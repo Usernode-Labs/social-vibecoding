@@ -254,7 +254,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   );
 }
 
-export function SessionHeader(): ReactNode {
+export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(sessionHeaderStore);
   return (
     <>
@@ -303,7 +303,7 @@ export function SessionHeader(): ReactNode {
           its own width (`max-width: min(45%, 14rem)`, app.css), and the title
           is what gives way. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
-      <ModeSwitch busy={!!s.busy} />
+      {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
     </>
   );
 }

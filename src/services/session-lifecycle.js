@@ -16,6 +16,7 @@ const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
 const branchNames = require('./branch-names');
+const externalAgentTasks = require('./external-agent-tasks');
 
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
@@ -246,6 +247,24 @@ async function finalizeArchivedSession({
   reason = 'manual',
   purgeCc = false,
 }) {
+
+  // A work order is one ATTEMPT at an issue, and this is where the attempt
+  // ends. It had a beginning (prepare) and two endings (submit, "Start over")
+  // but none for "the session it belonged to is over", so dead attempts
+  // leaked: each held one of the owner's ten open-work-order slots for the
+  // full 14-day expiry, and they piled up into a backlog the launchpad then
+  // tried to hand back out, one per new change. Best-effort like every side
+  // effect here — an archive must not fail because a reservation could not be
+  // closed, and the expiry still collects anything this misses.
+  await externalAgentTasks.abandonTasksForSession(pool, sessionId)
+    .then((closed) => {
+      if (closed) {
+        log.info('session-lifecycle', 'Work orders closed with the session', { sessionId, closed });
+      }
+    })
+    .catch((err) => {
+      log.warn('session-lifecycle', 'Failed to close work orders on archive', { sessionId, err: err.message });
+    });
 
   // owner_username feeds the PR-withdrawn group-chat line (#200). The
   // manual archive endpoint is owner-scoped, so when userId is present

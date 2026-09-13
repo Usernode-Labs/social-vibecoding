@@ -599,7 +599,11 @@ const GroupChat = {
     // clause it fell through to `message`, and the row acquired an avatar, an
     // author name and a trip through the markdown pipeline it was never meant
     // to have.
-    const isSystem = kindRaw === 'system' || (kindRaw === 'spec_share' && !isSpecShare);
+    // Conflict resolution posts `conflict`, including the repeated synced-with-
+    // main notices. They are system events too: treating them as human messages
+    // bypasses the transcript's repeat folding on both history and live updates.
+    const isSystem = kindRaw === 'system' || kindRaw === 'conflict'
+      || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
     const username = msg.username || 'System';
     const me = App.user && App.user.username;

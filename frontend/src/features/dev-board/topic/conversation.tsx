@@ -4,7 +4,7 @@ import type { TopicBody, TranscriptSection } from './model';
 
 const TABS = [
   { key: 'discussion', label: 'Discussion' },
-  { key: 'workspace', label: 'Agent workspace' },
+  { key: 'workspace', label: 'Build' },
   { key: 'activity', label: 'Activity' },
 ] as const;
 type Tab = typeof TABS[number]['key'];
@@ -14,6 +14,13 @@ export function workspaceKind(item: any, body: TopicBody) {
   if (item?.source === 'imported') return 'imported';
   if (body.workspace) return 'owner';
   return body.transcript ? 'published' : 'private';
+}
+
+export function initialConversationTab(item: any, body: TopicBody, requested: string | null, sharedBookmark = false): Tab {
+  if (requested === 'discussion' || requested === 'workspace' || requested === 'activity') return requested;
+  if (sharedBookmark && body.transcript) return 'workspace';
+  return workspaceKind(item, body) === 'owner' && ['active', 'paused'].includes(item?.status)
+    ? 'workspace' : 'discussion';
 }
 
 export function mountChangeDiscussion(host: HTMLElement, id: number, readOnly: boolean) {
@@ -119,11 +126,10 @@ function PublishedWorkspace({ transcript }: { transcript: TranscriptSection }) {
 export function ChangeConversation({ item, body }: { item: any; body: TopicBody }) {
   const id = Number(body.changeId);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  // Existing /dev/shared bookmarks mean "read this chat"; ordinary Open card
-  // links arrive at Discussion. Both destinations now have all three tabs.
+  // Explicit links win; unfinished native work opens Build for its author.
+  // State is initialized once so refreshes preserve the selected tab.
   const requested = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversation') : null;
-  const initial: Tab = requested === 'workspace' || requested === 'activity' ? requested
-    : av?._devTopic?.kind === 'session' && body.transcript ? 'workspace' : 'discussion';
+  const initial = initialConversationTab(item, body, requested, av?._devTopic?.kind === 'session');
   const [tab, setTab] = useState<Tab>(initial);
   const [visited, setVisited] = useState(() => new Set<Tab>([initial]));
   const root = useRef<HTMLElement>(null);

@@ -473,6 +473,166 @@ function previewDatabaseAffinity(cfg, environment) {
   };
 }
 
+// ── Platform assets on every app's own origin ─────────────────────────
+//
+// The bridge, the native kit and the Tailwind runtime are centrally hosted:
+// every app loads all three from the platform. Apps have historically named
+// the platform's HOSTNAME to do it, which is what makes a domain move break
+// the whole fleet at once: the last one left every app scaffolded before it
+// still requesting these three files from the previous hostname, which no
+// longer answers, so they lost the bridge, the kit and their styling
+// together.
+//
+// Serving the same three prefixes on the app's OWN hostname lets an app
+// reference them at a relative path and carry no hostname at all. The
+// backend is a small Deployment of the platform's own image running
+// scripts/serve-platform-assets.js, in the generated-app namespace: an
+// Ingress backend must be a Service in the SAME namespace as the Ingress,
+// and the platform runs in its own. That script's header has the rest.
+const PLATFORM_ASSET_PREFIXES = Object.freeze([
+  '/usernode-bridge/', '/usernode-native/', '/usernode-tailwind/',
+]);
+const PLATFORM_ASSET_NAME = 'usernode-platform-assets';
+const PLATFORM_ASSET_MANAGED_BY = 'social-vibecoding-platform-assets';
+
+// Deliberately NOT the runtime's own managed-by value: listStatusResources
+// selects on it to enumerate APP deployments, and this is not an app — it
+// would show up in the admin status list as a phantom one, with no app-id
+// or session-id label for normalizeDeployment to read.
+function platformAssetLabels() {
+  return {
+    'app.kubernetes.io/part-of': PART_OF,
+    'app.kubernetes.io/name': PLATFORM_ASSET_NAME,
+    'app.kubernetes.io/managed-by': PLATFORM_ASSET_MANAGED_BY,
+  };
+}
+
+// Pure, so the shape can be asserted without a cluster. The asset prefixes
+// come FIRST and the catch-all last; the Ingress spec resolves overlapping
+// Prefix rules by longest match, so order is belt-and-braces rather than
+// the mechanism. `assetBackend` false omits them entirely, which is what
+// keeps an asset-backend failure from changing how an app itself is routed.
+function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }) {
+  const assetPaths = assetBackend ? PLATFORM_ASSET_PREFIXES.map((prefix) => ({
+    path: prefix,
+    pathType: 'Prefix',
+    backend: { service: { name: PLATFORM_ASSET_NAME, port: { number: 3000 } } },
+  })) : [];
+  return {
+    apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
+      name, namespace, labels: resourceLabels,
+      // TLS belongs to the installation, not the disposable app/preview.
+      // No issuer annotation: ingress-shim must not create per-host certificates.
+      annotations: {},
+    },
+    spec: {
+      ingressClassName: cfg.ingressClassName,
+      rules: [{ host: hostname, http: { paths: [
+        ...assetPaths,
+        { path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } },
+      ] } }],
+      tls: [{ hosts: [hostname], secretName: cfg.appTlsSecretName || 'social-apps-wildcard-tls' }],
+    },
+  };
+}
+
+// Memoised for the life of the process, which is the right window rather
+// than just a convenience: the image is read from the RUNNING platform
+// Deployment, and a platform rollout replaces this process, so the next one
+// re-reads it and the assets track the platform's own version — the
+// fleet-wide fix central hosting is for. Without the memo this would add
+// three API calls to every app deploy and every preview build.
+let platformAssetBackend = null;
+// After a failed reconcile, stop trying for a while. Clearing the memo alone
+// means the NEXT app deploy pays the readiness wait again, and the one after
+// that — so a backend that cannot come up (a bad launch command, an image
+// that will not start) would add that wait to every deploy on the platform
+// rather than costing it once. Routing is the thing being delayed here, and
+// no app needs it urgently enough to be worth that.
+let platformAssetBackendRetryAfter = 0;
+
+async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retryAfterMs = 300000 } = {}) {
+  if (platformAssetBackend) return platformAssetBackend;
+  // Still cooling off from a failure: no backend, and crucially no wait.
+  if (Date.now() < platformAssetBackendRetryAfter) return null;
+  platformAssetBackend = (async () => {
+    const cfg = config.kubernetes;
+    const namespace = cfg.appNamespace;
+    const { core, apps } = getClients();
+
+    const platform = await apps.readNamespacedDeployment({
+      namespace: cfg.platformNamespace || 'social-platform',
+      name: cfg.platformDeployment || 'social-vibecoding',
+    });
+    const containers = platform?.spec?.template?.spec?.containers || [];
+    const image = (containers.find((c) => c.name === 'platform') || containers[0] || {}).image;
+    if (!image) throw new Error('platform Deployment exposes no container image');
+
+    const resourceLabels = platformAssetLabels();
+    const selectorLabels = { 'social.usernode.io/runtime-name': PLATFORM_ASSET_NAME };
+
+    await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
+      apiVersion: 'v1', kind: 'Service', metadata: { name: PLATFORM_ASSET_NAME, namespace, labels: resourceLabels },
+      spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
+    });
+
+    await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
+      apiVersion: 'apps/v1', kind: 'Deployment',
+      metadata: { name: PLATFORM_ASSET_NAME, namespace, labels: resourceLabels },
+      spec: {
+        // Two, with maxUnavailable 0: this sits on the critical path of
+        // every app's page load, so a single-replica restart would be a
+        // fleet-wide gap in styling and in the bridge.
+        replicas: 2,
+        strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
+        selector: { matchLabels: selectorLabels },
+        template: {
+          metadata: { labels: { ...resourceLabels, ...selectorLabels } },
+          spec: {
+            serviceAccountName: cfg.generatedAppServiceAccount,
+            automountServiceAccountToken: false,
+            securityContext: podSecurityContext(),
+            containers: [{
+              name: 'assets', image, imagePullPolicy: 'IfNotPresent',
+              // Through the CNB launcher, NOT a bare `node`. The image is
+              // built by kpack/Paketo, and a command that bypasses
+              // /cnb/lifecycle/launcher does not get the buildpack's launch
+              // environment (PATH to the node layer among it), so the
+              // container never starts and the Service has no ready
+              // endpoints — which the ingress answers as 503 on every asset
+              // path. See the buildEnv comment above on launcher env.
+              command: ['/cnb/lifecycle/launcher'],
+              args: ['node scripts/serve-platform-assets.js'],
+              ports: [{ name: 'http', containerPort: 3000 }],
+              startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 20 },
+              readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
+              livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
+              resources: { requests: { cpu: '25m', memory: '64Mi' }, limits: { cpu: '500m', memory: '256Mi' } },
+              securityContext: containerSecurityContext(),
+            }],
+          },
+        },
+      },
+    });
+
+    // Only now is it safe to route to it. Publishing the Ingress paths on
+    // an upsert that merely SUCCEEDED is what turned a broken backend into a
+    // 503 on every asset path — strictly worse than not routing at all,
+    // because the app itself can no longer serve those paths either. If it
+    // never becomes ready this throws, the caller logs, and the app deploys
+    // with exactly its previous routing.
+    await waitForDeployment(namespace, PLATFORM_ASSET_NAME, { timeoutMs: readyTimeoutMs });
+    return PLATFORM_ASSET_NAME;
+  })().catch((err) => {
+    // Clear the memo so the next deploy retries rather than this process
+    // serving apps without asset routing until it restarts.
+    platformAssetBackend = null;
+    platformAssetBackendRetryAfter = Date.now() + retryAfterMs;
+    throw err;
+  });
+  return platformAssetBackend;
+}
+
 // `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
 // stay at 100m so scheduling is unchanged). Staging previews pass
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
@@ -535,19 +695,35 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
       },
     },
   });
-  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace, {
-    apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
-      name, namespace, labels: resourceLabels,
-      // TLS belongs to the installation, not the disposable app/preview.
-      // No issuer annotation: ingress-shim must not create per-host certificates.
-      annotations: {},
-    },
-    spec: {
-      ingressClassName: cfg.ingressClassName,
-      rules: [{ host: hostname, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } }] } }],
-      tls: [{ hosts: [hostname], secretName: cfg.appTlsSecretName || 'social-apps-wildcard-tls' }],
-    },
-  });
+  // Best-effort, and deliberately so: the asset backend is shared
+  // infrastructure, and a failure to reconcile it must not stop THIS app
+  // from deploying. Without it the Ingress simply omits the asset paths and
+  // the app routes exactly as it did before.
+  //
+  // RECONCILING the shared backend and ROUTING this app to it are separate
+  // questions, and conflating them cost an outage (#2045). The backend is
+  // shared; the routing is per-app. Guarding both on the self-app check meant
+  // platform previews — far and away the most frequent deploy here — stopped
+  // reconciling at all, so the one thing that happens constantly could no
+  // longer heal a broken backend, and an already-deployed app whose Ingress
+  // carried the asset paths kept answering 503 with no way back.
+  //
+  // So: always reconcile, and route only for child apps. The platform's own
+  // deployment is the SOURCE of these three trees — routing them to the
+  // shared backend would serve a preview the production image's copy of its
+  // own files, and the preview's checks would describe bytes that are not in
+  // the preview. Its 15 native-kit demo checks caught exactly that.
+  let assetBackend = null;
+  try {
+    const backend = await ensurePlatformAssetBackend(config);
+    if (app.slug !== config.selfAppSlug) assetBackend = backend;
+  } catch (err) {
+    log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
+      namespace, app: app.slug, error: err?.message,
+    });
+  }
+  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+    appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   try {
     await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
   } catch (err) {
@@ -1572,4 +1748,8 @@ module.exports = {
   _deploymentStateForTest: deploymentState,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
+  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
+  _appIngressManifestForTest: appIngressManifest,
+  _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
+  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
 };

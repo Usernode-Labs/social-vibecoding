@@ -157,7 +157,12 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
   const s = card.pill?.state || null;
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
-  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  // `meta` chips (the status tags) ride the row's META line, which is
+  // metaLineNodes' — the same seam as the card. The band is the bar, the
+  // remaining state chips and the vote.
+  const chips = (card.badges || [])
+    .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
+    .slice(0, ROW_BADGE_MAX);
   if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">

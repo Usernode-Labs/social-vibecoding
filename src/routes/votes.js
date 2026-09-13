@@ -372,6 +372,41 @@ function stagingMockProposals(viewer) {
       ],
       mergeability_files_complete: true,
     },
+    // (e) #2038: the three states the SERVER now names, rather than the
+    // browser guessing from a precedence table. Each carries its own
+    // measuredAt, because the card says how old the answer is — a number
+    // stated without its age is a claim about the present that a cache
+    // cannot support, and that was the whole shape of the "the UI is out of
+    // sync" reports.
+    {
+      ...mk(9000081, 900181,
+        '[Mock] #2038: the votes are in, the checks are still running',
+        4, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 40 * 1000).toISOString(),
+      integration_behind_by: 0,
+      integration_merges_clean: true,
+      check_state: 'pending',
+    },
+    {
+      ...mk(9000082, 900182,
+        '[Mock] #2038: approved, and being brought up to date with main',
+        5, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 5 * 1000).toISOString(),
+      integration_behind_by: 6,
+      integration_merges_clean: true,
+      integration_block_reasons: ['integrating'],
+    },
+    {
+      ...mk(9000083, 900183,
+        '[Mock] #2038: GitHub refused the merge, measured ten minutes ago',
+        7, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      integration_behind_by: 12,
+      integration_merges_clean: false,
+      integration_conflict_paths: ['src/routes/votes.js', 'public/js/merge-status.js'],
+      // Derived by the card from this column, not restated by the server.
+      merge_conflict_state: 'conflict',
+    },
     // (c) Checks passed, against a base main has since moved past. The
     // verdict is real and the tests did pass; what they passed against is no
     // longer what this would merge into. Soft on purpose: it is a caveat on
@@ -758,9 +793,12 @@ function stagingMockProposals(viewer) {
       ],
     },
     // ── Card-as-pointer revision fixtures ──
-    // The composite status pill names ONE reason and its tooltip counts the
-    // rest; the detail view enumerates every one. That behaviour needs a row
-    // with several reasons at once, which no existing mock has.
+    // A row with several reasons at once, which no other mock has. It was
+    // added when the status bar named ONE reason and counted the rest in a
+    // tooltip; it proves the opposite now — the bar is the vote, and every
+    // reason is its own tag, colour-coded by whether it blocks the merge. The
+    // three here are deliberately one hard and two soft, so a preview shows
+    // both tints beside a live tally.
     {
       ...mk(9000050, 900150,
         '[Mock] Multi-reason test: behind main AND checks failing AND console errors',
@@ -1143,314 +1181,202 @@ async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
   }));
 }
 
-// #955: how far back the classifier will follow first parents looking for the
-// reviewed revision. Stacked platform syncs are the reason it is more than one
-// (a drain can resolve, fail to merge, and resolve again before anything
-// reconciles); a small cap keeps a pathological history from costing GitHub
-// reads. Anything deeper is treated as an author push — the safe direction.
-const MAX_PLATFORM_CHAIN_HOPS = 5;
+const SHA40_RE = /^[0-9a-f]{40}$/i;
 
-// True while the platform itself is moving this branch — either a MODE=sync
-// worker turn or a conflict-resolver drain. Process-local, same
-// single-Node-process assumption the two registries already make.
-function platformSyncInFlight(sessionId) {
-  try {
-    const { getSyncState } = require('../services/sync-main');
-    if (getSyncState(sessionId)) return true;
-  } catch (_) { /* treat an unavailable registry as "not syncing" */ }
-  try {
-    if (isResolving(sessionId)) return true;
-  } catch (_) { /* same */ }
-  return false;
+function normalizedSha(value) {
+  return typeof value === 'string' && SHA40_RE.test(value) ? value.toLowerCase() : null;
 }
 
-// Walk first parents from the live head back towards the reviewed revision,
-// requiring EVERY commit on the way to be one the platform recorded pushing
-// for this session. Recorded provenance — not the commit's shape — is what
-// makes this safe: an author can trivially craft a "merge main" commit whose
-// first parent is the reviewed SHA, so trusting shape alone would turn vote
-// preservation into a governance bypass.
-async function platformPushChain({ session, pool, liveHead, reviewedHead }) {
-  const chain = [];
-  if (!liveHead) return { platform: false, chain };
-  const syncMain = require('../services/sync-main');
-  const target = nativeGithubTarget(session);
-  let cursor = liveHead;
-
-  for (let hop = 0; hop < MAX_PLATFORM_CHAIN_HOPS; hop++) {
-    const record = await syncMain.findPlatformPush(pool, session.id, cursor);
-    if (!record) return { platform: false, chain };
-    chain.push(record);
-
-    // A row with no pinned revision has no bound votes to protect; a recorded
-    // platform push is provenance enough to bind it (see sync-main).
-    if (!reviewedHead) return { platform: true, chain };
-
-    let parent = normalizedSha(record.first_parent_sha);
-    if (!parent && target && github.isEnabled()) {
-      // The parents read can fail at push time; fill it in now so later passes
-      // stay a pure DB walk.
-      try {
-        const parents = await github.getCommitParents(target.owner, target.repo, cursor);
-        parent = normalizedSha(parents[0]);
-        if (parent) {
-          await syncMain.backfillPlatformPushParent(pool, session.id, cursor, parent);
-        }
-      } catch (err) {
-        log.warn('votes', 'Could not read platform-push parents', {
-          sessionId: session.id, sha: cursor, err: err.message,
-        });
-      }
-    }
-    if (!parent) return { platform: false, chain };
-    if (parent === reviewedHead) return { platform: true, chain };
-    cursor = parent;
-  }
-  return { platform: false, chain };
-}
-
-// #955: decide WHO moved a native proposal's head before deciding what that
-// costs its votes.
-//   same            — the pin already describes this commit (case-insensitive).
-//   platform_advance— our own sync/conflict-resolution commit, sitting on top
-//                     of the reviewed revision: carry the votes across.
-//   pending_sync    — the platform is mid-sync and this commit isn't recorded
-//                     yet; don't decide at all, ask the caller to retry.
-//   author_push     — anything else: the reviewed code changed, clear the tally.
-async function classifyNativeHeadMove({ pool, session, liveHead }) {
-  const live = normalizedSha(liveHead);
-  const reviewed = normalizedSha(session.reviewed_head_sha);
-  if (live && reviewed && live === reviewed) return { kind: 'same' };
-
-  const { platform, chain } = await platformPushChain({
-    session, pool, liveHead: live, reviewedHead: reviewed,
-  });
-  if (platform) {
-    return {
-      kind: 'platform_advance',
-      chain,
-      // Pure git merges carry their verdict; a Claude-resolved tree does not.
-      resolvedTree: chain.some((c) => c.sync_result === 'resolved'),
-    };
-  }
-  if (platformSyncInFlight(session.id)) return { kind: 'pending_sync' };
-  return { kind: 'author_push' };
-}
-
-// Refresh a native proposal's reviewed revision from the live GitHub PR.
-// `fresh=false` avoids an unnecessary API read when a caller only needs to
-// initialize a legacy row; vote-time callers pass true because the PR may have
-// moved since the previous vote.
+// #2038 — what a head move costs a proposal's approvals.
 //
-// On a changed revision this function fail-closes first (revision-stamps the
-// row, removes only votes for other revisions, and marks checks pending), then
-// kicks an exact-SHA staging/check rebuild in the background. The conditional
-// UPDATE makes concurrent voters idempotent: only one caller owns the reset,
-// while `head_sha IS DISTINCT FROM` preserves any vote already cast on the new
-// revision.
+// This replaced a provenance ledger: session_platform_pushes, a five-hop
+// first-parent walk, a three-way classifier keyed on recorded pushes, a
+// "platform sync in flight, ask me later" race state, and a fail-closed
+// branch for when GitHub would not say who a commit's parents were. All of
+// that existed to tell the platform's own sync commit from an author's push,
+// and it had to be built on recorded provenance because a commit's SHAPE can
+// be forged — anyone can craft a merge whose first parent is the reviewed sha.
 //
-// #955: that reset is for AUTHOR pushes. The platform's own "sync with main"
-// commit changes the branch without changing the patch under review, so it
-// advances the pin and carries the votes with it instead.
+// services/integration.js answers the same question by REDOING the merge and
+// comparing trees. Nothing to record, nothing to walk, nothing to forge, and
+// no network: the mirror already has both commits.
+//
+// The outcome is spent in one place — the approval epoch. A mechanical merge
+// does not touch it, so the approvals keep counting with nothing carried or
+// advanced. Anything authored bumps it, and every tally in the platform stops
+// counting the old votes in the same statement.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
 }) {
+  const integration = require('../services/integration');
+  const mirror = require('../services/repo-mirror');
+
+  const epochOf = (s) => {
+    const n = parseInt(s?.approval_epoch, 10);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   if (!session || session.source === 'imported') {
-    return { enforced: false, headSha: reviewedHeadForSession(session) };
+    return { enforced: false, headSha: reviewedHeadForSession(session), epoch: epochOf(session) };
   }
   if (!github.isEnabled()) {
-    // Local/mock installations without GitHub keep their existing PR-less
-    // behaviour. There is no external mutable branch to protect in that mode.
-    return { enforced: false, headSha: session.reviewed_head_sha || null };
+    // Local/mock installations keep their PR-less behaviour: there is no
+    // external mutable branch to protect.
+    return { enforced: false, headSha: session.reviewed_head_sha || null, epoch: epochOf(session) };
   }
   if (!session.repo_url) {
-    // PR-less local sessions have no mutable remote head to authorize. A row
-    // that claims a GitHub PR but has lost its repository identity must fail
-    // closed instead of silently bypassing revision verification.
+    // No repository identity at all. A row that claims a pull request but has
+    // lost its repository cannot be verified and must not merge on an
+    // unverified head — this is the one case that still fails closed, because
+    // there is nothing to fail open TO.
     if (!session.pr_number) {
-      return { enforced: false, headSha: session.reviewed_head_sha || null };
+      return { enforced: false, headSha: session.reviewed_head_sha || null, epoch: epochOf(session) };
     }
     return {
-      enforced: true,
-      blocked: true,
+      enforced: true, blocked: true,
       reason: 'This proposal has no GitHub repository to verify.',
     };
   }
-
-  const target = nativeGithubTarget(session);
-  if (!target) {
+  if (!session.branch_name) {
+    // A repository but no recorded branch: legacy rows, and imported
+    // proposals whose head lives on the author's fork where the mirror cannot
+    // see it. The head cannot be resolved locally, so leave the revision as it
+    // stands — the exact-sha merge remains the guard. Same reasoning as the
+    // unreadable-mirror path below.
     return {
-      enforced: true,
-      blocked: true,
-      reason: 'This proposal has no valid GitHub pull request to verify.',
+      enforced: true, headSha: session.reviewed_head_sha || null,
+      epoch: epochOf(session), unchanged: true, measurementUnavailable: true,
     };
   }
-  if (!fresh && session.reviewed_head_sha) {
-    return { enforced: true, headSha: session.reviewed_head_sha, unchanged: true };
+
+  const parsed = integration._parseRepo(session.repo_url);
+  if (!parsed) {
+    return {
+      enforced: true, blocked: true,
+      reason: 'This proposal has no valid GitHub repository to verify.',
+    };
   }
 
-  let pr;
+  const oldHead = normalizedSha(session.reviewed_head_sha);
+  let dir; let liveHead; let mainSha;
   try {
-    pr = await github.getPR(target.owner, target.repo, session.pr_number);
+    dir = await mirror.ensureMirror(parsed.owner, parsed.repo, {
+      refs: [oldHead, normalizedSha(session.checks_commit_sha)].filter(Boolean),
+    });
+    mainSha = await mirror.defaultBranchSha(dir);
+    liveHead = await mirror.resolveBranch(dir, session.branch_name);
   } catch (err) {
-    log.warn('votes', 'Could not verify native proposal head', {
-      sessionId: session.id, pr: session.pr_number, err: err.message,
+    // Fail OPEN, deliberately, and this is the one place in the merge path
+    // where that is the safe direction.
+    //
+    // The mirror is a cache of a repository, not the authority on it. The
+    // authority is the exact-sha merge at the end of checkAndMerge, which
+    // pins to the revision recorded here: if the head has moved and this
+    // read did not notice, GitHub refuses the merge with a 409 and the
+    // proposal comes straight back round to be reconciled properly. Nothing
+    // can be merged on the strength of a head we failed to check.
+    //
+    // Failing closed, by contrast, would block every vote and every merge on
+    // every app behind one unreachable git host — the same wedge the
+    // explicit-approval check documents avoiding for a GitHub outage. A
+    // proposal nobody can vote on is a worse outcome than a merge attempt
+    // that GitHub declines.
+    log.warn('votes', 'Mirror unreadable; leaving the reviewed revision as it stands', {
+      sessionId: session.id, err: err.message,
     });
     return {
-      enforced: true,
-      blocked: true,
-      transient: true,
-      reason: 'GitHub could not verify the pull request revision. Try again shortly.',
+      enforced: true, headSha: oldHead, epoch: epochOf(session),
+      unchanged: true, measurementUnavailable: true,
     };
   }
 
-  if (pr?.merged) {
-    return {
-      enforced: true,
-      blocked: true,
-      reason: `PR #${session.pr_number} was already merged on GitHub.`,
-    };
-  }
-  if (pr?.state && pr.state !== 'open') {
-    return {
-      enforced: true,
-      blocked: true,
-      reason: `PR #${session.pr_number} is not open on GitHub.`,
-    };
-  }
-  const liveHead = pr?.head?.sha || null;
-  if (!liveHead || !/^[0-9a-f]{40}$/i.test(liveHead)) {
-    return {
-      enforced: true,
-      blocked: true,
-      reason: 'GitHub did not return a valid pull-request head commit.',
-    };
-  }
-  if (sameSha(liveHead, session.reviewed_head_sha)) {
-    // Same commit — including a stamp that differs only in letter case. Nothing
-    // about the reviewed code changed, so nothing may be cleared.
-    return { enforced: true, headSha: liveHead, unchanged: true };
-  }
-
-  const oldHead = session.reviewed_head_sha || null;
-  const move = await classifyNativeHeadMove({ pool, session, liveHead });
-
-  if (move.kind === 'pending_sync') {
-    // The platform is mid-sync and this commit isn't recorded yet: it is either
-    // our own push a moment before it lands in the ledger, or a genuine author
-    // push. Deciding now could destroy an approval that must survive, so defer
-    // — nothing is written, and the next attempt classifies it correctly.
-    log.info('votes', 'Head move deferred: platform sync in flight', {
-      sessionId: session.id, oldHead, liveHead,
+  if (!liveHead) {
+    // The branch is not in the mirror: deleted, renamed, never pushed, or an
+    // imported head that lives on a fork. Not a head move, and nothing here
+    // may clear approvals over an absence. Same fail-open reasoning as above.
+    log.info('votes', 'Branch not present in the mirror; revision left as it stands', {
+      sessionId: session.id, branch: session.branch_name,
     });
     return {
-      enforced: true,
-      blocked: true,
-      transient: true,
-      reason: 'This proposal is being synced with main. Try again in a moment.',
+      enforced: true, headSha: oldHead, epoch: epochOf(session),
+      unchanged: true, measurementUnavailable: true,
+    };
+  }
+  if (sameSha(liveHead, oldHead)) {
+    return { enforced: true, headSha: liveHead, epoch: epochOf(session), unchanged: true };
+  }
+
+  // A row with no pin yet is being bound for the first time. Pre-#872
+  // semantics counted its unbound votes anyway, so binding costs nothing and
+  // must not clear anything.
+  if (!oldHead) {
+    await pool.query(
+      `UPDATE chat_sessions SET reviewed_head_sha = $1, stale_notified_at = NULL WHERE id = $2`,
+      [liveHead, session.id]
+    );
+    session.reviewed_head_sha = liveHead;
+    return {
+      enforced: true, headSha: liveHead, epoch: epochOf(session),
+      updated: true, initialized: true, changed: false, kind: 'initialized',
     };
   }
 
-  const platformAdvance = move.kind === 'platform_advance';
-  // Install the new head and reconcile the approvals in ONE statement. If that
-  // half fails, PostgreSQL rolls the head update back too, so a later retry
-  // cannot mistake a partially-reconciled row for a clean one.
-  //
-  // Author push  → delete every approval cast against another revision.
-  // Platform sync→ carry the approvals for the previous revision onto the new
-  //                one; approvals for any OTHER revision are still stale.
+  const move = await integration.classifyHeadMove(dir, {
+    approvedHead: oldHead, newHead: liveHead, mainSha,
+  });
+
+  // 'resolved' keeps the approvals — the bytes that differ from the
+  // mechanical attempt all lie in files git itself could not merge, so the
+  // resolution is bounded by the conflict — but the tree is one nobody has
+  // tested, so its checks are always re-run below.
+  const keepsApprovals = move.kind === 'mechanical' || move.kind === 'resolved';
+
+  // One statement. If the epoch bump and the head install could land
+  // separately, a crash between them would leave a row whose approvals
+  // describe neither the old code nor the new.
   const { rows: claimed } = await pool.query(
-    platformAdvance
-      ? `WITH claimed AS (
-           UPDATE chat_sessions
-              SET reviewed_head_sha = $1, stale_notified_at = NULL
-            WHERE id = $2
-              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-              AND reviewed_head_sha IS DISTINCT FROM $1
-            RETURNING reviewed_head_sha
-         ), moved AS (
-           UPDATE pr_votes SET head_sha = $1
-            WHERE session_id = $2
-              AND head_sha IS NOT DISTINCT FROM $3::varchar
-              AND EXISTS (SELECT 1 FROM claimed)
-            RETURNING 1
-         ), deleted AS (
-           DELETE FROM pr_votes
-            WHERE session_id = $2
-              AND head_sha IS DISTINCT FROM $1
-              -- disjoint from the moved set on purpose: two data-modifying
-              -- CTEs touching one row in a statement is undefined behaviour.
-              AND head_sha IS DISTINCT FROM $3::varchar
-              AND EXISTS (SELECT 1 FROM claimed)
-            RETURNING 1
-         )
-         SELECT reviewed_head_sha,
-                (SELECT COUNT(*)::int FROM moved) AS votes_moved,
-                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
-           FROM claimed`
-      : `WITH claimed AS (
-           UPDATE chat_sessions
-              SET reviewed_head_sha = $1, stale_notified_at = NULL
-            WHERE id = $2
-              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-              AND reviewed_head_sha IS DISTINCT FROM $1
-            RETURNING reviewed_head_sha
-         ), deleted AS (
-           DELETE FROM pr_votes
-            WHERE session_id = $2
-              AND head_sha IS DISTINCT FROM $1
-              AND EXISTS (SELECT 1 FROM claimed)
-            RETURNING 1
-         )
-         SELECT reviewed_head_sha,
-                0 AS votes_moved,
-                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
-           FROM claimed`,
-    [liveHead, session.id, oldHead]
+    `UPDATE chat_sessions
+        SET reviewed_head_sha = $1,
+            stale_notified_at = NULL,
+            approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
+      WHERE id = $2
+        AND reviewed_head_sha IS NOT DISTINCT FROM $4::varchar
+      RETURNING approval_epoch`,
+    [liveHead, session.id, keepsApprovals, oldHead]
   );
 
-  // Another concurrent verifier may have installed this same revision first.
-  // Re-read instead of performing a second vote/check reset. A different value
-  // means the PR moved again during our fetch; fail closed and let the caller
-  // retry against a fresh snapshot.
   if (!claimed.length) {
+    // Another verifier installed a revision while we were reading. Re-read
+    // rather than reset a second time.
     const { rows } = await pool.query(
-      `SELECT reviewed_head_sha FROM chat_sessions WHERE id = $1`,
+      `SELECT reviewed_head_sha, approval_epoch FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
-    const storedHead = rows[0]?.reviewed_head_sha || null;
-    session.reviewed_head_sha = storedHead;
-    if (sameSha(storedHead, liveHead)) {
-      return { enforced: true, headSha: liveHead, unchanged: true };
+    session.reviewed_head_sha = rows[0]?.reviewed_head_sha || null;
+    session.approval_epoch = rows[0]?.approval_epoch;
+    if (sameSha(session.reviewed_head_sha, liveHead)) {
+      return { enforced: true, headSha: liveHead, epoch: epochOf(session), unchanged: true };
     }
     return {
-      enforced: true,
-      blocked: true,
-      transient: true,
-      reason: 'The pull request changed while its revision was being verified. Try again.',
+      enforced: true, blocked: true, transient: true,
+      reason: 'The proposal changed while its revision was being verified. Try again.',
     };
   }
 
+  const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.reviewed_head_sha = liveHead;
-  const votesDeleted = parseInt(claimed[0]?.votes_deleted, 10) || 0;
-  const votesMoved = parseInt(claimed[0]?.votes_moved, 10) || 0;
+  session.approval_epoch = epoch;
 
-  // A platform-authored push may already have run checks for this exact head.
-  // Preserve that verdict; otherwise invalidate the old result synchronously
-  // before launching the exact-SHA rebuild. A pure `clean` platform merge keeps
-  // its verdict too (git merged tested main into a tested branch), but a tree
-  // Claude edited to resolve conflicts is unverified and must be re-checked.
-  const checksCarry = platformAdvance && !move.resolvedTree;
+  // Checks policy follows who wrote the tree. A mechanical merge is pure git
+  // over a tested branch and a tested main, so the verdict carries. Anything
+  // else is an unverified tree and is re-checked against this exact commit.
+  const checksCarry = move.kind === 'mechanical';
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
     if (deferChecks) {
-      // A managed local upload may contain more than one commit. Clear the old
-      // verdict immediately, but let proposal_submit_build launch the single
-      // preview/check run after every exact-tree commit has been uploaded.
-      // The atomic reviewed-head/vote reset above is never deferred.
       const visuals = require('../services/visuals');
       await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
-        .catch((err) => log.warn('votes', 'Deferred native revision setChecksPending failed (non-fatal)', {
+        .catch((err) => log.warn('votes', 'Deferred setChecksPending failed (non-fatal)', {
           sessionId: session.id, headSha: liveHead, err: err.message,
         }));
       try { visuals.notifyChecksPending(session.id, liveHead, 'building', 'commit-push'); } catch (_) {}
@@ -1474,80 +1400,67 @@ async function reconcileNativeReviewedHead({
         sessionId: session.id,
         appSlug: session.app_slug || null,
         merged: false,
-        headMoved: oldHead != null,
-        ...(platformAdvance ? { votesKept: true } : {}),
+        headMoved: true,
+        ...(keepsApprovals ? { votesKept: true } : {}),
       });
     } catch (_) { /* ws failures are non-fatal */ }
-  }
 
-  if (notify && platformAdvance && votesMoved > 0) {
-    // Our own commit, not the author's: say what actually happened instead of
-    // asking everyone to re-review code they already approved.
     const label = session.pr_title
       ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
-    const how = move.resolvedTree
-      ? 'was synced with main and its merge conflicts were resolved automatically'
-      : 'was synced with main';
-    const checksNote = move.resolvedTree
-      ? ' Its checks are re-running against the new commit and it will merge on its own once they pass.'
-      : '';
-    await sendSystemMessage(
-      pool, session.app_id,
-      `${label} ${how}. Existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
-      'system',
-      { headChanged: true, votesKept: true, prNumber: session.pr_number, headSha: liveHead },
-      { type: 'session', ref: session.id }
-    ).catch(() => {});
-  } else if (notify && !platformAdvance && (oldHead || votesDeleted > 0)) {
-    const label = session.pr_title
-      ? `PR #${session.pr_number}: ${session.pr_title}`
-      : `PR #${session.pr_number}`;
-    const message = oldHead
-      ? `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
-      : `${label} is now pinned to commit ${liveHead.slice(0, 8)}. Earlier unbound votes were cleared, so please re-review.`;
+    const message = move.kind === 'mechanical'
+      ? `${label} was brought up to date with main. Nothing in the proposal changed, so its votes still stand.`
+      : move.kind === 'resolved'
+        ? `${label} was brought up to date with main and ${move.conflictPaths?.length || 'its'} conflicting file${move.conflictPaths?.length === 1 ? '' : 's'} were resolved automatically. The votes still stand; its checks are re-running against the merged code and it will merge on its own once they pass.`
+        : move.kind === 'unknown'
+          ? `${label} moved to a commit the platform could not verify (${move.reason}). Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
+          : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
     await sendSystemMessage(
       pool, session.app_id, message, 'system',
-      { headChanged: !!oldHead, prNumber: session.pr_number, headSha: liveHead },
+      { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead },
       { type: 'session', ref: session.id }
     ).catch(() => {});
   }
 
-  log.info('votes', 'Native proposal revision reconciled', {
-    sessionId: session.id,
-    oldHead,
-    newHead: liveHead,
-    moveKind: move.kind,
-    votesDropped: votesDeleted,
-    votesCarried: votesMoved,
-    checksReset: needsChecks,
-    checksDeferred: needsChecks && deferChecks,
+  log.info('votes', 'Proposal revision reconciled', {
+    sessionId: session.id, oldHead, newHead: liveHead,
+    moveKind: move.kind, keepsApprovals, epoch, checksReset: needsChecks,
   });
+
   return {
     enforced: true,
     headSha: liveHead,
+    epoch,
     updated: true,
-    initialized: oldHead == null,
-    changed: oldHead != null,
-    votesDropped: votesDeleted,
-    votesCarried: votesMoved,
+    changed: true,
+    kind: move.kind,
+    votesKept: keepsApprovals,
     checksDeferred: needsChecks && deferChecks,
-    platformAdvance,
-    votesKept: platformAdvance,
   };
 }
 
-const SHA40_RE = /^[0-9a-f]{40}$/i;
-
-function normalizedSha(value) {
-  return typeof value === 'string' && SHA40_RE.test(value) ? value.toLowerCase() : null;
-}
-
-function voteMatchesReviewedRevision(expectedHeadSha, revision) {
+/**
+ * Is the vote the browser is casting a vote on the proposal it was shown?
+ *
+ * The old guard compared the rendered COMMIT to the live head and rejected
+ * any difference. That cost a voter their click on every platform sync —
+ * including the ones the platform had just certified changed nothing — because
+ * the comparison could not tell "this is different code" from "this is the
+ * same code, rebased". An epoch can: it only moves when somebody writes bytes
+ * that were not already approved.
+ *
+ * An absent stamp is accepted. A client that sends no epoch is voting on
+ * whatever is current, which is the pre-#872 behaviour and is safe now that
+ * the epoch — not the vote's own revision — is what decides whether it counts.
+ */
+function voteMatchesApprovalEpoch(expectedEpoch, revision) {
   if (!revision?.enforced) return true;
-  const expected = normalizedSha(expectedHeadSha);
-  const current = normalizedSha(revision.headSha);
-  return !!expected && expected === current;
+  if (expectedEpoch === undefined || expectedEpoch === null || expectedEpoch === '') return true;
+  const expected = parseInt(expectedEpoch, 10);
+  if (!Number.isFinite(expected)) return true;
+  const current = parseInt(revision.epoch, 10);
+  if (!Number.isFinite(current)) return true;
+  return expected === current;
 }
 
 // Optional testing metadata on a PR import. Returns the three column values
@@ -1604,26 +1517,41 @@ function parseImportSummary(body) {
   return trimmed.slice(0, MAX_IMPORT_SUMMARY);
 }
 
-function revisionChangedVoteResponse(res, headSha, message = null) {
+function revisionChangedVoteResponse(res, headSha, message = null, epoch = null) {
   return res.status(409).json({
     error: message
       || 'This proposal changed since it was shown. Refresh it, review the new revision, then vote again.',
     headChanged: true,
     refreshRequired: true,
     reviewedHeadSha: headSha || null,
+    // #2038: the client re-arms its buttons from this instead of refetching
+    // and hoping. A rejection that does not say what the current epoch IS
+    // leaves an impatient second click carrying the same stale stamp — which
+    // is how one head move produced two identical rejections.
+    approvalEpoch: epoch == null ? null : parseInt(epoch, 10),
   });
 }
 
-// Record a native vote only while chat_sessions still points at the revision
-// the browser reviewed. SELECT ... FOR UPDATE and the INSERT share one SQL
-// statement, so a concurrent head reconciliation either happens before the
-// predicate is checked (zero rows) or after the vote is safely written (and
-// then removes it as stale). Imported/local rows keep their existing write.
+// Record a vote, stamped with the epoch it was cast under.
+//
+// The epoch is read INSIDE the statement (`SELECT ... FOR UPDATE`) rather
+// than passed in, so a reconciliation racing this write either lands first —
+// and the vote is stamped with the new epoch, which is correct, because the
+// voter is voting on whatever the reconciliation decided — or lands after,
+// against a row this statement already holds a lock on. There is no window in
+// which a vote is written carrying an epoch that never existed.
+//
+// head_sha is still recorded. It no longer decides anything, but it is the
+// only record of which commit a person was looking at when they approved,
+// and that is worth keeping.
 async function recordVote({ pool, session, userId, vote, headSha, revisionEnforced }) {
   if (!revisionEnforced) {
     return pool.query(
-      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()
+      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch)
+       SELECT $1, $2, $3, $4, cs.approval_epoch FROM chat_sessions cs WHERE cs.id = $1
+       ON CONFLICT (session_id, user_id) DO UPDATE
+         SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
+             approval_epoch = EXCLUDED.approval_epoch, created_at = NOW()
        RETURNING id`,
       [session.id, userId, vote, headSha]
     );
@@ -1631,17 +1559,17 @@ async function recordVote({ pool, session, userId, vote, headSha, revisionEnforc
 
   return pool.query(
     `WITH current_session AS (
-       SELECT id
+       SELECT id, approval_epoch
          FROM chat_sessions
         WHERE id = $1
           AND status IN ('promoted', 'merging')
-          AND reviewed_head_sha = $4::varchar
         FOR UPDATE
      )
-     INSERT INTO pr_votes (session_id, user_id, vote, head_sha)
-     SELECT id, $2, $3, $4 FROM current_session
+     INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch)
+     SELECT id, $2, $3, $4, approval_epoch FROM current_session
      ON CONFLICT (session_id, user_id) DO UPDATE
-       SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()
+       SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
+           approval_epoch = EXCLUDED.approval_epoch, created_at = NOW()
      RETURNING id`,
     [session.id, userId, vote, headSha]
   );
@@ -2741,13 +2669,14 @@ function voteRoutes(config) {
         return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
       }
 
-      // A click approves the revision that was actually rendered in the
-      // voter's browser, not whichever commit happens to be newest by the time
-      // this request reaches GitHub. Reconciliation above still advances the
-      // proposal and clears stale votes, but a changed/missing browser stamp
-      // requires a refresh and a second explicit click.
-      if (!voteMatchesReviewedRevision(req.body?.expectedHeadSha, revision)) {
-        return revisionChangedVoteResponse(res, revision.headSha);
+      // A click approves the PROPOSAL the voter was shown, which is not the
+      // same claim as "the commit the voter was shown". The old guard compared
+      // commits and so rejected this click on every platform sync — including
+      // the ones reconciliation had just certified changed nothing, which is
+      // how a vote-preserving merge still cost somebody their vote (#2038).
+      // The epoch only moves when bytes nobody approved were written.
+      if (!voteMatchesApprovalEpoch(req.body?.expectedEpoch, revision)) {
+        return revisionChangedVoteResponse(res, revision.headSha, null, revision.epoch);
       }
 
       // Was this a new vote, or a flip? Distinguishing matters because
@@ -2759,13 +2688,20 @@ function voteRoutes(config) {
       // The DB upsert itself is still safe (UNIQUE(session_id,user_id))
       // but we avoid the side-effects on a no-op.
       const { rows: prevRows } = await pool.query(
-        `SELECT vote, head_sha FROM pr_votes WHERE session_id = $1 AND user_id = $2`,
+        `SELECT pv.vote, pv.approval_epoch, cs.approval_epoch AS current_epoch
+           FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+          WHERE pv.session_id = $1 AND pv.user_id = $2`,
         [session.id, req.user.id]
       );
       const previousVote = prevRows[0]?.vote || null;
       const voteHeadSha = reviewedHeadForSession(session);
+      // #2038: "unchanged" means the same person voting the same way on the
+      // same PROPOSAL. Keying it on the commit made a re-vote after a
+      // mechanical sync look like a change, re-posting to group chat and
+      // re-entering checkAndMerge for a click that moved nothing.
       const unchanged = previousVote === vote
-        && (prevRows[0]?.head_sha || null) === voteHeadSha;
+        && prevRows[0]?.approval_epoch != null
+        && prevRows[0].approval_epoch === prevRows[0].current_epoch;
 
       // Stamp every GitHub proposal vote with its reviewed PR head. Imported
       // proposals retain imported_pr_head_sha; native proposals use the new
@@ -3195,6 +3131,16 @@ function voteRoutes(config) {
            cs.freshness_main_sha, cs.freshness_merge_base_sha,
            cs.freshness_behind_by, cs.freshness_ahead_by,
            cs.freshness_checked_at, cs.freshness_error,
+           -- #2038: the single integration record, and the epoch a vote is
+           -- pinned to. The card reads these; the six groups above are kept
+           -- written-through for one release so nothing that still reads
+           -- them breaks mid-rollout.
+           cs.integration_measured_at, cs.integration_head_sha, cs.integration_main_sha,
+           cs.integration_base_sha, cs.integration_behind_by, cs.integration_ahead_by,
+           cs.integration_merges_clean, cs.integration_conflict_paths,
+           cs.integration_merged_tree, cs.integration_checks_base_current,
+           cs.integration_block_reasons, cs.integration_error,
+           cs.approval_epoch,
            -- Which half of a 'pending' run is in flight ('building' |
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
@@ -3395,7 +3341,16 @@ function voteRoutes(config) {
       // sides rather than a rename anything has to follow.
       {
         const freshnessSvc = require('../services/proposal-freshness');
-        for (const row of rows) row.freshness = freshnessSvc.readFreshness(row);
+        const integrationSvc = require('../services/integration');
+        for (const row of rows) {
+          row.freshness = freshnessSvc.readFreshness(row);
+          // #2038: the one answer the card actually renders, carrying its own
+          // measuredAt so it can say how old it is instead of implying it is
+          // live. `blockReason` rides along so the card stops re-deriving a
+          // guess from a thirteen-state precedence table — the gate knows
+          // which rung refused and now says so.
+          row.integration = integrationSvc.readIntegration(row);
+        }
       }
 
       res.json({
@@ -4493,10 +4448,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt, explicitApproval,
-    // Every GitHub PR proposal counts only approvals cast against its current
-    // reviewed revision. Imported rows keep their existing source field;
-    // native rows use reviewed_head_sha.
-    headSha: reviewedHeadForSession(session),
+    // #2038: scoped by approval epoch inside the gate. No revision is passed,
+    // because a proposal's commit changes for reasons that say nothing about
+    // whether its approvals still describe it.
   });
   const yesCount = gate.qualifiedYes;
   const noCount = gate.qualifiedNo;
@@ -4596,48 +4550,91 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' });
     }
 
-    // #8: refuse the merge if the branch is behind origin/main. We don't
-    // auto-spawn a sync turn from here because:
-    //   1. Charging the sync to the voter who happened to push us over
-    //      the threshold is unfair — the cost should land on the
-    //      session owner who controls the branch.
-    //   2. Auto-spawning would add ~30-90s latency to the merge with no
-    //      visible feedback to the voter who triggered it.
-    // Instead, surface in group chat that the owner needs to click
-    // "Sync with main" in their dev-chat. The next yes vote will
-    // re-attempt the merge, which succeeds once behind_main=0.
-    if ((session.behind_main || 0) > 0) {
-      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+    // #2038 — the integration gate.
+    //
+    // This replaced a behind-main gate that blocked the merge, posted
+    // "syncing automatically", and queued a drain that only ever touched
+    // proposals ALREADY eligible to merge — so for anything below threshold
+    // the message was a promise nobody was keeping, and the proposal sat
+    // drifting with no actor at all. That was #2038's F2.
+    //
+    // Being behind is not a reason to refuse a merge; it is a reason to
+    // integrate first. The queue brings the proposal onto current main,
+    // re-checks the merged tree and comes back here. What this gate decides
+    // is only whether that is possible right now.
+    //
+    // Measured, not remembered: the old gate read session.behind_main off a
+    // row that could be hours old, and a cached 0 let a genuinely-behind
+    // proposal through to a 405 that nobody expected.
+    // Required lazily and only where used. services/merge-queue pulls in the
+    // worker and docker chain, and this gate runs on every vote — including
+    // in unit suites that drive checkAndMerge with those collaborators
+    // deliberately absent.
+    const integrationSvc = require('../services/integration');
+    const enqueueIntegration = () => {
+      try {
+        require('../services/merge-queue').enqueue(config, session.app_id);
+      } catch (err) {
+        log.warn('votes', 'Could not enqueue for integration', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+    };
+    const measured = await integrationSvc.measureDeduped(
+      { pool, session }, { force: true }
+    ).catch((err) => {
+      // A measurement that cannot run must not block a merge: the exact-sha
+      // merge is still the real guard, and GitHub refuses anything genuinely
+      // unmergeable. Failing closed here would wedge every merge on the
+      // platform behind a git hiccup.
+      log.warn('votes', 'Integration measurement failed; not blocking the merge', {
+        sessionId: session.id, err: err.message,
+      });
+      return { behindBy: null, mergesClean: null, conflictPaths: [] };
+    });
+
+    if (measured.mergesClean === false) {
+      // A real conflict, from a real merge — not GitHub's lazily-computed
+      // guess, and the paths are the ones git could not resolve rather than
+      // the superset the old prediction had to settle for.
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. Syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
-      await sendSystemMessage(pool, session.app_id, behindMsg, 'system');
-      // Dual-post into the proposal's thread (lifecycle in context).
-      await sendSystemMessage(pool, session.app_id, behindMsg, 'system',
+      const n = (measured.conflictPaths || []).length;
+      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+      const msg = `${label} conflicts with main in ${n} file${n === 1 ? '' : 's'}`
+        + `${n ? ` (${measured.conflictPaths.slice(0, 5).join(', ')}${n > 5 ? ', …' : ''})` : ''}. `
+        + `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it from the session's dev-chat.`;
+      await sendSystemMessage(pool, session.app_id, msg, 'system',
         null, { type: 'session', ref: session.id }).catch(() => {});
-      log.info('votes', 'Merge blocked: branch behind main', {
-        sessionId: session.id, behind: session.behind_main,
+      dstep({
+        phase: 'gate:integration', level: 'warn',
+        message: `Conflicts with main in ${n} file(s); queued for integration.`,
+        detail: { conflictPaths: measured.conflictPaths, behindBy: measured.behindBy },
       });
-      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main. Auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
-      dend('conflict_resolving', 'Behind main: auto-sync queued; see the conflict-resolution run.');
-      // Auto-heal: sync the branch with main (worker git-merge +
-      // Claude-on-markers) and retry the merge. The PR keeps its votes
-      // because the sync push doesn't go through the vote-resetting
-      // dev-turn path. Fire-and-forget so the voter's request returns
-      // immediately.
-      if (autoResolve) {
-        // Funnel through the app-level drain so this vote-triggered resolve
-        // is serialized with any other in-flight resolve for the app —
-        // only one proposal per app resolves+merges at a time, highest-
-        // voted first (this PR is eligible, so it's in that queue).
-        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((err) => {
-          log.error('votes', 'Auto-resolve (behind_main) failed', {
-            sessionId: session.id, err: err.message,
-          });
-        });
-      }
-      return { merged: false, yesCount, needed: required, behindMain: session.behind_main };
+      dend('conflict_resolving', 'Conflicts with main: queued for integration.');
+      // 'conflict' is derivable by the browser from the columns it already
+      // reads, so the server does not restate it — only 'integrating' is its
+      // to report, and the queue sets that when it actually starts.
+      if (autoResolve) enqueueIntegration();
+      return {
+        merged: false, yesCount, needed: required,
+        blockReason: 'conflict', conflictPaths: measured.conflictPaths,
+      };
+    }
+
+    if ((measured.behindBy || 0) > 0) {
+      dstep({
+        phase: 'gate:integration',
+        message: `Behind main by ${measured.behindBy}; queued for integration before merging.`,
+        detail: { behindBy: measured.behindBy },
+      });
+      dend('conflict_resolving', 'Behind main: queued for integration.');
+      if (autoResolve) enqueueIntegration();
+      return {
+        merged: false, yesCount, needed: required,
+        blockReason: 'integrating', behindMain: measured.behindBy,
+      };
     }
 
     // #47: "CI for proposals" gate. A proposal merges only when its
@@ -4744,7 +4741,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');
       return {
-        merged: false, yesCount, needed: required,
+        merged: false, yesCount, needed: required, blockReason: 'checks',
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
         checksRevisionMismatch,
       };
@@ -4796,7 +4793,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
         dend('blocked', 'Blocked: a new platform variable has no value set.');
         return {
-          merged: false, yesCount, needed: required,
+          merged: false, yesCount, needed: required, blockReason: 'platform_env',
           platformEnvBlocked: true,
           platformEnvMissing: envVerdict.detail.missing.map((m) => m.key),
         };
@@ -4841,6 +4838,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
     return { merged: false, inProgress: true };
   }
   dstep({ phase: 'claim', message: 'Claimed merge (promoted → merging).' });
+  // Nothing is blocking it any more; the card should stop saying so.
+  await require('../services/integration')
+    .setBlockReasons(pool, session.id, []);
 
   // Broadcast the 'merging' transition so every client refreshes its
   // vote panel and re-renders the PR as "Merging…" — rather than having
@@ -5634,9 +5634,8 @@ module.exports = {
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
   reconcilePromotedSweepHead,
-  classifyNativeHeadMove,
   reviewedHeadForSession,
-  voteMatchesReviewedRevision,
+  voteMatchesApprovalEpoch,
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
   // The request an imported pull request implements (#1217), likewise.

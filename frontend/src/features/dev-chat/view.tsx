@@ -119,7 +119,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
         id="dc-session-header"
         className="flex items-center gap-2 px-3 py-2 shrink-0 dc-lift dc-lift-strip"
       >
-        <SessionHeader />
+        <SessionHeader embedded={s.embedded} />
       </div>
       {/* `display: contents` — #dc-view is a flex column and each banner has
           to stay exactly the flex child it was, rather than becoming a block
@@ -168,7 +168,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           {/* The element carries the pane's scroll geometry and
               `initScrollTracking` binds click, keydown and scroll on it. */}
           <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto py-2">
-            <DevChatTranscript />
+            <DevChatTranscript embedded={s.embedded} />
           </div>
           {/* platform-safe-bar (app.css): this block is the bottom of the
               screen on a phone, so it carries the home-indicator inset on top
