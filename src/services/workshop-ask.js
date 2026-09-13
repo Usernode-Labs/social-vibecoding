@@ -43,6 +43,25 @@ const SUMMARY_MAX = 4000;
 const BODY_MAX = 6000;
 const QUESTION_MAX = 1000;
 
+// The diff budget. github.getProposalDiff defaults to 12000, which is sized
+// for an agent reading a change; this is a voter asking one question with a
+// summary already in front of them, and the ceiling exists so a
+// three-hundred-file proposal costs the same as a one-file one.
+const DIFF_CHAR_BUDGET = 9000;
+// Comments kept, most recent first-in-thread order preserved.
+// clipIssueComments defaults to 30 — that is the topic page's budget, which
+// has a whole screen. Twelve is the tail of a conversation, which is the
+// part a question is usually about.
+const COMMENTS_KEEP = 12;
+
+// NOT included: src/prompts/app-conventions.md. The pane's original note
+// named "the app's conventions" alongside the diff and the discussion, and
+// that document is 141 KB — the same 141 KB on every question, dwarfing the
+// change being asked about, to answer "how should apps here be written",
+// which is a question a voter is not asking. If a conventions answer is
+// wanted later it belongs behind a retrieval step, not stapled to every
+// call.
+
 const KINDS = new Set(['proposal', 'gov', 'issue']);
 
 const clip = (v, n) => {
@@ -149,16 +168,96 @@ async function resolveSubject(pool, app, target) {
 }
 
 /**
- * What the model is given: the subject and nothing else.
+ * The change itself and what has been said about it — best effort.
+ *
+ * BOTH HALVES FAIL OPEN, and that is the whole design of this function. An
+ * answer built from the title and summary alone is worse than one built
+ * from the diff, but it is far better than an error: GitHub being slow is
+ * not a reason a voter cannot ask what a change does. Every absence is
+ * REPORTED rather than silently omitted — `diffAvailable: false` in the
+ * snapshot is what stops the model answering about code it never saw, and
+ * the system prompt tells it to say so instead of guessing.
+ *
+ * The diff is a three-dot compare against `main`, matching every other
+ * caller in the codebase (platform-env-check, app-admins).
+ */
+async function gatherEvidence(app, subject) {
+  const out = { diff: null, diffAvailable: false, diffTruncated: false, filesChanged: null,
+    discussion: null, discussionTruncated: false };
+  const or = parseOwnerRepo(app.repo_url);
+  if (!or || !github.isEnabled()) return out;
+
+  // A proposal's code. Governance items and issues have none by
+  // construction, so this is not attempted for them.
+  if (subject.kind === 'proposal' && subject.branch) {
+    try {
+      const d = await github.getProposalDiff(
+        or.owner, or.repo, `main...${subject.branch}`, DIFF_CHAR_BUDGET
+      );
+      if (d && d.diff) {
+        out.diff = d.diff;
+        out.diffAvailable = true;
+        out.diffTruncated = !!d.truncated;
+        out.filesChanged = d.fileCount;
+      }
+    } catch (err) {
+      log.warn('workshop-ask', 'diff fetch failed', {
+        app: app.slug, branch: subject.branch, message: err.message,
+      });
+    }
+  }
+
+  // The thread. A proposal's discussion lives on its pull request, which is
+  // an issue number as far as the comments API is concerned — so one call
+  // covers all three kinds, on whichever number the subject carries.
+  const thread = subject.prNumber || subject.issueNumber || null;
+  if (thread) {
+    try {
+      const raw = await github.fetchIssueComments(or.owner, or.repo, thread);
+      const clipped = github.clipIssueComments(raw.comments, {
+        max: COMMENTS_KEEP, wasTruncated: !!raw.truncated,
+      });
+      if (clipped.comments.length) {
+        out.discussion = clipped.comments;
+        out.discussionTruncated = !!clipped.truncated;
+      }
+    } catch (err) {
+      log.warn('workshop-ask', 'comment fetch failed', {
+        app: app.slug, thread, message: err.message,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * What the model is given: the subject, the evidence, and nothing else.
  *
  * `appName` is here so an answer can say "this app" and mean something.
- * Every value in it came from resolveSubject — see the trust note at the
- * top of the file.
+ * Every value in it came from resolveSubject or gatherEvidence — see the
+ * trust note at the top of the file.
  */
-function buildContext(app, subject) {
+function buildContext(app, subject, evidence) {
+  const e = evidence || {};
   return {
     app: clip(app.name || app.slug, 120),
     item: subject,
+    // Stated whether or not there is a diff. The model is told to answer
+    // from the snapshot and to say when it cannot, and "there is no diff
+    // here" is the fact that makes that instruction actionable rather than
+    // a hope.
+    code: {
+      available: !!e.diffAvailable,
+      filesChanged: e.filesChanged == null ? null : e.filesChanged,
+      truncated: !!e.diffTruncated,
+      diff: e.diff || null,
+    },
+    discussion: {
+      available: !!(e.discussion && e.discussion.length),
+      truncated: !!e.discussionTruncated,
+      comments: e.discussion || [],
+    },
   };
 }
 
@@ -192,10 +291,14 @@ async function ask({ pool, config, app, userId, target, question, history, model
     throw err;
   }
 
+  // AFTER the budget check, never before: a user who cannot be billed for
+  // the answer should not cost the platform two GitHub round trips first.
+  const evidence = await gatherEvidence(app, subject);
+
   let result;
   try {
     result = await llm.answerWorkshopQuestion({
-      contextJson: JSON.stringify(buildContext(app, subject)),
+      contextJson: JSON.stringify(buildContext(app, subject, evidence)),
       question: q,
       history,
       model,
@@ -224,6 +327,7 @@ async function ask({ pool, config, app, userId, target, question, history, model
 }
 
 module.exports = {
-  ask, parseTarget, resolveSubject, buildContext,
+  ask, parseTarget, resolveSubject, buildContext, gatherEvidence,
   TITLE_MAX, SUMMARY_MAX, BODY_MAX, QUESTION_MAX,
+  DIFF_CHAR_BUDGET, COMMENTS_KEEP,
 };

@@ -2223,6 +2223,8 @@ async function answerWorkshopQuestion({
 
 You are given a JSON snapshot of the item: its title, the plain-language summary written for voters, its state, and — when available — the code diff and the discussion on it.
 
+Read "code" and "discussion" before you answer from them. Each has an "available" flag, and it is often false: a governance proposal and an open request have no code by construction, and a fetch can fail. When "code.available" is false you have NOT seen the change's code — say so rather than inferring what it does from its title. When "code.truncated" is true you have seen part of a larger diff, and an answer about what the change does NOT touch is one you cannot give. The same goes for "discussion".
+
 Rules:
 - Answer from the snapshot. If it does not contain what was asked, say so plainly in one sentence and name what you would need. Never guess at code, behaviour or intent that is not in front of you.
 - Be short. Two or three sentences is usually right; six is the ceiling. This is read in a small pane under the card it is about.

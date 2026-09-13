@@ -29,9 +29,24 @@ function stub(id, exports) {
 }
 
 let publicIssues = { issues: [], truncatedList: false };
+// The two evidence fetches are swappable per test: several of these are
+// about what happens when one of them FAILS.
+let diffResult = async () => ({ diff: '', fileCount: 0, truncated: false });
+let commentsResult = async () => ({ comments: [], truncated: false });
+const ghCalls = [];
+// The real module is loaded ONCE, before the stub replaces its cache entry,
+// purely to borrow clipIssueComments: its caps are part of what is under
+// test here, so a hand-rolled stand-in would be testing the stand-in. The
+// fetch/cache machinery it also carries is never called.
+const realGithub = require('../src/services/github');
 stub(require.resolve('../src/services/github'), {
   isEnabled: () => true,
   fetchPublicIssues: async () => publicIssues,
+  getProposalDiff: async (...args) => { ghCalls.push({ fn: 'diff', args }); return diffResult(...args); },
+  fetchIssueComments: async (...args) => { ghCalls.push({ fn: 'comments', args }); return commentsResult(...args); },
+  // The real clipper: its caps are part of what is under test, so stubbing
+  // it would test the stub.
+  clipIssueComments: realGithub.clipIssueComments,
 });
 
 const poolMod = require('../src/db/pool');
@@ -178,14 +193,111 @@ test('resolveSubject clips long fields', async () => {
   assert.equal(s.summary.length, workshopAsk.SUMMARY_MAX);
 });
 
-// ── buildContext: nothing but the resolved subject ────────────────────
+// ── buildContext: nothing but the resolved subject and its evidence ───
 
-test('buildContext carries the app name and the subject, and nothing else', () => {
+test('buildContext carries the app, the subject and the evidence, and nothing else', () => {
   const subject = { kind: 'proposal', ref: 55, title: 'T' };
-  const ctx = workshopAsk.buildContext(APP, subject);
-  assert.deepEqual(Object.keys(ctx).sort(), ['app', 'item']);
+  const ctx = workshopAsk.buildContext(APP, subject, {
+    diff: 'diff --git a/x b/x', diffAvailable: true, diffTruncated: false, filesChanged: 1,
+    discussion: [{ author: 'alice', body: 'looks good', createdAt: '2026-09-01' }],
+    discussionTruncated: false,
+  });
+  assert.deepEqual(Object.keys(ctx).sort(), ['app', 'code', 'discussion', 'item']);
   assert.equal(ctx.app, 'Demo');
   assert.equal(ctx.item, subject);
+  assert.equal(ctx.code.available, true);
+  assert.equal(ctx.code.filesChanged, 1);
+  assert.equal(ctx.discussion.comments.length, 1);
+});
+
+// The absence flags are the thing that stops the model answering about code
+// it never saw, so they must be PRESENT and false, never missing.
+test('buildContext states absence explicitly when there is no evidence', () => {
+  const ctx = workshopAsk.buildContext(APP, { kind: 'gov', ref: 3 }, null);
+  assert.equal(ctx.code.available, false);
+  assert.equal(ctx.code.diff, null);
+  assert.equal(ctx.code.filesChanged, null);
+  assert.equal(ctx.discussion.available, false);
+  assert.deepEqual(ctx.discussion.comments, []);
+});
+
+// ── gatherEvidence: best effort, and honest about what it got ─────────
+
+test('gatherEvidence compares against main and honours the diff budget', async () => {
+  ghCalls.length = 0;
+  diffResult = async () => ({ diff: 'diff --git a/a b/a\n+one\n', fileCount: 3, truncated: false });
+  commentsResult = async () => ({ comments: [], truncated: false });
+  const e = await workshopAsk.gatherEvidence(APP, {
+    kind: 'proposal', branch: 'fix/reply-input', prNumber: 1902,
+  });
+  const diffCall = ghCalls.find((c) => c.fn === 'diff');
+  assert.deepEqual(diffCall.args.slice(0, 3), ['acme', 'demo', 'main...fix/reply-input']);
+  assert.equal(diffCall.args[3], workshopAsk.DIFF_CHAR_BUDGET);
+  assert.equal(e.diffAvailable, true);
+  assert.equal(e.filesChanged, 3);
+});
+
+test('gatherEvidence fails OPEN when the diff fetch throws', async () => {
+  diffResult = async () => { throw new Error('GitHub 502'); };
+  commentsResult = async () => ({ comments: [{ author: 'a', body: 'b', createdAt: 'c' }], truncated: false });
+  const e = await workshopAsk.gatherEvidence(APP, {
+    kind: 'proposal', branch: 'b', prNumber: 1902,
+  });
+  assert.equal(e.diffAvailable, false, 'a failed diff must not become an error');
+  assert.equal(e.diff, null);
+  assert.equal(e.discussion.length, 1, 'the other half must still be gathered');
+});
+
+test('gatherEvidence fails OPEN when the comment fetch throws', async () => {
+  diffResult = async () => ({ diff: 'd', fileCount: 1, truncated: false });
+  commentsResult = async () => { throw new Error('GitHub 502'); };
+  const e = await workshopAsk.gatherEvidence(APP, {
+    kind: 'proposal', branch: 'b', prNumber: 1902,
+  });
+  assert.equal(e.discussion, null);
+  assert.equal(e.diffAvailable, true);
+});
+
+test('gatherEvidence does not look for a diff on a governance item or an issue', async () => {
+  ghCalls.length = 0;
+  diffResult = async () => { throw new Error('should not be called'); };
+  commentsResult = async () => ({ comments: [], truncated: false });
+  await workshopAsk.gatherEvidence(APP, { kind: 'gov', ref: 3, issueNumber: null });
+  await workshopAsk.gatherEvidence(APP, { kind: 'issue', ref: 7, issueNumber: 7 });
+  assert.equal(ghCalls.filter((c) => c.fn === 'diff').length, 0);
+});
+
+test('gatherEvidence reads a proposal thread on its PR number', async () => {
+  ghCalls.length = 0;
+  diffResult = async () => ({ diff: 'd', fileCount: 1, truncated: false });
+  commentsResult = async () => ({ comments: [], truncated: false });
+  await workshopAsk.gatherEvidence(APP, { kind: 'proposal', branch: 'b', prNumber: 1902 });
+  const c = ghCalls.find((x) => x.fn === 'comments');
+  assert.deepEqual(c.args.slice(0, 3), ['acme', 'demo', 1902]);
+});
+
+test('gatherEvidence caps the thread and says when it clipped', async () => {
+  diffResult = async () => ({ diff: '', fileCount: 0, truncated: false });
+  commentsResult = async () => ({
+    comments: Array.from({ length: 40 }, (_, i) => ({
+      author: 'alice', body: `comment ${i}`, createdAt: '2026-09-01',
+    })),
+    truncated: false,
+  });
+  const e = await workshopAsk.gatherEvidence(APP, { kind: 'issue', ref: 7, issueNumber: 7 });
+  assert.equal(e.discussion.length, workshopAsk.COMMENTS_KEEP);
+  assert.equal(e.discussionTruncated, true, 'dropping older comments must be disclosed');
+  // The TAIL is what is kept: a question is usually about the latest turn.
+  assert.equal(e.discussion[e.discussion.length - 1].body, 'comment 39');
+});
+
+test('gatherEvidence returns nothing gathered when the repo url is unparseable', async () => {
+  const e = await workshopAsk.gatherEvidence(
+    { ...APP, repo_url: 'not-a-github-url' },
+    { kind: 'proposal', branch: 'b', prNumber: 1902 }
+  );
+  assert.equal(e.diffAvailable, false);
+  assert.equal(e.discussion, null);
 });
 
 // ── ask(): the end-to-end path ────────────────────────────────────────
@@ -290,8 +402,9 @@ test('ask routes the spend to the BYOK bucket when the user key paid', async () 
   assert.equal(spends[0].byok, true);
 });
 
-test('ask refuses an out-of-allowance user WITHOUT calling the model', async () => {
+test('ask refuses an out-of-allowance user WITHOUT calling the model or GitHub', async () => {
   dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
+  ghCalls.length = 0;
   let called = false;
   await withBilling({ billing: { error: 'Daily limit reached.' } }, () => withStubClient(
     answerResp('should not happen'),
@@ -304,8 +417,44 @@ test('ask refuses an out-of-allowance user WITHOUT calling the model', async () 
         (err) => { called = calls.length > 0; return err.code === 'budget_exceeded'; }
       );
       assert.equal(called, false, 'the model must not be called on a budget refusal');
+      // The evidence fetch is two GitHub round trips. A user who cannot be
+      // billed for the answer must not cost the platform those first.
+      assert.equal(ghCalls.length, 0, 'GitHub must not be hit on a budget refusal');
     }
   ));
+});
+
+test('ask puts the real diff in front of the model', async () => {
+  dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
+  diffResult = async () => ({
+    diff: 'diff --git a/workshop.tsx b/workshop.tsx\n+const target = row.askAbout;\n',
+    fileCount: 2,
+    truncated: true,
+  });
+  commentsResult = async () => ({
+    comments: [{ author: 'snait', body: 'Does this cover governance rows?', createdAt: '2026-09-11' }],
+    truncated: false,
+  });
+  await withBilling({ billing: { apiKey: null, byok: false } }, () => withStubClient(
+    answerResp('It adds two lines to the deck.'),
+    async (calls) => {
+      await workshopAsk.ask({
+        pool, config: CONFIG, app: APP, userId: 42,
+        target: { kind: 'proposal', ref: 55 }, question: 'What files does it touch?', history: [],
+      });
+      const sent = calls[0].messages[calls[0].messages.length - 1].content;
+      assert.match(sent, /diff --git a\/workshop\.tsx/);
+      assert.match(sent, /Does this cover governance rows\?/);
+      // Truncation is disclosed, so the model can decline to say what the
+      // change does NOT touch.
+      assert.match(sent, /"truncated":true/);
+      assert.match(sent, /"filesChanged":2/);
+      // And the prompt tells it to read those flags before trusting them.
+      assert.match(calls[0].system, /code\.available.*false.*have NOT seen/s);
+    }
+  ));
+  diffResult = async () => ({ diff: '', fileCount: 0, truncated: false });
+  commentsResult = async () => ({ comments: [], truncated: false });
 });
 
 test('ask rejects an unknown ref as not_found', async () => {
