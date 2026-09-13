@@ -91,8 +91,26 @@ function workshopAskRoutes(config) {
       // is worse than handling it in one, and the client shows the
       // server's sentence either way.
       let open = false;
+      // The 200 is written on the FIRST thing that has to reach the client,
+      // whether that is a token or the finished answer, so a reply short
+      // enough to arrive in one block still opens a stream.
+      const openStream = () => {
+        if (open) return;
+        open = true;
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          // Caddy/Nginx buffer by default, which would hold the whole
+          // answer back and defeat the point of streaming it.
+          'X-Accel-Buffering': 'no',
+        });
+      };
+      // JSON.stringify is what keeps the framing intact: an answer with a
+      // newline in it would otherwise split one data: line into two and the
+      // reader would see a truncated frame. JSON escapes it to \n.
       const send = (event, data) => {
-        if (res.writableEnded) return;
+        if (res.writableEnded || res.destroyed) return;
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       };
 
@@ -112,32 +130,14 @@ function workshopAskRoutes(config) {
           model: picked,
           signal: abort.signal,
           onToken: (chunk) => {
-            if (!open) {
-              open = true;
-              res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache, no-transform',
-                Connection: 'keep-alive',
-                // Caddy/Nginx buffer by default, which would hold the whole
-                // answer back and defeat the point of streaming it.
-                'X-Accel-Buffering': 'no',
-              });
-            }
+            openStream();
             send('token', { text: chunk });
           },
         });
-        // A complete answer that produced no token callback (a very short
-        // reply, or a stream the SDK delivered in one block) still has to
-        // reach the client, so the header may be written here instead.
-        if (!open) {
-          open = true;
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-transform',
-            Connection: 'keep-alive',
-            'X-Accel-Buffering': 'no',
-          });
-        }
+        // A complete answer that produced no token callback — a very short
+        // reply, or a stream the SDK delivered in one block — still has to
+        // reach the client, so the header may be opened here instead.
+        openStream();
         // The assembled text rides on `done` as well as the tokens. The
         // client renders from THIS, not from what it accumulated: a
         // dropped chunk then costs a flicker rather than a wrong answer.

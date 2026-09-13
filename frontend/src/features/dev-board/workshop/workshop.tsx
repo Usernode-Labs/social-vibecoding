@@ -878,7 +878,15 @@ function NeedsDeck({
   // Which rows have had their stored thread fetched. Marked BEFORE the
   // request goes out, so moving away and back does not fire a second one,
   // and so a row whose fetch failed is not retried on every render.
-  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
+  //
+  // A REF, NOT STATE, and that is load-bearing rather than an optimisation.
+  // As state it would have to be a dependency of the effect that writes it,
+  // and then: the effect runs, sets it, the new object re-renders, the
+  // dependency has changed, React tears the effect down — running the
+  // cleanup that marks the in-flight request stale — and the response is
+  // discarded on arrival. Every time. A ref changes no identity and appears
+  // in no dependency list, so the effect runs exactly once per row.
+  const loadedRef = useRef<Set<string>>(new Set());
   // Which model answers. The dev session's own list and its own default —
   // see `_workshopModels`. It appears when the box is in use, because a
   // picker over an empty composer is a setting nobody has a use for yet.
@@ -952,11 +960,11 @@ function NeedsDeck({
    * otherwise vanish when the stored (older) version landed on top of it.
    */
   useEffect(() => {
-    if (!target || loaded[row.key]) return undefined;
+    if (!target || loadedRef.current.has(row.key)) return undefined;
     const key = row.key;
     const { kind, ref } = target;
     let live = true;
-    setLoaded((cur) => ({ ...cur, [key]: true }));
+    loadedRef.current.add(key);
     const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(String(ref))}`;
     fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask/thread?${qs}`, {
       credentials: 'same-origin',
@@ -980,7 +988,11 @@ function NeedsDeck({
       // is the state it opens in anyway. Nothing to say to the reader.
       .catch(() => {});
     return () => { live = false; };
-  }, [slug, row.key, target, loaded]);
+    // PRIMITIVES ONLY. `target` is an object off the view model, and a
+    // republish that rebuilds it with the same contents would otherwise
+    // count as a change, tear the effect down and strand the request in
+    // flight exactly as the state version did.
+  }, [slug, row.key, target?.kind, target?.ref]);
   /**
    * Send one question and write the answer in under it.
    *
