@@ -5141,6 +5141,17 @@ const AppView = {
     if (AppView._kanbanFiltersSlug !== App.currentApp) {
       AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
       AppView._kanbanFiltersSlug = App.currentApp || null;
+      // ...and the board's active COLUMN with them, for the same reason and
+      // under the same guard. This was the standalone Board branch's job, done
+      // once at its first mount; that branch is unreachable now that those
+      // columns are the stage pane, so without this line `_kanbanTab` never
+      // leaves its 'issues' default and `?col=` reaches nothing at all.
+      //
+      // The slug guard is what makes it safe to do here: it fires on the first
+      // paint (null -> a slug) and on an app switch, the only two times the
+      // stored column legitimately changes underneath the viewer, so a tap on
+      // a column tab is never clobbered by the next repaint.
+      AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
     }
     AppView._renderKanbanFilterBar();
     AppView._rerenderWorkshop();

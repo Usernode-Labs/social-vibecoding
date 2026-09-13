@@ -302,6 +302,31 @@ test('no ?col= and no stored value → Issues', () => {
   assert.equal(AppView._loadKanbanTab('demo-app'), 'issues');
 });
 
+test('the surface that draws the columns restores the active one, or ?col= reaches nothing', () => {
+  // WHAT BROKE. `_kanbanTab` was loaded in ONE place: the standalone Board
+  // branch of `_repaintDevBody`, at its first mount. When the Board view mode
+  // retired and those columns became the Workshop's stage pane, that branch
+  // stopped being reachable — and `_loadKanbanTab` with it, so `_kanbanTab`
+  // sat on its 'issues' default and three declared `?col=` checks failed
+  // while every other board check passed.
+  //
+  // The two branches restore the SAME per-app state, and this asserts that
+  // pairing rather than one branch's contents: filters and the active column
+  // are both per-app, both read from a URL override then storage, and dropping
+  // either one is silent.
+  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _repaintDevBody()'));
+  const fn = body.slice(0, body.indexOf('\n  },'));
+  assert.equal((fn.match(/_loadKanbanFilters\(/g) || []).length, 2,
+    'both surfaces restore this app\'s filters');
+  assert.equal((fn.match(/_loadKanbanTab\(/g) || []).length, 2,
+    'and both restore this app\'s active column');
+  // Each restore is guarded, so a repaint never clobbers a tap: the Board
+  // branch by its own host being absent, the Workshop branch by the slug.
+  const workshop = fn.slice(fn.indexOf("_kanbanFiltersSlug !== App.currentApp"));
+  assert.match(workshop, /_loadKanbanTab\(App\.currentApp\)/,
+    'the Workshop restores the column inside the slug guard, not on every repaint');
+});
+
 // ── ?view= override on the view mode ───────────────────────────────────────
 
 test('?view=kanban resolves onto the Workshop, with the stage pane up', () => {
