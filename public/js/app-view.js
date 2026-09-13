@@ -6000,17 +6000,15 @@ const AppView = {
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
-    // #1902: the row carries its item's THREAD, exactly as the "mine" lane
-    // above does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
-    // opened from "Needs your vote" had no reply box — the one lane where a
-    // reader most wants to ask a question before voting.
-    //
-    // It also carries the plain-language summary a voter reads
-    // (`pr_summary_md`): the Needs-you deck leads with it, because the card's
-    // title is a pull-request title and says nothing about what a person
-    // using the app would notice. Null on a legacy proposal or one whose
-    // summary pass failed, and the deck says so rather than showing an empty
-    // space.
+    // The plain-language summary a voter reads (`pr_summary_md`), carried on
+    // the row: the Needs-you deck leads with it, because the card's title is
+    // a pull-request title and says nothing about what a person using the app
+    // would notice. Null on a legacy proposal or one whose summary pass
+    // failed, and the deck says so rather than showing an empty space.
+    // `askAbout` names the card for the Needs-you deck's ask box: a kind
+    // and a reference, and NOTHING else. The server looks the item up from
+    // that pair (services/workshop-ask.js) rather than trusting anything
+    // the client says about it, so this carries an address, never content.
     //
     // #1902: it also carries the item's THREAD, exactly as the "mine" lane
     // does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
@@ -6025,6 +6023,9 @@ const AppView = {
         card,
         summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
           ? item.pr_summary_md.trim()
+          : null,
+        askAbout: (item && item.id != null)
+          ? { kind: kind === 'proposal' ? 'proposal' : 'gov', ref: item.id }
           : null,
       };
       const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
@@ -6240,6 +6241,7 @@ const AppView = {
         key: `need:${e.row.key}`,
         kind: 'claim',
         summary: null,
+        askAbout: n != null ? { kind: 'issue', ref: n } : null,
         // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
         // two labels: neither recorded anything, both moved the deck on, and
         // offering them side by side asked the reader to tell apart a
