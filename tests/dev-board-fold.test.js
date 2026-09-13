@@ -404,6 +404,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // three-step shape, the instructions to copy and their text on the card, the
   // absent brief field, the connect-first state, and a continuation saying the
   // work lands as an update.
+  // 605 → 608: #2061 adds three checks for the merge-requirements checklist
+  // — the locked-app gate that had no UI at all, the "nobody has to act"
+  // wording, and the steps listed AFTER the one a proposal is stuck on.
   // 601 → 604: #2038 adds three checks for the card states it renames or
   // introduces — a proposal being brought up to date, a refused merge named
   // for what it was rather than as a conflict, and automatic resolution
@@ -413,7 +416,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // deliberately not asserting it is enabled: the box is disabled on a row
   // with no resolvable reference, which is a legitimate state the demo
   // fixtures may well be in.
-  assert.equal(DAPP.tests.length, 605);
+  assert.equal(DAPP.tests.length, 608);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

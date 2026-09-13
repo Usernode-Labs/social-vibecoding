@@ -179,10 +179,38 @@ export interface TitleSpec {
   title: string;
 }
 
+/** One step of "what this still needs before it merges" (#2061). */
+export interface RequirementSpec {
+  key: string;
+  label: string;
+  /** 'auto' | 'author' | 'admin' | 'group' — who can clear it. */
+  actor: string;
+  /** 'done' | 'active' | 'waiting' | 'blocked' | 'pending'. */
+  state: string;
+  /** The one-line "why", when the gate recorded one. */
+  note?: string | null;
+}
+
 /** An extra row under the four bands (the work note, the admin claim list). */
 export type ExtraSpec =
   | { t: 'note'; key: string; text: string; workState: string }
-  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] };
+  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] }
+  | {
+    t: 'requirements';
+    key: string;
+    /** The collapsed line — the whole answer for most people. */
+    headline: string;
+    detail?: string | null;
+    done: number;
+    total: number;
+    /**
+     * Whether to open on first paint. The card opens itself only when the
+     * step it is stuck on is one THIS viewer can clear; an admin-approval
+     * row put in front of a non-admin is a chore they cannot do.
+     */
+    open: boolean;
+    gates: RequirementSpec[];
+  };
 
 /** The card's right-edge rail: ⋯ at the top, the eye at the bottom. */
 export interface RailSpec {

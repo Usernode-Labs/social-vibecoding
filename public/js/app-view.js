@@ -8681,9 +8681,96 @@ const AppView = {
         chevron: !noNav,
         preview: noNav ? null : preview,
       },
-      extra: [],
+      extra: [AppView.requirementsSpec(pr)].filter(Boolean),
       dense: !noNav,
       uncapped: noNav,
+    };
+  },
+
+  // ── What this still needs before it merges (#2061) ──────────────────
+  //
+  // The tags answer "what is wrong with this". They cannot answer "is it my
+  // turn", because they are a NEGATIVE surface: an absent tag reads the same
+  // whether a gate passed, does not apply, or has no UI at all — and two of
+  // the seven gates genuinely had none. The server records what the merge gate
+  // actually did (services/merge-requirements.js) and this renders the whole
+  // ordered list, satisfied steps included.
+  //
+  // Returns null when there is nothing to say: a merged or withdrawn row, or a
+  // proposal the gate has never run against. An empty checklist would be a
+  // claim about a merge that nothing has evaluated.
+  requirementsSpec(pr) {
+    const p = pr || {};
+    if (p.status === 'merged' || p.status === 'closed') return null;
+    const block = p.mergeRequirements;
+    const gates = block && Array.isArray(block.gates) ? block.gates : [];
+    if (!gates.length) return null;
+
+    // All three signals are already on the card. `hasVoted` is deliberately
+    // "has cast one", not "voted yes": someone who voted no is not waiting to
+    // be prompted.
+    const viewer = {
+      isAuthor: !!(typeof App !== 'undefined' && App.user && p.user_id === App.user.id),
+      isAdmin: !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
+        || !!AppView._proposalsCtx?.isAppAdmin,
+      hasVoted: !!p.my_vote,
+    };
+    const s = AppView._summarizeRequirements(gates, viewer);
+    return {
+      t: 'requirements',
+      key: `req:${p.id}`,
+      headline: s.headline,
+      detail: s.detail,
+      done: s.done,
+      total: s.total,
+      // Shut unless the step it is stuck on is one THIS viewer can clear.
+      // Not remembered per viewer: a remembered "closed" would hide the one
+      // case the rule exists for.
+      open: s.needsViewer,
+      gates: gates.map((g) => ({
+        key: g.key, label: g.label, actor: g.actor, state: g.state,
+        note: (g.detail && g.detail.note) || null,
+      })),
+    };
+  },
+
+  // The collapsed line. Mirrors services/merge-requirements.js summarize() —
+  // the server cannot compute it, because it depends on who is looking.
+  _summarizeRequirements(gates, viewer) {
+    const v = viewer || {};
+    const total = gates.length;
+    const done = gates.filter((g) => g.state === 'done').length;
+    const current = gates.find((g) => g.state !== 'done' && g.state !== 'pending') || null;
+    const noteOf = (g) => (g && g.detail && g.detail.note) || null;
+
+    if (!current) {
+      return {
+        headline: done === total ? 'Merging now' : 'Nothing left to check',
+        detail: total ? `all ${total} steps done` : null,
+        done, total, needsViewer: false,
+      };
+    }
+    // Anything in flight, and every 'auto' step, needs nobody at all.
+    if (current.actor === 'auto' || current.state === 'active') {
+      return {
+        headline: 'Nothing needs you',
+        detail: noteOf(current) || String(current.label || '').toLowerCase(),
+        done, total, needsViewer: false,
+      };
+    }
+    const roles = {
+      author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
+      admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
+      group: { them: 'Waiting on the group', you: 'Waiting on your vote', is: !v.hasVoted },
+    };
+    const role = roles[current.actor];
+    if (!role) {
+      return { headline: 'Waiting', detail: noteOf(current), done, total, needsViewer: false };
+    }
+    return {
+      headline: role.is ? role.you : role.them,
+      detail: noteOf(current),
+      done, total, needsViewer: role.is,
     };
   },
 
