@@ -342,6 +342,16 @@ test('the light and dark palettes declare the same variables', () => {
     // --dc-*-fill tints (which DO have .dark counterparts and are checked
     // like every other colour); a `.dark` copy could only restate this one.
     '--dc-frost',
+    // The air under the Workshop's phone tab bar — 8px, a length, and the one
+    // number the bar's own `bottom` offset, `--ws-area`'s floor and the tab
+    // body's clearance all read, so where the bar rests and the space held
+    // open for it cannot drift apart. It is declared at the ROOT rather than
+    // on `.dev-ws` because the bar is portalled out of that subtree to be
+    // fixed to the viewport, and a property declared there would be undefined
+    // for it — which drops the whole `calc()` and sends the bar off-screen.
+    // Nothing about the dark palette moves it; a `.dark` copy could only
+    // restate this one.
+    '--ws-gap',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],
