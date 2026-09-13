@@ -52,6 +52,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
 import { BrowseRows } from './browse-list';
+import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
 
 const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
@@ -214,7 +215,15 @@ export function BrowseScreen() {
           className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
-            ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>
+            ? (
+              // #1899: the shared error card, spanning the md+ grid; Retry
+              // re-runs the same directory load.
+              <AppsLoadError
+                className="md:col-span-full"
+                title="Couldn't load the app directory"
+                onRetry={() => browse()?._load?.()}
+              />
+            )
             : <BrowseRows rows={state.rows} curated={state.curated} moreExpanded={state.moreExpanded} />}
         </div>
         <div
