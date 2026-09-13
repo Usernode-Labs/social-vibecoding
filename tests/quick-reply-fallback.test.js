@@ -529,7 +529,12 @@ test('the session list serializes created_from_issue_number', () => {
   // `pr_number` — null for a session shared with `share: true`, which left
   // its own author with no way to wake it. Derived exactly as the
   // shared-session list derives it, so the two cards cannot disagree.
-  assert.match(select, /\(pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL\)\s*AS can_preview/,
+  //
+  // #2069: `checks_commit_sha` turned out to be the same kind of proxy and
+  // null for the same session — a shared draft has no checks gate either, so
+  // the fix above only moved which subsystem's leftovers were being consulted.
+  // `shared_at` is the session's own evidence that a branch was pushed.
+  assert.match(select, /\(pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL\s*OR shared_at IS NOT NULL\)\s*AS can_preview/,
     'and whether the branch has pushed changes, for the preview affordance');
 });
 
