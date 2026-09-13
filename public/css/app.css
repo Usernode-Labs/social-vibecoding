@@ -12101,6 +12101,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-direction: column;
 }
 #dev-workshop > .dev-ws { flex: 1 1 auto; width: 100%; }
+/* ...AND THE FITTED TAB HAS TO BE ABLE TO SHRINK INSIDE IT. `.dev-ws` is a
+   flex ITEM of the chain above, and a flex item's automatic minimum size is
+   its CONTENT — every other link here carries `min-height: 0` for that
+   reason and this one did not. So on Needs you a long summary did not make
+   `.dev-ws-needs-scroll` scroll: the deck refused to shrink, the lander grew
+   instead, and the answers and the ask box went down with it. Measured at
+   402x874 against a nine-paragraph summary: `.dev-ws` 1803px tall with the
+   composer 910px below the fold, in the NATIVE layout — the one whose
+   definite scroller was supposed to bound it — and at a 34px inset as well
+   as at none.
+   ONLY THAT TAB. The other two are meant to grow: #dev-forum-scroll is the
+   scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
+   so shrinking them to the viewport would clip what they hold rather than
+   make it reachable. */
+#dev-workshop > .dev-ws[data-ws-tab="needs"] { min-height: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* The tab body takes the space and carries the clearance; the rail follows
    it. `margin-top: auto` on the rail is gone with it — the body's `flex: 1`
@@ -12330,6 +12345,58 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-bar) - var(--ws-lift)
   );
+  /* AND THE SCROLLER'S OWN CONTENT BOX, which is a DIFFERENT quantity and
+     not `--ws-area` plus something. That floor clears the floating pill,
+     which rests `--ws-lift` off the screen's foot; this is simply where
+     `.dev-ws` ends when the chain above it has a definite height — the
+     reading area, less `.platform-safe-scroll`'s reservation and
+     `#dev-body`'s own bottom padding, which are the two things below it.
+     The pill then overlays the last `--ws-bar` of it, exactly as it
+     overlays every other tab, and `.dev-ws-tabbody`'s clearance is what
+     holds the content off it.
+     The two coincide only at a zero inset. At a 34px one the pill lifts by
+     14 and the scroller gives back 34, so a fitted tab written in terms of
+     the floor would be 20px out on a phone with an indicator and nowhere
+     else. */
+  --ws-fit: calc(
+    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    - var(--ws-gap) - var(--platform-safe-bottom, 0px)
+  );
+}
+/* ── Needs you is a FITTED SCREEN on a phone, in both layouts ──────────
+   With the rule above it is, in the NATIVE one: #dev-forum-scroll has a
+   definite height there, the flex chain bounds the deck, and
+   `.dev-ws-needs-scroll` is what takes a long card — so the answers, the
+   page arrows and the ask box are pinned. Measured at 402x874: the composer
+   ends 8px under the pill whatever the card holds, at a 34px inset and at
+   none.
+
+   In a mobile BROWSER the page itself scrolls (`html[data-browser-scroller]`,
+   see browser-scroll.ts), #dev-forum-scroll is `height: auto`, and every
+   height below it resolves to content. `--ws-area` is only a FLOOR there, so
+   it could not stop a long card growing the deck — and on a SHORT one it
+   stopped the deck early instead, because it is not the same number as the
+   clearance `.dev-ws-tabbody` reserves: measured, 79px of dead air between
+   the composer and the pill at a zero inset and 51px at 34, against the
+   native layout's 8 at both. The inset-independence the tab body's padding
+   is built for cannot survive a floor that disagrees with it.
+
+   So the tab takes `--ws-fit` as a definite HEIGHT — the box the native
+   chain arrives at on its own — and the tab body's clearance is what holds
+   the composer off the pill, exactly as it does on every other tab. One
+   reservation, one layout, both engines, any inset.
+
+   Scoped to the phone as well as to the layout, and that is load-bearing:
+   `data-browser-scroller` is set on any coarse pointer (MOBILE_PAGE_QUERY),
+   tablets included, and above 700px the pill is in flow at the head of the
+   column, so the whole arithmetic below it is a different one. 700px is the
+   same decision as the `@media (min-width: 700px)` block below and as
+   `useRailHost`'s query. */
+@media (max-width: 699.98px) {
+  html[data-browser-scroller] .dev-ws[data-ws-tab="needs"] {
+    height: var(--ws-fit);
+    min-height: var(--ws-fit);
+  }
 }
 .dev-ws-needs {
   /* The lander is a flex column with a floor under its height, so the deck
@@ -12553,23 +12620,23 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   border-color: var(--app-sheet-line); font-weight: 500;
 }
 .dev-ws-answer-btn[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
-/* ── Since your last visit, as one line ──────────────────────
-   A row, not a pane, until it is opened. It was a whole section of the
-   status tab — heading, summary line, control — spent on a fact most visits
-   do not need, sitting above the door to the app's chat. */
-.dev-ws-since-row {
+/* ── Since your last visit ───────────────────────────────────
+   A HEADING over rows, not a disclosure. It was one collapsed line with a
+   caret, on the reasoning that most visits do not need the fact — and what
+   that produced was a strip nobody opened: the count said something had
+   moved and the rows saying what were behind a press. The bargain is the
+   LIST'S LENGTH now (three, then `Show older`), not its existence, which is
+   what the week walk one pane up already does with its own history.
+
+   `.dev-ws-since-head` is what `.dev-ws-since-row` was, minus everything
+   that said "press me": no pill radius, no pointer, no hover ink, no caret.
+   It is the pane's eyebrow, with a count riding it. */
+.dev-ws-since-head {
   display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 8px 12px;
-  border: 0; border-radius: 999px; background: transparent;
-  font: inherit; font-size: 13px; font-weight: 600;
-  color: var(--text-muted); text-align: left; cursor: pointer;
+  width: 100%; padding: 2px 2px 0;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
 }
-.dev-ws-since-row:hover { color: var(--accent); }
-.dev-ws-since-row:disabled { cursor: default; opacity: .6; }
-.dev-ws-since-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* Shut, it is the only thing on the status tab with no surface of its own —
-   which is the point: it is a line, and opening it makes it a pane. */
-.dev-ws-since-shut { margin-block: -2px; }
 .dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
 .dev-ws-since-n {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -12577,8 +12644,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   background: var(--brand-tint); color: var(--brand-ink);
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
-.dev-ws-since-chev { flex: none; width: 14px; height: 14px; }
-.dev-ws-since-row[aria-expanded="true"] .dev-ws-since-chev { transform: rotate(90deg); }
+/* `Show older` is the week walk's own control — `.dev-ws-reveal`, centred,
+   caret down at what it is about to reveal — and it sits under a stack of
+   full-width rows exactly as that one does, so it takes the centred form
+   rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
+   the air between it and the last row. */
+.dev-ws-since-more { margin-top: 2px; }
 /* ── The ask box's model ─────────────────────────────────────
    The dev session's own list, and only once the box is in use: a picker over
    an empty composer is a setting nobody has a use for yet. */
@@ -12643,13 +12714,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 /* The composer is `.dc-card`: one white surface holding the field and a row
    of controls under it. Everything here is what that card does NOT carry —
-   the field's own reset, and the row's spacing. */
-.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; }
-/* THE RESTING LINE: the field and the send circle, always both. The send used
-   to live in the controls row and so appeared only on focus, which left the
-   card with no visible way to send — a text box and nothing else. The model
-   row is the part that earns its height on use; the send button is the
-   affordance that says the box does something. */
+   the field's own reset, and the row's spacing.
+
+   THE PADDING IS SQUARED UP, and that is a real fix rather than a tidy-up.
+   `.dc-card` ships `0.875rem 1rem 0.625rem` — 14 over, 10 under — which is
+   right for the dev session's composer, a tall field with a row of controls
+   below it where the optical weight sits low. Here, at rest, the card holds
+   ONE line: 14 above it and 10 below put that line 2px under the middle of
+   its own box, which is what "the ask box sits slightly low" was. Measured
+   at 402x874: a 58px card with its 34px line starting at 14. Even padding
+   centres it at either height. */
+.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
+/* THE RESTING LINE: the field, and the send circle while the card is ONE row.
+   The whole controls row once sat behind focus, which took the send button
+   with it and left a card that looked like a text box and nothing else — no
+   sign it would do anything. That is what the circle is doing here: a
+   collapsed composer still has to say it sends. Open, the circle is the last
+   thing in the card instead (`.dev-ws-ask-row` below), and the model is what
+   earns the second row's height. */
 .dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
 .dev-ws-ask-input {
@@ -12659,7 +12741,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-ask-input:focus { outline: none; }
 .dev-ws-ask-input::placeholder { color: var(--text-muted); }
+/* THE CONTROLS ROW, AND THE SEND CIRCLE AT ITS RIGHT END. Open, the card is
+   a field over a row, and the send belongs where a composer's send belongs —
+   the bottom right corner, which is also where `.dc-card-row` puts the dev
+   session's own. `margin-left: auto` rather than `justify-content`, because
+   the model picker to its left has to keep shrinking into whatever is left
+   (a <select>'s intrinsic width is its longest option — see above). With no
+   picker the circle is the row's only child and the auto margin still pins
+   it right. */
 .dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-row > .dev-ws-ask-send { margin-left: auto; }
 /* Smaller than the session's 44px circle: that one is the primary action of
    a whole screen, this is the second control in a pane that is a third of
    one. The fill, the ink and the halo are `.dc-circle-send`'s. */
@@ -12836,11 +12927,30 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    between pills would read as two unrelated toggles. Deliberately NOT
    .dev-ws-chip — those are the sort order WITHIN the category pane and sit
    one row below, so the two controls have to look like different kinds of
-   thing or the row reads as five options over one list. */
+   thing or the row reads as five options over one list.
+
+   IT IS THE SAME CONTROL AS THE LANDER'S OWN TAB STRIP, and now says so.
+   The geometry was already `.dev-ws-tabtrack`'s — a fully round rail, 2px
+   between the halves — but the surface and the selected state were a second
+   answer to a question the bar above had already answered: a recessed
+   `--dc-strip` rail with a hairline, and a selected half painted in the
+   plain sheet with a drop shadow, against the bar's raised track and its
+   periwinkle. Two tab strips two rows apart on one screen, in two
+   vocabularies. So the track is `--dc-sheet-raise` with no ring, and the
+   selected half is `--brand-tint` / `--brand-ink` / `--brand-line` — the
+   bar's own three tokens, for the reason its note gives: this is where you
+   are, drawn the way the header above draws where you are.
+
+   TWO THINGS STAY DIFFERENT, both on purpose. The WIDTH, which is the real
+   distinction from the sort chips a row below. And the selected state is
+   painted on the HALF rather than on a marker that slides between them
+   (#2063): the slide is worth its measuring machinery across three tabs of
+   unequal width, and a two-state switch has neither that machinery nor a
+   use for it. The colours are the same either way, which is what a reader
+   sees. */
 .dev-ws-group {
   display: flex; align-items: stretch; gap: 2px;
-  padding: 3px; border-radius: 999px; background: var(--dc-strip);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  padding: 2px; border-radius: 999px; background: var(--dc-sheet-raise);
 }
 /* Full width of the reading column, the two panes splitting it evenly — the
    same edge-to-edge the General-discussion card above it takes. Shrunk to
@@ -12854,9 +12964,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
 }
+/* The tokens carry their own dark values, so there is no dark variant —
+   the same note `.dev-ws-tab[aria-selected="true"]` carries. */
 .dev-ws-group-tab[aria-selected="true"] {
-  background: var(--dc-sheet); color: var(--text-primary);
-  box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
+  background: var(--brand-tint); color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
 /* ── The working pane ──────────────────────────────────────────────────
