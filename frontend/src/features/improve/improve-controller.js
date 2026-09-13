@@ -420,6 +420,7 @@ const Improve = {
     improveStore.set({
       previewSessionId: (preview && preview.sessionId) || null,
       previewUrl: (preview && preview.url) || null,
+      previewBuildable: !!(preview && preview.buildable),
     });
   },
 
