@@ -2650,7 +2650,7 @@ function registerTools(server, ctx) {
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and re-shoot the screenshots — the same act as the panel\'s "Re-run checks" button. No code moves and NO votes are cleared. Use it when the verdict is stale for a reason outside this proposal (a platform-side fix, a preview that had died) instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
-        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Usernode creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
+        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Usernode creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
         .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
@@ -2708,6 +2708,28 @@ function registerTools(server, ctx) {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     const updating = Number.isInteger(proposalId) && proposalId > 0;
+    // #2066. `share` belongs to the taskId shape: the reshare path keys off
+    // the TASK's session_id, so passing it here did nothing at all. Silently.
+    //
+    // And it is a natural call to make — the first share hands back a
+    // sessionId, get_proposal reports a sessionId, so reaching for
+    // proposalId + share is what the surface invites. It took the ordinary
+    // update route instead, which for an active session is the SAME work, so
+    // nothing looked wrong until somebody went looking for a preview.
+    //
+    // Refused rather than quietly honoured, because the two targets diverge:
+    // on a session `share` is redundant, and on a PROPOSAL already up for a
+    // vote it is meaningless — accepting it there would let a caller believe
+    // they had moved a proposal back to drafts when they had advanced the
+    // very thing the group is voting on.
+    if (updating && share === true) {
+      return toolError(
+        'invalid_request',
+        '`share` is not part of an update. To push new commits onto a shared in-progress card, call '
+        + 'submit_work with proposalId + branch and NO `share` — that is the same operation, and it '
+        + 'rebuilds the card\'s preview. To create one, call it with taskId + branch + share.'
+      );
+    }
     if (updating && !branch) {
       return toolError(
         'invalid_request',
@@ -2955,6 +2977,25 @@ function registerTools(server, ctx) {
               ? ' Your commit landed but the description could not be written to GitHub — send the same commit again with just the description to retry.'
               : '';
 
+      // #2066. A card in the IN-PROGRESS area is not up for a vote, so every
+      // sentence about cleared votes and reviewers looking again is false for
+      // it — and it was being printed on one, beside a `votesCleared: 0` in
+      // the same payload. `targetKind` already says which this is; the propose
+      // branch below reads it for exactly this reason.
+      const buildNote = result.resumeRequired
+        ? ' It is paused, so the commit landed and no preview was built — reopen it when you want one.'
+        : result.previewRebuilding
+          ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
+          : ' No preview build started for this push.';
+      const landedStep = result.targetKind === 'session'
+        ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
+          + `collected.${buildNote}${shotOn}`
+        : `The proposal now points at your new commit.${cleared > 0
+          ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
+          : ' Any votes it had collected were cleared, because they were cast on the old code'}`
+          + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
+          + `use get_proposal to follow them.${shotOn}`;
+
       return toolResult({
         proposalId: result.proposalId,
         appSlug: result.appSlug,
@@ -2972,6 +3013,14 @@ function registerTools(server, ctx) {
         descriptionUpdated: result.descriptionUpdated === true,
         descriptionRejected: result.descriptionRejected || null,
         captureRerun: result.captureRerun === true,
+        // #2066. What this push actually set going, rather than what the
+        // documentation says usually happens. `previewRebuilding` false with
+        // `resumeRequired` true is a paused session: the commit landed and the
+        // build deliberately did not.
+        previewRebuilding: result.previewRebuilding === true,
+        checksRerun: result.checksRerun === true,
+        resumeRequired: result.resumeRequired === true,
+        targetKind: result.targetKind || null,
         proposed,
         proposeError,
         // #1347: this submission went to the vote, not to the in-progress
@@ -2982,13 +3031,8 @@ function registerTools(server, ctx) {
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
-        nextStep: (result.unchanged
-          ? resubmitStep
-          : `The proposal now points at your new commit.${cleared > 0
-            ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
-            : ' Any votes it had collected were cleared, because they were cast on the old code'}`
-            + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
-            + `use get_proposal to follow them.${shotOn}`) + rejectedNote + titleNote + descNote + proposeNote,
+        nextStep: (result.unchanged ? resubmitStep : landedStep)
+          + rejectedNote + titleNote + descNote + proposeNote,
       });
     }
 
