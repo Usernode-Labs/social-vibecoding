@@ -12537,6 +12537,26 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; }
 .dev-ws-ask-ai { align-self: flex-start; background: var(--dc-sheet); color: var(--text-primary); }
+/* An answer on its way. It occupies the bubble the answer will fill, so the
+   pane does not jump when it lands; muted and italic so it never reads as
+   the answer itself. The pulse is the only thing saying it is still going,
+   and it is dropped for anyone who has asked for less motion. */
+.dev-ws-ask-pending {
+  color: var(--text-muted); font-style: italic;
+  animation: dev-ws-ask-breathe 1.6s ease-in-out infinite;
+}
+@keyframes dev-ws-ask-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .dev-ws-ask-pending { animation: none; }
+}
+/* A question that did not get an answer. Tinted rather than shouted: the
+   text in it is the server's own sentence ("you are out of allowance", "too
+   many at once"), which is information, not an alarm — but it must not be
+   mistakable for an answer about the change. */
+.dev-ws-ask-failed {
+  background: var(--danger-soft, rgba(220, 38, 38, 0.10));
+  color: var(--danger-strong, #b91c1c);
+}
 /* The composer is `.dc-card`: one white surface holding the field and a row
    of controls under it. Everything here is what that card does NOT carry —
    the field's own reset, and the row's spacing. */
