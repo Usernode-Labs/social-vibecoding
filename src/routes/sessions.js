@@ -1812,7 +1812,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 -- _cardPreviewSpec fell back to pr_number, which is null for
                 -- a share-only session and left the owner with no affordance
                 -- at all once the idle GC nulled staging_url.
-                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL)
+                -- #2069: and checks_commit_sha was the same kind of proxy,
+                -- null for the same reason. A shared draft has no pull
+                -- request AND no checks gate, so both halves were absent
+                -- exactly where the comment above says the affordance is
+                -- needed. shared_at asks about THIS session instead of a
+                -- neighbouring subsystem: the share route verifies a pushed
+                -- branch and stamps it at creation, so it is direct evidence
+                -- that there is a commit to build.
+                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
+                   OR shared_at IS NOT NULL)
                   AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
@@ -1916,7 +1925,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url,
-                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
+                -- #2069, as above: a shared draft has neither a pull request
+                -- nor a checks run, and shared_at is the session's own
+                -- evidence that a verified branch was pushed.
+                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL
+                   OR cs.shared_at IS NOT NULL)
                   AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
