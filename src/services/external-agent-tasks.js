@@ -2709,6 +2709,22 @@ async function submitUpdate(deps, params, proposalId) {
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,
+    // #2066. services/proposal-update.js computes this on all three of its
+    // tails — the proposal, the active session and the paused one — and the
+    // RESHARE path a few hundred lines above passes it through. This one
+    // dropped it, so an agent that advanced a shared card could not tell
+    // whether a preview build had started and reported the documented
+    // behaviour instead of the actual answer. Somebody then went looking for
+    // a preview that was never built.
+    //
+    // `checksRerun` rides along for the same reason: on a proposal it is the
+    // other half of "what did this push actually set going".
+    previewRebuilding: result.previewRebuilding === true,
+    checksRerun: result.checksRerun === true,
+    // A paused session takes the commit and deliberately does NOT build (it
+    // has no container). Saying so is the difference between "your preview is
+    // coming" and "reopen it when you want one".
+    resumeRequired: result.resumeRequired === true,
     externalAgent: label,
     submittedVia: result.submittedVia || null,
   };

@@ -932,6 +932,115 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+// ── #2066: advancing a shared in-progress card ──────────────────────────
+//
+// A draft landed with `share: true`, more commits were pushed onto it, and
+// the card never got a preview. Three defects, all in what the connector says
+// back rather than in what the platform did.
+
+test('submit_work refuses `share` on an update, and names the call that works', () => {
+  // `share` keys off the TASK's session_id, so passing it with proposalId did
+  // nothing at all — silently. And it is the natural call to make: the first
+  // share hands back a sessionId and get_proposal reports a sessionId, so the
+  // surface invites exactly this. Refused rather than quietly honoured,
+  // because on a proposal already up for a vote it would let a caller believe
+  // they had moved it back to drafts.
+  const { handlers, calls, restore } = connector(() => ({ updated: true }), {
+    scopes: [READ_SCOPE, WRITE_SCOPE],
+  });
+  try {
+    const res = handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix', share: true });
+    return Promise.resolve(res).then((r) => {
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /`share` is not part of an update/);
+      assert.match(r.content[0].text, /proposalId \+ branch and NO `share`/,
+        'the refusal has to name the call that does work, or it costs a round trip');
+      assert.match(r.content[0].text, /taskId \+ branch \+ share/, 'and the one that creates a card');
+      assert.equal(calls.length, 0, 'refused before anything reached the platform');
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('an update to a SESSION is reported in session words, not proposal words', async () => {
+  // It used to say "Any votes it had collected were cleared ... reviewers have
+  // been asked to look again" on a card that is up for no vote, beside a
+  // votesCleared: 0 in the same payload.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 4158, appSlug: 'recipe-box', prNumber: null,
+    headSha: 'c0ffee00506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'session', previewRebuilding: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
+    const step = res.structuredContent.nextStep;
+    assert.match(step, /shared card now points at your new commit/);
+    // The claim that must not appear, rather than the word: saying "no votes
+    // are being collected" is the correct thing to say about such a card.
+    assert.doesNotMatch(step, /votes? .*(were|was) cleared/i,
+      'a card in the in-progress area has no votes to clear');
+    assert.doesNotMatch(step, /reviewers/i, 'and nobody has been asked to review it');
+    assert.match(step, /no votes are being collected/i, 'which is worth saying outright');
+    assert.match(step, /preview is rebuilding/, 'what this push actually set going');
+    assert.equal(res.structuredContent.targetKind, 'session');
+    assert.equal(res.structuredContent.previewRebuilding, true);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+test('a push that started no build says so, rather than promising a preview', async () => {
+  // The defect that sent somebody looking for a preview that did not exist:
+  // the answer described the documented behaviour instead of the real one.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 4158, appSlug: 'recipe-box', votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'session',
+    previewRebuilding: false, resumeRequired: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
+    assert.equal(res.structuredContent.previewRebuilding, false);
+    assert.equal(res.structuredContent.resumeRequired, true);
+    assert.match(res.structuredContent.nextStep, /paused/,
+      'a paused session takes the commit and deliberately does not build');
+    assert.doesNotMatch(res.structuredContent.nextStep, /rebuilding now/);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+test('a proposal update keeps its own wording', async () => {
+  // The session branch must not swallow the case it was carved out of.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52, votesCleared: 2,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+    assert.match(res.structuredContent.nextStep, /The proposal now points at your new commit/);
+    assert.match(res.structuredContent.nextStep, /2 votes it had collected were cleared/);
+    assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
 // ── submit_work `propose: true` — the review boundary, on the owner's ask ──
 //
 // A session continuation deliberately lands quietly; until now the ONLY way
