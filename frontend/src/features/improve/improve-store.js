@@ -116,6 +116,7 @@ export function boardHref(slug, boardView) {
  * @property {'workshop'|'kanban'} boardView
  * @property {number|null} previewSessionId
  * @property {string|null} previewUrl
+ * @property {boolean} previewBuildable
  * @property {boolean} previewActive
  */
 
@@ -275,6 +276,16 @@ const INITIAL = {
    */
   previewSessionId: null,
   previewUrl: null,
+  /**
+   * #2069: whether a preview could be BUILT for the open session, even
+   * though none is live. `ensure-staging` rebuilds from the branch's latest
+   * commit, so "no URL" stopped meaning "nothing to see" when #439 landed —
+   * but the eye kept the old gate and vanished on exactly the condition the
+   * rebuild exists for. Separate from previewUrl because the two answer
+   * different questions: one is "is there a page", the other "is there a
+   * commit".
+   */
+  previewBuildable: false,
   /**
    * True while a staging preview is actually ON SCREEN — the "seeing" half
    * of the board's doing↔seeing loop. Set by AppView.ensureStaging (the one

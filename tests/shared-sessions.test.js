@@ -172,7 +172,7 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // only set once a real commit on this branch has been BUILT, and
     // teardownStaging does not clear it the way it clears staging_url.
     assert.match(q.sql,
-      /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\)\s*AS can_preview/);
+      /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\s*OR cs\.shared_at IS NOT NULL\)\s*AS can_preview/);
     // …but nothing that opens the owner's dev chat — pr_number itself is
     // never selected bare, only inside the boolean above.
     assert.doesNotMatch(q.sql, /pr_url/);

@@ -47,7 +47,7 @@ function headerHtml(state, preview) {
   // The mode switch reads these three off the improve store. Reset every
   // time so one test's preview cannot leak into the next one's rest state.
   m.improveStore.set({
-    previewSessionId: null, previewUrl: null, previewActive: false, ...(preview || {}),
+    previewSessionId: null, previewUrl: null, previewBuildable: false, previewActive: false, ...(preview || {}),
   });
   return renderToHtml(createElement(m.SessionHeader, {}));
 }
@@ -347,6 +347,46 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.equal((seeing.match(/bg-violet-600|bg-amber-300/g) || []).length, 1, 'still one fill');
   // Only ONE label at a time — the chip is the current mode, not both.
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
+});
+
+test('a preview that can be BUILT draws the switch too (#2069)', () => {
+  // The control that rebuilds a missing preview used to hide whenever the
+  // preview was missing. ensure-staging rebuilds from the branch's latest
+  // commit and has authorized this since #439 — only this gate had not caught
+  // up, so a shared draft whose preview went to sleep offered no route back.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: null, previewBuildable: true });
+
+  assert.match(html, /id="dc-mode-switch"/, 'the switch is drawn with no live URL');
+  assert.match(html, /id="app-eye-btn"/);
+  // And it says what the click DOES, which is not the same as opening one.
+  assert.match(html, /aria-label="Build a preview of this change"/);
+  assert.match(html, /title="Build a staging preview of this change[^"]*"/);
+});
+
+test('a live preview still says "preview", not "build"', () => {
+  // The new wording must not leak onto the case that already worked.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+  assert.match(html, /aria-label="Preview this change"/);
+  assert.doesNotMatch(html, /aria-label="Build a preview/);
+});
+
+test('with nothing to build the strip still falls back to the status chip', () => {
+  // #1594's rule survives, narrowed: it applies to a session with no commit
+  // to preview, rather than to every session without a live URL.
+  const { view } = makeDevChat();
+  const busy = headerHtml({ ...view(SESSION), busy: true },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(busy, /id="dc-mode-switch"/, 'no switch with nothing to switch to');
+  assert.match(busy, /id="dc-mode-chip"[\s\S]{0,400}?Building/, 'status, not an action');
+
+  const idle = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(idle, /id="dc-mode-switch"/);
+  assert.doesNotMatch(idle, /id="dc-mode-chip"/, 'and idle with nothing to build draws nothing');
 });
 
 test('the label belongs to the THUMB, so both sides carry one', () => {

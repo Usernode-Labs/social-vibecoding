@@ -148,9 +148,15 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
-  const { previewSessionId, previewUrl, previewActive } = useStoreState(improveStore) as {
-    previewSessionId: number | null; previewUrl: string | null; previewActive: boolean;
+  const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
+    previewSessionId: number | null; previewUrl: string | null;
+    previewBuildable: boolean; previewActive: boolean;
   };
+  // #2069: a live preview OR one the click can build. ensure-staging rebuilds
+  // from the branch's latest commit and has authorized this case since #439;
+  // only this gate had not caught up, so the single control that would restore
+  // a missing preview disappeared exactly when the preview went missing.
+  const hasPreview = !!previewUrl || !!previewBuildable;
   const seeing = !!previewActive;
   const trackRef = useRef<HTMLSpanElement | null>(null);
   const eyeRef = useRef<HTMLButtonElement | null>(null);
@@ -161,7 +167,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   // its text's, so this cannot be computed ahead of the paint. `seeing` and
   // `busy` are the two inputs that change which segment is wide.
   useIsomorphicLayoutEffect(() => {
-    if (!previewUrl) { setThumb(null); return undefined; }
+    if (!hasPreview) { setThumb(null); return undefined; }
     const measure = () => {
       const active = seeing ? eyeRef.current : penRef.current;
       if (!active) return;
@@ -173,11 +179,15 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (ro && trackRef.current) ro.observe(trackRef.current);
     return () => ro?.disconnect();
-  }, [seeing, busy, previewUrl]);
+  }, [seeing, busy, hasPreview]);
 
   // #1594: with no preview to switch to, Building is status, not an action.
   // Keep it compact and neutral; the accent-filled controls remain clickable.
-  if (!previewUrl) {
+  //
+  // #2069 narrows "no preview to switch to": a session whose branch has a
+  // commit HAS one to switch to, it just has to be built first. Only a session
+  // with nothing to build falls through to the status chip.
+  if (!hasPreview) {
     if (!busy) return null;
     return (
       <span
@@ -223,9 +233,11 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label="Preview this change"
+        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
         aria-pressed={seeing ? 'true' : 'false'}
-        title="Preview this change on staging"
+        title={previewUrl
+          ? 'Preview this change on staging'
+          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
