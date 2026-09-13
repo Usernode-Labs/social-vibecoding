@@ -123,8 +123,15 @@ function seed(AppView) {
   AppView._devDataReady = true;
 }
 
+// RELATIVE TO NOW, NOT A WALL-CLOCK DATE. These two stamps were pinned to
+// 2026-09-06, which was inside `relStamp`'s seven-day relative window on the
+// day they were written and outside it a week later: the footnote assertion
+// wants "drafted 2d ago" and started getting "drafted Sep 6" at exactly the
+// REL_FLOOR_MS boundary, with nothing about the grouping having changed. A
+// suite that starts failing because time passed blocks every merge in the
+// repository, so the fixture moves with the clock and only the copy is pinned.
 const themes = (list, extra) => ({
-  slug: 'demo-app', source: 'ai', generatedAt: '2026-09-06T00:00:00Z', discoveredAt: '2026-09-06T00:00:00Z',
+  slug: 'demo-app', source: 'ai', generatedAt: at(2), discoveredAt: at(2),
   stale: false, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
   at: Date.now(), themes: list, ...(extra || {}),
 });
@@ -1655,6 +1662,16 @@ test('the footnote says what is actually happening to the category grouping', ()
     { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
   html = workshopHtml(AppView, 'all');
   assert.match(html, /placing new cards…/, 'pending placement on real categories says so');
+  // The stamp has to sit inside `relStamp`'s relative window for that copy to
+  // be the copy under test at all. Pinned here so a fixture that drifts out of
+  // it fails as "the fixture went stale" rather than as a grouping bug — which
+  // is how it read the first time, a week after the date was hardcoded.
+  const REL_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
+  const stamp = Date.parse(themes([], {}).discoveredAt);
+  assert.ok(Date.now() - stamp < REL_FLOOR_MS,
+    'the fixture stamp is relative to now, not a wall-clock date that ages out');
+  assert.match(APP_VIEW_SRC, /const REL_FLOOR_MS = 7 \* 24 \* 60 \* 60 \* 1000;/,
+    'and that window is still seven days where relStamp defines it');
   assert.match(html, /Categories were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\./);
   assert.match(html, /3 new cards are being placed\./);
   // The name is preceded by the theme's glyph now (#1787); the pin is still
