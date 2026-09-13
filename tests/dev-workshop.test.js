@@ -861,8 +861,17 @@ test('the vote deck is its own tab; the unclaimed suggestion stays with the stat
   // a vote first, the unclaimed issues behind them.
   const q = AppView._workshopView().queue;
   assert.deepEqual(plain(q.map((r) => r.kind)), ['vote', 'claim', 'claim']);
+  // The claim question INVITES rather than interrogates: "Do you want to pick
+  // this up?" reads as a duty being assigned, and the thing on offer is a
+  // try, not a commitment.
   assert.deepEqual(plain(q.map((r) => r.ask)),
-    ['Should this change go in?', 'Do you want to pick this up?', 'Do you want to pick this up?']);
+    ['Should this change go in?', 'Want to give this one a try?', 'Want to give this one a try?']);
+  // And a claim carries ONE positive answer, not a pair. "No" and "Skip" were
+  // the same press wearing two labels — neither recorded anything, both moved
+  // the deck on — so the row no longer offers a `no` at all.
+  assert.deepEqual(plain(q.filter((r) => r.kind === 'claim').map((r) => r.no)), [null, null]);
+  assert.deepEqual(plain(q.filter((r) => r.kind === 'claim').map((r) => r.yes && r.yes.label)),
+    ["Let's take it", "Let's take it"]);
   // The heading states the fact; the offer is the line under it. "Why not
   // give it a try?" did both at once and coaxed while it did.
   assert.ok(!html.includes('Free to take, if you want to try solving an issue.'),
@@ -2399,7 +2408,14 @@ test('the rail rests the same distance off the bottom on every tab', () => {
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-gap\)/, 'the floor subtracts the gap');
   assert.ok(!/- 24px/.test(area[1]), 'and not a bare number with no counterpart');
-  assert.match(CSS, /\.dev-ws-tabs \{\s*position: sticky; bottom: var\(--ws-gap\);/,
+  // The nav LEADS the markup — focus order follows the DOM, not `order`, and a
+  // nav announced before the content it navigates is the better half of that
+  // trade — so `order: 1` is what drops it to the foot of the column on a
+  // phone. Read the rule's body rather than the two declarations adjacent.
+  const rail = /\n\.dev-ws-tabs \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(rail, 'the rail rule exists');
+  assert.match(rail[1], /^\s*order: 1;$/m, 'the nav is last on the screen, not in the markup');
+  assert.match(rail[1], /position: sticky; bottom: var\(--ws-gap\);/,
     'the sticky offset is the same gap');
   // The clearance under the last card is the rail's box PLUS that gap, so it
   // tracks where the rail actually rests instead of being remembered.
@@ -2473,4 +2489,192 @@ test('the lander fills its scroller without a percentage in the floor', () => {
   // content: measured 760 -> 640 on By category and 1432 -> 310 on By stage.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\) \{[^}]*width: 100%/);
   assert.match(CSS, /#dev-workshop > \.dev-ws \{ flex: 1 1 auto; width: 100%; \}/);
+});
+
+test('the ask box sits just above the rail, on both widths', () => {
+  // It was floating well clear of the bar, for two different reasons.
+  //
+  // ON A PHONE the deck filled its box exactly and the box stopped 80px
+  // short: `.dev-ws-tabbody` reserves the rail's height so the last card of a
+  // SCROLLING tab can be read clear of a bar that overlays it. Needs you does
+  // not scroll under the rail — it is one fitted decision per screen — so
+  // that clearance was dead space pushing the composer up. Measured at
+  // 402x874: 90px between the ask box and the bar. The clearance now lifts on
+  // that tab alone.
+  assert.match(CSS, /\.dev-ws\[data-ws-tab="needs"\] > \.dev-ws-tabbody \{ padding-bottom: 0; \}/);
+  // ON A DESKTOP the deck was content-sized top-aligned (`flex: 0 0 auto` with
+  // `align-content: start`), which put the ask box directly under the answers
+  // and left the window empty beneath it — measured at 1440x900, 271px. The
+  // deck still sits at the top, which is what that rule is for; the SECOND row
+  // takes the free space and the pane aligns to its end.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen deck rule exists');
+  assert.match(wide[1], /grid-template-rows: auto 1fr;/, 'the deck is content-sized, the ask row takes the rest');
+  assert.match(wide[1], /\.dev-ws-needs > \.dev-ws-ask \{ align-self: end; \}/);
+  // Comments stripped first: the block above explains WHY `align-content:
+  // start` was wrong, and prose naming it is not the declaration this forbids
+  // — the same distinction the 100vw check in this file already makes.
+  assert.ok(!/align-content: start/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
+    'top-aligning the whole deck is what left the gap');
+  // Both now measure 10px above the bar — `.dev-ws`'s own column gap, which is
+  // the floor for anything sitting directly above the rail.
+});
+
+test('the deck answers in one row and moves in another', () => {
+  // TWO ROWS BECAUSE THEY ARE TWO QUESTIONS. The top one is what you can do
+  // about the card in front of you, and every press there records something.
+  // The bottom one only changes which card is in front of you, and records
+  // nothing.
+  //
+  // Skip belonged to neither and sat among the answers, where it read as a
+  // third verdict while doing nothing but advancing — and it could only go
+  // forwards, so a card passed by accident was gone. The arrows replace it.
+  assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
+  assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
+  assert.match(WORKSHOP, /<div className="dev-ws-move-row" data-ws-move-row="">/);
+  for (const [dir, guard, word] of [
+    ['prev', /disabled=\{i <= 0\}/, /Previous/],
+    ['next', /disabled=\{i >= cards\.length - 1\}/, /Next/],
+  ]) {
+    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,320}?</button>`).exec(WORKSHOP);
+    assert.ok(btn, `the ${dir} control exists`);
+    assert.match(btn[0], guard, `${dir} is disabled at its end rather than wrapping`);
+    // A VISIBLE WORD, not a bare chevron with an aria-label. An arrow alone
+    // reads as another button in a row of buttons; the label is what says
+    // navigation. It also means no `aria-label` is wanted — a visible name
+    // IS the accessible name, and a second one only invites them to drift.
+    assert.match(btn[0], word, `${dir} says what it does`);
+    assert.ok(!/aria-label/.test(btn[0]), `${dir} needs no aria-label over its own words`);
+  }
+  // The count sits BETWEEN them rather than in the eyebrow: it answers "where
+  // am I", which is the question these two buttons change, and up there it was
+  // a second small number competing with the sentence saying how many need you.
+  assert.match(WORKSHOP, /data-ws-move="prev"[\s\S]{0,700}?dev-ws-needs-of[\s\S]{0,400}?data-ws-move="next"/);
+  assert.ok(!/dev-ws-needs-head[\s\S]{0,300}?dev-ws-needs-of/.test(WORKSHOP),
+    'and no longer in the head');
+  // NO WRAP, and no reordering. Skip used to send a card to the back, which
+  // was the only way back to it without losing your place; you walk back now.
+  // A deck that reorders itself as you browse is one you never reach the end
+  // of, and an arrow that silently returns you to the first card is how you
+  // lose your place in a queue you are working through.
+  assert.match(WORKSHOP, /const go = \(delta: number\) => setAt\(Math\.min\(Math\.max\(i \+ delta, 0\), cards\.length - 1\)\);/);
+  assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
+  assert.match(WORKSHOP, /const cards = rows\.filter\(\(r\) => r\.t === 'card'\);/,
+    'the deck keeps the order it was published in');
+});
+
+test('the lander opens on the tab you last used', () => {
+  // Three tabs are three different jobs, and the one you want is usually the
+  // one you wanted last time — somebody working the vote queue landed on the
+  // digest every single visit. Stored per browser: it is a reading position,
+  // not a setting, and it reuses the mechanism the grouping already has.
+  assert.match(APP_VIEW_SRC, /WORKSHOP_TAB_KEY: 'devWorkshopTab',/);
+  const read = /_workshopTab\(\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  assert.ok(read, '_workshopTab resolves it');
+  // ORDER MATTERS: the deep link wins, then what you chose, then the default.
+  // A declared check runs against an empty localStorage, so `?ws=` losing to
+  // a stored value would make every one of them assert the wrong tab.
+  assert.match(read[1], /const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
+  assert.match(read[1], /localStorage\.getItem\(AppView\.WORKSHOP_TAB_KEY\)/);
+  assert.match(read[1], /return 'status';/);
+  // And an explicit tap retires the URL override, exactly as the grouping
+  // does — otherwise `?ws=` would keep winning over every later press.
+  const write = /_setWorkshopTab\(key\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  assert.ok(write, '_setWorkshopTab stores it');
+  assert.match(write[1], /AppView\._workshopTabUrlOverride = null;/);
+  assert.match(write[1], /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  // The view model publishes the RESOLVED tab, not the raw parameter.
+  assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => \{ setTab\(t\.key\); callAppView\('_setWorkshopTab', t\.key\); \}\}/);
+});
+
+test('a category card is raised off the pane it sits on', () => {
+  // It took `--dc-sheet-fill`, the SAME value as the pane beneath it, so in
+  // dark mode the card was rgba(28,28,30,.72) on rgba(28,28,30,.72) with only
+  // a 12%-white hairline between them. Light mode got away with it because
+  // its hairline is 10% BLACK on near-white, which reads far harder.
+  assert.match(CSS, /--dc-sheet-raise: #ffffff;/, 'light');
+  assert.match(CSS, /--dc-sheet-raise: #2c2c2e;/, 'dark, one step up the same ramp as the sheet');
+  const card = /\.dev-ws-theme \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(card, 'the card rule exists');
+  assert.match(card[1], /background-color: var\(--dc-sheet-raise\);/);
+  // Opaque, so no frost: it blurs what is BEHIND, and what is behind is a
+  // pane of one flat colour — a compositing layer per card for nothing.
+  assert.ok(!/backdrop-filter/.test(card[1]), 'the frost went with it');
+});
+
+test('a wide window reads the tabs at the top, as underlined words', () => {
+  // THE PILL IS A PHONE CONVENTION. Pinned to the floor of a 900px window it
+  // puts the switch as far from the reading as the window allows, and the eye
+  // crosses the whole height to use it. Above 700px — the breakpoint the deck
+  // already uses, so the two stay in step — the bar loses the pill entirely.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  // ONE block at this breakpoint, not two: a second would sit below the deck
+  // rules and the regex above would read only the first, so a rule could be
+  // added here and silently go unchecked.
+  assert.equal((CSS.match(/@media \(min-width: 700px\) \{/g) || []).length, 1,
+    'the breakpoint is written once');
+  const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(rail, 'the rail is restyled for width');
+  // `order: 0` is the whole move — the nav is already first in the DOM, so
+  // dropping the phone's `order: 1` paints it where it is written.
+  assert.match(rail[1], /order: 0;/, 'it paints where it is written');
+  assert.match(rail[1], /position: static;/, 'nothing to stick to at the head of a column');
+  assert.match(rail[1], /border-bottom: 1px solid var\(--app-sheet-line\);/, 'a rule, not a pill');
+  assert.match(rail[1], /border-radius: 0;/);
+  assert.match(rail[1], /background: none; backdrop-filter: none;/,
+    'no fill and no frost, so nothing to composite');
+  const tab = /\.dev-ws-tab \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(tab, 'the tab is restyled too');
+  // Word beside glyph, sized to its text, not a third of the width: three
+  // words at the head of a 1440px column, not three stretched thirds.
+  assert.match(tab[1], /flex: 0 0 auto; flex-direction: row;/);
+  assert.match(tab[1], /border-bottom: 2px solid transparent; margin-bottom: -1px;/,
+    'the underline reserves its space unselected and overlaps the rule');
+  const sel = /\.dev-ws-tab\[aria-selected="true"\] \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(sel, 'the live tab is restyled');
+  assert.match(sel[1], /background: none; box-shadow: none;/, 'the phone pill is undone');
+  assert.match(sel[1], /border-bottom-color: var\(--brand-ink\);/, 'the rule carries the accent');
+  // Nothing overlays the content any more, so the clearance that existed for a
+  // bar floating over what scrolls beneath it is dead space here.
+  assert.match(wide[1], /\.dev-ws-tabbody \{ padding-bottom: 0; \}/);
+});
+
+test('the read-only demo check names the pane its proposal is actually on', () => {
+  // #621 asserts one string — the seeded proposal's title — is on the demo
+  // app's Dev tab. The rework put it behind two choices and `&ws=all` alone
+  // was not enough, so the check went red and stayed red through a merge.
+  //
+  // ALL ITEMS DEFAULTS TO "BY CATEGORY", AND A CATEGORY CARD IS COLLAPSED.
+  // It renders the category's name, its saying and its count chips; the lanes
+  // holding item titles are behind `open`. So the title is not merely below
+  // the fold on that pane — it is not in the document. By stage renders the
+  // board's own columns, where every row is a card with its title.
+  //
+  // `&col=inreview` because the seed (src/db/migrate.js) inserts the proposal
+  // `promoted`, which `_kanbanView` buckets into `inreview` — and at phone
+  // width the board shows ONE column, so without it the check passes at
+  // 1280px and fails at 402px depending on the runner's viewport. Measured
+  // against the real components at 402, 800 and 1280: absent on category at
+  // every width, absent on stage/issues at 402, present and painted on
+  // stage/inreview at all three.
+  const dapp = JSON.parse(read('dapp.json'));
+  const found = [];
+  const walk = (o) => {
+    if (Array.isArray(o)) return o.forEach(walk);
+    if (!o || typeof o !== 'object') return;
+    if (typeof o.expectText === 'string' && o.expectText === 'Staging demo read-only proposal') found.push(o);
+    Object.values(o).forEach(walk);
+  };
+  walk(dapp);
+  assert.equal(found.length, 1, 'exactly one check asserts the seeded proposal');
+  const p = found[0].path;
+  assert.match(p, /[?&]ws=all(&|$)/, 'the tab, since the lander opens on Current status');
+  assert.match(p, /[?&]group=stage(&|$)/, 'the pane that lists item titles');
+  assert.match(p, /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
+  // The bucketing this leans on, pinned here so moving `promoted` to another
+  // column fails locally rather than as a red check on somebody's proposal.
+  assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
+  assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
 });
