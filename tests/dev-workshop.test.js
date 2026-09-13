@@ -2756,7 +2756,10 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // `order: 0` is the whole move — the nav is already first in the DOM, so
   // dropping the phone's `order: 1` paints it where it is written.
   assert.match(rail[1], /order: 0;/, 'it paints where it is written');
-  assert.match(rail[1], /position: static;/, 'nothing to stick to at the head of a column');
+  // RELATIVE, not static: nothing to stick to at the head of a column, but the
+  // bar must stay the containing block for the selection marker and the
+  // element its tabs' offsetLeft/offsetTop resolve against.
+  assert.match(rail[1], /position: relative;/, 'still the containing block for the marker');
   // A BLOCK, not the pill: it inherits the reading column and its centring, so
   // the strip keeps one left edge whether the pane beside it is the 760px
   // category list or the full-bleed board.
@@ -2790,8 +2793,14 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // override here would be the bug, not the fix.
   assert.ok(!/\.dev-ws-tab\[aria-selected="true"\]/.test(wide[1]),
     'the phone rule carries through');
-  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*background: var\(--brand-tint\);/,
-    'and that rule is still the periwinkle one');
+  // THE PERIWINKLE MOVED TO THE MARKER, which is what lets the selection slide
+  // instead of snapping: a background drawn by the tab itself can only appear
+  // on one and vanish from another. The tab keeps the ink, which has nothing
+  // to animate between.
+  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*color: var\(--brand-ink\);\s*\}/,
+    'the selected tab is ink only');
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?background: var\(--brand-tint\);/,
+    'and the fill is the marker, at both widths — it carries no breakpoint');
 
   // Nothing overlays the content any more, so the clearance that existed for a
   // bar floating over what scrolls beneath it is dead space here.
@@ -2840,4 +2849,68 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   // column fails locally rather than as a red check on somebody's proposal.
   assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
   assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
+});
+
+test('the selection slides between tabs instead of snapping', () => {
+  // ONE ELEMENT THAT MOVES, not a fill redrawn per tab. A background painted by
+  // the selected tab can only appear on one and vanish from another; a single
+  // marker can travel, which is what every other app's tab bar does.
+  assert.match(WORKSHOP, /<span\s+className="dev-ws-tab-marker"/);
+  assert.match(WORKSHOP, /aria-hidden="true"/);
+  // It is decoration. `aria-selected` on the tab already announces the state,
+  // so a box that claimed it too would say the same thing twice.
+  const marker = /<span\s+className="dev-ws-tab-marker"[\s\S]*?\/>/.exec(WORKSHOP);
+  assert.ok(marker, 'the marker is rendered');
+  assert.ok(!/role=|tabIndex=/.test(marker[0]), 'decorative: no role, not focusable');
+
+  // EVERY NUMBER IS MEASURED, none written down. That is what lets one
+  // implementation serve the phone's equal-width 58px tabs and the desktop
+  // strip's content-width 32px ones without a breakpoint of its own.
+  assert.match(WORKSHOP, /function useTabMarker\(/);
+  assert.match(WORKSHOP, /x: el\.offsetLeft, y: el\.offsetTop, w: el\.offsetWidth, h: el\.offsetHeight/);
+  // useLayoutEffect, not useEffect: a paint between measuring and positioning
+  // is a visible flash of the marker in the wrong place.
+  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{[\s\S]{0,900}?ResizeObserver/,
+    'measured in a layout effect, and re-measured on resize');
+  // The three things that move the tabs, each of which has: the tab changing,
+  // a resize (rotation, a drag across the breakpoint, a late webfont), and the
+  // portal remount, which tears the bar out of one parent into another.
+  assert.match(WORKSHOP, /\}, \[barRef, tab, railHost\]\);/);
+
+  // NULL UNTIL MEASURED, so the marker renders hidden rather than at the left
+  // edge — otherwise it slides in from nowhere on the first paint.
+  assert.match(WORKSHOP, /\{\.\.\.\(markerBox \? \{ 'data-ws-marker-at': '' \} : \{\}\)\}/);
+  assert.match(WORKSHOP, /style=\{markerBox \? \{/);
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?opacity: 0;[\s\S]*?\n\}/, 'hidden by default');
+  assert.match(CSS, /\.dev-ws-tab-marker\[data-ws-marker-at\] \{ opacity: 1; \}/);
+
+  // THE TRANSITION IS ON THE PLACED STATE ONLY. On the base rule it would
+  // animate the first placement too — from the left edge at zero width, which
+  // is the slide-in the null-until-measured render exists to prevent.
+  const base = /\.dev-ws-tab-marker \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(base && !/transition/.test(base[1]), 'the base rule does not transition');
+  const motion = /@media \(prefers-reduced-motion: no-preference\) \{\s*\.dev-ws-tab-marker\[data-ws-marker-at\] \{([\s\S]*?)\n  \}/.exec(CSS);
+  assert.ok(motion, 'and the placed state animates only where motion is welcome');
+  assert.match(motion[1], /transform \.26s/);
+  // width and height are in the list because the desktop segments are
+  // content-width: "Current status" and "Needs you" differ, so a transform
+  // alone would slide a box of the wrong size. On the phone they never change.
+  assert.match(motion[1], /width \.26s/);
+  assert.match(motion[1], /height \.26s/);
+
+  // THE BAR IS THE CONTAINING BLOCK AT BOTH WIDTHS, which is what makes
+  // offsetLeft/offsetTop mean what the marker assumes. `fixed` gives it for
+  // free on a phone; the wide rule has to ask for it.
+  const rail = /\n\.dev-ws-tabs \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.match(rail[1], /position: fixed;/);
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.match(wide[1], /position: relative;/);
+  assert.ok(!/position: static;/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
+    'static would send the marker and the measurement to some other ancestor');
+
+  // The tabs sit above it. Without `position: relative` on them both are
+  // static, and the marker — later in paint order for positioned elements —
+  // would cover the labels.
+  assert.match(CSS, /\.dev-ws-tab \{ position: relative; z-index: 1; \}/);
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?z-index: 0;/);
 });

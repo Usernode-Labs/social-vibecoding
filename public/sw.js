@@ -144,7 +144,12 @@
 // previous build for at least one load. That lag is exactly what made two
 // earlier rounds of this bar look unfixed: every report was of the deploy
 // before the one being discussed.
-const SW_VERSION = 'v16';
+//
+// v17: the Workshop's selection marker — the tab bar's selected fill becomes
+// one element that slides rather than a background redrawn per tab. app.css
+// and the shell bundle are the whole user-visible surface, so the bump belongs
+// in this proposal, per v10.
+const SW_VERSION = 'v17';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
