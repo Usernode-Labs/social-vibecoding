@@ -12119,6 +12119,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   white-space: nowrap; overflow: hidden;
   cursor: pointer;
 }
+/* THE TRACK IS INERT ON A PHONE. `.dev-ws-tabs` is itself the pill there —
+   edge to edge, frosted, stuck to the floor — so the wrapper the desktop
+   layout needs must not introduce a box. `display: contents` removes it from
+   the layout entirely and the buttons stay direct flex items of the nav,
+   which is what they were before it existed. */
+.dev-ws-tabtrack { display: contents; }
 /* Size lives here, not on the component: icons.tsx has no size variant by
    design, so every call site passes its own class. `flex: none` because the
    glyph is now a flex ITEM in a column and would otherwise be squeezed by a
@@ -12233,42 +12239,63 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
   .dev-ws-needs-scroll { flex: 0 1 auto; }
   .dev-ws-ask-log { max-height: 40vh; }
 
-  /* ── A wide window reads the tabs at the TOP, as words ─────────────────
+  /* ── A wide window reads the tabs at the TOP, as a segmented control ───
      A pill pinned to the floor of a 900px window puts the switch as far from
      the reading as the window allows, and the eye crosses the whole height to
      use it — a phone convention wearing a desktop out. Above 700px the bar
-     loses its pill entirely and becomes three underlined words at the head of
-     the column: no fill, no sticky, no clearance beneath it.
+     comes off the floor and sits at the head of the column.
 
-     `order: 0` is the whole move. The nav is already first in the DOM, so
-     dropping the phone's `order: 1` paints it where it is written — and on the
-     width where a keyboard is likeliest, focus order and reading order agree.
+     `order: 0` is the move that gets it there. The nav is already first in the
+     DOM, so dropping the phone's `order: 1` paints it where it is written —
+     and on the width where a keyboard is likeliest, focus order and reading
+     order agree.
 
-     The choice of underline over a pill is not only taste: the three tabs are
-     "where the app is", "what needs you" and "everything there is", which are
-     sections of one subject rather than modes of one tool, and a rule under a
-     word says section where a filled pill says mode. It is also the shortest
-     of the treatments, which the deck needs — it is the tab fighting hardest
-     for height. */
+     WHAT IT IS NOT, ANY MORE: three underlined words. That shape separates by
+     RULE, and this product separates by FIGURE AND GROUND — the distinction
+     @/components/ui/tabs.tsx spells out where it retired the same underline
+     from the Leaderboard's own strip. An underlined row is also the idiom of
+     code-hosting tools and admin consoles, which is what it read as here: a
+     developer surface bolted to a consumer one. The geometry below is
+     SECTION_TABS_LIST / SECTION_TAB_BASE transcribed — 2px track, 32px
+     segments, 16px of side padding, fully round.
+
+     THE SELECTED STATE IS NOT RESTATED HERE, deliberately. The phone rule's
+     periwinkle carries straight through, so the two widths are one control at
+     two sizes rather than two ideas: the note beside it explains why that is
+     the tint and not the primitive's near-black, and nothing about a wider
+     window changes that argument.
+
+     The track is `--dc-sheet-raise` and carries no frost. Frost is for the
+     phone's bar, which floats over what scrolls beneath it; this one sits in
+     the flow with nothing passing behind, so it wants the opaque raised
+     surface the cards already use — the same reason tabs.tsx's track is white
+     rather than the recessed grey a control gets on a card. */
 
   .dev-ws-tabs {
     order: 0;
     position: static;
-    gap: 22px; padding: 0;
-    border: 0; border-bottom: 1px solid var(--app-sheet-line); border-radius: 0;
+    /* A BLOCK, not the pill. It inherits the 760px reading column and its
+       centring, which is what keeps the strip on the same left edge whether
+       the pane beside it is the category list at 760 or the full-bleed board
+       at the window's width. The pill is `.dev-ws-tabtrack` inside it. */
+    display: block;
+    gap: 0; padding: 0;
+    border: 0; border-radius: 0;
     background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    margin-bottom: 4px;
+  }
+  .dev-ws-tabtrack {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px;
+    border-radius: 9999px;
+    background-color: var(--dc-sheet-raise);
   }
   .dev-ws-tab {
     flex: 0 0 auto; flex-direction: row; gap: 7px;
-    height: auto; padding: 8px 0 9px;
-    border-radius: 0; font-size: 14px;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    height: 32px; padding: 0 16px;
+    border-radius: 9999px; font-size: 14px;
   }
-  .dev-ws-tab[aria-selected="true"] {
-    background: none; box-shadow: none;
-    color: var(--brand-ink); border-bottom-color: var(--brand-ink);
-  }
-  .dev-ws-tab-glyph { width: 17px; height: 17px; }
+  .dev-ws-tab-glyph { width: 16px; height: 16px; }
   /* Nothing overlays the content any more, so nothing needs reserving under
      it — that clearance exists only for a bar that floats over what scrolls
      beneath it. */
