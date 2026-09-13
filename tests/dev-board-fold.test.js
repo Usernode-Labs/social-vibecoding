@@ -408,8 +408,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // introduces — a proposal being brought up to date, a refused merge named
   // for what it was rather than as a conflict, and automatic resolution
   // saying nobody has to act.
-  // 604 → 605: #1823's Challenges row in the app menu, under Discover.
-  assert.equal(DAPP.tests.length, 605);
+  // 604 → 605: the Needs-you deck's ask box answers for real now, so one
+  // check pins the composer being present on the card. Selector-only, and
+  // deliberately not asserting it is enabled: the box is disabled on a row
+  // with no resolvable reference, which is a legitimate state the demo
+  // fixtures may well be in.
+  // 605 → 606: #1823's Challenges row in the app menu, under Discover.
+  assert.equal(DAPP.tests.length, 606);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

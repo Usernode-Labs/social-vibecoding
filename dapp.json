@@ -1969,6 +1969,11 @@
       "expectText": "Vote"
     },
     {
+      "name": "The Needs-you deck's ask box is present and ready to take a question about the card",
+      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] [data-ws-ask] form.dev-ws-ask-composer input#dev-ws-ask-input"
+    },
+    {
       "name": "The view strip marks Workshop as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
