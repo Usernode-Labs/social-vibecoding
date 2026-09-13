@@ -36,6 +36,9 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+// The scroller the rail sticks inside: it carries `.platform-safe-scroll`,
+// which is what reserves the home-indicator strip the gap must NOT re-add.
+const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 // The row, the open sheet and the fold between them: shared with the Board's columns.
 const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
@@ -2419,8 +2422,30 @@ test('the rail rests the same distance off the bottom on every tab', () => {
   // which measured at 1440x900 as 23px of air on Current status and Needs you
   // against 0 on All items — "floating part way up, and it moves between
   // tabs". One token, spent in both places, is what makes them agree.
-  assert.match(CSS, /--ws-gap: calc\(8px \+ var\(--platform-safe-bottom, 0px\)\);/,
-    'the gap is named once');
+  // A PLAIN LENGTH, NOT `calc(8px + var(--platform-safe-bottom))`. That form
+  // counted the home-indicator strip a second time: #dev-forum-scroll carries
+  // `.platform-safe-scroll`, whose padding-bottom has already reserved it. On
+  // a 34px inset the rail sat 76px off the bottom instead of 42 — constant on
+  // every tab and at every scroll position, which is what an iOS PWA showed
+  // and what nothing here could see, because a headless browser reports the
+  // inset as 0 and both spends were then `0px`.
+  assert.match(CSS, /--ws-gap: 8px;/, 'the gap is a plain length');
+  assert.ok(!/--ws-gap: calc\(8px \+ var\(--platform-safe-bottom/.test(CSS),
+    'the inset is reserved by .platform-safe-scroll, not re-added here');
+  // The scroller really does carry that reservation — the whole fix rests on
+  // it, so it is pinned rather than assumed.
+  assert.match(CSS, /\.platform-safe-scroll \{\s*padding-bottom: var\(--platform-safe-bottom\) !important;/);
+  assert.match(BOARD_FRAME, /id="dev-forum-scroll"[\s\S]{0,160}platform-safe-scroll/,
+    'and #dev-forum-scroll is the element carrying it');
+  // The keyboard case now falls out of the shell's own suppression instead of
+  // a copy of its reasoning here.
+  assert.match(CSS, /html\.un-kb \.platform-safe-scroll \{\s*padding-bottom: 0 !important;/);
+  // Comments stripped first: the block beside the token EXPLAINS that this
+  // override is gone, and prose naming a declaration is not the declaration —
+  // the same distinction the `align-content: start` check in this file makes.
+  const DECLS = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/html\.un-kb \.dev-ws \{ --ws-gap/.test(DECLS),
+    'the local keyboard override is redundant and gone');
   const area = /--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-gap\)/, 'the floor subtracts the gap');
@@ -2437,9 +2462,7 @@ test('the rail rests the same distance off the bottom on every tab', () => {
   // The clearance under the last card is the rail's box PLUS that gap, so it
   // tracks where the rail actually rests instead of being remembered.
   assert.match(CSS, /padding-bottom: calc\(72px \+ var\(--ws-gap\)\);/);
-  // Keyboard up, inset gone — it sits behind the keyboard, so reserving it is
-  // dead space. Same trade the shell makes for its own bars.
-  assert.match(CSS, /html\.un-kb \.dev-ws \{ --ws-gap: 8px; \}/);
+
   // And the bar does NOT carry .platform-safe-bar: that rule adds the inset to
   // the element's own padding, which on this floating pill landed 8px under
   // the tabs against 6px over them.
