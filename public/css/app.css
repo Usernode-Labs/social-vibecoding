@@ -12191,10 +12191,57 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    thing: where you are, and where you could go. A black pill was the only
    flat-black object on the screen and read as a different product.
    The tokens carry their own dark values, so there is no dark variant. */
+/* THE INK STAYS ON THE TAB; THE FILL MOVED TO THE MARKER. A background drawn
+   by the selected tab itself cannot travel — it can only appear on one and
+   vanish from another, which is the snap this replaces. One element that slides
+   is the whole idea, so the tab is left with the colour change, which has
+   nothing to animate between. */
 .dev-ws-tab[aria-selected="true"] {
-  background: var(--brand-tint);
   color: var(--brand-ink);
+}
+/* Above the marker, which is painted first and sits at the floor of the
+   stacking context. `position: relative` is what puts them on that ladder at
+   all — without it the tabs and the marker are both static and the marker,
+   coming later in paint order for positioned elements, would cover the
+   labels. */
+.dev-ws-tab { position: relative; z-index: 1; }
+/* THE MARKER. Every number it uses is measured off the live tab (see
+   workshop.tsx), so this rule carries no geometry — which is what lets it
+   serve the phone's 58px equal-width pill and the desktop strip's 32px
+   content-width segments without a breakpoint of its own.
+
+   `top: 0; left: 0` and then translated: the transform is the only thing that
+   moves, and a transform is the one property that animates without asking the
+   layout engine anything. */
+.dev-ws-tab-marker {
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: var(--brand-tint);
   box-shadow: inset 0 0 0 1px var(--brand-line);
+  pointer-events: none;
+  /* Hidden until measured — see the note in workshop.tsx. */
+  opacity: 0;
+}
+.dev-ws-tab-marker[data-ws-marker-at] { opacity: 1; }
+/* THE TRANSITION IS NOT ON THE BASE RULE, deliberately. It applies only once
+   the marker has been placed, so the first measurement lands instantly and
+   every later one animates. A transition on the base rule would animate that
+   first placement too — from the left edge, at 0 width, which is exactly the
+   slide-in the null-until-measured render exists to avoid.
+
+   `width` and `height` are in the list because the desktop segments are
+   content-width: "Current status" and "Needs you" are different sizes, so a
+   transform alone would slide a box of the wrong width. On the phone all
+   three match and those two properties simply never change. */
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-tab-marker[data-ws-marker-at] {
+    transition:
+      transform .26s cubic-bezier(.32, .72, 0, 1),
+      width .26s cubic-bezier(.32, .72, 0, 1),
+      height .26s cubic-bezier(.32, .72, 0, 1);
+  }
 }
 
 /* ── Needs you: one question, the whole screen ───────────────
@@ -12353,7 +12400,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   }
   .dev-ws-tabs {
     order: 0;
-    position: static;
+    /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
+       column — that part is unchanged — but the bar has to remain the
+       CONTAINING BLOCK for the selection marker, and the element `offsetLeft`
+       and `offsetTop` resolve against when workshop.tsx measures a tab. On a
+       phone `position: fixed` gives that for free; here it has to be asked
+       for, and `static` would send both the marker and the measurement to
+       whatever ancestor happened to be positioned. */
+    position: relative;
     /* A BLOCK, not the pill. It inherits the 760px reading column and its
        centring, which is what keeps the strip on the same left edge whether
        the pane beside it is the category list at 760 or the full-bleed board
