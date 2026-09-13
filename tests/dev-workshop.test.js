@@ -39,6 +39,8 @@ const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 // The scroller the rail sticks inside: it carries `.platform-safe-scroll`,
 // which is what reserves the home-indicator strip the gap must NOT re-add.
 const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+// The shell tree, for the out-of-frost portal host the fixed rail needs.
+const SHELL = read('frontend/src/Shell.tsx');
 // The row, the open sheet and the fold between them: shared with the Board's columns.
 const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
@@ -2414,60 +2416,80 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
     'applied once, so a later republish cannot override the reader');
 });
 
-test('the rail rests the same distance off the bottom on every tab', () => {
-  // IT CAME TO REST TWO DIFFERENT WAYS and nobody had made the two agree. On
-  // a short tab `.dev-ws` ends above the fold, so the floor under its height
-  // sets the gap; on a long one the rail is stuck while the content scrolls,
-  // so `bottom` sets it. The floor subtracted a bare 24px and `bottom` was 0,
-  // which measured at 1440x900 as 23px of air on Current status and Needs you
-  // against 0 on All items — "floating part way up, and it moves between
-  // tabs". One token, spent in both places, is what makes them agree.
-  // A PLAIN LENGTH, NOT `calc(8px + var(--platform-safe-bottom))`. That form
-  // counted the home-indicator strip a second time: #dev-forum-scroll carries
-  // `.platform-safe-scroll`, whose padding-bottom has already reserved it. On
-  // a 34px inset the rail sat 76px off the bottom instead of 42 — constant on
-  // every tab and at every scroll position, which is what an iOS PWA showed
-  // and what nothing here could see, because a headless browser reports the
-  // inset as 0 and both spends were then `0px`.
-  assert.match(CSS, /--ws-gap: 8px;/, 'the gap is a plain length');
-  assert.ok(!/--ws-gap: calc\(8px \+ var\(--platform-safe-bottom/.test(CSS),
-    'the inset is reserved by .platform-safe-scroll, not re-added here');
-  // The scroller really does carry that reservation — the whole fix rests on
-  // it, so it is pinned rather than assumed.
-  assert.match(CSS, /\.platform-safe-scroll \{\s*padding-bottom: var\(--platform-safe-bottom\) !important;/);
-  assert.match(BOARD_FRAME, /id="dev-forum-scroll"[\s\S]{0,160}platform-safe-scroll/,
-    'and #dev-forum-scroll is the element carrying it');
-  // The keyboard case now falls out of the shell's own suppression instead of
-  // a copy of its reasoning here.
-  assert.match(CSS, /html\.un-kb \.platform-safe-scroll \{\s*padding-bottom: 0 !important;/);
-  // Comments stripped first: the block beside the token EXPLAINS that this
-  // override is gone, and prose naming a declaration is not the declaration —
-  // the same distinction the `align-content: start` check in this file makes.
-  const DECLS = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(!/html\.un-kb \.dev-ws \{ --ws-gap/.test(DECLS),
-    'the local keyboard override is redundant and gone');
-  const area = /--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
-  assert.ok(area, 'the floor exists');
-  assert.match(area[1], /var\(--ws-gap\)/, 'the floor subtracts the gap');
-  assert.ok(!/- 24px/.test(area[1]), 'and not a bare number with no counterpart');
-  // The nav LEADS the markup — focus order follows the DOM, not `order`, and a
-  // nav announced before the content it navigates is the better half of that
-  // trade — so `order: 1` is what drops it to the foot of the column on a
-  // phone. Read the rule's body rather than the two declarations adjacent.
+test('the phone rail is fixed to the real viewport, not to its container', () => {
+  // THREE FIXES FAILED HERE BEFORE THIS ONE, and they failed the same way:
+  // the bar's resting place was derived from the container it sat in, so it
+  // depended on `--ws-area`'s viewport arithmetic, the flex chain filling,
+  // `.platform-safe-scroll`'s padding and `100dvh` — every one of which
+  // behaved differently on a real iOS PWA than in a headless Chromium, where
+  // all three measured correct. A fixed element depends on none of them.
+  //
+  // `position: fixed` was the ORIGINAL design and was abandoned because the
+  // Dev frame's `.dc-lift-strip` carries a `backdrop-filter`, which
+  // establishes a containing block for fixed descendants — so `bottom` meant
+  // the bottom of a frosted panel. The bar is portalled out of that frost now,
+  // which is what makes the keyword mean the screen again.
   const rail = /\n\.dev-ws-tabs \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(rail, 'the rail rule exists');
-  assert.match(rail[1], /^\s*order: 1;$/m, 'the nav is last on the screen, not in the markup');
-  assert.match(rail[1], /position: sticky; bottom: var\(--ws-gap\);/,
-    'the sticky offset is the same gap');
-  // The clearance under the last card is the rail's box PLUS that gap, so it
-  // tracks where the rail actually rests instead of being remembered.
-  assert.match(CSS, /padding-bottom: calc\(72px \+ var\(--ws-gap\)\);/);
+  assert.match(rail[1], /position: fixed;/, 'pinned to the viewport');
+  // Comments stripped: the block above NAMES `position: sticky` to say what it
+  // replaces, and prose naming a declaration is not the declaration — the
+  // third absence check in this file to need saying so.
+  const railDecls = rail[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/position: sticky/.test(railDecls), 'not to its container');
+  // The inset is spent ONCE, in the offset. A fixed element is out of flow, so
+  // `.platform-safe-scroll`'s reservation — which applies to the scroller's
+  // content — cannot double-count it the way it did in #4149.
+  assert.match(rail[1], /bottom: calc\(var\(--ws-gap\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // Out of flow means no container supplies its width either.
+  assert.match(rail[1], /left: 4px; right: 4px;/, 'matching #dev-body\'s own side padding');
+  assert.match(rail[1], /margin-inline: auto;/);
+  // `order` survives for the single render before the portal takes over.
+  assert.match(rail[1], /^\s*order: 1;$/m);
 
-  // And the bar does NOT carry .platform-safe-bar: that rule adds the inset to
-  // the element's own padding, which on this floating pill landed 8px under
-  // the tabs against 6px over them.
+  // THE PORTAL, and the two rules that keep it honest.
+  assert.match(WORKSHOP, /import \{ createPortal \} from 'react-dom';/);
+  assert.match(WORKSHOP, /function useRailHost\(\): HTMLElement \| null \{/);
+  // Null until after mount, so the FIRST render is always the in-place one and
+  // never disagrees with prerendered markup — a hydration mismatch is a
+  // console error, and a console error on any route fails proposal checks.
+  assert.match(WORKSHOP, /const \[host, setHost\] = useState<HTMLElement \| null>\(null\);/);
+  assert.match(WORKSHOP, /useEffect\(\(\) => \{[\s\S]{0,400}?matchMedia\('\(min-width: 700px\)'\)/,
+    'the host is resolved in an effect, not during render');
+  // Null above the breakpoint too: up there the strip is the segmented control
+  // in flow at the head of the column, and there is nothing to lift out.
+  assert.match(WORKSHOP, /setHost\(mq\.matches \? null : document\.getElementById\('dev-ws-rail-host'\)\);/);
+  assert.match(WORKSHOP, /\{railHost \? createPortal\(railNode, railHost\) : null\}/);
+  assert.match(WORKSHOP, /\{railHost \? null : railNode\}/,
+    'and the same node renders in place when there is no host');
+
+  // THE HOST IS OUTSIDE THE FROST. This is the whole mechanism: if it ever
+  // moves inside `.dc-lift`, `fixed` silently starts resolving against the
+  // frosted panel again and the bug returns with no test to catch it.
+  // It is rendered at the shell's TOP LEVEL — six-space indent, sibling of the
+  // islands — which is what puts it outside every frame the Dev board mounts
+  // at runtime. Shell.tsx renders no `.dc-lift` element itself; the frosted
+  // wrappers all come from features/dev-board, below #app-view.
+  //
+  // Ancestry is a DOM property and a source file cannot assert it, so the real
+  // check is the harness walking the rail's live ancestor chain for anything
+  // with transform / filter / backdrop-filter / contain. This pins the half
+  // that IS expressible: the host stays where the shell put it.
+  assert.match(SHELL, /^      <div id="dev-ws-rail-host" \/>$/m,
+    'the host is a top-level child of the shell body');
+  assert.match(SHELL, /<Island name="LegacyPortals"><LegacyPortals \/><\/Island>[\s\S]*?<div id="dev-ws-rail-host" \/>/,
+    'and sits with the other end-of-body anchors');
+
+  // The clearance under the last card: a fixed bar overlays what scrolls
+  // beneath it, so the content owes it a bar's height plus the offset it rests
+  // at — the inset included, now that the offset carries one.
+  assert.match(CSS, /padding-bottom: calc\(72px \+ var\(--ws-gap\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+
+  // Still NOT `.platform-safe-bar`: that rule puts the inset inside the
+  // element's own padding, which on this pill landed 8px under the tabs
+  // against 6px over them. The bar floats; the inset belongs in the offset.
   assert.ok(!/dev-ws-tabs platform-safe-bar/.test(WORKSHOP),
-    'the floating pill carries the inset in the gap, not in its padding');
+    'the floating pill carries the inset in its offset, not in its padding');
 });
 
 test('the ask composer shows its send button before it is touched', () => {
