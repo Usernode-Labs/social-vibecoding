@@ -2752,7 +2752,7 @@
     },
     {
       "name": "Read-only demo app's Dev tab renders its seeded proposal (#621)",
-      "path": "/app/staging-demo-readonly/dev?ws=all",
+      "path": "/app/staging-demo-readonly/dev?ws=all&group=stage&col=inreview",
       "expectText": "Staging demo read-only proposal"
     },
     {

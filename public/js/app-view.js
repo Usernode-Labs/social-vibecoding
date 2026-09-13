@@ -5371,11 +5371,43 @@ const AppView = {
     return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
   },
 
+  WORKSHOP_TAB_KEY: 'devWorkshopTab',
+  // `?ws=` resolved once and cached, mirroring `?group=` above — and for the
+  // same reason: a declared check runs against an empty localStorage and
+  // would otherwise always land on the default tab and assert nothing.
+  _workshopTabUrlOverride: undefined,
   _workshopTabParam() {
+    if (AppView._workshopTabUrlOverride !== undefined) return AppView._workshopTabUrlOverride;
     try {
       const v = new URLSearchParams(window.location.search).get('ws');
-      return AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
-    } catch { return null; }
+      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
+    } catch { AppView._workshopTabUrlOverride = null; }
+    return AppView._workshopTabUrlOverride;
+  },
+  /**
+   * Which tab the lander opens on: the deep link, then what you last chose,
+   * then Current status.
+   *
+   * REMEMBERED, because the three tabs are three different jobs and the one
+   * you want is usually the one you wanted last time — somebody working
+   * through the vote queue lands on the digest every time otherwise. Stored
+   * per browser rather than per account: it is a reading position, not a
+   * setting, and the same mechanism the grouping already uses.
+   */
+  _workshopTab() {
+    const url = AppView._workshopTabParam();
+    if (url) return url;
+    try {
+      const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      return AppView.WORKSHOP_TABS.indexOf(stored) !== -1 ? stored : 'status';
+    } catch { return 'status'; }
+  },
+  _setWorkshopTab(key) {
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
+    // does — otherwise `?ws=` would keep winning over every later press.
+    AppView._workshopTabUrlOverride = null;
+    try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
@@ -6189,9 +6221,14 @@ const AppView = {
         key: `need:${e.row.key}`,
         kind: 'claim',
         summary: null,
-        ask: 'Do you want to pick this up?',
-        yes: n ? { label: 'Yes', act: { fn: 'openTopic', args: ['issue', n] } } : null,
-        no: { label: 'No', act: null },
+        // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
+        // two labels: neither recorded anything, both moved the deck on, and
+        // offering them side by side asked the reader to tell apart a
+        // distinction the app does not make. Skip is the honest one — it says
+        // "not now" without implying the app filed a preference.
+        ask: 'Want to give this one a try?',
+        yes: n ? { label: "Let's take it", act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        no: null,
       });
     }
 
@@ -6247,7 +6284,7 @@ const AppView = {
       loading: false,
       emptyNote,
       // Which tab a URL asked for, or null for the viewer's own choice.
-      tab: AppView._workshopTabParam(),
+      tab: AppView._workshopTab(),
       // The models the Needs-you tab's ask box may talk to, read from the
       // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
       // from GET /api/models at startup) rather than a second list here —
