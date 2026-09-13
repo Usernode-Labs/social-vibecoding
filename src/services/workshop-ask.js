@@ -269,7 +269,7 @@ function buildContext(app, subject, evidence) {
  *   budget_exceeded — the asker is out of allowance and has no key on file
  *   llm_unavailable — no model is configured on this server
  */
-async function ask({ pool, config, app, userId, target, question, history, model }) {
+async function ask({ pool, config, app, userId, target, question, history, model, onToken, signal }) {
   const q = clip(question, QUESTION_MAX);
   if (!q) {
     const err = new Error('Ask a question first');
@@ -302,6 +302,8 @@ async function ask({ pool, config, app, userId, target, question, history, model
       question: q,
       history,
       model,
+      onToken,
+      signal,
       apiKey: billing.apiKey,
       telemetryContext: { pool, appId: app.id },
     });

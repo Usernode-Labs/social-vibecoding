@@ -66,6 +66,7 @@ import type { DevWorkshopView, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
+import { readAskStream } from './ask-stream';
 
 type SortKey = 'people' | 'activity' | 'open';
 type TabKey = 'status' | 'needs' | 'all';
@@ -953,12 +954,25 @@ function NeedsDeck({
       .filter((m) => !m.pending && !m.failed)
       .map((m) => ({ who: m.who, text: m.text }));
 
+    // Writes the trailing bubble in place. Every update goes through here
+    // so there is one rule about which bubble is being written: the LAST
+    // one on this row's thread, and only while it is still pending.
+    const writeTail = (patch: AskMsg) => setThreads((cur) => {
+      const t = cur[key];
+      if (!t || !t.length) return cur;
+      const last = t.length - 1;
+      if (!t[last].pending) return cur;
+      const next = t.slice();
+      next[last] = patch;
+      return { ...cur, [key]: next };
+    });
+
     let text: string;
     let failed = false;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
         credentials: 'same-origin',
         body: JSON.stringify({
           target: sending.askAbout,
@@ -967,10 +981,12 @@ function NeedsDeck({
           model: model || undefined,
         }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && typeof data.text === 'string' && data.text.trim()) {
-        text = data.text.trim();
-      } else {
+
+      // A refusal the server could make BEFORE opening the stream is still
+      // ordinary JSON with a real status, so that shape is handled first.
+      const isStream = (res.headers.get('content-type') || '').includes('text/event-stream');
+      if (!res.ok || !isStream || !res.body) {
+        const data = await res.json().catch(() => ({}));
         failed = true;
         // The server's own sentence wherever it wrote one: it is the only
         // thing that can say WHICH of "you are out of allowance", "too many
@@ -979,21 +995,30 @@ function NeedsDeck({
         text = (typeof data.error === 'string' && data.error.trim())
           ? data.error.trim()
           : 'That did not go through. Try asking again.';
+      } else {
+        const parsed = await readAskStream(res.body, (sofar) => {
+          // Still pending while it grows: the bubble keeps its live styling
+          // until `done` says the answer is complete.
+          writeTail({ who: 'ai', text: sofar, pending: true });
+        });
+        if (parsed.error) {
+          failed = true;
+          text = parsed.error;
+        } else if (parsed.text.trim()) {
+          // `done`'s assembled text wins over what was accumulated — a
+          // dropped chunk costs a flicker rather than a wrong answer.
+          text = parsed.text.trim();
+        } else {
+          failed = true;
+          text = 'That did not go through. Try asking again.';
+        }
       }
     } catch {
       failed = true;
       text = 'That did not go through. Check your connection and try again.';
     }
 
-    setThreads((cur) => {
-      const t = cur[key];
-      if (!t || !t.length) return cur;
-      const last = t.length - 1;
-      if (!t[last].pending) return cur;
-      const next = t.slice();
-      next[last] = { who: 'ai', text, failed };
-      return { ...cur, [key]: next };
-    });
+    writeTail({ who: 'ai', text, failed });
     setAsking((cur) => {
       const next = { ...cur };
       delete next[key];

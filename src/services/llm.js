@@ -577,7 +577,13 @@ async function createMessageWithTelemetry({
   }
 }
 
-async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey, telemetryContext }) {
+// The ceiling every streamed call has always had. Kept as the DEFAULT
+// rather than a constant so a short-answer caller can ask for less — a
+// two-sentence reply in a phone-sized pane has no use for 8192, and an
+// unbounded one is a runaway nobody sees until the bill.
+const STREAM_MAX_TOKENS_DEFAULT = 8192;
+
+async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey, telemetryContext, maxTokens }) {
   // BYOK (#30): when the caller passes a user-provided key, we spin up
   // a transient client for this request instead of reusing the shared
   // one. Otherwise fall back to the admin key. Creating a client per
@@ -607,7 +613,9 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
     const runStream = async (runModel, { withFallbacks }) => {
       const params = {
         model: runModel,
-        max_tokens: 8192,
+        max_tokens: Number.isInteger(maxTokens) && maxTokens > 0
+          ? maxTokens
+          : STREAM_MAX_TOKENS_DEFAULT,
         system: systemPrompt,
         messages,
         stream: true,
@@ -2213,12 +2221,14 @@ const WORKSHOP_ASK_MAX_TOKENS = 700;
 // this box is for.
 const WORKSHOP_ASK_HISTORY_MAX = 8;
 
-async function answerWorkshopQuestion({
-  contextJson, question, history, model, apiKey, telemetryContext,
-}) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
-  if (!activeClient) throw new Error('LLM not initialized');
-
+/**
+ * The prompt and the turns, built once for the one call that uses them.
+ *
+ * Split out from the call itself so a test can assert on what would be
+ * sent without a client, and so the streaming path and any later
+ * non-streaming one can never drift into two different prompts.
+ */
+function buildWorkshopAskRequest({ contextJson, question, history, model }) {
   const system = `You answer one question about one proposed change to a collaboratively built app. The person asking is about to vote on whether it goes in, and they are not necessarily a developer.
 
 You are given a JSON snapshot of the item: its title, the plain-language summary written for voters, its state, and — when available — the code diff and the discussion on it.
@@ -2257,23 +2267,51 @@ ${stripLoneSurrogates(String(question || '')).slice(0, 1000)}`;
   // allowlist is that module's job, and a second copy of it here is a
   // second thing to keep in step. Falsy means "no picker choice": the box
   // has its own default, which is not the dev session's.
-  const resolved = model || WORKSHOP_ASK_MODEL;
-  const resp = await createMessageWithTelemetry({
-    activeClient,
-    params: {
-      model: resolved,
-      max_tokens: WORKSHOP_ASK_MAX_TOKENS,
-      system,
-      messages,
-    },
-    telemetryContext,
-    defaults: { backend: 'helper', component: 'workshop_ask' },
+  return { system, messages, model: model || WORKSHOP_ASK_MODEL };
+}
+
+/**
+ * Ask, and stream the answer.
+ *
+ * Through `streamChat` rather than a plain create, because that is this
+ * module's single funnel for every streamed call — its telemetry, its
+ * BYOK client handling and its Fable fallback logic all live there, and a
+ * second streaming path would be a second place to keep them.
+ *
+ * `onToken` is optional. Without it this is an ordinary await that happens
+ * to have streamed under the hood, which is what the tests and any later
+ * non-streaming caller want; with it, the caller gets the text as it
+ * arrives AND the assembled text at the end, so the route never has to
+ * reassemble what it forwarded.
+ *
+ * The component is named in `telemetryContext` rather than left to
+ * streamChat's `other_helper` default: this is a distinct spend line and
+ * worth being able to read on its own.
+ */
+async function answerWorkshopQuestion({
+  contextJson, question, history, model, apiKey, telemetryContext, onToken, signal,
+}) {
+  const req = buildWorkshopAskRequest({ contextJson, question, history, model });
+  const out = await streamChat({
+    messages: req.messages,
+    systemPrompt: req.system,
+    model: req.model,
+    maxTokens: WORKSHOP_ASK_MAX_TOKENS,
+    onToken,
+    signal,
     apiKey,
+    telemetryContext: {
+      ...(telemetryContext || {}),
+      backend: 'helper',
+      component: 'workshop_ask',
+    },
   });
 
-  const text = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
+  const text = (out.text || '').trim();
   if (!text) throw new Error('Empty answer in workshop ask response');
-  return { text, usage: resp.usage, model: resolved };
+  // servedModel, not the requested one: a fallback that swapped the model
+  // is what the spend should be costed against.
+  return { text, usage: out.usage, model: out.servedModel || req.model };
 }
 
 // Test hook: swap the shared client for a stub so streamChat's fallback

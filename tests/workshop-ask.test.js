@@ -71,16 +71,34 @@ function dispatch(map) {
   };
 }
 
-const answerResp = (text) => ({
+// The ask goes through llm.streamChat now, so the stub is the STREAM
+// surface (tests/llm-fallback.test.js' shape): .on('text', …) feeds the
+// token callback and finalMessage() resolves the canned response.
+const answerResp = (text, served = 'claude-haiku-4-5') => ({
+  model: served,
+  stop_reason: 'end_turn',
+  stop_details: null,
   content: [{ type: 'text', text }],
   usage: { input_tokens: 900, output_tokens: 120 },
 });
 
-function withStubClient(response, fn) {
+// `chunks` lets a test drive real token callbacks; by default the whole
+// answer arrives as one.
+function withStubClient(response, fn, chunks = null) {
   const calls = [];
+  const makeStream = (params) => {
+    calls.push(params);
+    const pieces = chunks
+      || [((response.content || []).find((b) => b.type === 'text') || {}).text || ''];
+    return {
+      on(event, handler) { if (event === 'text') pieces.forEach((c) => handler(c)); },
+      finalMessage: async () => response,
+    };
+  };
   const prev = llm._setClientForTests({
     calls,
-    messages: { create: async (params) => { calls.push(params); return response; } },
+    messages: { stream: makeStream },
+    beta: { messages: { stream: makeStream } },
   });
   return Promise.resolve(fn(calls)).finally(() => llm._setClientForTests(prev));
 }
@@ -494,10 +512,54 @@ test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', as
     const a = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q' });
     assert.equal(a.model, 'claude-haiku-4-5');
     assert.equal(calls[0].model, 'claude-haiku-4-5');
+  });
+  await withStubClient(answerResp('Short answer.', 'claude-sonnet-5'), async (calls) => {
     const b = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q', model: 'claude-sonnet-5' });
     assert.equal(b.model, 'claude-sonnet-5');
-    assert.equal(calls[1].model, 'claude-sonnet-5');
+    assert.equal(calls[0].model, 'claude-sonnet-5');
   });
+});
+
+// The reported model is the one that ANSWERED, not the one asked for. It
+// is what the spend is costed against (services/workshop-ask.js hands it
+// straight to estimateCostCents), so a fallback that swapped the model
+// must not be billed at the requested model's rate.
+test('answerWorkshopQuestion reports the served model, not the requested one', async () => {
+  await withStubClient(answerResp('Short answer.', 'claude-haiku-4-5'), async () => {
+    const out = await llm.answerWorkshopQuestion({
+      contextJson: '{}', question: 'q', model: 'claude-sonnet-5',
+    });
+    assert.equal(out.model, 'claude-haiku-4-5');
+  });
+});
+
+// The box asks for a short answer and must not inherit streamChat's 8192
+// default: an unbounded reply in a third of a phone screen is a runaway
+// nobody sees until the bill.
+test('answerWorkshopQuestion caps max_tokens well below the streaming default', async () => {
+  await withStubClient(answerResp('Short answer.'), async (calls) => {
+    await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q' });
+    assert.equal(calls[0].max_tokens, 700);
+    assert.ok(calls[0].max_tokens < 8192);
+  });
+});
+
+// Tokens reach the caller as they arrive, AND the assembled text comes
+// back at the end — the route forwards the first and sends the second on
+// `done`, so a dropped chunk costs a flicker rather than a wrong answer.
+test('answerWorkshopQuestion streams tokens and still returns the whole answer', async () => {
+  const seen = [];
+  await withStubClient(
+    answerResp('One two three.'),
+    async () => {
+      const out = await llm.answerWorkshopQuestion({
+        contextJson: '{}', question: 'q', onToken: (t) => seen.push(t),
+      });
+      assert.deepEqual(seen, ['One ', 'two ', 'three.']);
+      assert.equal(out.text, 'One two three.');
+    },
+    ['One ', 'two ', 'three.']
+  );
 });
 
 test('answerWorkshopQuestion caps how much history rides along', async () => {
