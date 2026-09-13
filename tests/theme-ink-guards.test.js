@@ -359,6 +359,12 @@ test('the light and dark palettes declare the same variables', () => {
     // rules are all that keep content from running underneath it. Root-scoped
     // for the same reason as the gap; a `.dark` copy could only restate it.
     '--ws-bar',
+    // How far the Workshop's pill floats off the bottom — a length, derived
+    // from the home-indicator inset rather than from any colour. Root-scoped
+    // with the other two because the bar is portalled out of `.dev-ws` and
+    // could not read a property declared there. A `.dark` copy could only
+    // restate it.
+    '--ws-lift',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],

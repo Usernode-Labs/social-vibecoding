@@ -136,6 +136,26 @@
      floating: measured at 402x874, 51px of slack above the bar at a 34px
      inset against 17px at zero. Counting only the box gives 9px at both. */
   --ws-bar: 72px;
+  /* HOW FAR THE PILL FLOATS OFF THE BOTTOM. The bar is a rounded pill again —
+     WhatsApp's shape, not a strip fused to the edge — so it needs air beneath
+     it, and the question is how much.
+
+     NOT the full home-indicator inset. That is Apple's GESTURE zone, 34px;
+     the indicator GRAPHIC is a thin line about 8px off the bottom. Reserving
+     the whole inset is what made the pill read as stopping short of the phone
+     — the complaint that started this. Sixteen less than the inset clears the
+     line with room to spare and sits the pill visibly at the bottom.
+
+     `max()` rather than a bare subtraction because a device with no indicator
+     reports 0, and a bare subtraction would tuck the pill off the screen.
+
+     TWENTY, NOT SIXTEEN: 18px off the bottom was still reading high on a real
+     phone, so this is the second trim, from a preview rather than a guess.
+     There is not much further to go — the indicator LINE sits about 8px up and
+     is roughly 5px tall, so its top edge is near 13px, and a pill resting
+     below that starts to meet it. 14px is the last value with visible air
+     between the two; anything smaller is a collision, not a nudge. */
+  --ws-lift: max(8px, calc(var(--platform-safe-bottom, 0px) - 20px));
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
   /* Content-row height of the mobile install strip (#1372). Declared here,
@@ -12089,11 +12109,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-tabbody {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; gap: 10px;
-  /* A fixed bar overlays what scrolls beneath it, so a scrolling tab's last
-     card owes it the bar's box. The air above it comes from `#dev-body`'s own
-     bottom padding, which is already `--ws-gap` — adding the token here too
-     spent it twice. */
-  padding-bottom: var(--ws-bar);
+  /* WHAT SITS BETWEEN `.dev-ws`'s FOOT AND THE PILL'S TOP EDGE. A fixed bar
+     overlays what scrolls beneath it, and the pill's top is `--ws-bar +
+     --ws-lift` above the screen's foot — while `.dev-ws` itself already ends
+     `--ws-gap + the inset` above it, reserved by `#dev-body`'s bottom padding
+     and `.platform-safe-scroll`.
+
+     Subtracting the inset is what makes the result INDEPENDENT of it: the
+     remaining air works out to `--ws-gap` exactly, whatever the device
+     reports. Measured, the version without it gave 0px of air at a 0 inset
+     and 34px at a 34px one — the composer touching the pill on one phone and
+     floating well clear of it on another. */
+  padding-bottom: calc(var(--ws-bar) + var(--ws-lift) - var(--platform-safe-bottom, 0px));
 }
 /* NEEDS YOU USED TO BE EXEMPT FROM THAT, and can't be any more. The exemption
    read: the deck is fitted, nothing ever passes beneath the rail, so the
@@ -12127,22 +12154,25 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      from #4149 made structurally impossible rather than merely corrected. */
   order: 1;
   position: fixed;
-  /* EDGE TO EDGE, AND ITS FILL REACHES THE TRUE BOTTOM. The floating pill this
-     replaces rested `8px + the inset` up, which is the safe rectangle's floor
-     — correct by the letter of the inset and wrong to the eye, because the bar
-     read as stopping short of the phone. The conventional answer is the one
-     iOS itself uses: the SURFACE runs to the physical edge and the CONTENT is
-     padded off the home indicator, so nothing tappable sits where the system
-     takes a gesture and nothing looks like it is hovering.
+  /* A FLOATING PILL, RESTING LOW. It went edge-to-edge for one round, on the
+     reasoning that a surface reaching the physical edge is what iOS does with
+     its own tab bars. It is — but it is not what this app wants: the shape
+     that reads right here is the oval, the way WhatsApp draws its bar, and
+     the complaint was never the shape. It was that the oval sat too high,
+     because it reserved the whole gesture inset beneath itself.
 
-     That is why the inset moved out of `bottom` and into `padding-bottom`.
-     It is still spent exactly once. */
-  left: 0; right: 0; bottom: 0;
+     So: the pill returns, and `--ws-lift` decides the air under it — the
+     indicator's graphic cleared, its gesture zone not reserved twice over.
+     The inset is still spent exactly once, now inside that token. */
+  left: 10px; right: 10px;
+  bottom: var(--ws-lift);
+  max-width: calc(760px - 20px);
+  margin-inline: auto;
   z-index: 30;
   display: flex; gap: 4px;
-  padding: 6px 6px calc(6px + var(--platform-safe-bottom, 0px));
-  border-radius: 0;
-  border: 0; border-top: 1px solid var(--app-sheet-line);
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -12298,7 +12328,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      screen edge. */
   --ws-area: calc(
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
-    - var(--ws-bar) - var(--ws-gap)
+    - var(--ws-bar) - var(--ws-lift)
   );
 }
 .dev-ws-needs {
