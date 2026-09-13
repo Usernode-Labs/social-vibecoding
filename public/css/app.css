@@ -147,8 +147,15 @@
      line with room to spare and sits the pill visibly at the bottom.
 
      `max()` rather than a bare subtraction because a device with no indicator
-     reports 0, and `0 - 16px` would tuck the pill off the screen. */
-  --ws-lift: max(10px, calc(var(--platform-safe-bottom, 0px) - 16px));
+     reports 0, and a bare subtraction would tuck the pill off the screen.
+
+     TWENTY, NOT SIXTEEN: 18px off the bottom was still reading high on a real
+     phone, so this is the second trim, from a preview rather than a guess.
+     There is not much further to go — the indicator LINE sits about 8px up and
+     is roughly 5px tall, so its top edge is near 13px, and a pill resting
+     below that starts to meet it. 14px is the last value with visible air
+     between the two; anything smaller is a collision, not a nudge. */
+  --ws-lift: max(8px, calc(var(--platform-safe-bottom, 0px) - 20px));
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
   /* Content-row height of the mobile install strip (#1372). Declared here,

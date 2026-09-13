@@ -2448,7 +2448,11 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // THE LIFT IS NOT THE WHOLE INSET. 34px is Apple's GESTURE zone; the
   // indicator GRAPHIC is a thin line about 8px off the bottom. Reserving all
   // of it is what made the pill read as stopping short of the phone.
-  assert.match(CSS, /--ws-lift: max\(10px, calc\(var\(--platform-safe-bottom, 0px\) - 16px\)\);/);
+  // Trimmed twice, the second time from a preview on a real phone rather than
+  // a guess. There is little further to go: the indicator LINE sits about 8px
+  // up and is roughly 5px tall, so its top edge is near 13px — 14px is the
+  // last value with visible air between the two.
+  assert.match(CSS, /--ws-lift: max\(8px, calc\(var\(--platform-safe-bottom, 0px\) - 20px\)\);/);
   // `max()` because a device with no indicator reports 0, and `0 - 16px` would
   // tuck the pill off the bottom of the screen.
   const lift = /--ws-lift: ([^;]+);/.exec(CSS);
