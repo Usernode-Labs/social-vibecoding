@@ -43,6 +43,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   ArrowUpIcon,
@@ -1078,6 +1079,49 @@ function NeedsDeck({
   );
 }
 
+/**
+ * WHERE THE PHONE'S TAB BAR RENDERS.
+ *
+ * It has to pin to the real viewport, and it cannot do that in place:
+ * `position: fixed` resolves against the nearest ancestor that establishes a
+ * containing block, and the Dev board's frame wears `.dc-lift-strip`, whose
+ * `backdrop-filter` is one — so `bottom: 0` there means the bottom of a
+ * frosted panel, not of the screen. Walking the rail's real ancestor chain,
+ * that wrapper is the ONLY blocker, and it is shared with the chat and topic
+ * frames and three panels, so the bar comes out to #dev-ws-rail-host — an
+ * empty anchor the shell keeps outside the frost (Shell.tsx) — rather than
+ * the blur coming off.
+ *
+ * TWO RULES THIS HOOK EXISTS TO KEEP:
+ *
+ * 1. IT RETURNS null UNTIL AFTER MOUNT, so the first render is always the
+ *    in-place one and never disagrees with markup that was prerendered. A
+ *    hydration mismatch is a console error, and a console error on any route
+ *    fails proposal checks.
+ *
+ * 2. IT ONLY PORTALS BELOW THE BREAKPOINT. Above 700px the strip is the
+ *    segmented control at the head of the column — in flow, in place, not
+ *    fixed — so there is nothing to lift out. This query and app.css's
+ *    `@media (min-width: 700px)` are one decision in two places and have to
+ *    move together.
+ */
+function useRailHost(): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 700px)');
+    const apply = () => {
+      setHost(mq.matches ? null : document.getElementById('dev-ws-rail-host'));
+    };
+    apply();
+    // `change` rather than a resize listener: it fires once per crossing
+    // instead of on every intermediate width, and it is what the breakpoint
+    // actually means.
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+  return host;
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -1103,6 +1147,7 @@ export function DevWorkshop(): ReactNode {
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
   // `autoExpand` rather than from an effect.
+  const railHost = useRailHost();
   const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -1200,72 +1245,70 @@ export function DevWorkshop(): ReactNode {
   const slug = v.slug || '';
   const canPost = !!v.canPost;
 
+  /* ── The three destinations ──
+     ONE NODE, RENDERED IN ONE OF TWO PLACES. Above the breakpoint it stays
+     here, in flow at the head of the column, as the segmented control. Below
+     it, `useRailHost` hands back the shell's out-of-frost anchor and the same
+     element is portalled there so it can be `position: fixed` to the real
+     viewport — see app.css, and the hook for why the frost forces it out.
+
+     It LEADS the markup either way. Focus follows the DOM rather than the
+     painting, so a nav announced before the content it navigates is the
+     better half of that trade, and on the narrow width the portal puts it
+     last in the body — which is the same answer, reached the other way.
+
+     NO `.platform-safe-bar` HERE, deliberately. That rule adds the
+     home-indicator inset to the element's own bottom PADDING, which on this
+     pill landed 8px under the tabs against 6px over them. The bar floats — a
+     rounded pill with air beneath it — so the inset belongs in the offset
+     that positions it, not inside it. */
+  const railNode = (
+        <nav
+          className="dev-ws-tabs"
+          data-ws-tabs=""
+          role="tablist"
+          aria-label="Workshop sections"
+        >
+          {/* The TRACK, separate from the nav, and `display: contents` on a
+              phone so the bar there is byte-identical to what it was: the nav
+              itself is the pill, edge to edge.
+
+              Above 700px the two have different jobs. The nav is the POSITIONING
+              box — it inherits the 760px reading column and its centring, which
+              is what keeps the strip anchored to the same left edge whether the
+              pane beside it is the 760px category list or the full-bleed board.
+              The track is the pill, and it hugs its three labels: a segmented
+              control spanning the reading column would read as a header bar
+              rather than as a control, which is the same reason
+              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`. */}
+          <div className="dev-ws-tabtrack">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              className="dev-ws-tab"
+              data-ws-tab-btn={t.key}
+              aria-selected={tab === t.key}
+              onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
+            >
+              {/* The glyph is decoration over a label that is already there, so
+                  it is hidden from the accessibility tree rather than given a
+                  name of its own — otherwise every tab announces twice. Its
+                  size comes from the class, not a prop: icons.tsx has no size
+                  variant on purpose, and every other `.dev-ws-*` measurement
+                  lives in app.css beside its neighbours. */}
+              <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
+              <span className="dev-ws-tab-label">{t.label}</span>
+            </button>
+          ))}
+          </div>
+        </nav>
+  );
+
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
-      {/* ── The three destinations ──
-          FIRST IN THE DOM, and on a phone LAST on the screen: `order` moves
-          it, not the markup. Focus follows the DOM rather than the painting,
-          so whichever way round they disagree somebody gets a tab order that
-          does not match what they see — and a nav announced BEFORE the
-          content it navigates is the better half of that trade. The narrow
-          case is the one that reorders because a touch surface is where the
-          mismatch costs least.
-
-          On a phone it is a sticky bar at the bottom: navigation rather than
-          a control acting on what is above it, and the thumb is at the
-          bottom of the hand. ABOVE 700px it is a row of underlined words at
-          the top of the column instead — see app.css. A pill pinned to the
-          floor of a 900px window puts the switch as far from the reading as
-          the window allows, and the eye crosses the whole height to use it.
-
-          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
-          pinned against the screen edge: it adds the home-indicator inset to
-          the element's own bottom padding, which on this pill landed 8px
-          under the tabs against 6px over them. This bar FLOATS — a rounded
-          pill with air beneath it — so the inset belongs in that air instead,
-          and `--ws-gap` in app.css carries it (keyboard suppression
-          included). */}
-      <nav
-        className="dev-ws-tabs"
-        data-ws-tabs=""
-        role="tablist"
-        aria-label="Workshop sections"
-      >
-        {/* The TRACK, separate from the nav, and `display: contents` on a
-            phone so the bar there is byte-identical to what it was: the nav
-            itself is the pill, edge to edge.
-
-            Above 700px the two have different jobs. The nav is the POSITIONING
-            box — it inherits the 760px reading column and its centring, which
-            is what keeps the strip anchored to the same left edge whether the
-            pane beside it is the 760px category list or the full-bleed board.
-            The track is the pill, and it hugs its three labels: a segmented
-            control spanning the reading column would read as a header bar
-            rather than as a control, which is the same reason
-            @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`. */}
-        <div className="dev-ws-tabtrack">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            className="dev-ws-tab"
-            data-ws-tab-btn={t.key}
-            aria-selected={tab === t.key}
-            onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
-          >
-            {/* The glyph is decoration over a label that is already there, so
-                it is hidden from the accessibility tree rather than given a
-                name of its own — otherwise every tab announces twice. Its
-                size comes from the class, not a prop: icons.tsx has no size
-                variant on purpose, and every other `.dev-ws-*` measurement
-                lives in app.css beside its neighbours. */}
-            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
-            <span className="dev-ws-tab-label">{t.label}</span>
-          </button>
-        ))}
-        </div>
-      </nav>
+      {railHost ? null : railNode}
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a rail's worth of
@@ -1581,6 +1624,10 @@ export function DevWorkshop(): ReactNode {
 
       </div>
 
+      {/* The same node, lifted out of the frost. `railHost` is null above the
+          breakpoint and until after mount, so in both of those cases the rail
+          renders in place above and this is nothing. */}
+      {railHost ? createPortal(railNode, railHost) : null}
     </div>
   );
 }
