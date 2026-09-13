@@ -2437,21 +2437,29 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // third absence check in this file to need saying so.
   const railDecls = rail[1].replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/position: sticky/.test(railDecls), 'not to its container');
-  // EDGE TO EDGE, FILL TO THE TRUE BOTTOM. The floating pill this replaces
-  // rested `8px + the inset` up — the safe rectangle's floor, correct by the
-  // letter of the inset and wrong to the eye, because the bar read as stopping
-  // short of the phone. The surface reaches the physical edge now and the
-  // CONTENT is padded off the home indicator instead, which is what iOS does
-  // with its own tab bars: nothing tappable where the system takes a gesture.
-  assert.match(rail[1], /left: 0; right: 0; bottom: 0;/, 'the surface reaches the edge');
-  // The inset is STILL spent exactly once — it just moved from the offset into
-  // the padding. A fixed element is out of flow, so `.platform-safe-scroll`'s
-  // reservation cannot double-count it the way it did in #4149.
-  assert.match(rail[1], /padding: 6px 6px calc\(6px \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // A FLOATING PILL, RESTING LOW. It went edge-to-edge for one round, on the
+  // reasoning that a surface reaching the physical edge is what iOS does with
+  // its own tab bars. It is — but it is not what this app wants: the shape
+  // that reads right here is the oval, and the complaint was never the shape.
+  // It was that the oval sat too high, reserving the whole gesture inset.
+  assert.match(rail[1], /border-radius: 999px;/, 'a pill, not a strip');
+  assert.match(rail[1], /left: 10px; right: 10px;/, 'inset from the side edges');
+  assert.match(rail[1], /bottom: var\(--ws-lift\);/, 'and floating on the lift');
+  // THE LIFT IS NOT THE WHOLE INSET. 34px is Apple's GESTURE zone; the
+  // indicator GRAPHIC is a thin line about 8px off the bottom. Reserving all
+  // of it is what made the pill read as stopping short of the phone.
+  // Trimmed twice, the second time from a preview on a real phone rather than
+  // a guess. There is little further to go: the indicator LINE sits about 8px
+  // up and is roughly 5px tall, so its top edge is near 13px — 14px is the
+  // last value with visible air between the two.
+  assert.match(CSS, /--ws-lift: max\(8px, calc\(var\(--platform-safe-bottom, 0px\) - 20px\)\);/);
+  // `max()` because a device with no indicator reports 0, and `0 - 16px` would
+  // tuck the pill off the bottom of the screen.
+  const lift = /--ws-lift: ([^;]+);/.exec(CSS);
+  assert.match(lift[1], /^max\(/, 'the floor is a max, not a bare subtraction');
+  // The inset is spent ONCE in the bar rule — inside the lift, via the token.
   const insetSpends = (rail[1].replace(/\/\*[\s\S]*?\*\//g, '').match(/--platform-safe-bottom/g) || []).length;
-  assert.equal(insetSpends, 1, 'the inset appears once in the bar rule, not twice');
-  assert.match(rail[1], /border-radius: 0;/, 'a strip, not a pill');
-  assert.match(rail[1], /border-top: 1px solid var\(--app-sheet-line\);/);
+  assert.equal(insetSpends, 0, 'the bar reads the lift, not the inset directly');
   // `order` survives for the single render before the portal takes over.
   assert.match(rail[1], /^\s*order: 1;$/m);
 
@@ -2503,9 +2511,15 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   const area = /\.dev-ws \{[\s\S]*?--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-bar\)/, 'the floor takes the bar off');
+  assert.match(area[1], /var\(--ws-lift\)/, 'and the air it floats on');
   // ...and a scrolling tab's last card clears one.
-  assert.match(CSS, /padding-bottom: var\(--ws-bar\);/,
-    'the air above it is #dev-body\'s own bottom padding, already --ws-gap');
+  // WHAT SITS BETWEEN `.dev-ws`'s FOOT AND THE PILL'S TOP. Subtracting the
+  // inset is what makes the remaining air independent of it — it works out to
+  // `--ws-gap` exactly, whatever the device reports. Measured, the version
+  // without it gave 0px of air at a 0 inset and 34px at a 34px one: the
+  // composer touching the pill on one phone and floating clear of it on
+  // another.
+  assert.match(CSS, /padding-bottom: calc\(var\(--ws-bar\) \+ var\(--ws-lift\) - var\(--platform-safe-bottom, 0px\)\);/);
   // AND NEEDS YOU IS NO LONGER EXEMPT. It was, while the rail sat in flow and
   // took its own space; a fixed bar overlays every tab equally. With the
   // exemption left in, the deck filled to the foot of `.dev-ws` and the
