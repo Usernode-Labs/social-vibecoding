@@ -175,7 +175,8 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
       const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
       assert.ok(headUpdate, 'stored head advanced');
       assert.equal(headUpdate.params[0], newHead);
-      assert.ok(sqls.some((s) => /DELETE FROM pr_votes WHERE session_id = \$1/.test(s)), 'tally cleared');
+      assert.ok(sqls.some((s) => /approval_epoch = approval_epoch \+ 1/.test(s)),
+        'tally cleared by moving the epoch on (#2038) rather than deleting rows');
 
       assert.equal(sysMessages.length, 1, 'one re-review note');
       assert.match(sysMessages[0].content, /updated on GitHub/i);

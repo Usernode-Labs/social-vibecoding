@@ -391,6 +391,14 @@ test('previewStaging on a wide viewport mounts the slot and requests a docked op
   assert.equal(DevChat.stagingPanel.open, false, 'no slot on narrow viewports');
   assert.equal(calls[1].opts.dock, false, 'fullscreen open requested');
   assert.equal(calls[1].opts.jump, true, 'jump intent carried');
+
+  // The overview retains an invisible workspace to preserve drafts. A
+  // header preview must not dock against that hidden slot on desktop.
+  sandbox.AppView._stagingDockViewport = () => true;
+  sandbox.document.querySelector = (selector) => selector === '.dev-change-workspace[hidden]' ? {} : null;
+  DevChat.previewStaging('https://msg-url.example', false);
+  assert.equal(calls[2].opts.dock, false, 'overview preview remains fullscreen');
+  assert.equal(DevChat.stagingPanel.open, false, 'hidden workspace is not opened for docking');
 });
 
 test('leaving the session view tears the docked panel down', () => {

@@ -94,47 +94,19 @@ try {
     await page.waitForTimeout(900);
     await page.screenshot({ path: path.join(output, `dev-chat-${phase}-${width}.png`) });
     if (phase === 'after' && width === 360) {
-      const trigger = page.locator('.dc-session-details-trigger');
-      assert.equal(await page.locator('#dc-venue-select').isVisible(), false);
-      assert.equal(await page.locator('#dc-pr-header-link').isVisible(), false);
+      // #1940: no Details sheet — the provider and the PR link are inline at
+      // every width again, and the strip must still fit a 360px phone.
+      assert.ok(await page.locator('#dc-venue-select').isVisible(), 'Built with is shown directly');
+      assert.ok(await page.locator('#dc-pr-header-link').isVisible(), 'the PR link is shown directly');
       assert.ok(await page.locator('#dc-mode-switch').isVisible(), 'Preview/Building remains available');
-      await trigger.click();
-      const dialog = page.getByRole('dialog', { name: 'Session details' });
-      await dialog.waitFor();
-      await dialog.getByText('add help assistant', { exact: true }).waitFor();
-      await page.waitForTimeout(400);
-      await page.screenshot({ path: path.join(output, 'dev-chat-details-after-360.png') });
-      await dialog.getByRole('button', { name: 'Done' }).focus();
-      await page.keyboard.press('Shift+Tab');
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'dc-venue-details-select', 'focus stays inside Details');
-      await page.keyboard.press('Escape');
-      await dialog.waitFor({ state: 'hidden' });
-      assert.ok(await trigger.evaluate(el => el === document.activeElement), 'focus returns to Details');
-      await trigger.click();
-      await dialog.getByRole('button', { name: 'Done' }).click();
-      await dialog.waitFor({ state: 'hidden' });
-      await trigger.click();
-      await dialog.getByRole('button', { name: 'PR #21', exact: true }).click();
-      await dialog.waitFor({ state: 'hidden' });
-      await page.locator('.dc-pr-card-highlight').waitFor();
-      await trigger.click();
-      await page.locator('#dc-venue-details-select').click();
+      assert.equal(await page.locator('.dc-session-details-trigger').count(), 0, 'no Details button');
+      const strip = await page.locator('#dc-session-header').boundingBox();
+      const venue = await page.locator('#dc-venue-select').boundingBox();
+      assert.ok(venue.x + venue.width <= strip.x + strip.width, 'the provider fits inside the strip');
+      await page.locator('#dc-venue-select').click();
       await page.getByText('Where do you want to work on this?', { exact: true }).waitFor();
-      assert.equal(await page.locator('.un-modal').count(), 0, 'outgoing Details is gone before chooser opens');
       await page.keyboard.press('Escape');
       await page.getByText('Where do you want to work on this?', { exact: true }).waitFor({ state: 'hidden' });
-      await page.evaluate(() => { DevChat.isStreaming = true; DevChat._composerBusy = true; DevChat._repaintSessionHeader(); });
-      await trigger.click();
-      assert.ok(await page.locator('#dc-venue-details-select').isDisabled(), 'busy session cannot change provider');
-      await page.locator('#dc-venue-details-select .dc-venue-busy').waitFor();
-      await page.keyboard.press('Escape');
-      await dialog.waitFor({ state: 'hidden' });
-      await page.evaluate(() => { DevChat.isStreaming = false; DevChat._composerBusy = false; DevChat._repaintSessionHeader(); });
-      await trigger.click();
-      await dialog.waitFor();
-      await page.setViewportSize({ width: 800, height: 780 });
-      await dialog.waitFor({ state: 'hidden' });
-      assert.ok(await page.locator('#dc-venue-select').isVisible(), 'desktop regains inline controls');
       await page.setViewportSize({ width: 320, height: 780 });
       await page.emulateMedia({ colorScheme: 'dark' });
       await page.evaluate(() => {
@@ -142,13 +114,9 @@ try {
         DevChat._repaintSessionHeader();
       });
       assert.ok((await page.locator('.dc-session-title').boundingBox()).height <= 41, 'long title is capped at two header lines');
-      await trigger.click();
-      await dialog.waitFor();
-      await page.waitForTimeout(400);
-      assert.ok(await dialog.evaluate(el => el.getBoundingClientRect().right <= innerWidth), '320px Details fits');
-      await page.screenshot({ path: path.join(output, 'dev-chat-details-dark-320.png') });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px Dev chat has no horizontal overflow');
+      await page.screenshot({ path: path.join(output, 'dev-chat-dark-320.png') });
       await page.evaluate(() => { location.hash = '#apps'; });
-      await dialog.waitFor({ state: 'hidden' });
       await page.locator('#browse-list .browse-row').first().waitFor();
       await page.waitForTimeout(900);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px Discover has no horizontal overflow');
@@ -157,7 +125,7 @@ try {
     if (phase === 'after' && width === 1280) {
       assert.ok(await page.locator('#dc-venue-select').isVisible());
       assert.ok(await page.locator('#dc-pr-header-link').isVisible());
-      assert.equal(await page.locator('.dc-session-details-trigger').isVisible(), false);
+      assert.equal(await page.locator('.dc-session-details-trigger').count(), 0);
     }
     // Run mutation checks AFTER both comparison captures, so the before and
     // after screenshots use the exact same navigation and untouched data.

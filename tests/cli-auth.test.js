@@ -11,6 +11,10 @@ const routes = require('../src/routes/cli-auth');
 const config = require('../src/config');
 const { shellMarkup } = require('./lib/shell-markup');
 
+// Read before any fixture runs: PRODUCTION_ORIGIN was resolved from this at
+// the require above, and setPlatformKeys() sets USERNODE_DOMAIN afterwards.
+const domainAtRequire = process.env.USERNODE_DOMAIN;
+
 test('device and access secrets have the exact canonical 256-bit formats', () => {
   for (let i = 0; i < 100; i += 1) {
     const device = cliAuth.makeDeviceCode();
@@ -319,4 +323,22 @@ test('revoking a credential detaches the machines that attached with it', () => 
   assert.match(routes, /releaseLeasesForTokens\(client,/);
   // …but the wakeup happens after COMMIT.
   assert.equal((routes.match(/localAgent\.notifyReleased\(/g) || []).length, 2);
+});
+
+test('the shared test fixture pairs CLI_CANONICAL_ORIGIN with the compiled production origin', () => {
+  // config.load() exits the process when cliAuthEnabled and the canonical
+  // origin is not exactly PRODUCTION_ORIGIN, so the fixture that supplies it
+  // has to agree with the constant rather than restate it. PRODUCTION_ORIGIN
+  // reads USERNODE_DOMAIN once, at first require of cli-auth-constants; this
+  // file requires the constants and the fixture in the order every other
+  // suite does, which is the order that made a hardcoded literal drift.
+  const { setPlatformKeys } = require('./platform-keys');
+  const env = setPlatformKeys();
+  assert.equal(env.CLI_CANONICAL_ORIGIN, constants.PRODUCTION_ORIGIN);
+  // And the default itself, for a run that has not overridden the domain.
+  // Guarded rather than asserted flat, because a self-hosted checkout with
+  // USERNODE_DOMAIN exported is a supported way to run these tests.
+  if (!domainAtRequire) {
+    assert.equal(constants.PRODUCTION_ORIGIN, 'https://my.onhomeroom.com');
+  }
 });

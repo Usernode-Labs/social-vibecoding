@@ -276,7 +276,7 @@ test('shared imported Underway rows gain full proposal details without widening 
 
     const detail = capturedQueries.find(
       (q) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(q.sql));
-    assert.deepStrictEqual(detail.params, [[88]],
+    assert.deepStrictEqual(detail.params, [[88], false],
       'only the imported row selected by the privacy query is enriched');
     assert.match(detail.sql, /cs\.source = 'imported'/);
     assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);

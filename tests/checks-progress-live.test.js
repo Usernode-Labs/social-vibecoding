@@ -551,8 +551,20 @@ test('the build opens prepare_checks when the container is up, and the capture c
     poolMod.getPool = savedGetPool;
   }
   const src = read('src/services/visuals.js');
-  // Queued: reported from the re-queue branch, before it returns.
-  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]{0,900}reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // Queued: reported from the re-queue branch, before it returns. #2038 put
+  // the supersede check between the park and the report, so the window is
+  // wider — the ORDER is what this pins, not the distance.
+  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]*?reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // #2038: and a run for a DIFFERENT commit does not wait at all. The suite
+  // that is going is testing the old head, and storeChecks only writes when
+  // checks_commit_sha still matches the commit its run started on — which
+  // setChecksPending has already moved — so letting it finish writes the
+  // verdict nowhere and leaves the row 'pending' until the stale sweeper
+  // notices. It is aborted instead, and its finally block drains the queue.
+  assert.match(src, /running\.commitHash !== commitHash/,
+    'the supersede is keyed on the commit having moved, not on any run existing');
+  assert.match(src, /running\.operation\.abort\(lifecycle\.cancelled\(\)\)/,
+    'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
   assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
   assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
@@ -679,12 +691,25 @@ test('a pending run says what a pending sync will do to it', () => {
   assert.ok(!JSON.stringify(done).includes('Main has moved'));
 });
 
-test('a clean sync does not carry the commit pin out from under a run in flight', () => {
-  const src = read('src/services/sync-main.js');
-  assert.match(src, /const runInFlight = session\.check_state === 'pending';/);
-  assert.match(src, /const carryChecks = result\.syncResult === 'clean' && !runInFlight;/);
-  // The re-kick is the existing non-carry path, so a pending row now takes it.
-  assert.match(src, /if \(!carryChecks\) \{\n\s+await kickChecksForSyncedHead\(config, pool, session, nextSha\);/);
+test('an integration supersedes a check run rather than queueing behind it', () => {
+  // #1728: a sync that left a run in flight cost two abandoned runs (one of
+  // them 490 checks in), two ten-minute dead waits and three full runs for a
+  // single proposal. The run that is going tested the PRE-merge commit and
+  // its verdict is keyed to the commit it started on, so letting it finish
+  // writes a verdict nowhere.
+  //
+  // sync-main used to work around that by deciding whether to carry the
+  // checks pin (`runInFlight` / `carryChecks`). The queue cancels the run
+  // instead, which is the thing that was actually wanted — the supersede
+  // primitive already existed in services/preview-lifecycle.js and simply was
+  // not called from here.
+  const queue = read('src/services/merge-queue.js');
+  assert.match(queue, /preview-lifecycle/,
+    'the queue must reach for the supersede primitive');
+  assert.match(queue, /cancelled\(session\.id/,
+    'and actually cancel the in-flight run before moving the branch under it');
+  assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
+    'the carry-or-not workaround belongs to the deleted vote-carry path');
 });
 
 test('the board card and the running badge carry the live count', () => {

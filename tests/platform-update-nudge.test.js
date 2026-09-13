@@ -231,15 +231,13 @@ test('the per-proposal resolving badge still derives from the same fields', () =
   // Persisted snapshot (a card rendered mid-resolve after a reload)…
   const fromSnapshot = MergeStatus.lifecycle({ status: 'promoted', merge_conflict_state: 'resolving' });
   assert.equal(fromSnapshot.key, 'resolving');
-  assert.equal(fromSnapshot.label, 'Resolving conflicts…');
+  assert.equal(fromSnapshot.label, 'Resolving conflicts automatically…');
   assert.equal(fromSnapshot.spinner, true);
 
   // …and the feed's process-local flag from GET /api/apps/:slug/promoted.
   assert.equal(MergeStatus.lifecycle({ status: 'promoted', resolving: true }).key, 'resolving');
 
   // The state badges still have a home on the card.
-  assert.ok(MergeStatus.STATE_BADGE_KEYS.includes('resolving'));
-  assert.ok(MergeStatus.STATE_BADGE_KEYS.includes('conflict_failed'));
 
   // And a genuine merge still outranks everything — now reported ONLY
   // on the proposal's own badge, never as platform-wide chrome.

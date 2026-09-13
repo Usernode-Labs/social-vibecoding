@@ -333,6 +333,29 @@ export const ChatBubbleTailIcon = stroked(
   'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
 );
 
+/**
+ * A speech bubble with a tick inside — the Workshop's "Needs you" tab.
+ *
+ * THE ONE GLYPH IN THIS FILE THAT IS NOT TRANSCRIBED WHOLE. The outline is:
+ * it is the bubble half of `ChatIcon`'s path, character for character, with
+ * that glyph's three dot subpaths dropped — so the shape sits on the same
+ * grid and carries the same stroke rhythm as everything around it, and the
+ * two are not the same `d` string. The tick inside is drawn here, because no
+ * Heroicon pairs the two and the pairing is the whole point: the tab is where
+ * you answer, and neither half says that alone. A bubble says "messages",
+ * which is one tab over; a bare tick says "done", which is the state AFTER
+ * the tab has been used.
+ *
+ * The tick is NOT `CheckIcon`'s or `CheckLongIcon`'s path: both are drawn to
+ * fill their own 24 box, and neither fits inside a bubble that occupies most
+ * of one. If this glyph ever looks wrong, correct the tick — the bubble half
+ * must keep tracking `ChatIcon`.
+ */
+export const SpeechCheckIcon = stroked('SpeechCheckIcon', [
+  'M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+  'M8.6 11.8l2.4 2.4 4.4-4.9',
+]);
+
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
   'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
