@@ -196,47 +196,54 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
 // issue_votes (up/down keyed by issue_id). `approverIds` = null counts
 // every vote (policy 'anyone'); an array restricts to those users.
 //
-// #687 Slice 3: `headSha` (optional, PR kind only) scopes the count to
-// votes cast against that exact PR head commit. Imported proposals use
-// imported_pr_head_sha and native proposals use reviewed_head_sha; a head
-// change therefore re-opens approval. NULL/undefined (legacy rows + every
-// issue vote) applies no head filter.
-async function qualifiedCounts(pool, kind, id, approverIds, headSha = null) {
+// #687 Slice 3 scoped these counts to the exact PR head commit a vote was
+// cast against, so that a head change re-opened approval. #2038 keeps the
+// intent and changes the key: the scope is chat_sessions.approval_epoch now,
+// which the platform bumps only when somebody writes bytes that were not
+// already approved. A "sync with main" therefore stops re-opening approval,
+// because it changes the commit without changing the work — see
+// services/pr-vote-revision.js for why a commit could never answer that on
+// its own. Issue votes are unscoped: they have no revision to go stale.
+async function qualifiedCounts(pool, kind, id, approverIds) {
   const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
   const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';
   const yesVal = kind === 'issue' ? 'up' : 'yes';
   const noVal = kind === 'issue' ? 'down' : 'no';
-  // Head-scoping is PR-only (issue_votes has no head_sha column).
-  const scoped = kind !== 'issue' && headSha != null;
+  // #2038: approvals are scoped by EPOCH now, not by head sha. The epoch
+  // lives on the session row, so the clause is a scalar subquery rather than
+  // a bound parameter — which also means it needs no argument juggling as
+  // the placeholder numbers shift between the two branches below.
+  // PR-only: issue_votes has no epoch, and an issue vote has no revision to
+  // go stale against.
+  const scoped = kind !== 'issue';
+  const epochClause = scoped
+    ? ` AND approval_epoch = (SELECT approval_epoch FROM chat_sessions WHERE id = ${'$'}1)`
+    : '';
   if (approverIds == null) {
     // Unrestricted electorate: the exact two COUNT queries the merge
     // paths always issued (cheaper than a FILTER scan, and existing
     // callers/tests recognize the shape).
-    const shaClause = scoped ? " AND head_sha = $2" : '';
-    const shaArgs = scoped ? [headSha] : [];
     const { rows: yesRows } = await pool.query(
-      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${shaClause}`,
-      [id, ...shaArgs]
+      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${epochClause}`,
+      [id]
     );
     const { rows: noRows } = await pool.query(
-      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${shaClause}`,
-      [id, ...shaArgs]
+      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${epochClause}`,
+      [id]
     );
     return {
       yes: parseInt(yesRows[0]?.cnt, 10) || 0,
       no: parseInt(noRows[0]?.cnt, 10) || 0,
     };
   }
-  const shaClause = scoped ? " AND head_sha = $3" : '';
-  const shaArgs = scoped ? [headSha] : [];
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
        COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
      FROM ${table}
      WHERE ${keyCol} = $1
-       AND user_id = ANY($2::int[])${shaClause}`,
-    [id, approverIds, ...shaArgs]
+       AND user_id = ANY($2::int[])${epochClause}`,
+    [id, approverIds]
   );
   return {
     yes: parseInt(rows[0]?.yes, 10) || 0,
@@ -295,14 +302,14 @@ async function getElectorate(pool, appId, gov) {
 // Returns the mergeGate-shaped object from computeGate above, extended
 // with { policy, mode, approvalsRequired, qualifiedYes, qualifiedNo,
 // activeCount }.
-async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, headSha = null, explicitApproval = false } = {}) {
+async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, explicitApproval = false } = {}) {
   const gov = await getGovernance(pool, appId);
   const electorate = await getElectorate(pool, appId, gov);
-  // #687 Slice 3: for an imported proposal the caller passes the current
-  // imported_pr_head_sha so only approvals cast against that revision count;
-  // native callers pass reviewed_head_sha for the same protection. Issue
-  // callers pass no headSha because issue votes have no Git revision.
-  const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds, headSha);
+  // #2038: scoped by approval epoch inside qualifiedCounts. Callers no
+  // longer pass a revision, because the revision was never the right key —
+  // a proposal's commit changes for reasons that have nothing to do with
+  // whether the approvals still describe it.
+  const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds);
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, { explicitApproval });

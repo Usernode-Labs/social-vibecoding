@@ -111,7 +111,7 @@ const SESSION = {
 
 // ── 1. The venue button ────────────────────────────────────────────────
 
-test('the desktop venue remains a direct child with the attributes the check reads', () => {
+test('the venue remains a direct child with the attributes the check reads, at every width', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, agent_backend: 'codex_openrouter' }));
 
@@ -123,8 +123,8 @@ test('the desktop venue remains a direct child with the attributes the check rea
   assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
   assert.doesNotMatch(html, /data-venue-busy|Thinking…|dc-venue-busy/,
     'idle keeps the ordinary dropdown affordance');
-  // #1617 adds mobile Details after the inline desktop controls. Retain
-  // the direct-child contract, not the obsolete last-child assumption.
+  // The venue is a direct child — the contract the declared checks read.
+  // (#1617 hid it below sm behind a Details dialog; #1940 reverted that.)
   const { tokenize } = require('./helpers/html-tokens');
   let depth = 0;
   const children = [];
@@ -136,8 +136,8 @@ test('the desktop venue remains a direct child with the attributes the check rea
   }
   const venue = children.filter(c => c.id === 'dc-venue-select');
   assert.equal(venue.length, 1);
-  assert.match(venue[0].class, /max-sm:hidden/);
-  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 1);
+  assert.doesNotMatch(venue[0].class, /max-sm:hidden/, 'shown at every width');
+  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 0, 'no Details trigger');
   assert.equal(html.indexOf('dc-venue-select') > html.indexOf('New change'), true);
 });
 

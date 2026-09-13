@@ -35,6 +35,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 
 import { ChevronLeftIcon, TerminalIcon } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { improveStore } from '../improve/improve-store.js';
@@ -49,6 +50,8 @@ export function StagingOverlay(): ReactNode {
   const testBtnRef = useRef<HTMLButtonElement | null>(null);
   const fsBtnRef = useRef<HTMLButtonElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const retryRef = useRef<HTMLButtonElement | null>(null);
+  const spinnerRef = useRef<HTMLDivElement | null>(null);
 
   // Publish the element the bridge mutates. Registered once — this component
   // never unmounts, and the ref never points at a different node.
@@ -57,6 +60,8 @@ export function StagingOverlay(): ReactNode {
     return () => { stagingRefs.iframe = null; };
   }, []);
 
+  useHiddenClass(retryRef, !state.loaderRetry);
+  useHiddenClass(spinnerRef, state.loaderRetry);
   useHiddenClass(overlayRef, !state.open);
   useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked');
 
@@ -301,7 +306,7 @@ export function StagingOverlay(): ReactNode {
           ref={loaderRef}
           className="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6"
         >
-          <div className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
+          <div ref={spinnerRef} className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
           </div>
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
             {state.loaderTitle}
@@ -309,6 +314,18 @@ export function StagingOverlay(): ReactNode {
           <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed dark:text-zinc-400">
             {state.loaderSub}
           </div>
+          <Button
+            id="staging-retry-btn"
+            ref={retryRef}
+            type="button"
+            variant="pillAccent"
+            size="none"
+            ink="solidText"
+            className="hidden min-h-[44px] px-4 py-2 text-sm font-medium"
+            onClick={() => stagingHandlers.onRetry?.()}
+          >
+            Retry sign-in
+          </Button>
         </div>
       </div>
     </div>

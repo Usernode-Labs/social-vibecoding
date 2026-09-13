@@ -233,6 +233,9 @@ const OWNED = [
     sel: '#gc-thread-head',
     except: [
       '[data-transcript-body]', '[data-kudos-host]', '#dev-issue-comments',
+      // The change card's tabs give the existing chat controllers their
+      // own empty hosts. Their React subtrees are audited separately below.
+      '[data-change-discussion]', '[data-change-workspace]',
       // saveIssueTitle writes the error line by id while the editor is open.
       '#dev-issue-title-error',
     ],

@@ -40,6 +40,15 @@ const SESSION = {
   proposalHint: false, returnHint: false,
 };
 
+test('embedded workspace keeps the real composer and transcript without a second navigation strip', () => {
+  const change = { item: { id: 4073 }, card: {}, body: {} };
+  const embedded = html({ ...SESSION, change, embedded: true });
+  assert.match(embedded, /id="dc-composer-bar"/);
+  assert.match(embedded, /id="dc-messages"/);
+  assert.doesNotMatch(embedded, /Change overview|aria-label="Change views"/);
+  assert.match(html({ ...SESSION, change }), /Change overview/, 'old session bookmarks retain a route back to the card');
+});
+
 const html = (s) => renderToHtml(createElement(mod().DevChatViewView, {
   s: JSON.parse(JSON.stringify(s)),
 }));
