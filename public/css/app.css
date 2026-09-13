@@ -12168,22 +12168,39 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      this replaces. The old floor subtracted a bare 24px with no counterpart
      on the rail at all.
 
-     The device inset is IN the gap rather than inside the bar, because this
-     bar floats: it is a rounded pill with air under it, not a strip against
-     the screen edge, so the inset belongs below it and not in its padding.
-     That is also why the rail no longer carries `.platform-safe-bar`, whose
-     `calc(0.5rem + inset)` was landing 8px under the tabs against 6px over
-     them — the asymmetry you can see on a phone. */
-  --ws-gap: calc(8px + var(--platform-safe-bottom, 0px));
+     THE DEVICE INSET IS NOT IN THIS NUMBER, and used to be. `--ws-gap` read
+     `calc(8px + var(--platform-safe-bottom, 0px))`, which counted the
+     home-indicator strip a SECOND time: `#dev-forum-scroll` carries
+     `.platform-safe-scroll`, whose `padding-bottom: var(--platform-safe-bottom)`
+     has already reserved it. On a 34px inset that put the rail 76px off the
+     bottom instead of 42 — a whole indicator of dead air, constant on every
+     tab and at every scroll position, which is what an iOS PWA showed.
+
+     It was invisible everywhere it was tested. A headless desktop browser
+     reports the inset as 0, so both spends were `0px` and the sum was the
+     right 8px; the screenshot and measuring harnesses never set an inset at
+     all. Only a real device has a non-zero value for this, so only a real
+     device could see it.
+
+     The rail still rests clear of the indicator — the reservation just comes
+     from the platform class that owns it rather than from a second copy
+     here. Two things follow: the gap is a plain length again, so `--ws-area`
+     subtracts a constant; and `html.un-kb .dev-ws { --ws-gap: 8px }` is gone,
+     because `html.un-kb .platform-safe-scroll` already zeroes the reservation
+     when the keyboard is up. The keyboard case now falls out of the shell's
+     own rule instead of needing a copy of its reasoning.
+
+     The rail still does NOT carry `.platform-safe-bar`, for the original
+     reason: that rule's `calc(0.5rem + inset)` lands the inset INSIDE the
+     bar's padding, 8px under the tabs against 6px over them, and this bar
+     floats — a rounded pill with air beneath it, not a strip against the
+     screen edge. */
+  --ws-gap: 8px;
   --ws-area: calc(
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-gap)
   );
 }
-/* Keyboard up, inset gone — the home-indicator strip is behind the keyboard,
-   so reserving it there is dead space. The base 8px stays, which is the same
-   trade `html.un-kb .platform-safe-bar` makes for the shell's own bars. */
-html.un-kb .dev-ws { --ws-gap: 8px; }
 .dev-ws-needs {
   /* The lander is a flex column with a floor under its height, so the deck
      simply takes what is left between the head of the tab and the rail —
