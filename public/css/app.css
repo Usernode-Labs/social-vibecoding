@@ -12270,18 +12270,29 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   opacity: 0;
 }
 .dev-ws-tab-marker[data-ws-marker-at] { opacity: 1; }
-/* THE TRANSITION IS NOT ON THE BASE RULE, deliberately. It applies only once
-   the marker has been placed, so the first measurement lands instantly and
-   every later one animates. A transition on the base rule would animate that
-   first placement too — from the left edge, at 0 width, which is exactly the
-   slide-in the null-until-measured render exists to avoid.
+/* THE TRANSITION IS ON A SECOND ATTRIBUTE, and `data-ws-marker-slide` is not
+   `data-ws-marker-at`. `at` means MEASURED, which is what the opacity above
+   waits for; `slide` means the measurement was caused by the SELECTION
+   CHANGING. Only the second is worth animating, and keeping them apart is
+   what stops a re-measure of the tab you are already on from replaying the
+   slide — see useTabMarker in workshop.tsx, which owns the distinction.
+
+   Both were one attribute, and that conflated three things the marker does.
+   The first placement was one: `at` arrives in the same commit as the
+   transform, so the transition was live for a change from `none` at zero
+   width, and the marker slid in from the nav's left edge on every cold open
+   of the All items tab — the exact slide-in the null-until-measured render
+   was written to avoid, reintroduced by the rule meant to enforce it. A
+   re-measure was the other: any layout shift under the bar re-expressed an
+   unmoved tab in new coordinates and the marker animated to where it already
+   was. Neither is a selection changing, and neither carries `slide`.
 
    `width` and `height` are in the list because the desktop segments are
    content-width: "Current status" and "Needs you" are different sizes, so a
    transform alone would slide a box of the wrong width. On the phone all
    three match and those two properties simply never change. */
 @media (prefers-reduced-motion: no-preference) {
-  .dev-ws-tab-marker[data-ws-marker-at] {
+  .dev-ws-tab-marker[data-ws-marker-slide] {
     transition:
       transform .26s cubic-bezier(.32, .72, 0, 1),
       width .26s cubic-bezier(.32, .72, 0, 1),
@@ -12505,38 +12516,67 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
        for, and `static` would send both the marker and the measurement to
        whatever ancestor happened to be positioned. */
     position: relative;
-    /* A CENTRING ROW, not a block. The pill is `.dev-ws-tabtrack` inside it,
-       and it is content-width, so whatever positions the pill horizontally is
-       what decides where the strip appears. As a block that was the pill's
-       LEFT EDGE against the 760px reading column — which is stable only while
-       the pane beside it is also 760 wide. By stage is not: the board goes
-       full-bleed (`#dev-workshop:has(.dev-ws-board) { max-width: none }`) and
-       the strip stayed pinned to a column that no longer existed, stranded
-       mid-window with nothing under it to align to. That is the "hasn't
-       decided where it should show up" this replaces.
+    /* THE PHONE BAR'S OFFSETS ARE NOT THIS BAR'S, and leaving them in place
+       is what made the strip sit crooked in both axes.
 
-       CENTRED, the strip lands in the same place on every pane at every
-       width: the nav's own box is centred in the window on both paths — the
-       760 column is `margin: 0 auto`, and on the board pane the full-bleed
-       rule re-centres this element at `max-width: 760px` — so centring inside
-       it puts the pill on the window's centre line either way. `flex` rather
-       than `text-align: center`, because an inline-level box positioned by an
-       INHERITED property is one stray `text-align` on any ancestor away from
-       moving on its own. */
+       `left: 10px; right: 10px; bottom: var(--ws-lift)` size and place a
+       FIXED pill against the viewport. `position: relative` does not ignore
+       them — it SHIFTS the element by them — so the strip was displaced 10px
+       right of the reading column it is supposed to line up with, and lifted
+       `--ws-lift` (8px) off its own place in the flow. Measured at 1280px
+       wide: 2px of air above the strip and 18px below, against the 10 and 10
+       the two rules below actually declare. Every fix aimed at that air had
+       been aimed at the wrong pair of numbers.
+
+       `max-width` and `margin-inline` leak the same way and cost the
+       alignment below: 740px with auto side margins is a shrink-to-fit box
+       centred in the column, and a row cannot be left-aligned inside a box
+       that has already centred itself. The board pane re-states both at
+       higher specificity (`#dev-workshop:has(.dev-ws-board) > .dev-ws > …`),
+       which is the one place they are wanted up here. */
+    inset: auto;
+    max-width: none;
+    /* LEFT-ALIGNED, not centred. The pill is `.dev-ws-tabtrack` inside this
+       nav and it is content-width, so whatever positions the pill is what
+       decides where the strip appears — and the nav now spans the same
+       reading column the pane below it does, so `flex-start` puts the strip's
+       left edge on the pane's left edge. Centring put it on the WINDOW's
+       centre line, which belongs to nothing on the screen: the strip drifted
+       right as the column widened and lined up with no edge at any width.
+       `flex` rather than `text-align: center`, because an inline-level box
+       positioned by an INHERITED property is one stray `text-align` on any
+       ancestor away from moving on its own.
+
+       IT ALSO SETTLES THE SELECTION MARKER. The marker is placed from
+       `offsetLeft` against this nav (see workshop.tsx), and under
+       `justify-content: center` that number is `(nav - pill) / 2` plus the
+       tab's own offset — so it MOVED whenever the nav's width did, while the
+       tab stayed exactly where it was on screen. Switching By category →
+       By stage widens the nav from the pill's width to the full 760 and the
+       marker's coordinate jumped 158px for a tab that had not moved a pixel,
+       which the transition then animated. Against `flex-start` the pill sits
+       at offset 0 and the number is the tab's own, whatever the nav's width.
+       (workshop.tsx no longer animates a re-measure either; this is the half
+       that stops the coordinate changing in the first place.) */
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0; padding: 0;
     border: 0; border-radius: 0;
     background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
     /* NO MARGIN OF ITS OWN. `.dev-ws` is a flex column with `gap: 10px`, so a
        margin here stacks on top of it: 14px below the strip against the 8px
        of `#dev-body` padding above it, which is the unbalanced air. The gap
-       alone sets both sides, once the padding below matches it. */
-    margin-bottom: 0;
+       alone sets both sides, once the padding below matches it. `margin: 0`
+       rather than `margin-bottom: 0` because the side halves are the phone
+       rule's `margin-inline: auto`, retired with the rest of its box above. */
+    margin: 0;
   }
   /* The other half of that balance: 10px above, to equal the column gap
      below. The 8px here is the phone's, where the strip is `position: fixed`
-     at the foot and this padding is just the top of the page. */
+     at the foot and this padding is just the top of the page.
+     Both numbers are finally what lands: with the leaked `bottom` gone the
+     strip no longer floats 8px up out of the air it was given, which is the
+     "too little above, too much below" this pair always claimed to prevent. */
   #dev-body:has(> #dev-workshop) { padding-top: 10px; }
   .dev-ws-tabtrack {
     display: inline-flex; align-items: center; gap: 2px;
