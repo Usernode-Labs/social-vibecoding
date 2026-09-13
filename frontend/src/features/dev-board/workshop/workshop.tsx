@@ -73,6 +73,19 @@ type SortKey = 'people' | 'activity' | 'open';
 type TabKey = 'status' | 'needs' | 'all';
 
 /**
+ * "Since your last visit", as a length rather than a disclosure.
+ *
+ * Three, because that is what fits above the fold beside the panes around it
+ * and because a returning member's question is "did anything happen", which
+ * three rows answer. The step is the same number so each press pays the same
+ * scroll, and the button leaves when the list is exhausted — there is no
+ * "show fewer", for the reason the week walk gives: this is one pane with a
+ * way to ask for more, not a thing being opened and shut.
+ */
+const SINCE_FIRST = 3;
+const SINCE_STEP = 3;
+
+/**
  * The lander's three tabs, in the order a person needs them: where the app
  * is, what it needs from you, everything there is. The bar sits at the
  * BOTTOM — this is a phone screen first, and the three destinations are
@@ -893,6 +906,7 @@ function NeedsDeck({
   // picker over an empty composer is a setting nobody has a use for yet.
   const [model, setModel] = useState<string>(() => models.selected || '');
   const [focused, setFocused] = useState(false);
+  const wide = useWideLayout();
   // Answered here, this session: an answer moves the deck on, and the card
   // stays in the list so a mis-tap can be walked back to.
   const [answered, setAnswered] = useState<Record<string, string>>({});
@@ -912,6 +926,21 @@ function NeedsDeck({
   const row = cards[i];
   const thread = threads[row.key] || [];
   const engaged = thread.length > 0;
+  /**
+   * Is the composer showing its controls row?
+   *
+   * ON A DESKTOP, ALWAYS. The pane is a third of a tall window with nothing
+   * competing for it, the one-line form was hiding a model picker behind a
+   * click nobody knew to make, and there is no keyboard about to take half
+   * the screen — so the box opens the way it will be used. `wide` rather
+   * than `focused` also means blur does not shut it again, which seeding
+   * `focused` from the width would have done on the first click away.
+   *
+   * ON A PHONE it stays the one line it was until the field is tapped: the
+   * deck is a fitted screen there and the second row is height the card in
+   * front of you wants back.
+   */
+  const expanded = wide || focused || engaged;
   const answer = (which: string, act: { fn: string; args: unknown[] } | null) => {
     if (act) callAppView(act.fn, ...(act.args as unknown[]));
     setAnswered((cur) => ({ ...cur, [row.key]: which }));
@@ -1095,6 +1124,20 @@ function NeedsDeck({
     });
   };
 
+  /**
+   * ONE send circle, rendered in one of two places: the resting line while
+   * the card is a single row, the controls row once it opens. Written once
+   * so the disabled rule and the classes cannot drift between the two.
+   */
+  const sendBtn = (
+    <button
+      type="submit"
+      className="dc-send-btn dc-circle-send dev-ws-ask-send"
+      aria-label="Ask"
+      disabled={!draft.trim() || !target || inFlight}
+    ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
+  );
+
   return (
     <div
       className={engaged ? 'dev-ws-needs dev-ws-needs-engaged' : 'dev-ws-needs'}
@@ -1224,13 +1267,22 @@ function NeedsDeck({
           onSubmit={(e) => { e.preventDefault(); ask(); }}
         >
           <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
-          {/* THE RESTING LINE, and it keeps the send circle. An earlier cut
-              put the whole controls row behind focus, which took the send
-              button with it and left a card that looked like a text box and
-              nothing else — no sign it would do anything. The button never
-              MOVES, either: it is on this line whether the row below is there
-              or not, so tapping the field adds a row rather than relocating
-              the thing you were about to press. */}
+          {/* THE RESTING LINE. It keeps the send circle while the card is ONE
+              line — an earlier cut put the whole controls row behind focus,
+              which took the send button with it and left a card that looked
+              like a text box and nothing else, with no sign it would do
+              anything.
+
+              OPEN, THE CIRCLE IS THE LAST THING IN THE CARD, bottom right,
+              which is where a composer's send lives and where the dev
+              session's own card puts it (`.dc-card` + `.dc-card-row`). It
+              did stay on this line in both states, so that tapping the field
+              added a row rather than relocating the thing you were about to
+              press — but the press it was protecting cannot happen: the
+              button is disabled until there is a draft, and there is no
+              draft until the field has been tapped, which is the same tap
+              that opens the row. On the width where the row is open from the
+              first paint (see `expanded`) it never moves at all. */}
           <div className="dev-ws-ask-line">
             <input
               id="dev-ws-ask-input"
@@ -1250,17 +1302,14 @@ function NeedsDeck({
               onBlur={() => { if (!draft.trim()) setFocused(false); }}
               onChange={(e) => setDraft(e.target.value)}
             />
-            <button
-              type="submit"
-              className="dc-send-btn dc-circle-send dev-ws-ask-send"
-              aria-label="Ask"
-              disabled={!draft.trim() || !target || inFlight}
-            ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
+            {expanded ? null : sendBtn}
           </div>
-          {/* ONE LINE until it is tapped. The MODEL is what makes the card two
-              lines tall, and it is no use before there is something to send —
-              the picker on the dev session screen is the same bargain. */}
-          {focused || engaged ? (
+          {/* ONE LINE until it is tapped, on a phone. The MODEL is what makes
+              the card two lines tall, and it is no use before there is
+              something to send — the picker on the dev session screen is the
+              same bargain. Above the breakpoint the row is there from the
+              start: see `expanded`. */}
+          {expanded ? (
           <div className="dev-ws-ask-row">
             {models.list.length ? (
               <span className="dev-ws-ask-model" data-ws-ask-model="">
@@ -1279,12 +1328,60 @@ function NeedsDeck({
                 <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
               </span>
             ) : null}
+            {/* `margin-left: auto` in app.css, so the circle is at the card's
+                right edge whether or not the model picker is beside it. */}
+            {sendBtn}
           </div>
           ) : null}
         </form>
       </section>
     </div>
   );
+}
+
+/**
+ * The breakpoint, in one place. app.css's `@media (min-width: 700px)` block is
+ * the same decision written in the other language, and the two move together:
+ * above it the tab strip is a segmented control at the head of the column and
+ * the ask composer opens expanded; below it the strip is a bar stuck to the
+ * floor and the composer is one line until it is tapped.
+ */
+const WIDE_QUERY = '(min-width: 700px)';
+
+/** `matchMedia` where there is one — the vm the tests render in has none. */
+function matchesWide(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(WIDE_QUERY).matches
+    : false;
+}
+
+/**
+ * Is this the wide layout?
+ *
+ * READ AT MOUNT, not in an effect — which is the opposite of `useRailHost`
+ * below, and the difference is worth stating. That hook returns null until
+ * after mount because the node it moves has to agree with markup that may
+ * have been prerendered. NOTHING here is: the Workshop mounts client-side
+ * into a host `_repaintDevBody()` creates, so there is no first paint to
+ * disagree with, and the component's own header says so. The seed matters
+ * because the composer's resting state differs by width: a collapsed frame
+ * followed a tick later by an expanded one is a flash on every visit to the
+ * Needs-you tab.
+ *
+ * The effect is still there for the CROSSING — a rotated phone, a resized
+ * window — which the seed alone cannot see.
+ */
+function useWideLayout(): boolean {
+  const [wide, setWide] = useState(matchesWide);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(WIDE_QUERY);
+    const apply = () => setWide(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+  return wide;
 }
 
 /**
@@ -1316,7 +1413,7 @@ function NeedsDeck({
 function useRailHost(): HTMLElement | null {
   const [host, setHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 700px)');
+    const mq = window.matchMedia(WIDE_QUERY);
     const apply = () => {
       setHost(mq.matches ? null : document.getElementById('dev-ws-rail-host'));
     };
@@ -1350,7 +1447,10 @@ export function DevWorkshop(): ReactNode {
   const [openRows, setOpenRows] = useState<Record<string, string>>(
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
-  const [sinceOpen, setSinceOpen] = useState(false);
+  // How many of "since your last visit" are drawn. It was a collapsed row you
+  // had to open; the first three are simply on screen now and the rest are a
+  // press away, which is the WeekWalk's bargain one pane down.
+  const [sinceShown, setSinceShown] = useState(SINCE_FIRST);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -1440,7 +1540,7 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = Object.values(openRows).join('|') + (sinceOpen ? '|since' : '');
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -1646,50 +1746,60 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
       {/* ── What moved while you were away ──
-          ONE LINE until you want it. It was a pane with a heading and a
-          summary line under it — a whole section of the status tab spent on
-          a fact most visits do not need, above the door to the app's chat.
-          Collapsed it is a row: the label, the count, and a caret. Opening
-          it makes it the pane it used to be, with the rows in it. */}
+          SHOWN, not offered. It was one collapsed line — the label, the count
+          and a caret — on the reasoning that most visits do not need the
+          fact. What that produced was a strip nobody opened: the count said
+          something had moved and the rows saying WHAT were behind a press,
+          so the one thing on the lander addressed to this reader personally
+          was also the only thing they had to ask for.
+
+          So the pane is open and the LENGTH is what is bargained instead,
+          the way the week walk one pane up bargains its history: the newest
+          three on screen, the rest under a button that reveals three more
+          each press and leaves when there are none. Same control, same
+          chevron, pointing down at what it is about to show. */}
       {v.since ? (
-        sinceOpen ? (
-          <section className="dev-ws-strip" data-ws-since="">
-            <button
-              type="button"
-              className="dev-ws-since-row"
-              data-ws-since-btn=""
-              aria-expanded={true}
-              onClick={() => setSinceOpen(false)}
-            >
-              <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
-              <span className="dev-ws-since-label">Since your last visit</span>
-              <span className="dev-ws-since-n">{v.since.rows.length}</span>
-            </button>
-            {v.since.rows.map((row) => (row.t === 'card' ? (
-              <CardRowView
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.since === row.key}
-                onToggle={() => toggleRow('since', row.key)}
-              />
-            ) : null))}
-          </section>
-        ) : (
-          <button
-            type="button"
-            className="dev-ws-since-row dev-ws-since-shut"
-            data-ws-since-btn=""
-            aria-expanded={false}
-            disabled={!v.since.rows.length}
-            onClick={() => setSinceOpen(true)}
-          >
-            <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
+        <section className="dev-ws-strip" data-ws-since="">
+          {/* NOT A BUTTON ANY MORE. It opens nothing, so it must not look
+              like it does — a row that reads as tappable and is not is worse
+              than a plain heading. The label and the count keep their
+              classes; the caret went with the press. */}
+          <div className="dev-ws-since-head" data-ws-since-head="">
             <span className="dev-ws-since-label">Since your last visit</span>
             <span className="dev-ws-since-n">{v.since.rows.length}</span>
-          </button>
-        )
+          </div>
+          {v.since.rows.slice(0, sinceShown).map((row) => (row.t === 'card' ? (
+            <CardRowView
+              key={row.key}
+              row={row}
+              slug={slug}
+              canPost={canPost}
+              open={openRows.since === row.key}
+              onToggle={() => toggleRow('since', row.key)}
+            />
+          ) : null))}
+          {/* An empty pane would be a heading over nothing, and "nothing
+              moved" is a fact worth one line — it is the answer to the
+              question the heading asks. */}
+          {v.since.rows.length ? null : (
+            <p className="dev-ws-week-note" data-ws-since-none="">
+              Nothing has changed since you were last here.
+            </p>
+          )}
+          {v.since.rows.length > sinceShown ? (
+            <button
+              type="button"
+              className="dev-ws-reveal dev-ws-since-more"
+              data-ws-since-more=""
+              onClick={() => setSinceShown(sinceShown + SINCE_STEP)}
+            >
+              {/* Pointing DOWN, at where the rows it reveals appear — the
+                  week walk's own reading of the same control. */}
+              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+              Show older
+            </button>
+          ) : null}
+        </section>
       ) : null}
 
       </>

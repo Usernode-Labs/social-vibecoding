@@ -46,6 +46,8 @@ const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
 const CSS = read('public/css/app.css');
 const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
+// The toolbar, which renders the shared filter strip's host inside this pane.
+const ACTIONS_ROW = read('frontend/src/features/dev-board/actions-row.tsx');
 const dapp = JSON.parse(read('dapp.json'));
 
 function makeAppView(over) {
@@ -827,19 +829,31 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // holds those — under the free-to-take lane, as the one item there that is
   // a record rather than a request.
   assert.match(html, /<section class="dev-ws-strip" data-ws-dashboard="">/, 'not on the dashboard any more');
-  // ONE LINE, not a pane — until it is opened. It was a whole section of
-  // the status tab (heading, summary line, control) spent on a fact most
-  // visits do not need, sitting above the door to the app's chat.
-  assert.ok(!/<section[^>]*data-ws-since/.test(html), 'no pane while it is shut');
-  assert.match(html, /class="dev-ws-since-row dev-ws-since-shut" data-ws-since-btn=""[^>]*aria-expanded="false"/);
+  // SHOWN, not offered. It WAS one collapsed line with a caret, on the
+  // reasoning that most visits do not need the fact; what that produced was
+  // a strip nobody opened — the count said something had moved and the rows
+  // saying WHAT were a press away, so the one block on the lander addressed
+  // to this reader personally was also the only one they had to ask for.
+  // The pane is open now and the LIST'S LENGTH is what is bargained: the
+  // newest three, then `Show older`, which is the week walk's own bargain
+  // one pane up.
+  assert.match(html, /<section class="dev-ws-strip" data-ws-since="">/, 'a pane, always');
+  assert.match(html, /class="dev-ws-since-head" data-ws-since-head=""/);
   assert.match(html, /class="dev-ws-since-label">Since your last visit<\/span><span class="dev-ws-since-n">3</);
-  assert.ok(!html.includes('3d ago: 1 change landed'), 'and the summary line is gone with the pane');
+  assert.ok(!html.includes('3d ago: 1 change landed'), 'and the summary line stays gone');
   assert.ok(!html.includes('dev-ws-since-line'), 'the old line is retired');
-  // The pane's THIRD lane, built like the two above it: heading, note,
-  // control. A colon for a label and its value, never an em dash (#1389).
-  // The caret turns over into the pane it becomes.
-  assert.match(html, /data-ws-since-btn=""[\s\S]{0,200}?dev-ws-since-chev/, 'and it carries the caret');
-  assert.match(CSS, /\.dev-ws-since-row\[aria-expanded="true"\] \.dev-ws-since-chev \{[^}]*rotate\(90deg\)/);
+  // NOT A BUTTON, and nothing left that says it is one: a row that reads as
+  // tappable and opens nothing is worse than a plain heading.
+  assert.ok(!html.includes('data-ws-since-btn'), 'the disclosure is gone');
+  assert.ok(!html.includes('dev-ws-since-chev'), 'and so is its caret');
+  // Comments stripped: the rule that replaced it NAMES the old selector to say
+  // what it replaces, and prose naming a selector is not the selector.
+  assert.ok(!/\.dev-ws-since-row/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'the pressable row rule went with it');
+  // Three rows, because that is what the fixture has; the reveal only exists
+  // when there are more (pinned below, against a board that has six).
+  assert.equal((html.match(/data-ws-row="since:/g) || []).length, 3);
+  assert.ok(!html.includes('data-ws-since-more'), 'nothing to reveal at exactly three');
   // The week walk's reveal keeps its own shape: centred under the stack of
   // full-width cards it belongs to.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
@@ -1086,7 +1100,7 @@ test('the strips are ordered for a returning member: state, then what to do, the
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  const order = ['data-ws-dashboard', 'data-ws-discussion', 'data-discussion-row', 'data-ws-since-btn']
+  const order = ['data-ws-dashboard', 'data-ws-discussion', 'data-discussion-row', 'data-ws-since-head']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
@@ -1096,8 +1110,8 @@ test('the strips are ordered for a returning member: state, then what to do, the
   // own state. What is left on this tab is the app itself, the door to its
   // chat, and one line about what changed — the questions are a tab away.
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(html), 'no unsized text link toggles this pane');
-  assert.match(html, /data-ws-since-btn=""[^>]*aria-expanded="false"/,
-    'the since line is shut, and is a line rather than a pane');
+  assert.match(html, /class="dev-ws-since-head" data-ws-since-head=""/,
+    'the since block is a pane with a heading, not a disclosure');
   assert.match(html, /class="dev-ws-since-n">3</, 'with the count on it');
   assert.ok(!html.includes('waiting on votes ·'), 'and the bare number line is gone');
 });
@@ -2143,22 +2157,41 @@ test('the grouping preference lasts, and an unknown stored value is category', (
   assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
 });
 
-test('the tab strip is a segmented rail, distinct from the sort chips beside it', () => {
-  // Both controls sit two rows apart over one list. If they look alike the
-  // row reads as five options over the same thing, which is the mistake.
+test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
+  // Two tab strips two rows apart on one screen. They were drawn in two
+  // vocabularies: the bar above in a raised track with a periwinkle selected
+  // pill, this one in a recessed `--dc-strip` rail with a hairline and a
+  // selected half painted in the plain sheet with a drop shadow. The geometry
+  // already agreed (round rail, 2px between the halves) — only the colour did
+  // not, which is the half a reader actually sees.
   assert.match(CSS, /\.dev-ws-group \{[^}]*border-radius: 999px/);
-  assert.match(CSS, /\.dev-ws-group \{[^}]*background: var\(--dc-strip\)/);
-  assert.match(CSS, /\.dev-ws-group-tab\[aria-selected="true"\] \{[^}]*background: var\(--dc-sheet\)/);
-  // Full width of the reading column, split evenly. `flex: 1 1 0`, not
-  // `1 1 auto`: on `auto` the halves would be sized by their labels, so
-  // "By category" would take more of the rail than "By stage".
+  assert.match(CSS, /\.dev-ws-group \{[^}]*background: var\(--dc-sheet-raise\)/,
+    'the same track surface as .dev-ws-tabtrack');
+  const track = /\.dev-ws-group \{([^}]*)\}/.exec(CSS);
+  assert.ok(track, 'the rail rule exists');
+  assert.ok(!/box-shadow/.test(track[1]), 'and no ring around it, as the bar has none');
+  // THE SELECTED HALF IS THE BAR'S OWN THREE TOKENS, spelled the same way, so
+  // the two controls cannot drift apart the next time either is tuned.
+  const on = /\.dev-ws-group-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
+  const barOn = /\.dev-ws-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
+  assert.ok(on && barOn, 'both selected rules exist');
+  for (const decl of ['background: var(--brand-tint)', 'color: var(--brand-ink)',
+    'box-shadow: inset 0 0 0 1px var(--brand-line)']) {
+    assert.ok(on[1].includes(decl), `the grouping tab carries \`${decl}\``);
+    assert.ok(barOn[1].includes(decl), `and so does the bar, which is where it comes from`);
+  }
+  assert.ok(!/var\(--dc-sheet\)/.test(on[1]), 'the plain-sheet fill is gone');
+  // WHAT STAYS DIFFERENT IS THE WIDTH, and that is the real distinction from
+  // the sort chips a row below: full width of the reading column, split
+  // evenly. `flex: 1 1 0`, not `1 1 auto` — on `auto` the halves would be
+  // sized by their labels, so "By category" would take more than "By stage".
   assert.match(CSS, /\.dev-ws-group-tab \{[^}]*flex: 1 1 0/);
   assert.ok(!/\.dev-ws-group \{[^}]*align-self: flex-start/.test(CSS),
     'and the rail itself is not shrunk to its content');
   // A token that does not resolve is a silently wrong colour, not an error —
   // and inside a box-shadow list one bad var() voids the whole declaration.
-  for (const token of ['--dc-strip', '--dc-sheet', '--text-muted', '--text-primary',
-    '--app-sheet-line', '--app-sheet-shadow-near']) {
+  for (const token of ['--dc-sheet-raise', '--brand-tint', '--brand-ink', '--brand-line',
+    '--text-muted', '--text-primary']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }
 });
@@ -2462,7 +2495,12 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // never disagrees with prerendered markup — a hydration mismatch is a
   // console error, and a console error on any route fails proposal checks.
   assert.match(WORKSHOP, /const \[host, setHost\] = useState<HTMLElement \| null>\(null\);/);
-  assert.match(WORKSHOP, /useEffect\(\(\) => \{[\s\S]{0,400}?matchMedia\('\(min-width: 700px\)'\)/,
+  // ONE SPELLING OF THE BREAKPOINT. It was written out at this call site; the
+  // ask composer needs the same query to know whether to open expanded, and
+  // two literals of one decision is how they drift apart from each other and
+  // from app.css's `@media (min-width: 700px)` block.
+  assert.match(WORKSHOP, /const WIDE_QUERY = '\(min-width: 700px\)';/);
+  assert.match(WORKSHOP, /useEffect\(\(\) => \{[\s\S]{0,400}?matchMedia\(WIDE_QUERY\)/,
     'the host is resolved in an effect, not during render');
   // Null above the breakpoint too: up there the strip is the segmented control
   // in flow at the head of the column, and there is nothing to lift out.
@@ -2500,9 +2538,16 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   assert.ok(!/--ws-bar: calc\(72px \+ var\(--platform-safe-bottom/.test(CSS),
     'the inset is reserved below the bar, not inside this token');
   // The fitted deck ends above the bar...
-  const area = /\.dev-ws \{[\s\S]*?--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
-  assert.ok(area, 'the floor exists');
-  assert.match(area[1], /var\(--ws-bar\)/, 'the floor takes the bar off');
+  // TWO TOKENS NOW, one arithmetic. `--ws-fit` is the reading area with the
+  // bar NOT taken off — the box the native layout's flex chain arrives at on
+  // its own — and `--ws-area` is that minus the bar, which is what the
+  // page-scrolling tabs want as a floor. They were two spelled-out `calc()`s
+  // differing by one term.
+  assert.match(CSS, /--ws-fit: calc\(\s*100dvh - var\(--platform-header-h, 56px\) - var\(--platform-safe-top, 0px\)\s*- var\(--ws-gap\)\s*\);/);
+  const fit = /--ws-fit: calc\(([\s\S]*?)\);/.exec(CSS);
+  assert.ok(!/--ws-bar/.test(fit[1]), 'the fitted box does NOT take the bar off — the tab body reserves it');
+  assert.match(CSS, /--ws-area: calc\(var\(--ws-fit\) - var\(--ws-bar\)\);/,
+    'the floor takes the bar off');
   // ...and a scrolling tab's last card clears one.
   assert.match(CSS, /padding-bottom: var\(--ws-bar\);/,
     'the air above it is #dev-body\'s own bottom padding, already --ws-gap');
@@ -2517,8 +2562,8 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // it takes its own space and the floor must not subtract it again.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(wide, 'the wide block exists');
-  assert.match(wide[1], /--ws-area: calc\([\s\S]*?- var\(--ws-gap\)\n?\s*\);/,
-    'the wide floor takes only the air off');
+  assert.match(wide[1], /\.dev-ws \{ --ws-area: var\(--ws-fit\); \}/,
+    'the wide floor is the fitted box itself — only the air off');
   assert.ok(!/--ws-bar/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
     'and not the bar, which is in flow up there');
 
@@ -2529,24 +2574,182 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
     'the floating pill carries the inset in its offset, not in its padding');
 });
 
-test('the ask composer shows its send button before it is touched', () => {
+test('the ask composer keeps a visible send, and opens with it in the bottom-right corner', () => {
   // The whole controls row used to sit behind focus, which took the send
   // circle with it and left a card that looked like a text box and nothing
-  // else — no sign it would do anything. The MODEL is the part that earns its
-  // height on use; the send button is the affordance.
+  // else — no sign it would do anything. That half still holds: SHUT, the
+  // send is on the resting line, so a one-row card still says it sends.
   //
-  // The button also must not MOVE when the row appears, so it lives on the
-  // resting line rather than being hoisted out of the row on focus.
+  // OPEN, it is the last thing in the card. A composer's send belongs in the
+  // bottom-right corner — it is where `.dc-card-row` puts the dev session's
+  // own — and the earlier rule that pinned it to the resting line in BOTH
+  // states was protecting a press that cannot happen: the button is disabled
+  // until there is a draft, and there is no draft until the field has been
+  // tapped, which is the same tap that opens the row.
+  const send = /const sendBtn = \(([\s\S]*?)\n  \);/.exec(WORKSHOP);
+  assert.ok(send, 'the circle is written ONCE, so its two homes cannot drift');
+  assert.match(send[1], /className="dc-send-btn dc-circle-send dev-ws-ask-send"/);
+  assert.match(send[1], /disabled=\{!draft\.trim\(\) \|\| !target \|\| inFlight\}/);
   const line = /<div className="dev-ws-ask-line">([\s\S]*?)<\/div>/.exec(WORKSHOP);
   assert.ok(line, 'the composer has a resting line');
   assert.match(line[1], /id="dev-ws-ask-input"/, 'the field is on it');
-  assert.match(line[1], /className="dc-send-btn dc-circle-send dev-ws-ask-send"/,
-    'and so is the send circle, unconditionally');
-  // The focus-gated row holds the model and nothing else now.
-  const row = /\{focused \|\| engaged \? \(\s*<div className="dev-ws-ask-row">([\s\S]*?)\n          <\/div>/.exec(WORKSHOP);
-  assert.ok(row, 'the model row is still gated on focus');
-  assert.ok(!/dc-send-btn/.test(row[1]), 'the send circle is not in it');
-  assert.match(row[1], /data-ws-ask-model/, 'the model picker is');
+  assert.match(line[1], /\{expanded \? null : sendBtn\}/,
+    'and the circle, while the card is one row');
+  const row = /\{expanded \? \(\s*<div className="dev-ws-ask-row">([\s\S]*?)\n          <\/div>/.exec(WORKSHOP);
+  assert.ok(row, 'the controls row is gated on `expanded`');
+  assert.match(row[1], /data-ws-ask-model/, 'the model picker is in it');
+  assert.match(row[1], /\{sendBtn\}/, 'and the circle, as the row\'s last child');
+  assert.ok(row[1].indexOf('data-ws-ask-model') < row[1].indexOf('{sendBtn}'),
+    'model left, send right');
+  // `margin-left: auto` rather than `justify-content`: the picker beside it
+  // has to keep shrinking (a <select>'s intrinsic width is its longest
+  // option), and with no picker at all the circle is the row's only child and
+  // the auto margin still pins it right. Measured at 1280x900: the circle
+  // rests 14px from the card's right edge and 12px from its bottom, which is
+  // the card's own padding on both sides.
+  assert.match(CSS, /\.dev-ws-ask-row > \.dev-ws-ask-send \{ margin-left: auto; \}/);
+});
+
+test('the filter host asks to be filled, because the repaint that fills it runs too early', () => {
+  // THE ORDER IS THE BUG. `_repaintDevBody()`'s Workshop branch creates an
+  // empty `#dev-workshop` and then calls `_renderKanbanFilterBar()` — but
+  // `#dev-kanban-filterbar` is a node of the TOOLBAR, which the Workshop's
+  // All-items pane renders, so on the first visit of a page session the
+  // filler ran against a host that did not exist yet, returned at its own
+  // guard, and the search field appeared only on whatever repaint happened to
+  // come next: a WebSocket push, or a pull-to-refresh. "The search is missing
+  // for a few seconds and then it is there."
+  assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-workshop"><\/div>';[\s\S]*?AppView\._renderKanbanFilterBar\(\);/,
+    'the module still fills the strip on the repaint — this is that ordering');
+  assert.match(APP_VIEW_SRC, /_renderKanbanFilterBar\(\) \{\s*const el = document\.getElementById\('dev-kanban-filterbar'\);\s*if \(!el\) return;/,
+    'and it is a no-op when the host is absent, which is why nothing was drawn');
+  // So the host asks for itself, on the effect after it mounts.
+  assert.match(ACTIONS_ROW, /<div id="dev-kanban-filterbar"/, 'the toolbar owns the host');
+  assert.match(ACTIONS_ROW, /queueMicrotask\(\(\) => \{ if \(live\) callAppView\('_renderKanbanFilterBar'\); \}\);/);
+  // IN A MICROTASK, and that is React's own instruction rather than a taste.
+  // The mount publishes inside `flushSync`, and a `flushSync` raised while
+  // React is still committing answers with "flushSync was called from inside
+  // a lifecycle method… Consider moving this call to a scheduler task or
+  // micro task" — an effect body is inside that commit, passive or not.
+  // Checked both ways in a browser on a development React build: from the
+  // effect body it fires, from the microtask it does not.
+  assert.match(read('frontend/src/lib/legacy-portals.tsx'), /function commit\(\): void \{\s*flushSync\(publish\);/,
+    'the synchronous publish the mount goes through');
+  assert.ok(!/useLayoutEffect/.test(ACTIONS_ROW), 'and the effect is passive, not a layout one');
+  // Cancelled on unmount, so a row torn down inside the same tick does not
+  // mount a portal into a host that has already been discarded.
+  assert.match(ACTIONS_ROW, /return \(\) => \{ live = false; \};/);
+  // Nothing waits on it: the host holds the field's row open from the
+  // frame's first paint, so arriving a beat later shifts nothing under it.
+  assert.match(ACTIONS_ROW, /id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8"/);
+});
+
+test('Needs you is a fitted screen on a phone, in the page-scrolling layout too', () => {
+  // MEASURED, in the harness that loads the real generated shell and the real
+  // app.css at 402x874, with a nine-paragraph summary on the card.
+  //
+  // NATIVE layout (bounded #dev-forum-scroll): the deck refused to shrink and
+  // the lander grew instead — `.dev-ws` 1795px tall, the composer 828px below
+  // the fold — because `.dev-ws` is a flex ITEM whose automatic minimum size
+  // is its content, and it was the one link in the chain without
+  // `min-height: 0`.
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\] \{ min-height: 0; \}/);
+  // ONLY that tab: the other two are meant to grow and scroll inside
+  // #dev-forum-scroll, and `.dev-ws-tabbody` is not a scroller itself, so
+  // shrinking them would clip what they hold rather than make it reachable.
+  assert.ok(!/#dev-workshop > \.dev-ws \{[^}]*min-height: 0/.test(CSS),
+    'the rule is scoped to the fitted tab');
+  // BROWSER layout (`html[data-browser-scroller]`, which is what a mobile
+  // browser gets): every height below the scroller is `auto` there, so a long
+  // card pushed the composer under the fold with nothing pinned — and a SHORT
+  // one stopped 80px above the rail, because `--ws-area` is a bar less than
+  // the box and `.dev-ws-tabbody` reserves the bar AGAIN as padding. The tab
+  // takes `--ws-fit` instead, which is the box the native chain arrives at on
+  // its own. Both layouts now land the composer 8-9px above the bar, tall
+  // card or short.
+  const fitted = /@media \(max-width: 699\.98px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(fitted, 'the phone-only block exists');
+  assert.match(fitted[1], /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="needs"\] \{[\s\S]*?height: var\(--ws-fit\);[\s\S]*?min-height: var\(--ws-fit\);/);
+  // Scoped to the PHONE as well as to the layout, and that is load-bearing:
+  // `data-browser-scroller` is set on any coarse pointer (MOBILE_PAGE_QUERY),
+  // tablets included, and above 700px `--ws-area` no longer takes the bar off
+  // — so `--ws-fit` would be a bar too tall up there.
+  assert.match(read('frontend/src/lib/browser-scroll.ts'),
+    /MOBILE_PAGE_QUERY = '\(max-width: 767px\), \(hover: none\) and \(pointer: coarse\)';/,
+    'which is why the layout attribute alone is not a phone');
+  // What scrolls when the card is long is the card's own pane; the answers,
+  // the page arrows and the ask box are the fitted parts and stay put.
+  assert.match(CSS, /\.dev-ws-needs-scroll \{[\s\S]*?overflow-y: auto;/);
+});
+
+test('the ask card is padded evenly, so its resting line sits on its own middle', () => {
+  // `.dc-card` ships `0.875rem 1rem 0.625rem` — 14 over, 10 under — which is
+  // right for the dev session's composer, a tall field with controls beneath
+  // it. Here, at rest, the card holds ONE line, and 14 against 10 put that
+  // line 2px below the middle of its own box. That is what "the ask box sits
+  // slightly low" was. Measured at 402x874: a 58px card with a 34px line
+  // starting at 14.
+  assert.match(CSS, /\.dev-ws-ask-composer \{[^}]*padding: 12px 14px;/);
+  assert.match(CSS, /\.dc-card \{[\s\S]*?padding: 0\.875rem 1rem 0\.625rem;/,
+    'the session card keeps its own, which is why this is an override rather than a change');
+});
+
+test('since-your-last-visit shows three and reveals the rest, like the week walk', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  // Four merges instead of one, so the strip holds more than it draws.
+  AppView._merged = [40, 39, 38, 37].map((n, i) => ({
+    id: 78 - i, pr_number: n, pr_title: `Landed ${n}`, status: 'merged', username: 'alice',
+    created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr',
+  }));
+  AppView._mergedTotal = 4;
+  const html = workshopHtml(AppView);
+  assert.match(html, /class="dev-ws-since-n">6</, 'the count is the whole list');
+  assert.equal((html.match(/data-ws-row="since:/g) || []).length, 3, 'three are drawn');
+  // The week walk's own control: centred under a stack of full-width rows,
+  // caret DOWN at what it is about to show. Not `.dev-ws-reveal-start`, whose
+  // lane indent belongs to a left-aligned column of type.
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more=""/);
+  assert.ok(html.includes('Show older'));
+  assert.ok(!html.includes('dev-ws-reveal-start'), 'centred, as the week walk is');
+  // No "show fewer" — this is one pane with a way to ask for more, not a
+  // thing being opened and shut. The week walk's note is the same argument.
+  assert.ok(!html.includes('Show fewer'));
+  // An empty list is a heading over nothing, so it says so instead. A
+  // baseline of NOW rather than an emptied board: "nothing moved since you
+  // were last here" is a statement about the window, and the window is what
+  // the reader controls.
+  const fresh = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now()) } });
+  seed(fresh);
+  const quiet = workshopHtml(fresh);
+  assert.match(quiet, /data-ws-since-none=""/);
+  assert.ok(quiet.includes('Nothing has changed since you were last here.'));
+  assert.ok(!quiet.includes('data-ws-since-more'));
+});
+
+test('the composer opens expanded on a desktop and stays one line on a phone', () => {
+  // The pane is a third of a tall window with nothing competing for it, the
+  // one-line form hid the model picker behind a click nobody knew to make,
+  // and no keyboard is about to take half the screen — so above the
+  // breakpoint the box opens the way it will be used. Below it the deck is a
+  // fitted screen and the second row is height the card in front of you wants
+  // back, so it stays the one line it was until the field is tapped.
+  assert.match(WORKSHOP, /const expanded = wide \|\| focused \|\| engaged;/);
+  assert.match(WORKSHOP, /const wide = useWideLayout\(\);/);
+  // `wide` rather than a seeded `focused`, which is the part worth pinning:
+  // blur with an empty draft sets `focused` false, so seeding it would have
+  // shut the box again on the first click away.
+  assert.match(WORKSHOP, /onBlur=\{\(\) => \{ if \(!draft\.trim\(\)\) setFocused\(false\); \}\}/);
+  // READ AT MOUNT, unlike `useRailHost` — nothing here is prerendered (the
+  // Workshop mounts client-side into a host `_repaintDevBody()` creates), so
+  // there is no first paint to disagree with, and a collapsed frame followed
+  // a tick later by an expanded one is a flash on every visit.
+  assert.match(WORKSHOP, /const \[wide, setWide\] = useState\(matchesWide\);/);
+  // And guarded, because the render this suite does happens in node, where
+  // there is no matchMedia at all.
+  assert.match(WORKSHOP, /typeof window !== 'undefined' && typeof window\.matchMedia === 'function'/);
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
