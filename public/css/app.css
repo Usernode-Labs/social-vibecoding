@@ -112,6 +112,30 @@
      — kit `.un-safe-*` classes included — as if it were on a notched
      phone. */
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  /* THE AIR UNDER THE WORKSHOP'S BAR, and it lives at the ROOT because the bar
+     does not live in the Workshop any more. It is portalled to
+     #dev-ws-rail-host so it can be `position: fixed` to the real viewport,
+     which takes it out of `.dev-ws`'s subtree — and a custom property declared
+     there would simply be undefined for it. An undefined var inside a calc()
+     makes the whole declaration invalid at computed-value time, so `bottom`
+     would be dropped and the bar would fall to its static position at the end
+     of the body: measured at 946px in an 874px viewport, i.e. off the screen.
+     `.dev-ws` still reads it for `--ws-area` and the tab body's clearance. */
+  --ws-gap: 8px;
+  /* THE BAR'S BOX ABOVE THE INDICATOR: 1 of top border, 6 of padding, 58 of
+     tab, 6 again. Named once because the bar is out of flow, so nothing
+     reserves its space automatically and two rules have to agree — `--ws-area`
+     subtracts it so the fitted deck ends above the bar, and the tab body pads
+     by it so a scrolling tab's last card clears one. Recompute it whenever the
+     bar's box changes, or the overlap comes back somewhere.
+
+     IT DOES NOT INCLUDE THE INSET, and that is the whole trick. The bar's own
+     lower padding covers the home-indicator strip, and BELOW `.dev-ws` that
+     same strip is already held open by `.platform-safe-scroll` on the
+     scroller. Adding it here as well reserved it twice and left the content
+     floating: measured at 402x874, 51px of slack above the bar at a 34px
+     inset against 17px at zero. Counting only the box gives 9px at both. */
+  --ws-bar: 72px;
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
   /* Content-row height of the mobile install strip (#1372). Declared here,
@@ -12065,30 +12089,60 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-tabbody {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; gap: 10px;
-  /* THE RAIL'S OWN BOX PLUS THE GAP IT RESTS ON. 72 is the box: 6 + 58 + 6 of
-     padding and tab, 2 of border — recompute it whenever the rail changes, or
-     the overlap comes back. The gap is the token above rather than a second
-     copy of the inset, so the clearance tracks the rail's resting place by
-     construction instead of by being remembered. */
-  padding-bottom: calc(72px + var(--ws-gap));
+  /* A fixed bar overlays what scrolls beneath it, so a scrolling tab's last
+     card owes it the bar's box. The air above it comes from `#dev-body`'s own
+     bottom padding, which is already `--ws-gap` — adding the token here too
+     spent it twice. */
+  padding-bottom: var(--ws-bar);
 }
-/* ...EXCEPT ON NEEDS YOU, which does not scroll under the rail. The clearance
-   exists so the last card of a SCROLLING tab can be read clear of a bar that
-   overlays it. The deck is a fitted, one-decision-per-screen surface: nothing
-   ever passes beneath the rail, so the same 80px is dead space that pushes
-   the ask box up. Measured at 402x874: the composer ended 90px above the bar
-   with the deck otherwise filling its box exactly. */
-.dev-ws[data-ws-tab="needs"] > .dev-ws-tabbody { padding-bottom: 0; }
+/* NEEDS YOU USED TO BE EXEMPT FROM THAT, and can't be any more. The exemption
+   read: the deck is fitted, nothing ever passes beneath the rail, so the
+   clearance is dead space pushing the ask box up — measured at 402x874, 90px
+   of it. That was true while the rail sat IN FLOW and took its own space at
+   the foot of the column.
+   The bar is fixed now, so it overlays every tab equally, fitted or not. With
+   the exemption still in place the deck filled to the foot of `.dev-ws` and
+   the composer ran 63px UNDER the bar — measured, not predicted. Every tab
+   owes the same clearance because every tab has the same thing on top of it. */
 .dev-ws-tabs {
-  /* LAST ON THE SCREEN, FIRST IN THE MARKUP. The nav leads the DOM so it is
-     announced before the content it navigates; `order` is what puts it at the
-     foot on a phone. */
+  /* FIXED TO THE REAL VIEWPORT, which is the whole point of the portal.
+     `position: sticky` is what this replaces, and sticky was itself a retreat
+     from `fixed` after the frame's `backdrop-filter` turned out to establish a
+     containing block. The bar is rendered into #dev-ws-rail-host now, outside
+     that frost, so `fixed` finally means the screen.
+
+     WHY THAT MATTERS MORE THAN THE POSITIONING KEYWORD: sticky put the bar's
+     resting place at the mercy of the container it sat in — `--ws-area`'s
+     viewport arithmetic, the flex chain filling, `.platform-safe-scroll`'s
+     padding and `100dvh`. Three separate fixes failed on a real iOS PWA while
+     measuring correctly in a headless Chromium, each because one of those
+     inputs behaved differently there. A fixed element depends on none of them.
+
+     `order: 1` stays for the one render before the portal takes over: until
+     `useRailHost` reports, the bar is still a flex item of `.dev-ws`.
+
+     The offset spends the inset ONCE, here, because a fixed element is out of
+     flow — `.platform-safe-scroll`'s reservation applies to the scroller's
+     content, and the bar is no longer part of it. That is the double-count
+     from #4149 made structurally impossible rather than merely corrected. */
   order: 1;
-  position: sticky; bottom: var(--ws-gap); z-index: 25;
+  position: fixed;
+  /* EDGE TO EDGE, AND ITS FILL REACHES THE TRUE BOTTOM. The floating pill this
+     replaces rested `8px + the inset` up, which is the safe rectangle's floor
+     — correct by the letter of the inset and wrong to the eye, because the bar
+     read as stopping short of the phone. The conventional answer is the one
+     iOS itself uses: the SURFACE runs to the physical edge and the CONTENT is
+     padded off the home indicator, so nothing tappable sits where the system
+     takes a gesture and nothing looks like it is hovering.
+
+     That is why the inset moved out of `bottom` and into `padding-bottom`.
+     It is still spent exactly once. */
+  left: 0; right: 0; bottom: 0;
+  z-index: 30;
   display: flex; gap: 4px;
-  padding: 6px;
-  border-radius: 999px;
-  border: 1px solid var(--app-sheet-line);
+  padding: 6px 6px calc(6px + var(--platform-safe-bottom, 0px));
+  border-radius: 0;
+  border: 0; border-top: 1px solid var(--app-sheet-line);
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -12195,10 +12249,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      bar's padding, 8px under the tabs against 6px over them, and this bar
      floats — a rounded pill with air beneath it, not a strip against the
      screen edge. */
-  --ws-gap: 8px;
   --ws-area: calc(
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
-    - var(--ws-gap)
+    - var(--ws-bar) - var(--ws-gap)
   );
 }
 .dev-ws-needs {
@@ -12288,6 +12341,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
+  /* THE BAR IS BACK IN FLOW UP HERE, at the head of the column, so it takes
+     its own space and the floor must not subtract it a second time — that
+     would shorten `.dev-ws` by a bar's height for no one. Only the air is
+     taken off, as it was before the bar ever left the flow. */
+  .dev-ws {
+    --ws-area: calc(
+      100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+      - var(--ws-gap)
+    );
+  }
   .dev-ws-tabs {
     order: 0;
     position: static;

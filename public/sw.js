@@ -114,7 +114,29 @@
 // alongside the old in-task model list.
 // Card-action cleanup: retire cached shells so existing previews receive
 // the Build tab, its author default, and the simplified full-card controls.
-const SW_VERSION = 'v14';
+//
+// v15: THE FIRST BUMP MADE FOR CHANGES IN EARLIER PROPOSALS, which is the
+// variant none of the notes above covers and the reason this one is long.
+//
+// #4150 moved the Workshop's phone tab bar out of the frosted frame and made
+// it `position: fixed`; #4151 made it edge to edge so its surface reaches the
+// physical bottom. Both live ENTIRELY in public/css/app.css, the React shell
+// bundle and the document that names its build-scoped URL — all three
+// precached in SHELL_ASSETS — which is exactly the case the v10 entry says
+// needs a bump IN THE SAME PROPOSAL. Neither bumped it.
+//
+// So both merged, both deployed, production served them, and an installed PWA
+// and the native app kept drawing the cached shell: the bar still rendered as
+// the floating pill resting 42px up. Two rounds of "still not fixed" were the
+// old stylesheet, not the new one — the changes had never reached the device.
+//
+// WHAT THE v10 ENTRY DOES NOT SAY, and this one does: when the bump is missed,
+// it is still the remedy, just late. A later proposal can retire the cache for
+// work that landed earlier, and this is what that looks like. The reason to
+// prefer the same proposal is not that a later one cannot work — it is that
+// between the two, everyone who already had the app is looking at code nobody
+// can tell is stale, including the person who wrote it.
+const SW_VERSION = 'v15';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
