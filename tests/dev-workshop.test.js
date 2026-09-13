@@ -2227,6 +2227,51 @@ test('a retired Board preference opens on the columns, not on the categories', (
   assert.ok(!('devWorkshopGroup' in store), 'the migration stores nothing');
 });
 
+test('reaching the retired Board takes BOTH answers: the All items tab and the stage pane', () => {
+  // THE BUG THIS GUARDS, which cost a full round of the merge gate. Those
+  // columns are the `stage` grouping OF THE `all` TAB. A first attempt set the
+  // grouping alone — and the lander then opens on its DEFAULT tab, where the
+  // grouping control is not rendered at all, so the pane never mounts and all
+  // 69 declared checks that select #dev-kanban on a board route failed at once.
+  // Every way in has to supply both halves, and the test above proves that
+  // ('all', 'stage') is what puts the board's own markup on screen verbatim.
+  const at = (o) => {
+    const A = makeAppView(o);
+    return [A._workshopTab(), A._getWorkshopGroup()].join('/');
+  };
+  const loc = (search) => ({
+    location: { search, hash: '', href: `http://localhost/${search}` },
+  });
+
+  // 1. The route alias, driven exactly as app.js's restoreFromHash drives it.
+  const route = makeAppView({ localStorage: {} });
+  route._overrideWorkshopTab('all');
+  route._overrideWorkshopGroup('stage');
+  assert.equal([route._workshopTab(), route._getWorkshopGroup()].join('/'),
+    'all/stage', '#app/<slug>/board');
+
+  // 2. The retired deep link, which named one thing and meant two.
+  assert.equal(at(loc('?view=kanban')), 'all/stage', '?view=kanban');
+
+  // 3. The stored preference of somebody who last left the Dev screen on it.
+  for (const mode of ['kanban', 'pm', 'report']) {
+    assert.equal(at({ localStorage: { devViewMode: mode } }), 'all/stage', mode);
+  }
+
+  // ...and none of those three may drag anybody else onto the board.
+  assert.equal(at({ localStorage: {} }), 'status/category', 'the lander default');
+  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status/category',
+    'the Workshop replaced feed: that viewer never chose columns');
+
+  // The parameters still being offered, and the viewer's own taps, outrank
+  // every hop above — each half independently.
+  assert.equal(at(loc('?view=kanban&ws=needs')), 'needs/stage', 'an explicit tab wins');
+  assert.equal(at(loc('?view=kanban&group=category')), 'all/category', 'an explicit pane wins');
+  assert.equal(at({
+    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs', devWorkshopGroup: 'category' },
+  }), 'needs/category', 'and choices they have actually made win over the migration');
+});
+
 test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
   // Two tab strips two rows apart on one screen. They were drawn in two
   // vocabularies: the bar above in a raised track with a periwinkle selected

@@ -3594,7 +3594,11 @@ const App = {
         // same treatment `activity` gets above, one pane deeper.
         else if (tab === 'board') {
           tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop';
-          if (typeof AppView !== 'undefined' && AppView._overrideWorkshopGroup) {
+          // TWO answers, not one: those columns are the `stage` grouping of the
+          // `all` TAB, and setting the grouping alone lands on the default tab,
+          // where the grouping control is not rendered at all.
+          if (typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
+            AppView._overrideWorkshopTab('all');
             AppView._overrideWorkshopGroup('stage');
           }
         }

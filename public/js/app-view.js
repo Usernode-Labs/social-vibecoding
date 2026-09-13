@@ -250,6 +250,31 @@ const AppView = {
   // 'feed' are not here: the Workshop replaced those, and its default pane is
   // the one they resolve to.
   RETIRED_BOARD_VIEW_MODES: ['kanban', 'pm', 'report'],
+  // ── Reaching the retired Board: it takes TWO answers, not one ────────
+  //
+  // The board's columns are the Workshop's stage pane, and that pane is one
+  // grouping of ONE TAB: `_workshopTab()` has to say 'all' and
+  // `_getWorkshopGroup()` has to say 'stage'. Setting the grouping alone leaves
+  // the lander on its default tab, where the grouping control is not even
+  // rendered — which is the whole of the bug this pair of helpers fixes. Both
+  // resolvers consult both, so the translation lives in one place instead of
+  // being half-applied in two.
+  //
+  // Was this page opened by the retired Board view's own deep link?
+  _retiredBoardLink() {
+    try {
+      return new URLSearchParams(window.location.search).get('view') === 'kanban';
+    } catch { return false; }
+  },
+  // Did this viewer last leave the Dev screen ON the Board? Read-time, and it
+  // never writes: the day they choose a tab or a pane, that choice persists
+  // and outranks this.
+  _storedBoardPreference() {
+    try {
+      return AppView.RETIRED_BOARD_VIEW_MODES
+        .indexOf(window.localStorage.getItem(AppView.VIEW_MODE_KEY)) !== -1;
+    } catch { return false; }
+  },
   _migrateViewMode(v) {
     if (AppView._isViewMode(v)) return v;
     return AppView.RETIRED_VIEW_MODES[v] || null;
@@ -343,11 +368,10 @@ const AppView = {
   _readWorkshopGroupOverride() {
     if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
     try {
-      const q = new URLSearchParams(location.search);
-      const v = q.get('group');
-      const retiredBoard = q.get('view') === 'kanban' ? 'stage' : null;
-      AppView._workshopGroupUrlOverride =
-        AppView.WORKSHOP_GROUPS.includes(v) ? v : retiredBoard;
+      const v = new URLSearchParams(location.search).get('group');
+      AppView._workshopGroupUrlOverride = AppView.WORKSHOP_GROUPS.includes(v)
+        ? v
+        : (AppView._retiredBoardLink() ? 'stage' : null);
     } catch { AppView._workshopGroupUrlOverride = null; }
     return AppView._workshopGroupUrlOverride;
   },
@@ -381,8 +405,7 @@ const AppView = {
       // which the return above has already established, and read-time like
       // every other migration here: nothing is written back, so the day they
       // do choose a pane, that choice is what persists.
-      const storedMode = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (AppView.RETIRED_BOARD_VIEW_MODES.indexOf(storedMode) !== -1) return 'stage';
+      if (AppView._storedBoardPreference()) return 'stage';
       return 'category';
     } catch { return 'category'; }
   },
@@ -5456,9 +5479,23 @@ const AppView = {
     if (AppView._workshopTabUrlOverride !== undefined) return AppView._workshopTabUrlOverride;
     try {
       const v = new URLSearchParams(window.location.search).get('ws');
-      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
+      // A retired `?view=kanban` asked for the board's columns, which live in
+      // the All items tab — the other half of the answer is the grouping, in
+      // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
+      // is the parameter still being offered.
+      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1
+        ? v
+        : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
     return AppView._workshopTabUrlOverride;
+  },
+  // The retired Board ROUTE's landing, the tab half. `#app/<slug>/board` calls
+  // this and _overrideWorkshopGroup together (see app.js's restoreFromHash);
+  // transient exactly as `?ws=` is, and a tap on another tab clears it through
+  // _setWorkshopTab.
+  _overrideWorkshopTab(tab) {
+    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    AppView._workshopTabUrlOverride = tab;
   },
   /**
    * Which tab the lander opens on: the deep link, then what you last chose,
@@ -5475,7 +5512,13 @@ const AppView = {
     if (url) return url;
     try {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
-      return AppView.WORKSHOP_TABS.indexOf(stored) !== -1 ? stored : 'status';
+      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
+      // A viewer who last left the Dev screen on the Board gets the tab those
+      // columns live in, for the same reason _getWorkshopGroup gives them the
+      // pane: migrating the retired mode without carrying what it MEANT would
+      // hand them a digest where they had chosen a worklist.
+      if (AppView._storedBoardPreference()) return 'all';
+      return 'status';
     } catch { return 'status'; }
   },
   _setWorkshopTab(key) {
