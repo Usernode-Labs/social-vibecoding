@@ -1578,8 +1578,17 @@ const DevChat = {
    */
   _publishPreview() {
     const s = DevChat.currentSession;
+    if (!s) { window.Improve?.setSessionPreview?.(null); return; }
+    // #2069: a session with no live preview is not necessarily a session with
+    // nothing to preview. ensure-staging rebuilds from the branch's latest
+    // commit, and `can_preview` is the server's answer to "is there one" — so
+    // the eye is published as BUILDABLE rather than withheld, and the click
+    // does what it has been authorized to do all along.
+    const buildable = !s.staging_url && !!s.can_preview;
     window.Improve?.setSessionPreview?.(
-      s && s.staging_url ? { sessionId: s.id, url: s.staging_url } : null,
+      (s.staging_url || buildable)
+        ? { sessionId: s.id, url: s.staging_url || null, buildable }
+        : null,
     );
   },
 

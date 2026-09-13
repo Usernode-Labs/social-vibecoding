@@ -143,6 +143,28 @@ test('a long staging_error is clipped rather than pasted whole into an attribute
 
 // ── The rebuild path ────────────────────────────────────────────────────
 
+test('the server counts a SHARED session as previewable (#2069)', () => {
+  // The card half of the rebuild path already worked — the test below proves
+  // it — and still offered a shared draft nothing, because `can_preview` was
+  // false for it. The boolean was `pr_number IS NOT NULL`, then
+  // `OR checks_commit_sha IS NOT NULL` after #689 hit the first half of this.
+  // A `share: true` session has NEITHER: no pull request, and no checks gate
+  // to write a commit sha. Both proxies asked what some OTHER subsystem left
+  // behind, which is why each broke for the case that lacks that subsystem.
+  //
+  // `shared_at` is the session's own evidence: the share route verifies a
+  // pushed branch and stamps it at creation.
+  const sessionsSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
+  const derivations = [...sessionsSrc.matchAll(/\(\s*(?:cs\.)?pr_number IS NOT NULL[\s\S]{0,200}?AS can_preview/g)];
+  assert.ok(derivations.length >= 2,
+    'both the own-sessions list and the app-wide list derive it');
+  for (const d of derivations) {
+    assert.match(d[0], /shared_at IS NOT NULL/,
+      'every can_preview derivation has to count a shared draft, or one list disagrees with the other');
+  }
+});
+
 test('can_preview with no live URL is offered, and routes through ensure-staging', () => {
   const AppView = makeAppView();
   const item = { id: 71, can_preview: true, staging_url: null };
