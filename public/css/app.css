@@ -112,6 +112,16 @@
      — kit `.un-safe-*` classes included — as if it were on a notched
      phone. */
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  /* THE AIR UNDER THE WORKSHOP'S BAR, and it lives at the ROOT because the bar
+     does not live in the Workshop any more. It is portalled to
+     #dev-ws-rail-host so it can be `position: fixed` to the real viewport,
+     which takes it out of `.dev-ws`'s subtree — and a custom property declared
+     there would simply be undefined for it. An undefined var inside a calc()
+     makes the whole declaration invalid at computed-value time, so `bottom`
+     would be dropped and the bar would fall to its static position at the end
+     of the body: measured at 946px in an 874px viewport, i.e. off the screen.
+     `.dev-ws` still reads it for `--ws-area` and the tab body's clearance. */
+  --ws-gap: 8px;
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
   /* Content-row height of the mobile install strip (#1372). Declared here,
@@ -12070,7 +12080,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      the overlap comes back. The gap is the token above rather than a second
      copy of the inset, so the clearance tracks the rail's resting place by
      construction instead of by being remembered. */
-  padding-bottom: calc(72px + var(--ws-gap));
+  /* A fixed bar overlays what scrolls beneath it, so the content still owes
+     it a bar's height — and now the offset and the inset too, since the bar
+     rests that far up rather than at the container's foot. */
+  padding-bottom: calc(72px + var(--ws-gap) + var(--platform-safe-bottom, 0px));
 }
 /* ...EXCEPT ON NEEDS YOU, which does not scroll under the rail. The clearance
    exists so the last card of a SCROLLING tab can be read clear of a bar that
@@ -12080,11 +12093,36 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    with the deck otherwise filling its box exactly. */
 .dev-ws[data-ws-tab="needs"] > .dev-ws-tabbody { padding-bottom: 0; }
 .dev-ws-tabs {
-  /* LAST ON THE SCREEN, FIRST IN THE MARKUP. The nav leads the DOM so it is
-     announced before the content it navigates; `order` is what puts it at the
-     foot on a phone. */
+  /* FIXED TO THE REAL VIEWPORT, which is the whole point of the portal.
+     `position: sticky` is what this replaces, and sticky was itself a retreat
+     from `fixed` after the frame's `backdrop-filter` turned out to establish a
+     containing block. The bar is rendered into #dev-ws-rail-host now, outside
+     that frost, so `fixed` finally means the screen.
+
+     WHY THAT MATTERS MORE THAN THE POSITIONING KEYWORD: sticky put the bar's
+     resting place at the mercy of the container it sat in — `--ws-area`'s
+     viewport arithmetic, the flex chain filling, `.platform-safe-scroll`'s
+     padding and `100dvh`. Three separate fixes failed on a real iOS PWA while
+     measuring correctly in a headless Chromium, each because one of those
+     inputs behaved differently there. A fixed element depends on none of them.
+
+     `order: 1` stays for the one render before the portal takes over: until
+     `useRailHost` reports, the bar is still a flex item of `.dev-ws`.
+
+     The offset spends the inset ONCE, here, because a fixed element is out of
+     flow — `.platform-safe-scroll`'s reservation applies to the scroller's
+     content, and the bar is no longer part of it. That is the double-count
+     from #4149 made structurally impossible rather than merely corrected. */
   order: 1;
-  position: sticky; bottom: var(--ws-gap); z-index: 25;
+  position: fixed;
+  bottom: calc(var(--ws-gap) + var(--platform-safe-bottom, 0px));
+  /* Matching `#dev-body`'s own 4px side padding, which the bar sat inside
+     before it was lifted out, and capped so it stays a bar rather than
+     spanning a tablet. */
+  left: 4px; right: 4px;
+  max-width: calc(760px - 8px);
+  margin-inline: auto;
+  z-index: 30;
   display: flex; gap: 4px;
   padding: 6px;
   border-radius: 999px;
@@ -12195,7 +12233,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      bar's padding, 8px under the tabs against 6px over them, and this bar
      floats — a rounded pill with air beneath it, not a strip against the
      screen edge. */
-  --ws-gap: 8px;
   --ws-area: calc(
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-gap)
