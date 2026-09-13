@@ -1431,18 +1431,54 @@ function useWideLayout(): boolean {
  *   - the portal remount, because crossing that breakpoint tears the bar out
  *     of one parent and into another, and the old offsets belong to neither.
  *
+ * ── ONLY ONE OF THE THREE IS WORTH ANIMATING ───────────────────────────
+ *
+ * `slide` is the difference, and it is why the box carries a fourth field
+ * that is not a coordinate. These are OFFSETS INTO THE BAR, not screen
+ * positions, so the bar moving or resizing re-expresses a tab that has not
+ * budged — and the marker then animated across the strip to arrive exactly
+ * where it already was. Switching the All-items pane between By category and
+ * By stage did it every time: the two panes gave the nav two different
+ * widths, and under the centred strip that alone moved the measurement 158px
+ * for an unmoved tab. app.css takes that particular 158 away; this takes away
+ * the whole CLASS of it, for the breakpoint crossing and the late webfont and
+ * whatever moves under the bar next.
+ *
+ * So a measurement animates only when the SELECTION is what changed. Three
+ * rules, and each is one line below:
+ *   - unchanged geometry keeps the previous box identity, so the
+ *     ResizeObserver's delivery on `observe()` cannot clear a slide that is
+ *     still running;
+ *   - a resize that DID move the numbers snaps, because the tab did not move;
+ *   - the first measurement snaps too — there is no previous box, so there is
+ *     nothing to have slid from. That is the placement the null-until-measured
+ *     render is for, and it was animating anyway: `data-ws-marker-at` used to
+ *     carry the transition and arrives in the same commit as the transform, so
+ *     a cold open on All items slid the marker in from the nav's left edge at
+ *     zero width. It lands instantly now, which is what that render always
+ *     claimed.
+ *
  * It returns `null` until the first measurement lands so the marker can render
  * hidden rather than at the left edge — otherwise it slides in from nowhere on
  * the first paint, which reads as a bug rather than a flourish.
  */
+interface TabMarkerBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Whether moving to this box is a selection change, and so worth animating. */
+  slide: boolean;
+}
+
 function useTabMarker(
   bar: HTMLElement | null,
   tab: TabKey,
-): { x: number; y: number; w: number; h: number } | null {
-  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+): TabMarkerBox | null {
+  const [box, setBox] = useState<TabMarkerBox | null>(null);
   useLayoutEffect(() => {
     if (!bar) return;
-    const measure = () => {
+    const measure = (selectionChanged: boolean) => {
       const el = bar.querySelector<HTMLElement>('[data-ws-tab-btn][aria-selected="true"]');
       if (!el) return;
       // offsetLeft/Top resolve against the nearest positioned ancestor, which
@@ -1450,12 +1486,15 @@ function useTabMarker(
       // both widths precisely so these numbers mean what they look like.
       setBox((prev) => {
         const next = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
-        return prev && prev.x === next.x && prev.y === next.y
-          && prev.w === next.w && prev.h === next.h ? prev : next;
+        if (prev && prev.x === next.x && prev.y === next.y
+          && prev.w === next.w && prev.h === next.h) return prev;
+        return { ...next, slide: !!prev && selectionChanged };
       });
     };
-    measure();
-    const ro = new ResizeObserver(measure);
+    // The effect's own run is the tab having changed — it depends on `tab`.
+    // Everything the observer reports afterwards is the layout moving.
+    measure(true);
+    const ro = new ResizeObserver(() => measure(false));
     ro.observe(bar);
     return () => ro.disconnect();
   }, [bar, tab]);
@@ -1656,12 +1695,21 @@ export function DevWorkshop(): ReactNode {
               on the first render, so the element renders hidden and only
               becomes visible once it knows where to be; otherwise it slides in
               from the left edge on first paint, which reads as a bug rather
-              than a flourish. */}
+              than a flourish.
+
+              TWO ATTRIBUTES, TWO QUESTIONS. `data-ws-marker-at` says the box
+              has been measured and is what the opacity waits for;
+              `data-ws-marker-slide` says this box is where the SELECTION
+              moved to, and is what app.css hangs the transition on. A
+              re-measure of the tab you are already on carries the first and
+              not the second, so it lands without replaying the slide — see
+              useTabMarker. */}
           <span
             className="dev-ws-tab-marker"
             data-ws-tab-marker=""
             aria-hidden="true"
             {...(markerBox ? { 'data-ws-marker-at': '' } : {})}
+            {...(markerBox && markerBox.slide ? { 'data-ws-marker-slide': '' } : {})}
             style={markerBox ? {
               transform: `translate(${markerBox.x}px, ${markerBox.y}px)`,
               width: `${markerBox.w}px`,
