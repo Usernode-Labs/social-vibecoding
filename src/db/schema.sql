@@ -7379,33 +7379,6 @@ CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
   ON chat_sessions (integration_measured_at NULLS FIRST)
   WHERE status = 'promoted';
 
--- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
-CREATE TABLE IF NOT EXISTS account_email_verifications (
-  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  email VARCHAR(255) NOT NULL,
-  code_hash TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  previous_email VARCHAR(255),
-  attempts INTEGER NOT NULL DEFAULT 0,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE account_email_verifications IS 'staging:private';
-
--- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
-CREATE TABLE IF NOT EXISTS preview_operations (
-  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  desired_revision TEXT NOT NULL,
-  run_id UUID,
-  revision TEXT,
-  phase TEXT,
-  state TEXT NOT NULL DEFAULT 'queued',
-  result JSONB,
-  finished_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE preview_operations IS 'staging:private';
-
 -- The Needs-you deck's ask box (services/workshop-ask.js): one person's
 -- own questions about one card, and the answers they got.
 --
@@ -7446,3 +7419,49 @@ COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
 -- the same transaction and can share a timestamp.
 CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
   ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);
+
+-- ────────────────────────────────────────────────────────────────────
+-- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.
+--
+-- Two tests read this file, cut it at a marker near the top of one of the
+-- blocks below, and EXECUTE everything from there to the end of the file
+-- against a disposable schema holding nothing but their own stub tables:
+-- tests/account-email.test.js and tests/preview-lifecycle.test.js. So a
+-- statement down here has to run with no `apps`, no `users` and nothing
+-- else the platform has. A new table carrying a foreign key belongs ABOVE
+-- this line.
+--
+-- Getting it wrong is invisible locally — both tests skip without a real
+-- PostgreSQL — and only turns red on staging, after the proposal is filed.
+--
+-- The markers are matched by exact text, so do not quote them in a comment
+-- either: an earlier copy of this warning named one verbatim and moved the
+-- cut up into itself.
+-- ────────────────────────────────────────────────────────────────────
+
+-- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
+CREATE TABLE IF NOT EXISTS account_email_verifications (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  previous_email VARCHAR(255),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_email_verifications IS 'staging:private';
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';
