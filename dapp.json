@@ -1822,7 +1822,7 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The Board opens straight onto its cards, with no view tab strip above them",
+      "name": "The Dev screen opens straight onto its cards, with no view tab strip above them",
       "path": "/app/staging-demo-admins/dev",
       "expectSelector": "#dev-forum-scroll #dev-body"
     },
@@ -1882,7 +1882,7 @@
       "expectSelector": "#dev-kanban-col-done [data-gov-row=\"9100060\"] .attr-chip"
     },
     {
-      "name": "?view=kanban forces the board regardless of stored preference (#814)",
+      "name": "?view=kanban still reaches the board's columns, whatever is stored (#814)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
@@ -1892,10 +1892,10 @@
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The Board names itself in the chip, under the app it belongs to",
+      "name": "The Dev screen names itself in the chip, under the app it belongs to",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-switcher-btn #app-switcher-subtitle",
-      "expectText": "Board"
+      "expectText": "Workshop"
     },
     {
       "name": "A retired ?view=feed deep link resolves onto the Workshop",
@@ -3311,9 +3311,9 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
+      "name": "Back from a dev session is the header's own arrow, a real link at the Workshop (#1036, Streamlined Concept)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
+      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
       "name": "…and a cold session link opened by a Workshop viewer goes back to the Workshop",
@@ -3326,9 +3326,9 @@
       "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
-      "name": "…and from the Board it is still the Board",
+      "name": "…and from an issue opened on it, the same arrow to the same screen",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/board\"]"
+      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of Improve",

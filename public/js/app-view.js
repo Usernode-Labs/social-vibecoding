@@ -2484,12 +2484,18 @@ const AppView = {
       viewMode: AppView._getViewMode(),
     });
 
-    // The card area under whichever of its two names the active layout gives
-    // it — the kanban of work in flight is the Board, the themed lander is
-    // the Workshop — carried AS A SUBTITLE beside the app's own name, so the
+    // The card area, carried AS A SUBTITLE beside the app's own name, so the
     // chip never stops saying which app you are in.
-    App.setHeaderTitle?.(AppView.appData?.name || 'App',
-      AppView._getViewMode() === 'kanban' ? 'Board' : 'Workshop');
+    //
+    // This read `_getViewMode() === 'kanban' ? 'Board' : 'Workshop'` — the two
+    // names its two layouts gave it. With the Board VIEW MODE retired the
+    // screen has one name, and the ternary could only ever take one branch.
+    // Which also settles a fragility: the declared check on this subtitle was
+    // passing because thirty board-route checks run before it and each
+    // persisted `devViewMode: 'kanban'` through `_setViewMode`, so what the
+    // chip said depended on what had been navigated to earlier in the run.
+    // It says Workshop on the Dev screen, always.
+    App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
