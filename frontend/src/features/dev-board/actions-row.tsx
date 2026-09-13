@@ -20,7 +20,9 @@
  *
  * `#dev-kanban-filterbar` stays an innerHTML host that the module fills
  * (`_renderKanbanFilterBar()`); React renders it empty, with a constant
- * className, and never reconciles inside it.
+ * className, and never reconciles inside it. This row ASKS to be filled, on
+ * the effect after it mounts — see the call below for why `_repaintDevBody`'s
+ * own call cannot reach the host on the Workshop.
  *
  * EXACTLY ONE of the two call sites renders at a time — ./board-frame.tsx when
  * the Dev screen is on the Board, ./workshop/workshop.tsx when it is on the
@@ -33,7 +35,7 @@
  * a table.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { ReactNode } from 'react';
@@ -42,6 +44,7 @@ import {
   AppWindowIcon, GitHubIcon, KeyIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { callAppView } from './card/fold';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
 
 export interface DevActionsRowProps {
@@ -159,6 +162,45 @@ export function DevActionsRow({
   showsMembers,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
+  /**
+   * FILL THE FILTER HOST THE FRAME BELOW RENDERS, as soon as it exists.
+   *
+   * `_renderKanbanFilterBar()` is called from `_repaintDevBody()`, and on the
+   * Workshop that call runs BEFORE the surface it is filling has rendered:
+   * the branch creates an empty `#dev-workshop` and then calls the filler,
+   * but `#dev-kanban-filterbar` is a node of THIS row, which the Workshop's
+   * All-items pane renders — so the filler found no host, returned, and the
+   * search field only appeared on whatever repaint happened to come next.
+   * A WebSocket push or a pull-to-refresh, which is why it read as "the
+   * search is missing for a few seconds, then it is there".
+   *
+   * So the host asks to be filled itself, on the effect after it mounts.
+   * `mountKanbanFilters` is idempotent per host (legacy-portals keeps one
+   * entry per element and reconciles on a re-mount), and the publish that
+   * follows it is the same view model `_repaintDevBody` would have sent.
+   *
+   * IN A MICROTASK, which is React's own advice and not a superstition. The
+   * mount publishes inside `flushSync` (lib/legacy-portals.tsx — that is
+   * where the module's synchronous-DOM contract comes from), and React
+   * answers a `flushSync` raised while it is still committing with "flushSync
+   * was called from inside a lifecycle method… Consider moving this call to a
+   * scheduler task or micro task". An effect body is inside that commit,
+   * passive or not. Verified both ways in a browser against a DEVELOPMENT
+   * React build, which is the only build that carries the complaint: from the
+   * effect body it fires, from the microtask it does not. The shipped shell
+   * is a production build, so this is not what stands between the app and a
+   * green check — it is the difference between calling this where React says
+   * it is legal and calling it where React says it is not.
+   *
+   * Nothing waits on the microtask: it runs as soon as React's work loop
+   * unwinds, and the host below holds the field's row open with `min-h-8`
+   * from the frame's first paint, so arriving a beat later shifts nothing.
+   */
+  useEffect(() => {
+    let live = true;
+    queueMicrotask(() => { if (live) callAppView('_renderKanbanFilterBar'); });
+    return () => { live = false; };
+  }, []);
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
