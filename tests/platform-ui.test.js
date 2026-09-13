@@ -641,8 +641,13 @@ test("the Board owns the view control; the header's label is the chip", () => {
   assert.match(strip, /id="dc-mode-switch"/, 'the strip draws the doing<->seeing switch');
   assert.match(strip, /swapToStagingForSession/,
     'and the eye there opens that preview, the one preview affordance');
-  assert.match(strip, /if \(!previewUrl\)/,
-    'a session with no preview draws no switch — the gate moved with it');
+  // #2069 narrowed the gate rather than removing it: a session with nothing
+  // to preview still draws no switch, but "nothing to preview" no longer
+  // means "no live URL" — ensure-staging can build one from the branch.
+  assert.match(strip, /if \(!hasPreview\)/,
+    'a session with nothing to preview draws no switch — the gate moved with it');
+  assert.match(strip, /const hasPreview = !!previewUrl \|\| !!previewBuildable;/,
+    'and "nothing to preview" counts a preview that could be built');
 });
 
 test('the Improve panel is navigation, work and reference — one scroller', () => {
