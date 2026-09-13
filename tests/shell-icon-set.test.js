@@ -348,9 +348,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     // ThumbsUpIcon — the retired kudos meter row in the drawer's status pane.
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
-    // TrophyIcon — the retired Leaderboard drawer row. The route lives on, and
-    // the home screen's Challenges area is what links to it now.
-    'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
+    // (TrophyIcon left this list with #1823: the app menu's Challenges row
+    // draws it, and that menu ships in the cold document.)
     // BookmarkIcon — the outline half of the save toggle (#1280). It has no
     // React call site at all: the button it draws belongs to the message,
     // which public/js/group-chat.js renders as an HTML string, so this

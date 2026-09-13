@@ -113,6 +113,7 @@ import {
   PlusWideIcon,
   SearchIcon,
   ShieldCheckIcon,
+  TrophyIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -455,6 +456,18 @@ export function AppsSwitcherSheet(): ReactNode {
             href="#apps"
             icon={<SearchIcon />}
             label="Discover"
+          />
+          {/* #1823: Challenges is a platform place too — the group's shared
+              goals, on the Leaderboard screen's Challenges tab. It was only
+              reachable from Home's Challenges area, so from inside an app
+              there was no way to it short of going Home first. It sits
+              under Discover and before Messages; the `~` chains dapp.json
+              walks through this nav still resolve. */}
+          <MenuRow
+            id="switcher-row-challenges"
+            href="#leaderboard/challenges"
+            icon={<TrophyIcon />}
+            label="Challenges"
           />
           {/* Messages carries NO count. It wore #drawer-messages-badge from
               #1431's header bubble through #1443's row, and the argument for
