@@ -1104,7 +1104,8 @@ test('_load failure renders an inline error, never throws', async () => {
   await Browse._load();
   assert.equal(state.error, true);
   assert.equal(state.rows.length, 0, 'and the stale list is cleared');
-  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /Failed to load apps/);
+  // #1899: drawn as the shared error card with a Retry, not a red line.
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /<AppsLoadError[\s\S]*?title="Couldn't load the app directory"[\s\S]*?onRetry=\{\(\) => browse\(\)\?\._load\?\.\(\)\}/);
 });
 
 test('open seeds first paint from Home._apps, then refetches', async () => {
