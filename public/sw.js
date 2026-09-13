@@ -149,7 +149,12 @@
 // one element that slides rather than a background redrawn per tab. app.css
 // and the shell bundle are the whole user-visible surface, so the bump belongs
 // in this proposal, per v10.
-const SW_VERSION = 'v17';
+//
+// v18: the marker appears on FIRST open, and the desktop strip stops moving
+// between panes. The whole surface is app.css and the shell bundle again, and
+// v17 is already installed on the devices that previewed the marker — so
+// without this bump the fix reaches nobody who saw the bug.
+const SW_VERSION = 'v18';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
