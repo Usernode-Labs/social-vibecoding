@@ -2979,18 +2979,36 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // bar must stay the containing block for the selection marker and the
   // element its tabs' offsetLeft/offsetTop resolve against.
   assert.match(rail[1], /position: relative;/, 'still the containing block for the marker');
-  // A CENTRING ROW, not a block. The pill inside it is content-width, so
-  // whatever positions the pill is what decides where the strip appears. As a
-  // block that was the pill's LEFT EDGE against the 760px reading column —
-  // stable only while the pane beside it is also 760 wide. By stage is not:
-  // `#dev-workshop:has(.dev-ws-board)` drops the column entirely, and the
-  // strip stayed pinned to one that no longer existed, stranded mid-window
-  // with nothing under it to align to. Centred, it lands on the window's
-  // centre line on BOTH paths, because the nav's own box is centred either
-  // way — `margin: 0 auto` on the column, or the full-bleed rule re-centring
-  // this element at `max-width: 760px`.
-  assert.match(rail[1], /display: flex;\n    justify-content: center;/,
-    'the strip is centred, so it lands in one place on every pane');
+  // THE PHONE BAR'S BOX DOES NOT COME UP HERE, and all three of these are
+  // regressions, not tidying. `left/right/bottom` place a FIXED pill against
+  // the viewport; `position: relative` does not ignore them, it SHIFTS by
+  // them — so the strip sat 10px right of the column it aligns to and 8px
+  // (`--ws-lift`) above its own place in the flow. Measured in Chromium at
+  // 1280px: 2px of air above the strip and 18px below, against the 10 and 10
+  // the two rules here declare. `max-width`/`margin-inline` leak the same way
+  // and cost the alignment below — 740px with auto side margins is a
+  // shrink-to-fit box that has already centred itself, and nothing can be
+  // left-aligned inside one.
+  assert.match(rail[1], /inset: auto;/, 'the fixed offsets do not follow it into the flow');
+  assert.match(rail[1], /max-width: none;/, "and neither does the pill's width bound");
+  assert.match(rail[1], /\n    margin: 0;/, 'nor its auto side margins');
+  // LEFT-ALIGNED, not centred. The pill inside is content-width, so whatever
+  // positions the pill decides where the strip appears — and the nav spans the
+  // same reading column the pane below it does, so `flex-start` puts the
+  // strip's left edge on the pane's left edge. Centred, it sat on the WINDOW's
+  // centre line, which belongs to no edge on the screen at any width.
+  assert.match(rail[1], /display: flex;\n    justify-content: flex-start;/,
+    "the strip is left-aligned, on the reading column's own edge");
+  // AND IT IS WHAT SETTLES THE SELECTION MARKER. The marker is placed from
+  // `offsetLeft` against this nav, and under `justify-content: center` that
+  // number is `(nav - pill) / 2` plus the tab's own — so it MOVED whenever the
+  // nav's width did, for a tab that had not moved on screen. Switching the All
+  // items pane between By category and By stage gives the nav two widths, and
+  // the marker's coordinate jumped 158px for an unmoved tab, which the
+  // transition then animated. At `flex-start` the pill sits at offset 0 and
+  // the number is the tab's own, whatever the nav is doing.
+  assert.ok(!/justify-content: center/.test(decls),
+    'a centred strip re-expresses an unmoved tab every time the nav resizes');
   // FLEX, NOT `text-align: center`. An inline-level box placed by an INHERITED
   // property is one stray `text-align` on any ancestor away from moving on its
   // own — which is the class of bug this is fixing, not a shape to re-enter.
@@ -3111,7 +3129,10 @@ test('the selection slides between tabs instead of snapping', () => {
   assert.match(WORKSHOP, /x: el\.offsetLeft, y: el\.offsetTop, w: el\.offsetWidth, h: el\.offsetHeight/);
   // useLayoutEffect, not useEffect: a paint between measuring and positioning
   // is a visible flash of the marker in the wrong place.
-  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{[\s\S]{0,900}?ResizeObserver/,
+  // The span is a proximity bound, not a budget: what it pins is that the
+  // observer is set up inside the SAME layout effect that measures, so the two
+  // share a teardown. Widen it when the effect legitimately grows.
+  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{[\s\S]{0,1200}?ResizeObserver/,
     'measured in a layout effect, and re-measured on resize');
   // THE BAR IS A CALLBACK REF IN STATE, not a `useRef`. A ref object is stable,
   // so it can never wake this effect: on first open the workshop renders a
@@ -3132,19 +3153,46 @@ test('the selection slides between tabs instead of snapping', () => {
   assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?opacity: 0;[\s\S]*?\n\}/, 'hidden by default');
   assert.match(CSS, /\.dev-ws-tab-marker\[data-ws-marker-at\] \{ opacity: 1; \}/);
 
-  // THE TRANSITION IS ON THE PLACED STATE ONLY. On the base rule it would
-  // animate the first placement too — from the left edge at zero width, which
-  // is the slide-in the null-until-measured render exists to prevent.
+  // THE TRANSITION IS ON A SECOND ATTRIBUTE, and the two are not the same
+  // question. `data-ws-marker-at` means MEASURED, which is what the opacity
+  // above waits for; `data-ws-marker-slide` means the SELECTION is what moved,
+  // which is the only case worth animating. Conflated, the marker animated
+  // twice over for free: on the first placement, because `at` arrives in the
+  // same commit as the transform and a cold open on All items therefore slid
+  // it in from the nav's left edge at zero width — the very slide-in the
+  // null-until-measured render exists to prevent — and on every re-measure,
+  // because these are offsets into the bar, so a bar that moves or resizes
+  // re-expresses a tab that has not budged.
+  assert.match(WORKSHOP, /\{\.\.\.\(markerBox && markerBox\.slide \? \{ 'data-ws-marker-slide': '' \} : \{\}\)\}/);
   const base = /\.dev-ws-tab-marker \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(base && !/transition/.test(base[1]), 'the base rule does not transition');
-  const motion = /@media \(prefers-reduced-motion: no-preference\) \{\s*\.dev-ws-tab-marker\[data-ws-marker-at\] \{([\s\S]*?)\n  \}/.exec(CSS);
-  assert.ok(motion, 'and the placed state animates only where motion is welcome');
+  assert.ok(!/\.dev-ws-tab-marker\[data-ws-marker-at\] \{[^}]*transition/.test(CSS),
+    'being measured is not being moved to, and does not animate');
+  const motion = /@media \(prefers-reduced-motion: no-preference\) \{\s*\.dev-ws-tab-marker\[data-ws-marker-slide\] \{([\s\S]*?)\n  \}/.exec(CSS);
+  assert.ok(motion, 'and a selection change animates only where motion is welcome');
   assert.match(motion[1], /transform \.26s/);
   // width and height are in the list because the desktop segments are
   // content-width: "Current status" and "Needs you" differ, so a transform
   // alone would slide a box of the wrong size. On the phone they never change.
   assert.match(motion[1], /width \.26s/);
   assert.match(motion[1], /height \.26s/);
+
+  // WHICH MEASUREMENT EARNS THE SLIDE, in the three places it is decided.
+  // The effect depends on `tab`, so its own run IS the selection changing and
+  // passes true; everything the ResizeObserver reports afterwards is the
+  // layout moving under an unmoved tab and passes false.
+  assert.match(WORKSHOP, /measure\(true\);/, 'the effect run is the tab changing');
+  assert.match(WORKSHOP, /new ResizeObserver\(\(\) => measure\(false\)\)/,
+    'a resize moved the bar, not the selection');
+  // And the first placement snaps whatever asked for it: there is no previous
+  // box, so there is nothing to have slid from. `!!prev` is what says so.
+  assert.match(WORKSHOP, /slide: !!prev && selectionChanged/,
+    'the first measurement has nowhere to slide from');
+  // UNCHANGED GEOMETRY KEEPS THE PREVIOUS BOX. `ro.observe()` delivers once
+  // immediately, on the same numbers the effect just measured; returning a new
+  // object there would clear `slide` mid-animation and stop the slide dead.
+  assert.match(WORKSHOP, /&& prev\.w === next\.w && prev\.h === next\.h\) return prev;/,
+    'the observer’s first delivery must not replace an identical box');
 
   // THE BAR IS THE CONTAINING BLOCK AT BOTH WIDTHS, which is what makes
   // offsetLeft/offsetTop mean what the marker assumes. `fixed` gives it for
