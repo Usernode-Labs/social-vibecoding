@@ -50,6 +50,40 @@
     };
   }
 
+  // #2038 — the server's own answer, when it has one.
+  //
+  // Everything below this point is a PRECEDENCE TABLE: thirteen states the
+  // browser derives by guessing which of six cached columns matters most.
+  // The merge gate has always known exactly which rung refused a merge and
+  // then thrown that away, so the guess was the only thing anybody saw — and
+  // it guessed wrong in both directions (a stale 'conflict' snapshot with no
+  // re-measuring writer outranked every checks and vote state indefinitely;
+  // a proposal blocked on checks read "In vote").
+  //
+  // `integration.blockReason` is that answer. The table below stays as the
+  // fallback for rows that carry no record: merged rows, drafts, and anything
+  // written before this shipped.
+  function integrationOf(p) {
+    var i = (p && p.integration && typeof p.integration === 'object') ? p.integration : null;
+    return i;
+  }
+
+  // "measured 30 seconds ago" — the honest half of a cached number. A card
+  // that states a figure without its age is making a claim about the present
+  // that it cannot support, which is what every "the UI is out of sync"
+  // report was actually about.
+  function ageOf(iso) {
+    if (!iso) return null;
+    var t = Date.parse(iso);
+    if (!Number.isFinite(t)) return null;
+    var secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (secs < 45) return 'measured just now';
+    if (secs < 90) return 'measured a minute ago';
+    if (secs < 3600) return 'measured ' + Math.round(secs / 60) + ' minutes ago';
+    if (secs < 7200) return 'measured an hour ago';
+    return 'measured ' + Math.round(secs / 3600) + ' hours ago';
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -114,6 +148,33 @@
       votes.advisory = Math.max(0, num(p.yes_count) - num(p.qualified_yes_count));
     }
 
+    var integ = integrationOf(p);
+
+    // 0 — #2038: the two states only the SERVER can report.
+    //
+    // The board card derives every other reason itself, as a TAG, from the
+    // columns it already reads (AppView.blockReasons). This function feeds a
+    // different surface — the dev-chat header pill and the home strip, which
+    // have one slot and no tag line — so here the two server-known states do
+    // take the slot, because on those surfaces there is nowhere else for them
+    // to go. Both are in-flight or waiting: neither asks the reader to act.
+    var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
+    if (status === 'promoted' && served.indexOf('integrating') !== -1) {
+      return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
+        votes: votes,
+        title: 'The platform is merging the latest main into this proposal and '
+          + 're-running its checks against the result. It merges on its own once '
+          + 'that passes.' + (ageOf(integ.measuredAt) ? ' \u00b7 ' + ageOf(integ.measuredAt) : ''),
+      });
+    }
+    if (status === 'promoted' && served.indexOf('budget') !== -1) {
+      return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
+        votes: votes,
+        title: 'This proposal needs merging with main, but the platform\u2019s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+      });
+    }
+
     // 1 — terminal: merged.
     if (status === 'merged') {
       return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });
@@ -128,7 +189,7 @@
     // 3 — auto-resolver reconciling conflicts (persisted snapshot, or the
     // feed's process-local `resolving` flag) then retrying the merge.
     if (mcs === 'resolving' || p.resolving === true) {
-      return descriptor('resolving', 'Resolving conflicts…', 'amber', true, {
+      return descriptor('resolving', 'Resolving conflicts automatically…', 'amber', true, {
         votes: votes,
         title: 'Reconciling conflicts with main automatically, then retrying the merge.',
       });
@@ -234,9 +295,14 @@
     // own red state 4b above, since "syncing automatically" was a false
     // promise for proposals the gate-filtered auto-resolver never picks up.)
     if (behind > 0 || mcs === 'behind') {
+      // #2038: no longer a promise that something is syncing. Nothing syncs a
+      // proposal until it is eligible to merge, and saying otherwise is what
+      // left people watching a card that claimed to be working on itself.
+      var behindAge = integ ? ageOf(integ.measuredAt) : null;
       return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
         votes: votes,
-        title: 'This proposal is behind main. Syncing automatically, then it will retry the merge.',
+        title: 'Main has moved on since this was proposed. It is brought up to date and '
+          + 're-checked automatically once the vote passes.' + (behindAge ? ' \u00b7 ' + behindAge : ''),
       });
     }
     // 8 — locked app: majority reached but still needs an admin yes. (Only
@@ -330,6 +396,10 @@
       + inner(life, true) + '</span>';
   }
 
+  // STATE_BADGE_KEYS used to live here — "keys whose canonical badge belongs
+  // in the feed card's state slot". No renderer ever read it; only two test
+  // files did. #2026 moved that decision into AppView.statusTagSpecs anyway,
+  // so it is deleted rather than kept in step with a card it does not drive.
   var MergeStatus = {
     lifecycle: lifecycle,
     badgeHtml: badgeHtml,
@@ -337,7 +407,6 @@
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.
-    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'merge_conflict', 'behind', 'ready'],
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MergeStatus;

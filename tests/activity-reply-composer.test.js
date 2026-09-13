@@ -162,7 +162,12 @@ test('the Workshop staging route requires both the textarea and arrow', () => {
   assert.ok(check, 'a declared check names this change');
   // The row has to be unfolded for the composer to exist, which is what the
   // ?shot=feed-comments deep link does to the first issue row.
-  assert.equal(check.path, '/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop');
+  //
+  // ?ws=all JOINED IT when the lander became three tabs. The rows the deep
+  // link unfolds are the category list's, and that list is one tab in now —
+  // without the tab the route lands on Current status and there is no row to
+  // unfold, which is how staging failed this check rather than this file.
+  assert.equal(check.path, '/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop');
   assert.match(check.expectSelector, /textarea\[aria-label="Reply to this item"\]/);
   assert.match(check.expectSelector, /button\[aria-label="Send reply"\]:disabled/);
 });

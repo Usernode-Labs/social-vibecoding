@@ -444,7 +444,7 @@ test('the fixture id does not collide with an existing 99xxxx fixture', () => {
 
 test('dapp.json covers both the demo paint and the DB-backed path', () => {
   const tests = DAPP.tests || [];
-  const dbBacked = tests.find((t) => t.path === '/#app/usernode-2d5619/dev/sessions/990402');
+  const dbBacked = tests.find((t) => t.path === '/?workspace=1#app/usernode-2d5619/dev/sessions/990402');
   assert.ok(dbBacked, 'a check must render drafts straight from the database');
   assert.match(dbBacked.expectSelector, /dc-draft-row/);
   assert.match(dbBacked.expectText, /Staging demo draft/);

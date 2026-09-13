@@ -115,8 +115,8 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
   if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
   if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
-  if (a['data-shared-session-row']) return `#app/${slug}/dev/shared/${a['data-shared-session-row']}`;
-  if (a['data-session-chip']) return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
+  if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
+  if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
   return null;
 }
 
@@ -157,7 +157,12 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
   const s = card.pill?.state || null;
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
-  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  // `meta` chips (the status tags) ride the row's META line, which is
+  // metaLineNodes' — the same seam as the card. The band is the bar, the
+  // remaining state chips and the vote.
+  const chips = (card.badges || [])
+    .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
+    .slice(0, ROW_BADGE_MAX);
   if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">

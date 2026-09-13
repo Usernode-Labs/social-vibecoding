@@ -1,4 +1,4 @@
-// #361: the "Changes ready" card (dc-pr-card) + "Propose to group" button
+// #361: the "Changes ready" card (dc-pr-card) + "Submit for review" button
 // must render whenever a turn produced a reviewable commit — driven by the
 // staging-independent `changesReady` marker — NOT only when a staging
 // preview built. This guards the three render shapes:
@@ -46,7 +46,8 @@ function makeDevChat() {
     appendChild: () => {}, innerHTML: '', textContent: '',
   };
   const sandbox = {
-    console,
+    console, location: { search: '' }, URLSearchParams, App: { user: { id: 1 } },
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } }, dispatchEvent() {},
     escapeHtml: (s) => String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;'),
@@ -91,12 +92,15 @@ function makeDevChat() {
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8') + '\n;globalThis.AppView = AppView;', sandbox);
+  sandbox.AppView._renderTopicHead = () => {};
+  sandbox.AppView._loadDevData = async () => {};
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   // renderMarkdown is irrelevant to the card path; keep it cheap + safe.
   DevChat.renderMarkdown = (t) => String(t || '');
   return {
-    DevChat,
+    DevChat, AppView: sandbox.AppView,
     alerts: sandbox.__alerts,
     setFetch(fn) { sandbox.__fetchImpl = fn; },
     getHtml() { return t.html(); },
@@ -114,7 +118,7 @@ function makeDevChat() {
 }
 
 const activeSession = (over) => ({
-  id: 7, status: 'active', pr_url: null, pr_number: null, ...over,
+  id: 7, status: 'active', check_state: 'passing', pr_url: null, pr_number: null, ...over,
 });
 
 test('a CLI handoff reload derives the missing card from authoritative session state', () => {
@@ -200,7 +204,7 @@ test('changesReady WITHOUT stagingUrl renders the card with Propose + an ACTIVE 
   ], activeSession());
 
   assert.match(html, /dc-pr-card/, 'the Changes ready card renders');
-  assert.match(html, /Propose to group/, 'Propose to group button present');
+  assert.match(html, /Submit for review/, 'Submit for review button present');
   // #439: the Preview button is now ACTIVE — clicking it triggers an
   // on-demand rebuild rather than being a disabled "proposing will rebuild
   // it" dead-end. The fallback URL is empty (no live/message URL yet).
@@ -239,7 +243,7 @@ test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
   ], activeSession());
 
   assert.match(html, /dc-pr-card/, 'card renders');
-  assert.match(html, /Propose to group/, 'Propose to group present');
+  assert.match(html, /Submit for review/, 'Submit for review present');
   assert.deepEqual(changesRow().preview,
     { enabled: true, url: 'https://preview.example.org', title: '' }, 'live Preview button wired');
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview is NOT disabled when a URL exists');
@@ -257,18 +261,18 @@ test('managed CLI handoff keeps Propose disabled until its authoritative state i
 
   let html = h.render(messages, checking);
   assert.deepEqual(h.changesRow().propose, {
-    kind: 'blocked', label: 'Checks running…',
-    reason: 'Proposal checks are still running. You can propose after they pass.',
+    kind: 'blocked', label: 'Submit for review',
+    reason: 'Finish the build and pass checks for the current revision before submitting for review.',
   });
-  assert.match(html, /disabled[^>]*title="Proposal checks are still running/,
+  assert.match(html, /disabled[^>]*title="Finish the build and pass checks/,
     'the unavailable action is disabled and explains why');
-  assert.match(html, /Checks running…/, 'the visible label communicates progress');
+  assert.match(html, /Submit for review/, 'the action keeps its stable label');
 
   html = h.render(messages, { ...checking, proposal_state: 'ready', check_state: 'passing' });
   assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
-  assert.doesNotMatch(html, /disabled[^>]*>Propose to group</,
+  assert.doesNotMatch(html, /disabled[^>]*>Submit for review</,
     'the same action enables when the server reports ready');
-  assert.match(html, />Propose to group</);
+  assert.match(html, />Submit for review</);
 });
 
 test('live session refresh watches managed proposal readiness (#1650)', () => {
@@ -290,7 +294,7 @@ test('a plain no-changes status line renders NO card', () => {
   ], activeSession());
 
   assert.doesNotMatch(html, /dc-pr-card/, 'no card for a no-changes status');
-  assert.doesNotMatch(html, /Propose to group/, 'no Propose button');
+  assert.doesNotMatch(html, /Submit for review/, 'no Propose button');
 });
 
 test('a spec/question status line (no marker) renders NO card', () => {
@@ -351,7 +355,7 @@ test('promotePR disables the button and shows the spinner while the request is i
 
 test('promotePR re-entry guard: a second click while pending is a no-op (#558)', async () => {
   const h = makeDevChat();
-  h.DevChat.currentSession = { id: 7, status: 'active' };
+  h.DevChat.currentSession = activeSession({ id: 7 });
   let calls = 0;
   let release;
   h.setFetch(() => { calls++; return new Promise((res) => { release = () => res({ ok: true, json: async () => ({}) }); }); });
@@ -371,7 +375,7 @@ test('promotePR success locks and relabels the proposal button (#1602)', async (
     { role: 'system', content: 'Staging deployed!', changesReady: true,
       stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
   ], activeSession({ id: 7 }));
-  assert.match(h.getHtml(), /Propose to group/, 'button present before promote');
+  assert.match(h.getHtml(), /Submit for review/, 'button present before promote');
 
   h.setFetch(async () => ({ ok: true, json: async () => ({ prNumber: 42, prUrl: 'https://github.com/x/y/pull/42' }) }));
   await h.DevChat.promotePR();
@@ -393,7 +397,7 @@ test('an already-promoted session loads with a disabled completed proposal actio
 
   assert.match(html, /disabled[^>]*>Already proposed</,
     'the completion survives a fresh render rather than becoming clickable again');
-  assert.doesNotMatch(html, />Propose to group</, 'the active label is gone');
+  assert.doesNotMatch(html, />Submit for review</, 'the active label is gone');
   assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
 });
 
@@ -409,7 +413,7 @@ test('promotePR refuses a stale call for an already-proposed session (#1602)', a
   await h.DevChat.promotePR();
 
   assert.equal(calls, 0, 'no duplicate promotion request leaves the browser');
-  assert.equal(h.DevChat._proposing, null, 'no in-flight state was acquired');
+  assert.equal(h.DevChat.currentSession.status, 'promoted', 'no in-flight state was acquired');
 });
 
 test('merging and merged cards keep the proposal action completed (#1602)', () => {
@@ -449,7 +453,7 @@ test('promotePR failure (non-OK) re-enables the button and restores its label (#
   assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
     'button re-enabled after a failed response');
   const html = h.getHtml();
-  assert.match(html, />Propose to group</, 'original label restored');
+  assert.match(html, />Submit for review</, 'original label restored');
   assert.doesNotMatch(html, /aria-busy/, 'aria-busy cleared');
   assert.doesNotMatch(html, /Proposing/, 'and the spinner is gone');
   assert.deepEqual(h.alerts, ['Nope'], 'server error surfaced via alert');
@@ -482,12 +486,45 @@ test('promotePR failure (network error) re-enables the button and restores its l
       stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
   ], activeSession({ id: 7 }));
   cardOnScreen();
-  h.setFetch(async () => { throw new Error('boom'); });
+  h.setFetch(async () => { throw new TypeError('boom'); });
 
   await h.DevChat.promotePR();
 
   assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
     'button re-enabled after a thrown error');
-  assert.match(h.getHtml(), />Propose to group</, 'original label restored');
+  assert.match(h.getHtml(), />Submit for review</, 'original label restored');
   assert.deepEqual(h.alerts, ['Network error'], 'network error surfaced via alert');
+});
+
+
+test('embedded and historical build results retain their content without action controls', () => {
+  const h = makeDevChat();
+  h.render([{ role: 'system', content: 'Built the change', stagingUrl: 'https://preview.example', changesReady: true }],
+    activeSession({ pr_number: 12, pr_url: 'https://github.com/example/app/pull/12', testing_md: 'Check the result.' }));
+  const { renderComponent } = require('./lib/render-tsx');
+  const render = (props) => renderComponent('frontend/src/features/dev-chat/transcript.tsx', 'ChangesCard', { r: h.changesRow(), ...props });
+  for (const props of [{ embedded: true }, { historical: true }]) {
+    const html = render(props);
+    assert.match(html, /dc-pr-card/);
+    assert.doesNotMatch(html, /dc-pr-card-actions|dc-pr-btn-promote|Preview staging|Test this change/);
+  }
+  assert.doesNotMatch(render({ embedded: true }), /href="https:\/\/github.com/);
+  assert.match(render({}), /Preview staging/);
+  assert.match(render({}), /Submit for review/);
+});
+
+test('card and standalone workspace share one pending submission and reject concurrent clicks', async () => {
+  const h = makeDevChat();
+  h.render([{ role: 'system', content: 'Built', changesReady: true }], activeSession());
+  let resolve;
+  let calls = 0;
+  h.setFetch(() => { calls++; return new Promise((r) => { resolve = r; }); });
+  const pending = h.AppView.runChangeAction(7, 'promote');
+  await h.DevChat.promotePR();
+  assert.equal(calls, 1);
+  assert.equal(h.changesRow().propose.kind, 'pending');
+  resolve({ ok: true, json: async () => ({}) });
+  await pending;
+  assert.equal(h.changesRow().propose.kind, 'completed');
+  assert.equal(h.AppView._changeActions.size, 0);
 });

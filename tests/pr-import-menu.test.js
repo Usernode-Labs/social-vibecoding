@@ -98,14 +98,14 @@ const BASE_APP = {
 };
 
 // #1084 chunk G: the "+" menu is a React component now
-// (frontend/src/features/dev-board/board-frame.tsx), so there is no innerHTML
+// (frontend/src/features/dev-board/actions-row.tsx), so there is no innerHTML
 // string on #app-content to capture. These tests run with no
 // frontend/node_modules — the root install never touches that workspace — so
 // the markup is asserted against the component source and the GATE is asserted
 // against the module that still evaluates it, the same split
 // tests/dev-plus-menu.test.js and tests/standings-screen.test.js use.
 const FRAME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'actions-row.tsx'),
   'utf8'
 );
 

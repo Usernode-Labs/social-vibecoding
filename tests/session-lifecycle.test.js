@@ -552,3 +552,19 @@ test('purgeArchivedCc: destroys the volume and flips cc_purged', async () => {
     restore();
   }
 });
+
+
+test('archiveSession: an owned imported PR closes through the same lifecycle', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 17 }]],
+      [/SELECT cs\.\*/, [{ id: 17, source: 'imported', app_slug: 'widget', repo_url: REPO, pr_number: 31 }]],
+    ]);
+    assert.equal((await subject.archiveSession({ pool, sessionId: 17, userId: 3, reason: 'manual' })).archived, true);
+    assert.deepEqual(spies.closePR, [{ owner: 'acme', repo: 'widget', pr: 31 }]);
+    const transition = pool.calls.find((c) => /SET status = 'archived'/.test(c.sql));
+    assert.match(transition.sql, /user_id = \$2/);
+    assert.deepEqual(transition.params, [17, 3]);
+  } finally { restore(); }
+});

@@ -192,8 +192,19 @@ test('clean pathname parsing is narrow and legacy hashes remain router inputs', 
 test('interaction-gated app shots survive legacy-hash normalization', () => {
   assert.doesNotMatch(appViewSource, /location\.hash[^\n]*includes\(`app\/\$\{slug\}`\)/,
     'shot hooks must not depend on the legacy app fragment after it self-heals');
-  assert.match(appViewSource, /if \(App\.currentApp !== slug\) return;[\s\S]*?dev-plus-btn/,
+  // The plus-menu hook RETRIES now — its button moved into the Workshop's
+  // pane and no longer exists at a fixed 300ms — so the app-state guard is
+  // folded into the tick's bail-out rather than standing alone. What this
+  // asserts is the thing that matters: the hook keys off the ROUTED app
+  // state, not the legacy hash, whatever statement shape it wears.
+  const plusHook = appViewSource.slice(
+    appViewSource.indexOf("if (shot === 'plus-menu')"),
+    appViewSource.indexOf("if (shot === 'card-menu')"));
+  assert.ok(plusHook.length > 0, 'the plus-menu hook exists');
+  assert.match(plusHook, /App\.currentApp !== slug/,
     'the plus-menu shot follows the routed app state');
+  assert.match(plusHook, /dev-plus-btn/);
+  assert.ok(!/location\.hash/.test(plusHook), 'and never the legacy fragment');
   assert.match(appViewSource, /if \(App\.currentApp === slug\) \{\s*AppView\.showPreviewLoaderShot/,
     'preview shots follow the routed app state');
 });

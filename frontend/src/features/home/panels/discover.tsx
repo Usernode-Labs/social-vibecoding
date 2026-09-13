@@ -58,7 +58,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PlusWideIcon } from '@/components/ui/icons';
 
 import { clampFrame } from '../../../lib/illustration-framing';
 
@@ -262,9 +262,29 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       {view.featured.length ? (
         <Lane tiles={view.featured} />
       ) : (
-        <p className="home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-          Nothing featured right now. Browse the directory.
-        </p>
+        /* #1913: the empty state is a CARD, not a grey caption. It was one
+           centred 12px line, which read as an error note where the rail of
+           cards usually is. Now it wears the rail's own card language — a
+           tinted plate with a hairline — and the whole plate is the way on
+           to the directory, the one thing there is to do here. A fixed tint
+           rather than `cardTint`: it is not an app, so there is no slug to
+           hash, and a constant keeps the prerender and the client equal. The
+           wording keeps "Nothing featured right now", which dapp.json's
+           discover-empty check and the home tests read. */
+        <a
+          href="#apps"
+          className="home-discover-lane home-discover-empty home-tint-2 flex items-center gap-3"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+              Nothing featured right now
+            </span>
+            <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+              Browse the directory to find an app to try.
+            </span>
+          </span>
+          <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+        </a>
       )}
       {/*
           No popular apps → no divider and no second rail, rather than a second

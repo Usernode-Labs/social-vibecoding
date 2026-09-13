@@ -21,6 +21,7 @@
 //   GET  /api/apps/:slug/dev-flow/status         → the walkthrough's state
 //   POST /api/apps/:slug/external-tasks          → prepare a work order
 //   POST /api/apps/:slug/external-tasks/:id/submit → open the PR + import
+//   POST /api/apps/:slug/external-tasks/:id/discard → put a work order away
 //   POST /api/apps/:slug/external-tasks/:id/submit-update → advance a proposal
 //
 // The connector is now one way in, not the way in. Anyone who has linked
@@ -37,6 +38,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const externalAgentTasks = require('../services/external-agent-tasks');
+const prompts = require('../services/prompts');
 const githubLink = require('../services/github-link');
 const connectorLimits = require('../services/connector-limits');
 
@@ -288,9 +290,22 @@ function devFlowRoutes(config) {
         // (#1071) is the same walkthrough continuing a session nobody has
         // voted on. Two payloads because the difference a reviewer has to
         // check is entirely in the copy, and one of them cannot show both.
-        const demoKind = req.query.demo === 'session' ? 'session' : 'proposal';
+        //
+        // `?order=plain` is a SECOND discriminator, not a third `demo` value,
+        // and the distinction is load-bearing. `demo` is read by dozens of
+        // fixture routes that all test it for exactly '1' — including the
+        // /api/sessions ones that paint the very session this walkthrough is
+        // rendered inside — and the client forwards it through an allowlist.
+        // A new `demo` value therefore either fails that allowlist (no fixture
+        // at all) or passes it and reaches those routes as an unrecognised
+        // string (no session). Riding alongside, it narrows whichever fixture
+        // `demo` already selected to an ORDINARY work order — one that
+        // continues nothing, which both of the others do carry and which is
+        // the only shape "Start over" is offered on.
+        const order = req.query.order === 'connect' ? 'connect'
+          : (req.query.order === 'continue' ? 'continue' : null);
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
-          ? demoStatus(app, parsed, demoKind)
+          ? demoStatus(app, parsed, order)
           : {
             // The venue sheet's own state: the web hand-offs are offerable,
             // nothing is linked, no work order exists. Fixture session
@@ -359,7 +374,50 @@ function devFlowRoutes(config) {
       // Steps 3-5. An open task is RE-RENDERED from its stored values —
       // same branch, same base commit — so reopening the chat resumes the
       // walkthrough instead of restarting it.
-      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(pool, req.user.id, app.slug);
+      //
+      // `unexpiredOnly` because resumable is not the same as permanent. Nothing
+      // sweeps expired rows, so without it a reservation nobody ever submitted
+      // keeps answering for this app after it has stopped counting against the
+      // cap and stopped being reusable by prepareWork — leaving the launchpad
+      // showing step 3 done, with no way to say what to build instead.
+      //
+      // What the launchpad hands over now: short, static platform copy telling
+      // the agent to ask what to build and then mint its own work order.
+      //
+      // Set unconditionally, and that is the point — it must NOT hang off a
+      // task the way everything here used to, because the browser no longer
+      // mints one. `proposalId` and `targetKind` are the continuation the
+      // launchpad is offering; they only choose copy, and prepare_work
+      // re-checks ownership when the agent actually calls it, so nothing is
+      // trusted here beyond its shape.
+      const targetId = /^\d+$/.test(String(req.query.proposalId || ''))
+        ? parseInt(req.query.proposalId, 10)
+        : null;
+      payload.targetKind = targetId && req.query.targetKind === 'session' ? 'session'
+        : (targetId ? 'proposal' : null);
+      payload.instructions = prompts.getLaunchpadInstructions({
+        appName: app.name,
+        slug: app.slug,
+        targetProposalId: targetId,
+      });
+
+      // Per SESSION when the caller names one, which the dev chat always does.
+      // Keyed on the app alone, one open work order spoke for every session in
+      // it: "New change" opened a fresh session already showing an unrelated,
+      // often long-finished order, which is the bug this resolves. The
+      // app-wide lookup is kept for a caller that names no session, so a
+      // client running older JS degrades to the previous behaviour rather
+      // than to a blank walkthrough.
+      const sessionId = /^\d+$/.test(String(req.query.sessionId || ''))
+        ? parseInt(req.query.sessionId, 10)
+        : null;
+      const task = sessionId
+        ? await externalAgentTasks.loadOpenTaskForSession(
+          pool, req.user.id, app.slug, sessionId, { unexpiredOnly: true }
+        )
+        : await externalAgentTasks.loadLatestOpenTaskForSlug(
+          pool, req.user.id, app.slug, { unexpiredOnly: true }
+        );
       if (task) {
         const targetProposal = await reloadTargetProposal(
           pool, req.user, app, originOf(config), task
@@ -464,6 +522,13 @@ function devFlowRoutes(config) {
       return res.status(400).json({ error: 'proposalId must be a positive integer', code: 'invalid_request' });
     }
     const proposalId = hasProposal ? rawProposal : null;
+    // Which launchpad is asking. Recorded on the work order so the walkthrough
+    // in THIS session is the one that shows it, and no other. Optional and
+    // unvalidated beyond its shape: the lookups that read it are all scoped to
+    // the caller's own rows, so a session id that is not theirs matches
+    // nothing rather than reaching anything.
+    const rawSession = req.body?.sessionId;
+    const originSessionId = Number.isInteger(rawSession) && rawSession > 0 ? rawSession : null;
     if (!brief.trim() && !issueNumber) {
       return res.status(400).json({
         error: 'Describe the change you want first: the work order needs something to hand your agent.',
@@ -507,6 +572,7 @@ function devFlowRoutes(config) {
         clientName: 'Usernode',
         origin: originOf(config),
         restart: !!req.body?.restart,
+        originSessionId,
       });
       if (!result.ok) return sendFailure(res, result);
 
@@ -610,6 +676,65 @@ function devFlowRoutes(config) {
     }
   });
 
+  // ── Put a work order away without submitting it ──────────────────────
+  //
+  // The hand-off step's "Start over". The walkthrough is resumable by design,
+  // which means an open task is the thing it shows — so until this route
+  // existed there was no way back to the brief field once one had been minted,
+  // however stale it was. Abandoning is the whole effect: no branch is touched
+  // and no proposal is opened, so the next prepare mints a fresh work order at
+  // the app's CURRENT head rather than the commit the old one froze.
+  //
+  // Same guards as its neighbours: it is a cookie-authenticated mutation, so it
+  // carries the same-origin check, and the id is digits-only because
+  // parseInt('1.5.2') is 1 and would put away a task the caller never named.
+  router.post('/api/apps/:slug/external-tasks/:id/discard', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!sameOrigin(config, req, res)) return undefined;
+
+    const taskId = /^\d+$/.test(req.params.id) ? parseInt(req.params.id, 10) : NaN;
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Bad task id', code: 'invalid_request' });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      if (IS_STAGING) {
+        return res.status(503).json({
+          error: 'Putting a work order away is disabled in a staging preview.',
+          code: 'platform_unavailable',
+        });
+      }
+
+      // Finding 4: scoped to the app in the URL as well as the caller, so the
+      // slug is not decorative — a task under another app is not reachable
+      // through this one's route, and the log line below names the right app.
+      const discarded = await externalAgentTasks.discardTask(pool, req.user.id, app.id, taskId);
+      if (!discarded) {
+        // Already submitted, already abandoned, never the caller's, or not
+        // this app's. All four are the same answer to the browser, and all
+        // four are fine to land on twice: the walkthrough re-reads its status
+        // either way, and the client treats this as the state it was reaching
+        // for. A database FAILURE is deliberately not in that set — it throws
+        // out of discardTask into the catch below and answers 500, because
+        // "put away" and "could not write" must not paint the same notice.
+        return res.status(404).json({
+          error: 'That work order is not open any more.',
+          code: 'unknown_task',
+        });
+      }
+
+      log.info('dev-flow', 'work order discarded', {
+        userId: req.user.id, slug: app.slug, taskId: discarded,
+      });
+      return res.json({ ok: true, taskId: discarded });
+    } catch (err) {
+      log.error('dev-flow', 'discard failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Advance a proposal that is already up for a vote (#1054) ──────────
   //
   // body { proposalId, branch?, forkRepo?, expectedHeadSha? }
@@ -706,34 +831,36 @@ function devFlowRoutes(config) {
   return router;
 }
 
-// Staging mock data. Same rules as every other ?demo=1 branch on the
-// platform: obviously fake, read-only, written nowhere, impossible in
-// production (IS_STAGING gates the caller). It puts the walkthrough at
-// step 4 — GitHub linked, fork ready, work order in hand, branch not yet
-// pushed — because that is the step with the most to review.
+// The staging fixture for the walkthrough.
 //
-// The work order is an UPDATE one (#1054): the update branch is the harder of
-// the two to review, it renders every ordinary step as well, and a reviewer
-// who only ever sees the new-proposal copy cannot check the difference.
-function demoStatus(app, parsed, targetKind) {
+// Small now, because the walkthrough is. It used to carry a minted task, a
+// branch state and ~100 lines of work-order prose, all of which existed so a
+// reviewer could check copy that Usernode no longer writes: the agent asks
+// what to build and mints its own order through the connector.
+//
+// `?order=connect` drops the connector, which is the OTHER state worth
+// shooting: the hand-off step becomes "Connect Usernode", because without one
+// the agent cannot call prepare_work and there is nothing useful to hand it.
+// `?order=continue` makes it a continuation, where the instructions name the
+// proposal being updated. Any value here must also be in DevChat's
+// DEV_FLOW_ORDERS or the client drops it before it arrives; a test holds the
+// two lists to each other.
+function demoStatus(app, parsed, order) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
   const login = 'octo-contributor';
-  const continuing = targetKind === 'session';
-  const branch = continuing
-    ? 'staging-fixture/session-options'
-    : 'usernode/staging-fixture-1049';
-  const baseSha = '0123456789abcdef0123456789abcdef01234567';
+  const continuing = order === 'continue';
   return {
     available: true,
     reason: null,
     demo: true,
     repo: { owner, repo },
     github: { linked: true, login, available: true },
-    // Zero, so the fixture shows the hand-off step's connector note — the
-    // one line a first-time user most needs to review — rather than the
-    // "you already have N" hint a connected account gets instead.
-    connectors: { count: 0 },
+    // Connected, unless the fixture is deliberately showing the other state.
+    // It used to be zero on purpose, to show an advisory note under the
+    // hand-off step; that note is gone, because the connector is a
+    // requirement now rather than a suggestion.
+    connectors: { count: order === 'connect' ? 0 : 2 },
     fork: {
       state: 'ready',
       owner: login,
@@ -741,90 +868,14 @@ function demoStatus(app, parsed, targetKind) {
       url: `https://github.com/${login}/${repo}`,
       pageUrl: `https://github.com/${owner}/${repo}/fork`,
     },
-    task: {
-      id: 990501,
-      agent: 'claude-code',
-      branch,
-      baseSha,
-      forkOwner: login,
-      forkRepo: repo,
-      forkUrl: `https://github.com/${login}/${repo}`,
-      forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
-      issueNumber: null,
-      brief: continuing
-        ? 'Finish the options menu this session started.'
-        : 'Add a dark-mode toggle to the settings screen.',
-      // An array, exactly as renderPreparedTask returns — a reviewer looking
-      // at the demo payload should see the real shape, not a stand-in one.
-      guidance: [
-        `Fork ${owner}/${repo} on GitHub. Your fork is ${login}/${repo}.`,
-        'Open https://claude.ai/code and start a new session.',
-        `Choose ${login}/${repo} as its repository.`,
-        'Paste the work order below in exactly as written.',
-        'Come back here when it has pushed; Usernode submits the change itself.',
-      ],
-      workOrder: (continuing
-        ? [
-          `You are CONTINUING work in progress on the Usernode app "${app.name || app.slug}".`,
-          '',
-          `Repository to fork from: https://github.com/${owner}/${repo}`,
-          `Your fork: https://github.com/${login}/${repo}`,
-          `Branch to create: ${branch}`,
-          `Base commit: ${baseSha}`,
-          '',
-          'THE WORK YOU ARE CONTINUING',
-          '- Usernode session id:                   990405',
-          '- Its title:                             [staging fixture] Session and billing options',
-          '- Where its head lives:                  a branch in the app\'s own repository',
-          '',
-          'NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate, but this is',
-          'a session somebody is still working in, and they may take more turns on it',
-          'after you.',
-          '',
-          'TASK',
-          'Finish the options menu this session started.',
-          '',
-          'When you are done, commit and push the branch, then come back to',
-          'Usernode and press "Submit the update".',
-        ]
-        : [
-          `You are UPDATING a proposal on the Usernode app "${app.name || app.slug}".`,
-          '',
-          `Repository to fork from: https://github.com/${owner}/${repo}`,
-          `Your fork: https://github.com/${login}/${repo}`,
-          `Branch to create: ${branch}`,
-          `Base commit: ${baseSha}`,
-          '',
-          'THE PROPOSAL YOU ARE UPDATING',
-          '- Usernode proposal id:                  990601',
-          '- Its title:                             Add a dark-mode toggle',
-          '- Where its head lives:                  a branch in your own fork',
-          '',
-          'TASK',
-          'The dark-mode toggle proposal has a failing check. Fix it.',
-          '',
-          'When you are done, commit and push the branch, then come back to',
-          'Usernode and press "Submit the update".',
-        ]).join('\n'),
-      // The proposal or session this order continues. `null` on an ordinary
-      // work order.
-      targetProposal: continuing
-        ? {
-          id: 990405,
-          title: '[staging fixture] Session and billing options',
-          targetKind: 'session',
-          branchHome: 'app_repo',
-          webPath: `/#app/${app.slug}/dev/sessions/990405`,
-        }
-        : {
-          id: 990601,
-          title: 'Add a dark-mode toggle',
-          targetKind: 'proposal',
-          branchHome: 'user_fork',
-          webPath: `/#app/${app.slug}/dev/sessions/990601`,
-        },
-    },
-    branch: shapeBranch('missing'),
+    targetKind: continuing ? 'proposal' : null,
+    instructions: prompts.getLaunchpadInstructions({
+      appName: app.name,
+      slug: app.slug,
+      targetProposalId: continuing ? 990601 : null,
+    }),
+    task: null,
+    branch: null,
   };
 }
 

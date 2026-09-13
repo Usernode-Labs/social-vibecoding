@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const state = require('../src/cli/state');
 const main = require('../src/cli/main');
@@ -22,6 +23,32 @@ const {
   makeAccessToken,
   makeDeviceCode,
 } = require('../src/services/cli-auth');
+
+test('production defaults to Homeroom without an environment override', () => {
+  const env = { ...process.env };
+  delete env.USERNODE_DOMAIN;
+  const script = `
+    const state = require('./src/cli/state');
+    const config = state.defaultConfig();
+    process.stdout.write(JSON.stringify({
+      production: state.resolveProfile(config, 'production'),
+      local: state.resolveProfile(config, 'local'),
+    }));
+  `;
+  const resolve = (environment) => JSON.parse(execFileSync(process.execPath, ['-e', script], {
+    cwd: path.resolve(__dirname, '..'),
+    env: environment,
+    encoding: 'utf8',
+  }));
+  assert.deepEqual(resolve(env), {
+    production: { name: 'production', origin: 'https://my.onhomeroom.com' },
+    local: { name: 'local', origin: 'http://localhost:3000' },
+  });
+  assert.deepEqual(resolve({ ...env, USERNODE_DOMAIN: 'self-hosted.example.com' }), {
+    production: { name: 'production', origin: 'https://self-hosted.example.com' },
+    local: { name: 'local', origin: 'http://localhost:3000' },
+  });
+});
 
 test('profile origin normalization and profile grammar are fail closed', () => {
   assert.equal(state.canonicalOrigin('HTTPS://EXAMPLE.COM:443/'), 'https://example.com');
