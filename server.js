@@ -51,6 +51,7 @@ const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
+const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
@@ -590,6 +591,7 @@ app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
+app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
