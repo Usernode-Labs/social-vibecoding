@@ -270,6 +270,14 @@ export type ListRow =
     summary?: string | null;
     /** The server has themes but has not placed this card into one yet. */
     placing?: boolean;
+    /**
+     * Which item the Needs-you deck's ask box is asking about — an ADDRESS,
+     * never content. The server resolves the kind/ref pair against this
+     * app's own rows (services/workshop-ask.js), so nothing the client says
+     * about the card can reach the model. Null on a row with no resolvable
+     * reference, and the box is then not drawn.
+     */
+    askAbout?: { kind: 'proposal' | 'gov' | 'issue'; ref: number } | null;
   }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
