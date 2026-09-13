@@ -6011,9 +6011,14 @@ const AppView = {
     // using the app would notice. Null on a legacy proposal or one whose
     // summary pass failed, and the deck says so rather than showing an empty
     // space.
-    const voteRow = (x, card) => {
+    //
+    // #1902: it also carries the item's THREAD, exactly as the "mine" lane
+    // does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
+    // opened from the Needs-you deck had no reply box — the one place a
+    // reader most wants to ask a question before voting. `kind` is passed
+    // because the ref is per-kind (session / governance).
+    const voteRow = (card, item, kind) => {
       if (!card) return null;
-      const item = x.item;
       const row = {
         t: 'card',
         key: `vote:${card.key}`,
@@ -6022,7 +6027,7 @@ const AppView = {
           ? item.pr_summary_md.trim()
           : null,
       };
-      const th = AppView._feedThreadRef({ kind: x.kind, item: x.item });
+      const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
       if (th) row.thread = th;
       return row;
     };
@@ -6044,8 +6049,9 @@ const AppView = {
       total: votable.length,
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
-        x,
-        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
+        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item),
+        x.item,
+        x.kind
       )).filter(Boolean),
     };
 
@@ -6220,7 +6226,7 @@ const AppView = {
       const yes = pair.find((b) => b.key === 'yes') || null;
       const no = pair.find((b) => b.key === 'no') || null;
       queue.push({
-        ...voteRow(card, x.item),
+        ...(voteRow(card, x.item, x.kind) || {}),
         kind: 'vote',
         ask: 'Should this change go in?',
         yes: yes ? { label: yes.label, act: yes.act } : null,
