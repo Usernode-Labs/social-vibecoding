@@ -214,16 +214,42 @@ const AppView = {
   // (the Activity feed) and what is in flight (the Board) — and the Workshop
   // then replaced the feed: the same cards grouped by what they are ABOUT,
   // with "what just happened" and "what needs your vote" as strips above the
-  // themes. It is the lander; the Board is the detailed read-it-all view.
-  VIEW_MODES: ['workshop', 'kanban'],
+  // themes.
+  //
+  // ONE MODE IS LEFT, and this was the last cut. The Board was the second
+  // answer, and the Workshop's own "All items -> By stage" pane renders the
+  // very same <DevKanban/> from the very same published view model — so the
+  // Board VIEW MODE was a second surface for something the lander already
+  // contains. What retired is the mode and its standalone surface, not the
+  // columns: `#app/<slug>/board` and the old `?view=kanban` both resolve onto
+  // that pane (see _readWorkshopGroupOverride below and the alias block in
+  // app.js's restoreFromHash), exactly as `/activity` resolves onto the
+  // Workshop itself.
+  VIEW_MODES: ['workshop'],
   _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
   // Stored preferences from before the cut. A viewer who last left the board
   // in PM or Reporting has a localStorage value naming a mode that no longer
   // exists; without this they would silently land on the width default
   // instead of the nearest surviving surface, which reads as "my setting was
   // forgotten". 'list' and 'feed' are what the Workshop replaced; the two
-  // retired overviews were board-shaped, so they resolve to the board.
-  RETIRED_VIEW_MODES: { list: 'workshop', feed: 'workshop', pm: 'kanban', report: 'kanban' },
+  // retired overviews were board-shaped, and the board IS the Workshop's
+  // stage pane now, so every retired name resolves onto the one mode left.
+  // `kanban` joins them for exactly the reason the others are here: a viewer
+  // who last left the Dev screen on the Board has that value in localStorage,
+  // and the point of this table is that a stored preference is never silently
+  // forgotten. They land on the Workshop, whose stage pane is the board.
+  RETIRED_VIEW_MODES: {
+    list: 'workshop', feed: 'workshop', pm: 'workshop', report: 'workshop',
+    kanban: 'workshop',
+  },
+  // Which of those stored values MEANT THE BOARD — the mode itself, plus the
+  // two board-shaped overviews that already resolved onto it before it
+  // retired. The table above sends all five to the same mode, which is what
+  // stops anyone landing nowhere; this names the three whose viewer also
+  // wanted the COLUMNS, so _getWorkshopGroup can open them there. 'list' and
+  // 'feed' are not here: the Workshop replaced those, and its default pane is
+  // the one they resolve to.
+  RETIRED_BOARD_VIEW_MODES: ['kanban', 'pm', 'report'],
   _migrateViewMode(v) {
     if (AppView._isViewMode(v)) return v;
     return AppView.RETIRED_VIEW_MODES[v] || null;
@@ -233,13 +259,17 @@ const AppView = {
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
   // for the multi-column band) and with `sm:hidden` on #dev-kanban-tabs.
   KANBAN_MULTICOL_MEDIA: '(min-width: 640px)',
-  // The unset default is the Workshop on EVERY width. It used to be the
+  // The unset default is the Workshop on EVERY width — and with the Board
+  // mode retired this is the only resolution left to reach. It used to be the
   // kanban above 640px and the feed below, which made the lander depend on
   // the device; the Workshop is the lander because it answers the first
-  // question on any device, and the Board is one tap away on both.
+  // question on any device, and the board's columns are one tab away on both.
   _viewModeAutoDefault: null,
   // `?view=` on the page URL wins for one paint — a deep link to a layout —
-  // and is retired the moment the viewer chooses (see _setViewMode).
+  // and is retired the moment the viewer chooses (see _setViewMode). With one
+  // mode left it can only ever resolve to 'workshop'; `?view=kanban` is
+  // honoured as a request for the STAGE PANE instead, in
+  // _readWorkshopGroupOverride below, which is where those columns live now.
   _viewModeUrlOverride: undefined,
   _readViewModeOverride() {
     if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
@@ -284,10 +314,13 @@ const AppView = {
   // inside the Workshop's React tree. See
   // frontend/src/features/dev-board/workshop/group-mode-store.ts.
   //
-  // ADDITIVE. The Board VIEW MODE and its control in the Improve panel are
-  // untouched — this is a second way to reach those columns, not a
-  // replacement for the first, and the two can never be on screen together
-  // because `_repaintDevBody` gives #dev-body to one surface at a time.
+  // NO LONGER ADDITIVE — this pane IS the board. It arrived as a second way
+  // to reach those columns while the Board view mode still owned the first;
+  // that mode and its segment in the Improve panel have since retired, so the
+  // stage pane is the only way in and `#app/<slug>/board` resolves onto it.
+  // The two surfaces could never be on screen together anyway, because
+  // `_repaintDevBody` gives #dev-body to one at a time; what changed is that
+  // the other one is no longer reachable.
   //
   // localStorage, like VIEW_MODE_KEY and unlike the filter bar's
   // sessionStorage: which way you read the board is a lasting preference,
@@ -299,21 +332,58 @@ const AppView = {
   // what the declared check for the stage pane navigates to: a check run
   // starts with an empty localStorage and would otherwise always land on
   // category and assert nothing.
+  //
+  // It answers for the RETIRED Board view's deep link too. `?view=kanban`
+  // asked for a mode that no longer exists, and the pane it was asking for is
+  // this one, so the old parameter resolves here rather than going quietly
+  // nowhere — the same courtesy `#app/<slug>/board` gets from the alias block
+  // in app.js. An explicit `?group=` wins when both are present, because that
+  // is the parameter still being offered.
   _workshopGroupUrlOverride: undefined,
   _readWorkshopGroupOverride() {
     if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
     try {
-      const v = new URLSearchParams(location.search).get('group');
-      AppView._workshopGroupUrlOverride = AppView.WORKSHOP_GROUPS.includes(v) ? v : null;
+      const q = new URLSearchParams(location.search);
+      const v = q.get('group');
+      const retiredBoard = q.get('view') === 'kanban' ? 'stage' : null;
+      AppView._workshopGroupUrlOverride =
+        AppView.WORKSHOP_GROUPS.includes(v) ? v : retiredBoard;
     } catch { AppView._workshopGroupUrlOverride = null; }
     return AppView._workshopGroupUrlOverride;
+  },
+  // The retired Board ROUTE's landing, and the only caller that sets this
+  // override without a query parameter: `#app/<slug>/board` resolves onto the
+  // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
+  // exactly as `?group=` is — it does NOT write the stored preference, and a
+  // tap on "By category" clears it through _setWorkshopGroup — so following an
+  // old board link shows those columns without re-deciding how this viewer
+  // reads the board from then on.
+  _overrideWorkshopGroup(group) {
+    if (!AppView.WORKSHOP_GROUPS.includes(group)) return;
+    AppView._workshopGroupUrlOverride = group;
   },
   _getWorkshopGroup() {
     try {
       const override = AppView._readWorkshopGroupOverride();
       if (override) return override;
       const stored = window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY);
-      return AppView.WORKSHOP_GROUPS.includes(stored) ? stored : 'category';
+      if (AppView.WORKSHOP_GROUPS.includes(stored)) return stored;
+      // THE RETIRED BOARD PREFERENCE, carried across rather than dropped.
+      // `RETIRED_VIEW_MODES` already stops a stored 'kanban' landing on a mode
+      // that no longer exists, but on its own it forgets the thing the viewer
+      // actually chose: they picked the COLUMNS, and migrating them to the
+      // Workshop's default pane hands them the categories instead. The rule
+      // that table exists for is "the nearest surviving surface", and for the
+      // Board that surface is this pane — so a viewer who last left the Dev
+      // screen on the Board still opens on the columns.
+      //
+      // Only when they have expressed no grouping preference of their own,
+      // which the return above has already established, and read-time like
+      // every other migration here: nothing is written back, so the day they
+      // do choose a pane, that choice is what persists.
+      const storedMode = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
+      if (AppView.RETIRED_BOARD_VIEW_MODES.indexOf(storedMode) !== -1) return 'stage';
+      return 'category';
     } catch { return 'category'; }
   },
   _setWorkshopGroup(mode) {

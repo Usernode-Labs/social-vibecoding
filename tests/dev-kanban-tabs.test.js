@@ -304,12 +304,25 @@ test('no ?col= and no stored value → Issues', () => {
 
 // ── ?view= override on the view mode ───────────────────────────────────────
 
-test('?view=kanban wins over the Workshop default', () => {
+test('?view=kanban resolves onto the Workshop, with the stage pane up', () => {
+  // The retired Board view's deep link. The mode it asked for is gone, and the
+  // pane it was asking FOR is the Workshop's "By stage" — so the parameter is
+  // honoured there rather than going quietly nowhere.
   const AppView = makeAppView({
     search: '?view=kanban',
     matchMedia: () => ({ matches: false }), // phone frame
   });
-  assert.equal(AppView._getViewMode(), 'kanban');
+  assert.equal(AppView._getViewMode(), 'workshop');
+  assert.equal(AppView._getWorkshopGroup(), 'stage', 'the columns it wanted');
+});
+
+test('an explicit ?group= wins over the retired ?view=kanban beside it', () => {
+  // `?group=` is the parameter still being offered, so it names the pane.
+  const AppView = makeAppView({
+    search: '?view=kanban&group=category',
+    matchMedia: () => ({ matches: false }),
+  });
+  assert.equal(AppView._getWorkshopGroup(), 'category');
 });
 
 test('?view=workshop wins over a stored kanban preference', () => {
@@ -344,7 +357,11 @@ test('an unrecognized ?view= leaves the existing resolution untouched', () => {
   assert.equal(AppView._getViewMode(), 'workshop'); // the default, unchanged
 });
 
-test('toggling the view mode retires the ?view= override so the click sticks', () => {
+test('choosing a pane retires the ?view=kanban override so the click sticks', () => {
+  // The surviving half of "an explicit choice beats the URL". It used to be
+  // the view-mode toggle against `?view=`; with one mode left, the control
+  // that choice is made on is the grouping tab strip, and the override it has
+  // to retire is the one the retired parameter set.
   const store = { devViewMode: 'kanban' };
   const AppView = makeAppView({
     search: '?view=kanban',
@@ -354,15 +371,17 @@ test('toggling the view mode retires the ?view= override so the click sticks', (
       setItem: (k, v) => { store[k] = v; },
     },
   });
-  assert.equal(AppView._getViewMode(), 'kanban');
-  AppView._setViewMode('workshop');
-  assert.equal(AppView._getViewMode(), 'workshop', 'the explicit choice wins over the URL');
+  assert.equal(AppView._getViewMode(), 'workshop', 'the stored value migrates too');
+  assert.equal(AppView._getWorkshopGroup(), 'stage');
+  AppView._setWorkshopGroup('category');
+  assert.equal(AppView._getWorkshopGroup(), 'category',
+    'the explicit choice wins over the URL');
 });
 
 test('no ?view= at all lands on the Workshop on every width', () => {
   // The #462 width default (kanban when wide, the list when narrow) retired
   // with the feed: the Workshop is the lander because it answers the first
-  // question on any device, and the Board is one tap away on both.
+  // question on any device, and the board's columns are one tab away on both.
   const wide = makeAppView({ search: '', matchMedia: () => ({ matches: true }) });
   assert.equal(wide._getViewMode(), 'workshop');
   const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });

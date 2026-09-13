@@ -3588,7 +3588,16 @@ const App = {
         // `activity` is the retired Activity feed's address; the Workshop
         // replaced it as the lander, so the old links land there.
         if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
-        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
+        // `board` is the retired Board view's address. Those columns are the
+        // Workshop's "By stage" pane now, so an old link lands on the Workshop
+        // with that pane up rather than on a mode that no longer exists — the
+        // same treatment `activity` gets above, one pane deeper.
+        else if (tab === 'board') {
+          tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop';
+          if (typeof AppView !== 'undefined' && AppView._overrideWorkshopGroup) {
+            AppView._overrideWorkshopGroup('stage');
+          }
+        }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {

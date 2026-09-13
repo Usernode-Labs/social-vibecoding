@@ -1827,9 +1827,9 @@
       "expectSelector": "#dev-forum-scroll #dev-body"
     },
     {
-      "name": "A ?view=kanban deep link resolves onto the kanban board",
+      "name": "A retired ?view=kanban deep link resolves onto the Workshop's stage pane",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-kanban-board"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban"
     },
     {
       "name": "The self-hosted platform row gets its own App segment too (#1386, #1443)",
@@ -1908,9 +1908,9 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link, and a tap unfolds a row into its card, whose Open card leads to its page",
+      "name": "A retired ?view=kanban link lands on the stage pane, and a tap unfolds a row into its card, whose Open card leads to its page",
       "path": "/?demo=1&view=kanban&shot=board-unfold#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-kanban-board .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > a.dev-ws-open-btn[href*=\"/dev/\"]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > a.dev-ws-open-btn[href*=\"/dev/\"]",
       "expectText": "Open card"
     },
     {
@@ -1919,9 +1919,9 @@
       "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
     },
     {
-      "name": "#app/<slug>/board is the card area as a kanban, its cards folded to rows",
+      "name": "#app/<slug>/board resolves onto the stage pane, its cards folded to rows",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body #dev-kanban-board #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
       "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the open summary card and the step back",
@@ -1989,13 +1989,7 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #switcher-row-home"
     },
     {
-      "name": "The kanban carries the app's general discussion as a card above its columns",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-forum-scroll:has(#dev-body #dev-kanban-board) a#dev-chat-card[href^=\"/app/usernode-2d5619/dev/chat\"]",
-      "expectText": "General discussion"
-    },
-    {
-      "name": "...and the Workshop carries the same discussion as a row of its own instead",
+      "name": "The Workshop carries the app's general discussion as a row of its own",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-discussion-row]"
     },

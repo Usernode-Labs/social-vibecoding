@@ -1889,10 +1889,16 @@ test('the sheet CSS moved host with the entry, and the Workshop has its own', ()
 
 test('workshop replaced feed as a mode, and the retired names resolve onto it', () => {
   const AppView = makeAppView();
-  assert.deepEqual(plain(AppView.VIEW_MODES), ['workshop', 'kanban']);
+  assert.deepEqual(plain(AppView.VIEW_MODES), ['workshop']);
   assert.equal(AppView._migrateViewMode('feed'), 'workshop');
   assert.equal(AppView._migrateViewMode('list'), 'workshop');
-  assert.equal(AppView._migrateViewMode('pm'), 'kanban');
+  // 'pm' and 'report' were board-shaped and resolved to the Board; the Board
+  // mode has retired in turn, so the chain ends at the one mode left — as does
+  // 'kanban' itself, which is what a viewer who last left the Dev screen on
+  // the Board still has stored.
+  assert.equal(AppView._migrateViewMode('pm'), 'workshop');
+  assert.equal(AppView._migrateViewMode('report'), 'workshop');
+  assert.equal(AppView._migrateViewMode('kanban'), 'workshop');
   assert.equal(AppView._getViewMode(), 'workshop', 'the default on every width');
   assert.ok(!APP_VIEW_SRC.includes('_rerenderFeed()'), 'the feed renderer is gone');
   assert.ok(!APP_VIEW_SRC.includes('_feedView()'), 'and its view model');
@@ -2151,18 +2157,31 @@ test('the board view model is built only for the pane that shows it', () => {
     'and published before the mount');
 });
 
-test('the tabs are additive: the Board view mode and its control are untouched', () => {
-  // #1995-era decision, recorded here because the next change to this screen
-  // is the one that would quietly drop the standalone board.
-  assert.ok(APP_VIEW_SRC.includes("VIEW_MODES: ['workshop', 'kanban']")
-    || /VIEW_MODES:\s*\['workshop', 'kanban'\]/.test(APP_VIEW_SRC),
-    'both dev view modes still exist');
-  assert.match(VIEW_TABS, /board/i, 'the Improve panel still offers the Board row');
-  // The two surfaces can never be on screen together — `_repaintDevBody`
-  // gives #dev-body to exactly one of them — which is why both can render
-  // #dev-kanban without a duplicate id.
+test('the tabs are no longer additive: the Board view mode retired onto them', () => {
+  // The #1995-era decision was that the grouping tabs were ADDITIVE and the
+  // standalone board was untouched, and this test existed because "the next
+  // change to this screen is the one that would quietly drop the standalone
+  // board". That change is this one, and it is not quiet: the stage pane
+  // renders the same <DevKanban/> from the same published view model, so the
+  // Board view mode was a second surface for something the lander contains.
+  assert.match(APP_VIEW_SRC, /VIEW_MODES: \['workshop'\]/, 'one dev view mode');
+  assert.ok(!/VIEW_MODES: \['workshop', 'kanban'\]/.test(APP_VIEW_SRC),
+    'the Board mode is gone from the list, not merely unreachable by default');
+  assert.match(APP_VIEW_SRC, /kanban: 'workshop'/,
+    'and a stored preference naming it migrates rather than being forgotten');
+  assert.ok(!/data-context-row="board"/.test(VIEW_TABS),
+    'the Improve panel offers no Board segment');
+  // WHAT IS NOT REMOVED. The columns, the route and the old deep link all
+  // still resolve — onto the stage pane — and the standalone surface's own
+  // code is still here, now unreachable, to be swept separately rather than
+  // torn out alongside a routing change.
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-kanban-board"><\/div>'/);
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-workshop"><\/div>'/);
+  assert.match(APP_VIEW_SRC, /_overrideWorkshopGroup\(group\) \{/,
+    'the retired board ROUTE has a landing');
+  const board = dapp.tests.find((t) => /board resolves onto the stage pane/.test(t.name || ''));
+  assert.ok(board && /\[data-ws-stage\]/.test(board.expectSelector),
+    'and a declared check proves that landing draws the columns');
 });
 
 test('the grouping preference lasts, and an unknown stored value is category', () => {
@@ -2175,6 +2194,37 @@ test('the grouping preference lasts, and an unknown stored value is category', (
   assert.equal(AppView._getWorkshopGroup(), 'category', 'an unknown mode falls back');
   store.devWorkshopGroup = 'themes';
   assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
+});
+
+test('a retired Board preference opens on the columns, not on the categories', () => {
+  // The other half of retiring the Board VIEW MODE. RETIRED_VIEW_MODES stops a
+  // stored 'kanban' naming a mode that no longer exists — but on its own it
+  // forgets what the viewer actually chose, which was the COLUMNS, and hands
+  // them the categories instead. The three board-shaped values therefore open
+  // on the stage pane.
+  for (const mode of ['kanban', 'pm', 'report']) {
+    const AppView = makeAppView({ localStorage: { devViewMode: mode } });
+    assert.equal(AppView._getViewMode(), 'workshop', `${mode} migrates to the one mode left`);
+    assert.equal(AppView._getWorkshopGroup(), 'stage', `${mode} still opens on the columns`);
+  }
+  // The Workshop's own predecessors get its own default pane: those viewers
+  // never chose columns.
+  for (const mode of ['feed', 'list', 'workshop']) {
+    const AppView = makeAppView({ localStorage: { devViewMode: mode } });
+    assert.equal(AppView._getWorkshopGroup(), 'category', `${mode} lands on the lander`);
+  }
+  // A grouping the viewer actually chose outranks the migration — it is read
+  // first, so the migration only ever fills a gap.
+  const chosen = makeAppView({
+    localStorage: { devViewMode: 'kanban', devWorkshopGroup: 'category' },
+  });
+  assert.equal(chosen._getWorkshopGroup(), 'category');
+  // READ-TIME, like every other migration here: nothing is written back, so
+  // the day they pick a pane that choice is what persists.
+  const store = { devViewMode: 'kanban' };
+  const fresh = makeAppView({ localStorage: store });
+  assert.equal(fresh._getWorkshopGroup(), 'stage');
+  assert.ok(!('devWorkshopGroup' in store), 'the migration stores nothing');
 });
 
 test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
