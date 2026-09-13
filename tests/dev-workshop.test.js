@@ -2603,11 +2603,11 @@ test('a category card is raised off the pane it sits on', () => {
   assert.ok(!/backdrop-filter/.test(card[1]), 'the frost went with it');
 });
 
-test('a wide window reads the tabs at the top, as underlined words', () => {
+test('a wide window reads the tabs at the top, as a segmented control', () => {
   // THE PILL IS A PHONE CONVENTION. Pinned to the floor of a 900px window it
   // puts the switch as far from the reading as the window allows, and the eye
   // crosses the whole height to use it. Above 700px — the breakpoint the deck
-  // already uses, so the two stay in step — the bar loses the pill entirely.
+  // already uses, so the two stay in step — the bar comes off the floor.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(wide, 'the wide-screen block exists');
   // ONE block at this breakpoint, not two: a second would sit below the deck
@@ -2615,30 +2615,69 @@ test('a wide window reads the tabs at the top, as underlined words', () => {
   // added here and silently go unchecked.
   assert.equal((CSS.match(/@media \(min-width: 700px\) \{/g) || []).length, 1,
     'the breakpoint is written once');
+
+  // NOT AN UNDERLINED ROW. That shape separates by RULE where this product
+  // separates by figure and ground — the distinction @/components/ui/tabs.tsx
+  // spells out where it retired the same underline from the Leaderboard's
+  // strip — and it reads as a code-hosting tool bolted to a consumer one.
+  // Comments stripped first: the block above explains WHY the underline went,
+  // and prose naming it is not the declaration this forbids.
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/border-bottom: 2px solid/.test(decls), 'no underline on the tab');
+  assert.ok(!/border-bottom-color: var\(--brand-ink\)/.test(decls),
+    'and none carrying the accent under the selected one');
+
   const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(wide[1]);
   assert.ok(rail, 'the rail is restyled for width');
   // `order: 0` is the whole move — the nav is already first in the DOM, so
   // dropping the phone's `order: 1` paints it where it is written.
   assert.match(rail[1], /order: 0;/, 'it paints where it is written');
   assert.match(rail[1], /position: static;/, 'nothing to stick to at the head of a column');
-  assert.match(rail[1], /border-bottom: 1px solid var\(--app-sheet-line\);/, 'a rule, not a pill');
-  assert.match(rail[1], /border-radius: 0;/);
+  // A BLOCK, not the pill: it inherits the reading column and its centring, so
+  // the strip keeps one left edge whether the pane beside it is the 760px
+  // category list or the full-bleed board.
+  assert.match(rail[1], /display: block;/, 'the nav is the positioning box');
   assert.match(rail[1], /background: none; backdrop-filter: none;/,
-    'no fill and no frost, so nothing to composite');
+    'the frost belongs to the floating phone bar, not to a strip in the flow');
+
+  const track = /\.dev-ws-tabtrack \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(track, 'the track is the pill');
+  // `inline-flex` so it hugs its three labels: a segmented control spanning
+  // the reading column reads as a header bar rather than as a control, which
+  // is the same reason SECTION_TABS_LIST is inline-flex.
+  assert.match(track[1], /display: inline-flex;/, 'it hugs its labels');
+  assert.match(track[1], /border-radius: 9999px;/);
+  // A TOKEN, NOT A LITERAL WHITE. The mock that sold this option hardcoded
+  // #ffffff and rendered a glaring slab in dark mode; --dc-sheet-raise is the
+  // raised surface the category cards already use and carries both values.
+  assert.match(track[1], /background-color: var\(--dc-sheet-raise\);/);
+  assert.ok(!/#fff/i.test(track[1]), 'no literal white to strand dark mode');
+
   const tab = /\.dev-ws-tab \{([\s\S]*?)\n  \}/.exec(wide[1]);
   assert.ok(tab, 'the tab is restyled too');
-  // Word beside glyph, sized to its text, not a third of the width: three
-  // words at the head of a 1440px column, not three stretched thirds.
-  assert.match(tab[1], /flex: 0 0 auto; flex-direction: row;/);
-  assert.match(tab[1], /border-bottom: 2px solid transparent; margin-bottom: -1px;/,
-    'the underline reserves its space unselected and overlaps the rule');
-  const sel = /\.dev-ws-tab\[aria-selected="true"\] \{([\s\S]*?)\n  \}/.exec(wide[1]);
-  assert.ok(sel, 'the live tab is restyled');
-  assert.match(sel[1], /background: none; box-shadow: none;/, 'the phone pill is undone');
-  assert.match(sel[1], /border-bottom-color: var\(--brand-ink\);/, 'the rule carries the accent');
+  // SECTION_TAB_BASE's geometry, transcribed: h-8, px-4, rounded-full.
+  assert.match(tab[1], /height: 32px; padding: 0 16px;/);
+  assert.match(tab[1], /border-radius: 9999px;/);
+  assert.match(tab[1], /flex: 0 0 auto; flex-direction: row;/,
+    'sized to its text, not a stretched third of the column');
+
+  // THE SELECTED STATE IS NOT RESTATED AT THIS WIDTH. The phone's periwinkle
+  // carries through, so the two widths are one control at two sizes. A desktop
+  // override here would be the bug, not the fix.
+  assert.ok(!/\.dev-ws-tab\[aria-selected="true"\]/.test(wide[1]),
+    'the phone rule carries through');
+  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*background: var\(--brand-tint\);/,
+    'and that rule is still the periwinkle one');
+
   // Nothing overlays the content any more, so the clearance that existed for a
   // bar floating over what scrolls beneath it is dead space here.
   assert.match(wide[1], /\.dev-ws-tabbody \{ padding-bottom: 0; \}/);
+
+  // The markup half: the track exists and is inert on a phone, so the bar
+  // there is byte-identical to what it was.
+  assert.match(WORKSHOP, /<div className="dev-ws-tabtrack">/);
+  assert.match(CSS, /\.dev-ws-tabtrack \{ display: contents; \}/,
+    'the wrapper introduces no box on a phone');
 });
 
 test('the read-only demo check names the pane its proposal is actually on', () => {

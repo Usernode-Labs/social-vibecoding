@@ -1231,6 +1231,19 @@ export function DevWorkshop(): ReactNode {
         role="tablist"
         aria-label="Workshop sections"
       >
+        {/* The TRACK, separate from the nav, and `display: contents` on a
+            phone so the bar there is byte-identical to what it was: the nav
+            itself is the pill, edge to edge.
+
+            Above 700px the two have different jobs. The nav is the POSITIONING
+            box — it inherits the 760px reading column and its centring, which
+            is what keeps the strip anchored to the same left edge whether the
+            pane beside it is the 760px category list or the full-bleed board.
+            The track is the pill, and it hugs its three labels: a segmented
+            control spanning the reading column would read as a header bar
+            rather than as a control, which is the same reason
+            @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`. */}
+        <div className="dev-ws-tabtrack">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -1251,6 +1264,7 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-tab-label">{t.label}</span>
           </button>
         ))}
+        </div>
       </nav>
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
