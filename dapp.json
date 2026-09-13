@@ -3857,6 +3857,23 @@
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"resolving\"]",
       "expectText": "Resolving conflicts automatically"
+    },
+    {
+      "name": "#2061: a locked app's admin-approval requirement is on the card at last",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000092\"] [data-req-headline]",
+      "expectText": "Waiting on an admin"
+    },
+    {
+      "name": "#2061: an automatic step says nobody has to act",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
+      "expectText": "Nothing needs you"
+    },
+    {
+      "name": "#2061: the checklist lists the steps after the one it is stuck on",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
     }
   ],
   "governance": {
