@@ -81,10 +81,66 @@ test('an unknown gate or state is a programming error, not a silent no-op', () =
   assert.throws(() => requirements.trace().stop('checks', 'sideways'), /Unknown gate state/);
 });
 
-test('a row the gate has never run against reports nothing to describe', () => {
-  // An empty checklist would be a claim about a merge nothing has evaluated.
-  assert.deepEqual(requirements.readRequirements({}), { measuredAt: null, gates: [], evaluated: false });
-  assert.deepEqual(requirements.readRequirements(null), { measuredAt: null, gates: [], evaluated: false });
+test('a row the gate has never run against still says what it can', () => {
+  // This file originally asserted the opposite — that an un-run row describes
+  // nothing — and that was the bug. checkAndMerge records only when it runs,
+  // and it runs on a vote or on the sweep for proposals ALREADY at threshold.
+  // So a proposal below threshold, which is the case the checklist is most
+  // useful for, showed nothing at all, and a freshly cloned staging database
+  // showed nothing anywhere. A feature that appears only after somebody votes
+  // is not a feature.
+  const block = requirements.readRequirements({
+    votes_required: 3, yes_count: 1, check_state: 'passing',
+    integration_behind_by: 0, integration_merges_clean: true,
+  });
+  assert.equal(block.provisional, true, 'and it says that it is provisional');
+  assert.equal(block.evaluated, false);
+  assert.deepEqual(block.gates.map((g) => `${g.key}:${g.state}`),
+    ['approvals:waiting', 'integration:done', 'checks:done', 'github:pending']);
+  assert.equal(requirements.summarize(block.gates, { hasVoted: false }).headline, 'Waiting on your vote');
+});
+
+test('the provisional list never guesses a gate only the merge gate can answer', () => {
+  // Whether the app is locked, and whether a platform variable is unset, are
+  // answers no column on the row carries. Absent beats assumed-satisfied: a
+  // tick against a requirement nothing checked is the precise lie this whole
+  // change exists to remove.
+  const keys = requirements.provisional({ votes_required: 1, yes_count: 1 }).map((g) => g.key);
+  assert.ok(!keys.includes('admin_yes'), 'a locked-app requirement must not be invented');
+  assert.ok(!keys.includes('platform_env'), 'nor a platform-variables one');
+});
+
+test('an unmeasured row does not read as finished', () => {
+  // "Nothing left to check" on a row nothing has looked at is the exact
+  // misreading the feature exists to stop, in a new place.
+  const block = requirements.readRequirements({ votes_required: 3, yes_count: 3 });
+  const s = requirements.summarize(block.gates, {});
+  assert.notEqual(s.headline, 'Merging now');
+  assert.match(s.detail || '', /working out/);
+});
+
+test('every knowable requirement met reads as about to merge, not as unresolved', () => {
+  const block = requirements.readRequirements({
+    votes_required: 3, yes_count: 3, check_state: 'passing',
+    integration_behind_by: 0, integration_merges_clean: true,
+  });
+  const s = requirements.summarize(block.gates, {});
+  assert.equal(s.headline, 'Nothing needs you');
+  assert.match(s.detail || '', /merging shortly/);
+});
+
+test('a recording supersedes the provisional list wholesale', () => {
+  const t = requirements.trace().context({ locked: true, selfHosted: false });
+  t.pass('approvals').stop('admin_yes', 'waiting');
+  const block = requirements.readRequirements({
+    merge_requirements: t.toRecord(),
+    // Columns that would have produced a DIFFERENT provisional list.
+    votes_required: 3, yes_count: 0, check_state: 'failing',
+  });
+  assert.equal(block.provisional, false);
+  assert.deepEqual(block.gates.map((g) => g.key), ['approvals', 'admin_yes', 'integration', 'checks', 'github']);
+  assert.equal(block.gates.find((g) => g.key === 'approvals').state, 'done',
+    'the recording wins: the gate saw the real tally, the columns are a snapshot');
 });
 
 // ── The collapsed line, and who it opens for ────────────────────────────

@@ -8744,9 +8744,15 @@ const AppView = {
     const noteOf = (g) => (g && g.detail && g.detail.note) || null;
 
     if (!current) {
+      // Every step done, or the rest never measured — opposite facts, and
+      // "nothing left to check" for the second is exactly the misreading this
+      // whole feature exists to stop.
+      if (total && done === total) {
+        return { headline: 'Merging now', detail: `all ${total} steps done`, done, total, needsViewer: false };
+      }
       return {
-        headline: done === total ? 'Merging now' : 'Nothing left to check',
-        detail: total ? `all ${total} steps done` : null,
+        headline: 'Nothing needs you',
+        detail: 'still working out what this needs',
         done, total, needsViewer: false,
       };
     }

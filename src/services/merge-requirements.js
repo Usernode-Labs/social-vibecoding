@@ -89,6 +89,12 @@ const GATES = [
 
 const GATE_KEYS = new Set(GATES.map((g) => g.key));
 
+function intOrNull(v) {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
 // done    — passed
 // active  — in flight, nobody has to act (a sync, a check run, the merge)
 // waiting — a person has to do something
@@ -204,9 +210,20 @@ function summarize(list, viewer) {
   const current = gates.find((g) => g.state !== 'done' && g.state !== 'pending') || null;
 
   if (!current) {
+    // Nothing in flight and nothing waiting. Either every step really is done,
+    // or the ones left have never been measured — and those are opposite
+    // facts. Saying "nothing left to check" for the second is the exact
+    // mistake this feature exists to stop: a card that reads as finished when
+    // it has simply never been looked at.
+    if (total && done === total) {
+      return {
+        headline: 'Merging now', detail: `all ${total} steps done`,
+        done, total, current: null, opensFor: null, needsViewer: false,
+      };
+    }
     return {
-      headline: total && done === total ? 'Merging now' : 'Nothing left to check',
-      detail: total ? `all ${total} steps done` : null,
+      headline: 'Nothing needs you',
+      detail: 'still working out what this needs',
       done, total, current: null, opensFor: null, needsViewer: false,
     };
   }
@@ -247,16 +264,110 @@ function summarize(list, viewer) {
   };
 }
 
+/**
+ * The list before the gate has ever run against this proposal.
+ *
+ * The recording only happens when checkAndMerge runs, and checkAndMerge runs
+ * on a vote or on the sweep for proposals ALREADY at threshold. So a proposal
+ * below threshold — the case the checklist is most useful for, where the
+ * honest answer is "your vote is the only thing missing" — would have shown
+ * nothing at all, and a freshly cloned staging database would have shown
+ * nothing anywhere. A feature that appears only after somebody votes is not a
+ * feature.
+ *
+ * This is NOT the second evaluator the module header refuses. It re-states
+ * what the card's own tags already say, off the same columns they read, in
+ * list form. What it cannot know it does not guess: whether the app is locked
+ * and whether a platform variable is unset are answers only the gate has, so
+ * those gates are ABSENT here rather than assumed satisfied — and a record,
+ * once written, supersedes this wholesale.
+ */
+function provisional(session) {
+  const s = session || {};
+  const out = [];
+
+  const required = intOrNull(s.votes_required);
+  const yes = intOrNull(s.qualified_yes_count) != null
+    ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
+  out.push({
+    key: 'approvals',
+    label: 'Enough approvals',
+    actor: 'group',
+    state: (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
+    detail: (required != null && yes != null) ? { note: `${yes} of ${required}` } : null,
+  });
+
+  const behind = intOrNull(s.integration_behind_by);
+  const clean = s.integration_merges_clean == null ? null : !!s.integration_merges_clean;
+  let integrationState = 'pending';
+  let integrationNote = null;
+  if (clean === false) {
+    integrationState = 'active';
+    integrationNote = 'resolving a conflict with main';
+  } else if (behind != null && behind > 0) {
+    integrationState = 'active';
+    integrationNote = `${behind} commit${behind === 1 ? '' : 's'} behind, so the platform is merging main in`;
+  } else if (behind === 0 && clean === true) {
+    integrationState = 'done';
+    integrationNote = 'level with main, merges cleanly';
+  }
+  out.push({
+    key: 'integration',
+    label: 'Up to date with main',
+    actor: 'auto',
+    state: integrationState,
+    detail: integrationNote ? { note: integrationNote } : null,
+  });
+
+  const check = s.check_state || null;
+  const checkState = (check === 'passing' || check === 'skipped') ? 'done'
+    : (check === 'failing' || check === 'error') ? 'blocked'
+      : check === 'pending' ? 'active' : 'pending';
+  out.push({
+    key: 'checks',
+    label: 'Checks pass',
+    actor: 'author',
+    state: checkState,
+    detail: check === 'failing' ? { note: 'some checks are failing' }
+      : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+        : check === 'pending' ? { note: 'still running' } : null,
+  });
+
+  // Left 'pending' unconditionally this would be the only never-done step in
+  // a provisional list, so a proposal with every knowable requirement met
+  // would read as unresolved forever. When the three the columns DO cover are
+  // all satisfied, the honest statement is that the platform is about to try.
+  const allKnownDone = out.every((g) => g.state === 'done');
+  out.push({
+    key: 'github',
+    label: 'GitHub accepts the merge',
+    actor: 'auto',
+    state: allKnownDone ? 'active' : 'pending',
+    detail: allKnownDone ? { note: 'merging shortly' } : null,
+  });
+  return out;
+}
+
 /** The nested block the serializer hangs on a proposal row, beside `integration`. */
 function readRequirements(session) {
   const s = session || {};
   const raw = s.merge_requirements;
   const record = raw && typeof raw === 'object' ? raw : null;
-  if (!record) return { measuredAt: null, gates: [], evaluated: false };
+  if (!record) {
+    // No recording yet. Say what the columns support rather than nothing —
+    // and say that it IS provisional, so a surface can tone it accordingly.
+    return {
+      measuredAt: null,
+      gates: provisional(s),
+      evaluated: false,
+      provisional: true,
+    };
+  }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
     gates: describe(record),
     evaluated: true,
+    provisional: false,
   };
 }
 
@@ -287,6 +398,7 @@ module.exports = {
   ACTOR_WORD,
   trace,
   describe,
+  provisional,
   summarize,
   readRequirements,
   store,
