@@ -260,12 +260,16 @@ test('managed CLI handoff keeps Propose disabled until its authoritative state i
   });
 
   let html = h.render(messages, checking);
+  // #2074: the reason names the condition that actually failed. This is the
+  // managed-handoff contract — a tested, uploaded revision — not a generic
+  // "finish the build", which is what it used to say for all five conditions
+  // and is how a passing state got read as a broken button.
   assert.deepEqual(h.changesRow().propose, {
     kind: 'blocked', label: 'Submit for review',
-    reason: 'Finish the build and pass checks for the current revision before submitting for review.',
+    reason: 'This managed session needs a tested commit uploaded before it can be submitted.',
   });
-  assert.match(html, /disabled[^>]*title="Finish the build and pass checks/,
-    'the unavailable action is disabled and explains why');
+  assert.match(html, /disabled[^>]*title="This managed session needs a tested commit uploaded/,
+    'the unavailable action is disabled and explains why — naming ITS condition');
   assert.match(html, /Submit for review/, 'the action keeps its stable label');
 
   html = h.render(messages, { ...checking, proposal_state: 'ready', check_state: 'passing' });

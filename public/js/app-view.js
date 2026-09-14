@@ -3181,13 +3181,55 @@ const AppView = {
     if (AppView._changeActions.get(Number(item.id)) === 'promote') return { kind: 'pending' };
     // Ordinary sessions can kick off their first build/check cycle on submit.
     // Managed handoffs must already have a checked, uploaded revision.
-    const ready = item.status === 'active' && (item.check_state === 'passing'
-      || (!item.check_state && item.source !== 'cli_handoff')) && !item.busy
-      && !AppView._checksBaseNote(item)
-      && (item.source !== 'cli_handoff' || item.proposal_state === 'ready');
-    return ready ? { kind: 'ready' } : { kind: 'blocked', label: 'Submit for review',
-      reason: item.status === 'paused' ? 'Resume this change before submitting it.'
-        : 'Finish the build and pass checks for the current revision before submitting for review.' };
+    //
+    // #2074 — submitting is not merging, and this gate had been treating them
+    // as the same act. Three facts say so:
+    //
+    //   * POST /api/sessions/:id/promote has no checks condition. The wait was
+    //     the browser's alone.
+    //   * The connector's submit_work puts a change to the vote and answers
+    //     "Checks and the staging preview build automatically" — so the state
+    //     this refused is one the group is routinely shown anyway, through the
+    //     platform's other door.
+    //   * Checks gate MERGE. The platform says it in its own words wherever it
+    //     explains itself: "Merge is blocked until checks pass." A promoted
+    //     proposal with check_state 'pending' is ordinary, and the merge gate
+    //     refuses a non-green one however the vote goes.
+    //
+    // A build takes minutes and a vote takes days, so waiting for the first
+    // before starting the second spent the build for nothing.
+    //
+    // What still blocks is a KNOWN-BAD verdict: 'failing' and 'error' are
+    // reasons not to put a change in front of the group. 'pending', a build in
+    // flight, an unmeasured state and a stale-base caveat are not verdicts at
+    // all — they are answers that have not arrived.
+    //
+    // `_checksBaseNote` in particular: that is #1442's "checks ran against a
+    // main that has since moved", which #2038 made deliberately SOFT — "a
+    // caveat on a green result, not a failure, so it never blocks the vote".
+    // Soft for merging and hard for submitting cannot both be right.
+    const handoff = item.source === 'cli_handoff';
+    const blocked = (reason) => ({ kind: 'blocked', label: 'Submit for review', reason });
+
+    // Reported in the order a reader would act on them, and each naming its
+    // OWN condition. Five conditions collapsing into one sentence about
+    // finishing the build is what turned a passing state into a bug report:
+    // the message named checks that were not running, and gave no way to tell
+    // whether waiting would help.
+    if (item.status === 'paused') return blocked('Resume this change before submitting it.');
+    if (handoff && item.proposal_state !== 'ready') {
+      return blocked('This managed session needs a tested commit uploaded before it can be submitted.');
+    }
+    if (handoff && item.check_state !== 'passing') {
+      return blocked('This managed session needs its checks to pass before it can be submitted.');
+    }
+    if (item.check_state === 'failing') {
+      return blocked('The checks on this revision are failing. Push a fix, then submit it.');
+    }
+    if (item.check_state === 'error') {
+      return blocked('The checks could not run on this revision. Push a fix, then submit it.');
+    }
+    return { kind: 'ready' };
   },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
