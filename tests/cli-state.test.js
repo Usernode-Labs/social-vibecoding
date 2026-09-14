@@ -293,6 +293,54 @@ test('state and origin locks serialize live owners and recover only stale dead o
   }
 });
 
+test('an abandoned lock directory is taken over, not reported as corrupt', async () => {
+  // The race behind an intermittent CI failure. A lock directory with no
+  // owner file inside is never a lock somebody holds: a valid one is built
+  // complete and renamed into place, so it is non-empty the instant it
+  // becomes visible. An empty one is two contenders racing, or a process that
+  // died mid-teardown.
+  //
+  // It used to throw "Malformed lock file" — an error with NO `code`, out of
+  // a function whose contract is that contention carries one. Callers that
+  // switch on err.code saw `undefined` and fell through their handling.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-empty-')));
+  await fs.chmod(directory, 0o700);
+  const filename = path.join(directory, 'operation.lock');
+  try {
+    await fs.mkdir(filename, { mode: 0o700 });
+
+    // Absence reads as "no lock", and the retry is also the repair: POSIX
+    // rename() moves a directory onto an empty one, so the attempt takes the
+    // abandoned directory over rather than spinning until it times out.
+    const lock = await state.acquireLock(filename, {
+      operation: 'login', timeoutMs: 500, recoverAfterMs: 1000,
+    });
+    assert.ok(lock, 'the abandoned directory must not block a fresh acquisition');
+    assert.equal((await fs.lstat(filename)).isDirectory(), true);
+    await lock.release();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a genuinely corrupt owner file is still refused', async () => {
+  // The other half of the rule above: ABSENCE is not corruption, but
+  // corruption still is. Loosening the first must not swallow the second.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-corrupt-')));
+  await fs.chmod(directory, 0o700);
+  const filename = path.join(directory, 'operation.lock');
+  try {
+    await fs.mkdir(filename, { mode: 0o700 });
+    await fs.writeFile(path.join(filename, 'owner.json'), '{ not json', { mode: 0o600 });
+    await assert.rejects(
+      state.acquireLock(filename, { operation: 'login', timeoutMs: 100, recoverAfterMs: 1000 }),
+      /Malformed lock file/
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('fallback credential persistence is journaled outside environment-selected homes', async () => {
   const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-fallback-')));
   await fs.chmod(home, 0o700);
