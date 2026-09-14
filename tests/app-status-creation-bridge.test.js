@@ -25,13 +25,21 @@ const SRC = fs.readFileSync(
 
 function makeApp({ bridge = true } = {}) {
   const published = [];
+  const pending = [];
+  let renders = 0;
+  const appView = {
+    appData: null,
+    renderAppTab: () => { renders += 1; },
+    refreshToken: async () => {},
+    _rememberPendingAppStatus: (data) => pending.push(data),
+  };
   const sandbox = {
     console: { log() {}, warn() {}, error() {}, debug() {} },
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
     relTime: () => 'just now',
     Home: { load: () => {} },
-    AppView: { appData: null, renderAppTab: () => {}, refreshToken: async () => {} },
+    AppView: appView,
     ...(bridge ? {
       UsernodeReact: {
         appCreationProgress: { publish: (data) => published.push(data) },
@@ -65,7 +73,7 @@ function makeApp({ bridge = true } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__App = App;`, sandbox);
-  return { App: sandbox.__App, published };
+  return { App: sandbox.__App, appView, pending, published, renders: () => renders };
 }
 
 test('a creation-phase broadcast reaches the dialog store', () => {
@@ -99,4 +107,32 @@ test('a missing bridge is survivable — app.js loads before the React bundle', 
   assert.doesNotThrow(() => {
     App.handleAppStatusUpdate({ slug: 'x', status: 'running' });
   });
+});
+
+test('#2154: a terminal status is preserved when it beats the first app detail response', () => {
+  const { App, pending } = makeApp();
+  App.currentApp = 'fresh-app';
+  App.currentTab = 'app';
+
+  const event = {
+    slug: 'fresh-app', status: 'running', url: 'https://fresh-app.example.test',
+  };
+  App.handleAppStatusUpdate(event);
+
+  assert.deepEqual(pending, [event], 'open() can reconcile the event after its fetch settles');
+});
+
+test('#2154: awaiting secrets also replaces a loaded spinning-up state immediately', () => {
+  const { App, appView, renders } = makeApp();
+  App.currentApp = 'fresh-app';
+  App.currentTab = 'app';
+  appView.appData = { slug: 'fresh-app', status: 'creating' };
+
+  App.handleAppStatusUpdate({
+    slug: 'fresh-app', status: 'awaiting_secrets', missingSecrets: ['MAIL_TOKEN'],
+  });
+
+  assert.equal(appView.appData.status, 'awaiting_secrets');
+  assert.deepEqual(appView.appData.missingSecrets, ['MAIL_TOKEN']);
+  assert.equal(renders(), 1, 'the actionable blocked state replaces the spinner');
 });

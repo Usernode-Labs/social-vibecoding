@@ -984,6 +984,11 @@
       "expectText": "Opening…"
     },
     {
+      "name": "A newly started app replaces its spinner when terminal status beats its detail response (#2154)",
+      "path": "/?shot=app-launching&settle=1",
+      "expectSelector": "#app-iframe[src*=\"/health\"]"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",

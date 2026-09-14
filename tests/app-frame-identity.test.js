@@ -263,12 +263,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       documentElement: { classList: { contains: () => true }, style: {} },
     },
     getComputedStyle: () => ({ getPropertyValue: () => '0px' }),
-    fetch: async (url) => ({
-      ok: true,
-      json: async () => (String(url).includes('/api/iframe-token')
-        ? { token: sandbox.__nextToken }
-        : { status: 'ready' }),
-    }),
+    fetch: async (url) => sandbox.__fetch(url),
     alert: () => {},
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
     clearTimeout,
@@ -308,6 +303,12 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     requestAnimationFrame: (fn) => { const t = setTimeout(fn, 0); if (t.unref) t.unref(); return t; },
     __nextToken: 'tok-1',
   };
+  sandbox.__fetch = async (url) => ({
+    ok: true,
+    json: async () => (String(url).includes('/api/iframe-token')
+      ? { token: sandbox.__nextToken }
+      : { status: 'ready' }),
+  });
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   // THE WIRING UNDER TEST — exactly what main.tsx publishes.
@@ -624,6 +625,52 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   assert.match(h.status().message, /spinning up/, 'the placeholder is published');
 });
 
+test('#2154: a running event that beats the first detail response clears the spinner', async () => {
+  const h = await makeHarness();
+  const { AppView, sandbox } = h;
+  AppView.appData = null;
+  AppView.prefetchDevData = () => {};
+  AppView.startActivityTracking = () => {};
+  AppView.startTokenRefresh = () => {};
+
+  let releaseDetail;
+  const detail = new Promise((resolve) => { releaseDetail = resolve; });
+  sandbox.__fetch = async (url) => {
+    if (String(url).includes('/api/iframe-token')) {
+      return { ok: true, json: async () => ({ token: 'tok-1' }) };
+    }
+    if (String(url) === `/api/apps/${SLUG}`) return detail;
+    return { ok: true, json: async () => ({ status: 'ready' }) };
+  };
+
+  const opening = AppView.open(SLUG);
+  AppView._rememberPendingAppStatus({
+    slug: SLUG, status: 'running', url: APP_URL,
+  });
+  releaseDetail({
+    ok: true,
+    json: async () => ({ app: { slug: SLUG, name: 'Homeroom', status: 'creating', url: null } }),
+  });
+  await opening;
+
+  assert.equal(AppView.appData.status, 'running', 'the newer terminal event wins');
+  assert.equal(AppView.appData.url, APP_URL, 'the live app URL comes with it');
+  AppView.renderAppTab();
+  assert.equal(h.status(), null, 'the stale spinning-up placeholder is not painted');
+  assert.ok(h.bridge.frame(), 'the live app frame is mounted without a page refresh');
+});
+
+test('#2154: a new creating phase invalidates a terminal event from an earlier attempt', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+  AppView._rememberPendingAppStatus({ slug: SLUG, status: 'error', errorReason: 'old failure' });
+  AppView._rememberPendingAppStatus({ slug: SLUG, status: 'creating', phase: 'build' });
+
+  const detail = { slug: SLUG, status: 'creating', url: null };
+  assert.equal(AppView._applyPendingAppStatus(detail), detail,
+    'retry progress clears the obsolete terminal event');
+});
+
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
 //
 // It answers "would an eager launch mount the same frame renderAppTab would
@@ -781,6 +828,21 @@ test('the offline-app screenshot states are self-contained — no running app re
   assert.match(h.status().message, /needs a connection/,
     'and paints the placeholder the unchanged path still produces');
   assert.equal(h.surface(), 'platform', 'back on the platform surface');
+});
+
+test('#2154: the settled launch screenshot reproduces the status/detail race', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  AppView.showSettledLaunchShot();
+
+  assert.equal(AppView.appData.status, 'running', 'the pending terminal event wins');
+  assert.equal(AppView._pendingAppStatus['staging-demo-status-race'], undefined,
+    'the synthetic pending event is consumed just like open() consumes it');
+  assert.equal(h.status(), null, 'no spinning-up placeholder remains');
+  assert.ok(bridge.frame(), 'the resolved state mounts a live frame');
+  assert.equal(bridge.frame().src, 'https://platform.example/health',
+    "the fixture uses the shell's small, same-origin health document");
 });
 
 test('an offline-ready record older than its TTL is not trusted', async () => {
