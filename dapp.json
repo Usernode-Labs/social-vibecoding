@@ -1952,9 +1952,10 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
-      "name": "The Workshop carries the board's search and filter bar, not just the +",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
+      "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",
+      "path": "/?demo=1&ws=all&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search",
+      "expectText": "Nothing here matches the current search and filters."
     },
     {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",

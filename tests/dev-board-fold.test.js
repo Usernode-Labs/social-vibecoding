@@ -429,6 +429,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // — the locked-app gate that had no UI at all, the "nobody has to act"
   // wording, and the steps listed AFTER the one a proposal is stuck on,
   // landing on the other side of a second merge.
+  // 610 → 610: #2090 keeps the All items pane — and the search box in it —
+  // on screen when a search matches nothing. It RETARGETS the Workshop
+  // search-bar check rather than adding one: same box, the pane now opened
+  // already narrowed to a search nothing matches (`?q=`, new for this), with
+  // the note under it proving the search applied. The manifest sits exactly
+  // at the 20-slot floor under MAX_DECLARED_TESTS, and raising the cap is a
+  // coupled change with the capture deadline (services/app-manifest.js).
   assert.equal(DAPP.tests.length, 610);
 });
 
