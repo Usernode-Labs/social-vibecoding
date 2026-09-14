@@ -2579,8 +2579,8 @@ const AppView = {
       if (e.target.closest('a, button, input, form')) return;
       // A card inside a fold wrapper — the Workshop's rows, and the Board's
       // columns since they fold too (card/fold.tsx) — is the fold's: its own
-      // handler opens and closes it, and "Open on its own page" is the route
-      // out. Both sizes keep their data-*-row hooks so the checks and the
+      // handler opens and closes it, and the open card's "Open page ›" pill
+      // (#1886) is the route out. Both sizes keep their data-*-row hooks so the checks and the
       // lookups below still find the item; this is what stops a click on
       // them opening it full-screen. See _inFoldWrapper for why it reads the
       // event's path rather than the target's ancestors.
@@ -3271,8 +3271,12 @@ const AppView = {
     // next to them. Forks cannot be updated by the platform worker.
     let main = rows.find((r) => ['sync', 'behind', 'conflict', 'mergeability'].includes(r.key));
     if (!main) {
-      const behind = item.freshness_behind_by ?? item.behind_main;
-      main = { key: 'main', label: 'Main', tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? `${behind} commits behind main.` : (item.freshness_checked_at && behind === 0 ? 'Up to date with main.' : 'Main freshness has not been verified yet.')] };
+      // Through the one reader, so this row and the pill agree on which
+      // measurement — #2038's integration record or the legacy freshness
+      // columns — is the current one.
+      const fresh = AppView._freshnessOf(item);
+      const behind = fresh.behindBy;
+      main = { key: 'main', label: 'Main', tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : (fresh.checkedAt && behind === 0 ? 'Up to date with main.' : 'Main freshness has not been verified yet.')] };
       const reviewIndex = rows.findIndex((r) => r.key === 'votes');
       rows.splice(reviewIndex < 0 ? rows.length : reviewIndex, 0, main);
     }
@@ -3287,7 +3291,7 @@ const AppView = {
       const checks = rows.find((r) => r.key === 'checks');
       if (item.check_state === 'failing' && checks) checks.text = ['Required checks need attention before this change can be proposed.'];
       if (main.key === 'behind') {
-        const behind = item.freshness_behind_by ?? item.behind_main ?? main.count;
+        const behind = AppView._freshnessOf(item).behindBy ?? main.count;
         main.label = 'Main';
         main.sub = null;
         main.text = [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : 'Main has moved ahead.'];
@@ -3615,11 +3619,24 @@ const AppView = {
   },
   // Everything the ⋯ under `key` lists right now: the folded pills first,
   // then the registered descriptors.
-  _cardMenuItems(key) {
+  //
+  // `own` is the card's own page, when the trigger offers it: the Needs-you
+  // feed's ⋯ (workshop.tsx NeedsFeed) carries the href as
+  // `data-card-menu-open`, because there the item IS the screen and nothing
+  // on it reads as "the card" to tap. It leads the list. Every reader of the
+  // list passes the same value, so a row's index means the same descriptor
+  // in the menu that was opened and in the one refreshed under it.
+  _cardMenuItems(key, own) {
     const list = AppView._cardMenus[key] || [];
     const folded = AppView._foldedCardActions[key] || [];
-    if (!folded.length) return list;
-    return folded.map((a) => AppView._foldedMenuItem(a)).concat(list);
+    const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
+    if (!own) return rows;
+    return [{
+      label: 'Open card',
+      icon: 'open',
+      title: 'The card on its own page',
+      act: () => { window.location.hash = own; },
+    }].concat(rows);
   },
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
@@ -3684,6 +3701,7 @@ const AppView = {
     chat: '💬',       // 💬 matches the message-count badge
     archive: '📦',    // 📦
     campaign: '📊',   // 📊
+    open: '▢',             // ▢ the card on its own page
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.
@@ -3780,7 +3798,9 @@ const AppView = {
 
   _toggleCardMenu(trigger) {
     const key = trigger.dataset.cardMenu;
-    const items = AppView._cardMenuItems(key);
+    // Only an in-app route is honoured as the card's own page.
+    const own = /^#app\//.test(trigger.dataset.cardMenuOpen || '') ? trigger.dataset.cardMenuOpen : null;
+    const items = AppView._cardMenuItems(key, own);
     // Re-clicking the open trigger closes it (the popover idiom).
     const wasOpen = AppView._openCardMenu && AppView._openCardMenu.key === key;
     AppView._closeCardMenu();
@@ -3817,7 +3837,7 @@ const AppView = {
       // the menu opened: a repaint re-registers under the same key, and the
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
-      const live = AppView._cardMenuItems(key);
+      const live = AppView._cardMenuItems(key, own);
       const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
@@ -3828,7 +3848,7 @@ const AppView = {
       }
     });
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._openCardMenu = { key, el: menu, trigger };
+    AppView._openCardMenu = { key, el: menu, trigger, own };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },
@@ -3899,7 +3919,7 @@ const AppView = {
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key));
+    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key, open.own));
     AppView._positionCardMenu(open.el, trigger);
   },
 
@@ -5220,10 +5240,12 @@ const AppView = {
   // General chat card), per the card-list polish revision.
   // The banner and its `hidden` are features/dev-board/board-frame.tsx's now;
   // this publishes the one fact it draws from. `_proposalsCtx.locked` is
-  // server truth, loaded with the feed.
+  // server truth, loaded with the feed. The second fact (#1896) is the app's
+  // "Who can build it" setting, so the banner can say who that is.
   _renderLockedNotice() {
     AppView._reactDevBoard()?.publishLockedNotice(
-      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked));
+      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked),
+      !!(AppView.appData && AppView.appData.collab_visibility === 'private'));
   },
 
   // ── The app's general discussion, as a board citizen ────────────────
@@ -5574,6 +5596,64 @@ const AppView = {
       return 'status';
     } catch { return 'status'; }
   },
+  // "10h ago" for the feed's caption — the same ladder every card's meta line
+  // uses (relStamp), reduced to its text. '' when the stamp is missing.
+  _workshopAgo(ts) {
+    if (!ts) return '';
+    const part = AppView._agePart(ts);
+    return part ? part.s : '';
+  },
+
+  // The first before/after capture pair, as the Needs-you feed's picture.
+  // `visuals` is the server shape visualsTilesHtml reads — the grouped form
+  // or the legacy flat one — and this keeps only what the feed draws: one
+  // still per side (the recording is the detail view's), the route it was
+  // shot on, and whether it was a phone-frame capture (#768). Null when no
+  // group has a still on either side; a group with one honest half is kept,
+  // and the feed then shows that side alone.
+  _workshopVisuals(visuals) {
+    if (!visuals) return null;
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const groups = Array.isArray(visuals.captures)
+      ? visuals.captures
+      : ((visuals.before || visuals.after)
+        ? [{ path: visuals.capturedPath || '/', before: visuals.before, after: visuals.after }]
+        : []);
+    for (const g of groups) {
+      const before = g && g.before && idOk(g.before.png) ? g.before.png : null;
+      const after = g && g.after && idOk(g.after.png) ? g.after.png : null;
+      if (!before && !after) continue;
+      return {
+        path: typeof g.path === 'string' ? g.path : '/',
+        mobile: !!(g.mobile || (g.viewport && g.viewport === 'mobile')),
+        before,
+        after,
+        beforeWebm: g.before && idOk(g.before.webm) ? g.before.webm : null,
+        afterWebm: g.after && idOk(g.after.webm) ? g.after.webm : null,
+      };
+    }
+    return null;
+  },
+
+  // An issue body as one plain sentence-run for the feed: markdown marks
+  // stripped, whitespace folded, cut at a word. The full body is on the
+  // issue's own page, which the title links to.
+  _workshopExcerpt(text, max = 320) {
+    if (typeof text !== 'string') return '';
+    const plain = text
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/^[#>*\-\s]+/gm, '')
+      .replace(/[*_`~]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (plain.length <= max) return plain;
+    const cut = plain.slice(0, max);
+    const at = cut.lastIndexOf(' ');
+    return `${(at > max * 0.6 ? cut.slice(0, at) : cut).trim()}…`;
+  },
+
   _setWorkshopTab(key) {
     const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
@@ -6186,7 +6266,8 @@ const AppView = {
     // does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
     // opened from the Needs-you deck had no reply box — the one place a
     // reader most wants to ask a question before voting. `kind` is passed
-    // because the ref is per-kind (session / governance).
+    // because the ref is per-kind (session / governance). The feed's
+    // comments sheet reads the same reference.
     const voteRow = (card, item, kind) => {
       if (!card) return null;
       const row = {
@@ -6199,6 +6280,15 @@ const AppView = {
         askAbout: (item && item.id != null)
           ? { kind: kind === 'proposal' ? 'proposal' : 'gov', ref: item.id }
           : null,
+        // The feed's caption and its picture. `who`/`ago` are the card's own
+        // meta facts lifted out so the item can set them apart from the
+        // title; `visuals` is the first before/after capture pair, which is
+        // the item's picture when the checks shot one.
+        who: AppView._devCardAuthor(kind, item) || null,
+        ago: AppView._workshopAgo(item && (item.promoted_at || item.created_at)),
+        number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
+        body: null,
+        visuals: kind === 'proposal' ? AppView._workshopVisuals(item && item.visuals) : null,
       };
       const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
       if (th) row.thread = th;
@@ -6414,6 +6504,13 @@ const AppView = {
         kind: 'claim',
         summary: null,
         askAbout: n != null ? { kind: 'issue', ref: n } : null,
+        who: AppView._devCardAuthor('issue', e.item) || null,
+        ago: AppView._workshopAgo(e.item && (e.item.createdAt || e.item.created_at)),
+        number: n != null ? Number(n) : null,
+        // The issue's own words, as the line under its title. Plain text:
+        // the feed sets it as a sentence, not as a document.
+        body: AppView._workshopExcerpt(e.item && e.item.body),
+        visuals: null,
         // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
         // two labels: neither recorded anything, both moved the deck on, and
         // offering them side by side asked the reader to tell apart a
@@ -7554,7 +7651,7 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    // `slug` is what the open card's "Open on its own page" link is built
+    // `slug` is what the open card's page link ("Open page ›") is built
     // from; `unfolded` is the ?cards=open state (every card at full size).
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
     return {
@@ -8865,9 +8962,102 @@ const AppView = {
         chevron: !noNav,
         preview: noNav ? null : preview,
       },
-      extra: [],
+      extra: [AppView.requirementsSpec(pr)].filter(Boolean),
       dense: !noNav,
       uncapped: noNav,
+    };
+  },
+
+  // ── What this still needs before it merges (#2061) ──────────────────
+  //
+  // The tags answer "what is wrong with this". They cannot answer "is it my
+  // turn", because they are a NEGATIVE surface: an absent tag reads the same
+  // whether a gate passed, does not apply, or has no UI at all — and two of
+  // the seven gates genuinely had none. The server records what the merge gate
+  // actually did (services/merge-requirements.js) and this renders the whole
+  // ordered list, satisfied steps included.
+  //
+  // Returns null when there is nothing to say: a merged or withdrawn row, or a
+  // proposal the gate has never run against. An empty checklist would be a
+  // claim about a merge that nothing has evaluated.
+  requirementsSpec(pr) {
+    const p = pr || {};
+    if (p.status === 'merged' || p.status === 'closed') return null;
+    const block = p.mergeRequirements;
+    const gates = block && Array.isArray(block.gates) ? block.gates : [];
+    if (!gates.length) return null;
+
+    // All three signals are already on the card. `hasVoted` is deliberately
+    // "has cast one", not "voted yes": someone who voted no is not waiting to
+    // be prompted.
+    const viewer = {
+      isAuthor: !!(typeof App !== 'undefined' && App.user && p.user_id === App.user.id),
+      isAdmin: !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
+        || !!AppView._proposalsCtx?.isAppAdmin,
+      hasVoted: !!p.my_vote,
+    };
+    const s = AppView._summarizeRequirements(gates, viewer);
+    return {
+      t: 'requirements',
+      key: `req:${p.id}`,
+      headline: s.headline,
+      detail: s.detail,
+      done: s.done,
+      total: s.total,
+      // Shut unless the step it is stuck on is one THIS viewer can clear.
+      // Not remembered per viewer: a remembered "closed" would hide the one
+      // case the rule exists for.
+      open: s.needsViewer,
+      gates: gates.map((g) => ({
+        key: g.key, label: g.label, actor: g.actor, state: g.state,
+        note: (g.detail && g.detail.note) || null,
+      })),
+    };
+  },
+
+  // The collapsed line. Mirrors services/merge-requirements.js summarize() —
+  // the server cannot compute it, because it depends on who is looking.
+  _summarizeRequirements(gates, viewer) {
+    const v = viewer || {};
+    const total = gates.length;
+    const done = gates.filter((g) => g.state === 'done').length;
+    const current = gates.find((g) => g.state !== 'done' && g.state !== 'pending') || null;
+    const noteOf = (g) => (g && g.detail && g.detail.note) || null;
+
+    if (!current) {
+      // Every step done, or the rest never measured — opposite facts, and
+      // "nothing left to check" for the second is exactly the misreading this
+      // whole feature exists to stop.
+      if (total && done === total) {
+        return { headline: 'Merging now', detail: `all ${total} steps done`, done, total, needsViewer: false };
+      }
+      return {
+        headline: 'Nothing needs you',
+        detail: 'still working out what this needs',
+        done, total, needsViewer: false,
+      };
+    }
+    // Anything in flight, and every 'auto' step, needs nobody at all.
+    if (current.actor === 'auto' || current.state === 'active') {
+      return {
+        headline: 'Nothing needs you',
+        detail: noteOf(current) || String(current.label || '').toLowerCase(),
+        done, total, needsViewer: false,
+      };
+    }
+    const roles = {
+      author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
+      admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
+      group: { them: 'Waiting on the group', you: 'Waiting on your vote', is: !v.hasVoted },
+    };
+    const role = roles[current.actor];
+    if (!role) {
+      return { headline: 'Waiting', detail: noteOf(current), done, total, needsViewer: false };
+    }
+    return {
+      headline: role.is ? role.you : role.them,
+      detail: noteOf(current),
+      done, total, needsViewer: role.is,
     };
   },
 
@@ -13595,6 +13785,17 @@ const AppView = {
   // clients. Neither is authoritative over the other; a row is simply
   // whichever the caller had. Everything is nullable, and null means NOT
   // MEASURED, which is never the same as measured-and-fine.
+  //
+  // #2038 added a third shape, and made it the one the merge gate decides
+  // from: the `integration_*` record, measured from the local mirror on every
+  // merge attempt and every queue pass. The freshness sweep that kept the
+  // columns above current was retired with it, so on a proposal up for vote
+  // they are usually NULL — and a card that read only them said "Main
+  // freshness has not been verified yet" under a gate that had just measured
+  // "3 commits behind" (#2100's "the UI is not matching up"). The newer
+  // measurement wins, whichever shape carried it; a live `freshness` patch
+  // therefore still shows through, and a row that predates the record reads
+  // exactly as before.
   _freshnessOf(pr) {
     const p = pr || {};
     const f = (p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
@@ -13606,13 +13807,31 @@ const AppView = {
       }
       return null;
     };
-    const files = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+    const when = (v) => {
+      const t = v ? Date.parse(v) : NaN;
+      return Number.isFinite(t) ? t : null;
+    };
+    const legacyCheckedAt = f.checkedAt || p.freshness_checked_at || null;
+    const integrationAt = when(p.integration_measured_at);
+    const integrationWins = integrationAt !== null
+      && (when(legacyCheckedAt) === null || integrationAt >= when(legacyCheckedAt));
+    const legacyFiles = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
       : (Array.isArray(p.mergeability_files) ? p.mergeability_files : []);
-    const complete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
+    const legacyComplete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
       ? f.mergeabilityFilesComplete : p.mergeability_files_complete;
+    const legacyMergeability = p.mergeability || f.mergeability || null;
+    // The integration record's verdict is a real merge, so its answer is
+    // complete by construction; the legacy one was GitHub's estimate.
+    const integrationMergeability = p.integration_merges_clean === true ? 'clean'
+      : p.integration_merges_clean === false ? 'conflict' : null;
+    const integrationFiles = Array.isArray(p.integration_conflict_paths) ? p.integration_conflict_paths : [];
+    const useIntegrationMerge = integrationWins && integrationMergeability !== null;
+    const files = useIntegrationMerge ? integrationFiles : legacyFiles;
+    const complete = useIntegrationMerge ? true : legacyComplete;
+    const integrationBehind = num(p.integration_behind_by);
     return {
-      checkedAt: f.checkedAt || p.freshness_checked_at || null,
-      mergeability: p.mergeability || f.mergeability || null,
+      checkedAt: integrationWins ? p.integration_measured_at : legacyCheckedAt,
+      mergeability: useIntegrationMerge ? integrationMergeability : legacyMergeability,
       files: files.filter((x) => typeof x === 'string'),
       filesComplete: complete === undefined ? null : complete,
       baseVerdict: p.checks_base_verdict || f.checksBaseVerdict || null,
@@ -13620,8 +13839,10 @@ const AppView = {
       // The measured count wins over the column frozen at submission, which
       // is the whole point of #1442. `behind_main` is the last fallback, and
       // it is still what the merge gate reads.
-      behindBy: num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
-      error: f.error || p.freshness_error || null,
+      behindBy: (integrationWins && integrationBehind !== null)
+        ? integrationBehind
+        : num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
+      error: integrationWins ? (p.integration_error || null) : (f.error || p.freshness_error || null),
     };
   },
 

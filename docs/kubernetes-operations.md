@@ -7,9 +7,10 @@ Docker daemon or socket. Talos workloads are observed through Kubernetes APIs.
 
 ## Ownership and releases
 
-The `Build Kubernetes images` workflow builds the platform, worker and capture
-Dockerfiles in CI and publishes one OCI Helm chart containing all three image
-digests. `main` produces the stable `0.1.*` releases tracked by Argo CD. The
+The `Build Kubernetes images` workflow builds the platform Dockerfile in CI,
+builds or reuses worker/capture images by their tracked build inputs, and
+publishes one OCI Helm chart containing all three image digests. `main`
+produces the stable `0.1.*` releases tracked by Argo CD. The
 platform's own release uses this workflow; generated child apps use kpack and
 Paketo from exact Git revisions. Child-app Dockerfiles are not executed by kpack.
 

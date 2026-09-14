@@ -325,3 +325,84 @@ test('the service, not the route, owns the external_agent_tasks query', () => {
     /FROM external_agent_tasks/,
     'the table has one owner; a second copy of the filter drifts from it');
 });
+
+// ── #1948: a work order whose request has closed is not listed ─────────
+//
+// A work order stays `open` for its full 14 days unless the agent submits or
+// shares through THAT task. When the request is built some other way — a
+// platform session, another agent, a second work order — the issue closes
+// and the task does not. The row still said "Handed off" and still pointed at
+// `#app/<slug>/dev/issues/<n>`; the board only resolves OPEN issues, so the
+// route fell back to the card list and the tap appeared to do nothing
+// (reproduced on production with a puzzlechain task whose request had shipped
+// two days earlier). The list now drops a task whose issue is no longer in the
+// repo's open-issue list — but ONLY when that list is authoritative: a
+// rate-limited, truncated or failed fetch keeps every row, because hiding
+// work someone handed out on a guess is worse than a stale row.
+
+const REPO_ROW = (over) => ({
+  ...ROW,
+  repo_url: 'https://github.com/Usernode-Labs/puzzlechain',
+  app_slug: 'puzzlechain-6cf8ff', app_name: 'Game Corner',
+  ...over,
+});
+
+function openIssues(numbers, extra = {}) {
+  const calls = [];
+  const fetchOpenIssues = async (owner, repo) => {
+    calls.push(`${owner}/${repo}`);
+    return { issues: numbers.map((number) => ({ number })), truncatedList: false, ...extra };
+  };
+  return { calls, fetchOpenIssues };
+}
+
+test('#1948: a task whose request has closed is dropped; an open one stays', async () => {
+  const { calls, fetchOpenIssues } = openIssues([186]);
+  const rows = await svc.listOpenWorkOrders(fakePool([
+    REPO_ROW({ id: 1, issue_number: 185 }),
+    REPO_ROW({ id: 2, issue_number: 186 }),
+  ]), 42, { fetchOpenIssues });
+  assert.deepEqual(rows.map((r) => r.id), [2], 'the closed request\'s row is gone');
+  assert.deepEqual(calls, ['Usernode-Labs/puzzlechain'], 'one fetch per repository, not per task');
+});
+
+test('#1948: a task with no request behind it is never filtered', async () => {
+  const { calls, fetchOpenIssues } = openIssues([]);
+  const rows = await svc.listOpenWorkOrders(fakePool([
+    REPO_ROW({ id: 3, issue_number: null, brief: 'a bare brief' }),
+  ]), 42, { fetchOpenIssues });
+  assert.deepEqual(rows.map((r) => r.id), [3]);
+  assert.equal(calls.length, 0, 'nothing to check, so GitHub is not asked');
+});
+
+test('#1948: an unauthoritative issue list keeps every row', async () => {
+  for (const extra of [{ note: 'rate limited' }, { note: 'fetch failed' }, { truncatedList: true }]) {
+    const { fetchOpenIssues } = openIssues([], extra);
+    const rows = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ id: 4, issue_number: 185 })]), 42,
+      { fetchOpenIssues });
+    assert.deepEqual(rows.map((r) => r.id), [4], `kept under ${JSON.stringify(extra)}`);
+  }
+  const throwing = async () => { throw new Error('boom'); };
+  const rows = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ id: 5, issue_number: 185 })]), 42,
+    { fetchOpenIssues: throwing });
+  assert.deepEqual(rows.map((r) => r.id), [5], 'a throwing fetch keeps the row too');
+});
+
+test('#1948: the repository is read with the task, and never leaks into the row', async () => {
+  const queries = [];
+  const { fetchOpenIssues } = openIssues([185]);
+  const [row] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 185 })], queries), 42,
+    { fetchOpenIssues });
+  assert.match(queries[0].sql, /a\.repo_url/);
+  assert.equal(row.repo_url, undefined, 'the panel needs the destination, not the repository');
+});
+
+test('#1948: the row carries the app artwork the query already selects', async () => {
+  const { fetchOpenIssues } = openIssues([1417]);
+  const [emoji] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 1417, app_icon_emoji: '🧩' })]), 42,
+    { fetchOpenIssues });
+  assert.equal(emoji.app_icon_emoji, '🧩');
+  const [image] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 1417, app_icon_url: '/app-icons/9' })]), 42,
+    { fetchOpenIssues });
+  assert.equal(image.app_icon_url, '/app-icons/9');
+});
