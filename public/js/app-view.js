@@ -4431,9 +4431,22 @@ const AppView = {
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
     }, { signal });
-    // New change and Give feedback live in Improve (#1490). This menu keeps
-    // PR import and app management; each row is conditional on viewer/app
+    // New change lives in Improve (#1490). This menu keeps PR import and app
+    // management, and (#1900) filing an issue, which #1490 had folded into
+    // Improve's Give feedback; each row is conditional on viewer/app
     // permissions, so wire only the rows the frame rendered.
+    const issueBtn = menu.querySelector('[data-plus="issue"]');
+    if (issueBtn) {
+      issueBtn.addEventListener('click', () => {
+        close();
+        // The shared feedback dialog in its dev-context mode: the open app is
+        // preselected as the target (Platform for the self-hosted app, or
+        // while the repo does not exist yet) — #226. The same call
+        // Improve.giveFeedback() makes when the panel's app is the open one,
+        // so the two entry points cannot drift.
+        App.openFeedbackModal({ fromDev: true });
+      }, { signal });
+    }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
