@@ -2107,6 +2107,11 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
+-- #2161: 'app_deleted' has no app row left to join (notifications.app_id
+-- cascades with the app), so the deleted app's NAME rides in `detail`.
+-- apps.name is VARCHAR(255); widening is metadata-only in Postgres and
+-- re-running it is a no-op.
+ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(255);
 
 -- #1559: grant existing accounts at least two slots once, preserving higher
 -- allowances. A later explicit admin reduction must survive every restart.

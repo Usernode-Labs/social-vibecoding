@@ -16,7 +16,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const appAdmins = require('../src/services/app-admins');
-const { accessFlags, canDeleteApp } = require('../src/routes/apps');
+const { accessFlags, canDeleteApp, deleteBlockReason, isCoreApp } = require('../src/routes/apps');
 
 // Fresh module state per assertion group: the service TTL-caches
 // rosters by app id, so tests that reuse an id must invalidate.
@@ -259,12 +259,59 @@ test('delete uses the sole-contributor predicate, never general app-admin rights
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
   const at = src.indexOf("router.delete('/api/apps/:slug'");
   assert.notEqual(at, -1);
-  const body = src.slice(at, at + 900);
+  // The window covers the whole pre-teardown gate: #2161 put the core-app
+  // refusal and the typed-name check in front of the contributor read.
+  const body = src.slice(at, src.indexOf('applicationRuntime.remove', at));
+  assert.match(body, /isCoreApp\(app, config\.selfAppSlug\)/,
+    'the core-app refusal is the first gate (#2161)');
   assert.match(body, /loadContributorCounts/,
     'the route must re-read the contributor count at mutation time');
   assert.match(body, /canDeleteApp/);
+  assert.match(body, /confirm_name/, 'the typed name is verified server-side (#2161)');
+  assert.match(body, /acknowledge_shared !== true/, 'a shared app refuses a plain delete (#2161)');
   assert.doesNotMatch(body, /canManageApp/,
     'general app-admin rights must not authorize destructive deletion');
+});
+
+test('a core app is never deletable and the flags say why (#2161)', () => {
+  const app = { id: 5, created_by: 1, collab_visibility: 'private' };
+  assert.equal(isCoreApp(app), false);
+  assert.equal(isCoreApp({ ...app, self_hosted: true }), true);
+  assert.equal(isCoreApp({ ...app, slug: 'usernode-2d5619' }, 'usernode-2d5619'), true);
+  assert.equal(isCoreApp({ ...app, slug: 'usernode-2d5619' }), false,
+    'the slug signal needs the configured self-app slug');
+  assert.equal(isCoreApp({ ...app, self_hosted: 'TRUE' }), false, 'a boolean, not a truthy string');
+
+  const core = { ...app, self_hosted: true };
+  assert.equal(canDeleteApp(core, PLATFORM_ADMIN, 1), false, 'full admins included');
+  assert.equal(canDeleteApp(core, CREATOR, 1), false);
+  assert.equal(deleteBlockReason(core, PLATFORM_ADMIN, 1), 'core');
+  const flags = accessFlags(core, PLATFORM_ADMIN, true, null, 1);
+  assert.equal(flags.can_delete, false);
+  assert.equal(flags.delete_block, 'core');
+  assert.equal(flags.can_manage, true, 'blocking deletion does not touch management');
+
+  const bySlug = accessFlags({ ...app, slug: 'usernode-2d5619' }, PLATFORM_ADMIN, true, null, 1,
+    'usernode-2d5619');
+  assert.equal(bySlug.can_delete, false);
+  assert.equal(bySlug.delete_block, 'core');
+});
+
+test('delete_block names the reason a delete is refused, and is null when it is allowed (#2161)', () => {
+  const app = { id: 5, created_by: 1, collab_visibility: 'private' };
+  assert.equal(deleteBlockReason(app, CREATOR, 1), null);
+  assert.equal(deleteBlockReason(app, CREATOR, 2), 'shared');
+  assert.equal(deleteBlockReason(app, CREATOR, null), 'not_owner', 'an unknown count fails closed');
+  assert.equal(deleteBlockReason(app, CREATOR, 0), 'not_owner');
+  assert.equal(deleteBlockReason(app, APP_ADMIN, 1), 'not_owner');
+  assert.equal(deleteBlockReason(app, STRANGER, 1), 'not_owner');
+  assert.equal(deleteBlockReason(app, null, 1), 'not_owner');
+  assert.equal(deleteBlockReason(app, PLATFORM_ADMIN, 99), null,
+    'the admin override stays; the route makes it acknowledge the others');
+
+  assert.equal(accessFlags(app, CREATOR, true, null, 1).delete_block, null);
+  assert.equal(accessFlags(app, CREATOR, true, null, 2).delete_block, 'shared');
+  assert.equal(accessFlags(app, APP_ADMIN, true, new Set([5]), 1).delete_block, 'not_owner');
 });
 
 test('the locked-app admin-yes gate is still platform-admin only', () => {
