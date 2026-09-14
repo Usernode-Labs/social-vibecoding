@@ -422,7 +422,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // top two by users and used to lead the directory. It asserts the absence of
   // the tier headings too, because "one list in its own order" is the half of
   // the change that a Show-more selector alone would not catch.
-  assert.equal(DAPP.tests.length, 606);
+  // 606 → 609: #2061 adds three checks for the merge-requirements checklist
+  // — the locked-app gate that had no UI at all, the "nobody has to act"
+  // wording, and the steps listed AFTER the one a proposal is stuck on.
+  assert.equal(DAPP.tests.length, 609);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
