@@ -3282,6 +3282,7 @@ const AppView = {
     const rows = body.details.ledger;
     body.changeId = item.id;
     AppView._changeItems.set(Number(item.id), item);
+    body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
     if (mine && underway && item.source !== 'imported') {
       const own = AppView._mySessionCardModel(item);
       card.rail.menuKey = own.rail.menuKey;

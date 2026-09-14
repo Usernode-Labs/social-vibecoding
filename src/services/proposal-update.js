@@ -764,27 +764,48 @@ function normalizeLinkedIssues(linkedIssues) {
   return require('./pr-metadata').sanitizeIssueNumbers(linkedIssues);
 }
 
-async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues }) {
+// Update the issue associations on a session that already exists (#2028).
+// This is the one write shared by the browser, the hosted connector and the
+// older update-from-fork path below. `linked_issues` is the durable source of
+// truth; the PR body is a best-effort projection of it while a native PR is
+// still open.
+//
+// Additions and removals are DELTAS, not a replacement list. That matters to
+// agents and browser tabs working from a recently-read proposal: an unrelated
+// link added in between is preserved. Removal wins when a number appears in
+// both lists, matching applyIssueDeclarations and the dev-session dispatch
+// tools. The route bounds the final list to 50; the service sanitizes again so
+// no second caller can put malformed values into the integer[] column.
+async function updateLinkedIssues({
+  pool, gh, session, owner, repo, addIssues, removeIssues,
+}) {
   const prMetadata = require('./pr-metadata');
-  const adds = prMetadata.sanitizeIssueNumbers(linkedIssues);
-  if (!adds.length) return false;
-  const merged = prMetadata.applyIssueDeclarations(session.linked_issues, adds, []);
-  if (prMetadata.sameIssueSet(merged, session.linked_issues)) return false;
-  try {
+  const existing = prMetadata.sanitizeIssueNumbers(session.linked_issues);
+  const adds = prMetadata.sanitizeIssueNumbers(addIssues);
+  const removes = prMetadata.sanitizeIssueNumbers(removeIssues);
+  const linkedIssues = prMetadata.applyIssueDeclarations(existing, adds, removes);
+  const added = linkedIssues.filter((n) => !existing.includes(n));
+  const removed = existing.filter((n) => !linkedIssues.includes(n));
+  const changed = !prMetadata.sameIssueSet(linkedIssues, existing);
+  if (changed) {
     await pool.query(
       'UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2',
-      [merged, Number(session.id)]
+      [linkedIssues, Number(session.id)]
     );
-  } catch (err) {
-    log.error('proposal-update', 'could not store the revision\'s linked issues', {
-      sessionId: Number(session.id), err: err.message,
+    session.linked_issues = linkedIssues;
+    log.info('proposal-update', 'stored the proposal\'s linked issues', {
+      sessionId: Number(session.id), linkedIssues,
     });
-    return false;
   }
-  session.linked_issues = merged;
-  log.info('proposal-update', 'stored the revision\'s linked issues', {
-    sessionId: Number(session.id), linkedIssues: merged,
-  });
+
+  const result = {
+    changed,
+    linkedIssues,
+    addedIssues: added,
+    removedIssues: removed,
+    prBodyUpdated: false,
+    prBodyStatus: 'no_pr',
+  };
 
   // A row with no PR is done: the closing block is assembled from the row
   // when the PR is created (pr-metadata.applyPrMetadata at promote time). A
@@ -796,46 +817,110 @@ async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues 
   // hand-written "Fixes #N" is never doubled. Imported PRs are skipped:
   // that body belongs to its external author on GitHub. Best-effort like
   // the GitHub rename above — the row is the source of truth either way.
-  if (session.pr_number && String(session.source) !== 'imported') {
-    try {
-      const pr = await gh.getPR(owner, repo, Number(session.pr_number));
-      const open = pr && !pr.merged && (!pr.state || pr.state === 'open');
-      const body = pr && typeof pr.body === 'string' ? pr.body : '';
-      const declared = prMetadata.parseClosingKeywords(body);
-      const missing = adds.filter((n) => !declared.includes(n));
-      if (open) {
-        if (missing.length) {
-          await gh.updatePR(owner, repo, Number(session.pr_number), {
-            body: body
-              ? `${body}\n\n${prMetadata.buildClosingBlock(missing)}`
-              : prMetadata.buildClosingBlock(missing),
-          });
-          log.info('proposal-update', 'appended the closing block to the live PR body', {
-            sessionId: Number(session.id), prNumber: Number(session.pr_number), missing,
-          });
-        }
-        // Keep pr-metadata's drift gate truthful: every add is now reflected
-        // in the live body (patched above, or already declared by the body's
-        // own keywords), so record them as applied — otherwise the next
-        // applyPrMetadata turn would rewrite a body that is already right.
-        const applied = prMetadata.applyIssueDeclarations(
-          session.pr_linked_issues_applied, adds, []
-        );
-        if (!prMetadata.sameIssueSet(applied, session.pr_linked_issues_applied)) {
-          await pool.query(
-            'UPDATE chat_sessions SET pr_linked_issues_applied = $1 WHERE id = $2',
-            [applied, Number(session.id)]
-          );
-          session.pr_linked_issues_applied = applied;
-        }
-      }
-    } catch (err) {
-      log.warn('proposal-update', 'stored the linked issues but could not patch the PR body', {
-        sessionId: Number(session.id), prNumber: Number(session.pr_number), err: err.message,
-      });
-    }
+  if (!session.pr_number) return result;
+  if (String(session.source) === 'imported') {
+    result.prBodyStatus = 'imported_pr';
+    return result;
   }
-  return true;
+
+  let pr;
+  try {
+    pr = await gh.getPR(owner, repo, Number(session.pr_number));
+  } catch (err) {
+    result.prBodyStatus = 'github_unavailable';
+    log.warn('proposal-update', 'stored the linked issues but could not read the PR body', {
+      sessionId: Number(session.id), prNumber: Number(session.pr_number), err: err.message,
+    });
+    return result;
+  }
+  const open = pr && !pr.merged && (!pr.state || pr.state === 'open');
+  if (!open) {
+    result.prBodyStatus = 'pr_not_open';
+    return result;
+  }
+
+  const previousBody = pr && typeof pr.body === 'string' ? pr.body : '';
+  const appliedBefore = prMetadata.sanitizeIssueNumbers(session.pr_linked_issues_applied);
+  // Only remove exact `Closes #N` lines the applied snapshot says Usernode
+  // previously projected. Other closing-keyword forms remain the PR author's.
+  // Use the requested deltas as repair candidates too. If the association
+  // write succeeded but GitHub was temporarily unavailable, repeating the
+  // same idempotent call must repair the body rather than stop at “already
+  // linked”.
+  const managedRemovals = removes.filter((n) => appliedBefore.includes(n));
+  let nextBody = prMetadata.stripClosingLines(previousBody, managedRemovals);
+  if (nextBody !== previousBody) {
+    nextBody = nextBody.replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '');
+  }
+  const declared = prMetadata.parseClosingKeywords(nextBody);
+  const requestedAdds = adds.filter((n) => linkedIssues.includes(n));
+  const missing = requestedAdds.filter((n) => !declared.includes(n));
+  if (missing.length) {
+    const closing = prMetadata.buildClosingBlock(missing);
+    nextBody = nextBody ? `${nextBody}\n\n${closing}` : closing;
+  }
+
+  try {
+    if (nextBody !== previousBody) {
+      await gh.updatePR(owner, repo, Number(session.pr_number), { body: nextBody });
+      result.prBodyUpdated = true;
+      try {
+        await pool.query(
+          'UPDATE chat_sessions SET pr_body = $1 WHERE id = $2',
+          [nextBody || null, Number(session.id)]
+        );
+        session.pr_body = nextBody || null;
+      } catch (err) {
+        log.warn('proposal-update', 'PR issue links changed but its body mirror did not', {
+          sessionId: Number(session.id), err: err.message,
+        });
+      }
+    }
+
+    // Keep pr-metadata's drift gate truthful: every surviving association
+    // that was already applied, and every new association now declared in the
+    // live body, belongs in the snapshot. Removed links are subtracted.
+    const bodyIssues = prMetadata.parseClosingKeywords(nextBody);
+    const applied = prMetadata.sanitizeIssueNumbers([
+      ...appliedBefore.filter((n) => linkedIssues.includes(n)),
+      ...requestedAdds.filter((n) => bodyIssues.includes(n)),
+    ]);
+    if (!prMetadata.sameIssueSet(applied, appliedBefore)) {
+      await pool.query(
+        'UPDATE chat_sessions SET pr_linked_issues_applied = $1 WHERE id = $2',
+        [applied, Number(session.id)]
+      );
+      session.pr_linked_issues_applied = applied;
+    }
+    result.prBodyStatus = result.prBodyUpdated ? 'updated' : 'already_current';
+  } catch (err) {
+    result.prBodyStatus = 'github_unavailable';
+    log.warn('proposal-update', 'stored the linked issues but could not patch the PR body', {
+      sessionId: Number(session.id), prNumber: Number(session.pr_number), err: err.message,
+    });
+  }
+  return result;
+}
+
+// The update-from-fork path predates #2028 and intentionally treats issue
+// linkage as best-effort metadata: a GitHub or database hiccup must not reject
+// an otherwise valid code update. Keep its boolean contract while routing the
+// actual mutation through the shared implementation above.
+async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues }) {
+  const prMetadata = require('./pr-metadata');
+  const adds = prMetadata.sanitizeIssueNumbers(linkedIssues);
+  if (!adds.length) return false;
+  try {
+    const result = await updateLinkedIssues({
+      pool, gh, session, owner, repo, addIssues: adds, removeIssues: [],
+    });
+    return result.changed;
+  } catch (err) {
+    log.error('proposal-update', 'could not store the revision\'s linked issues', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return false;
+  }
 }
 
 // ── A resubmit that moves nothing (#1199) ──────────────────────────────
@@ -1757,4 +1842,6 @@ module.exports = {
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
+  // The post-creation issue association seam shared by the UI + connector.
+  updateLinkedIssues,
 };

@@ -97,7 +97,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 // ── Acting tools ───────────────────────────────────────────────────────
 //
-// The five calls that do something rather than read something. The list is
+// The calls that do something rather than read something. The list is
 // kept because the read-only naming contract cannot describe them by
 // inversion: `isHintEligibleTool` derives the reads from their prefixes, and
 // these are the remainder that has to stay out of the setup hint and out of
@@ -112,12 +112,11 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // Settings → Connectors: a user who granted it kept being asked anyway, with
 // nothing on either surface explaining why.
 //
-// It was the wrong control for THIS connector. Nothing here writes to an app.
-// Every one of these calls files a request — a proposal, an issue, a build —
-// and the platform merges none of it without a group vote. The vote is the
-// confirmation, and it is a better one than a prompt clicked through mid-loop
-// by the one person already driving the agent. #1218's reasoning holds for a
-// connector whose writes land directly; this connector's do not.
+// It was the wrong control for THIS connector. These calls either file work
+// for the group to review or modify metadata on the caller's own proposal;
+// none merges code or changes the app without a group vote. The vote is the
+// confirmation for implementation work, while an issue-link edit is already
+// bounded to the caller's own proposal and changes neither code nor votes.
 //
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
@@ -125,6 +124,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            work order that dangles if it is never used
 //   start_platform_build   — spends the user's daily Usernode credits
 //   submit_platform_build  — puts that build to a group vote
+//   update_proposal_issues — changes which requests an existing proposal
+//                            addresses (and its managed PR closing lines)
 //
 // `answer_questions` is a write and is deliberately NOT here: it only feeds
 // text to a build the user already started.
@@ -134,6 +135,7 @@ const ACTING_TOOLS = Object.freeze([
   'prepare_work',
   'start_platform_build',
   'submit_platform_build',
+  'update_proposal_issues',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -747,6 +749,9 @@ function shapeProposal(session, origin) {
     // which is not the same as an empty description.
     description: untrusted(session.pr_body, MAX_BODY_CHARS) || null,
     status: session.status || null,
+    // #2028. The relationship an agent may now edit after proposal creation
+    // has to be readable first; otherwise every update is a blind delta.
+    linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
     stagingUrl: session.staging_url || null,
@@ -1804,9 +1809,9 @@ function registerTools(server, ctx) {
   //
   // Neither is in ACTING_TOOLS: a claim is platform-local, names only the
   // caller, expires by itself and is cleared by one call, so it is not one of
-  // the five that file something for the group to act on. Nothing on this
-  // connector forces a prompt any more — see the ACTING_TOOLS note above —
-  // but the split still decides the setup hint and the shipped allow rules.
+  // the actions that files reviewable work or edits proposal metadata.
+  // Nothing on this connector forces a prompt any more — see the ACTING_TOOLS
+  // note above — but the split still decides the setup hint and shipped rules.
   //
   // `note` is the "note progress" half, and it is a normal chat message on the
   // request's thread — the same channel answer_questions posts to and the same
@@ -2006,6 +2011,7 @@ function registerTools(server, ctx) {
       description: z.string().nullable()
         .describe('The description the group is voting on, as last written through submit_work or the panel. Null on a proposal whose body predates the mirror.'),
       status: z.string().nullable(),
+      linkedIssues: z.array(z.number()),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
       stagingUrl: z.string().nullable(),
@@ -2136,6 +2142,72 @@ function registerTools(server, ctx) {
     if (!result.ok) return platformError(result);
     const session = (result.body && result.body.session) || {};
     return readResult('get_proposal', shapeProposal(session, origin));
+  });
+
+  // ── update_proposal_issues (#2028) ──────────────────────────────────
+  //
+  // Metadata-only continuation for an existing proposal. This deliberately
+  // does not ride on submit_work: requiring a new branch/commit to correct an
+  // issue association would clear votes and rebuild unchanged code. Both the
+  // connector and the browser call the same owner-scoped platform route.
+  server.registerTool('update_proposal_issues', {
+    title: 'Update a proposal’s issues',
+    description: 'Associate or disassociate GitHub requests after a proposal or pull request already exists. Read get_proposal.linkedIssues first, then pass only deliberate deltas: addIssues are unioned into the current set and removeIssues are subtracted, with removal winning if the same number appears in both. This changes no code and clears no votes. On a native open PR, Usernode also keeps its managed Closes lines aligned; imported and closed PR bodies remain untouched. Only the proposal owner can use this through the connector.',
+    inputSchema: {
+      proposalId: z.number().int().positive()
+        .describe('The existing proposal or in-progress session id returned by get_proposal or list_my_proposals.'),
+      addIssues: z.array(z.number().int().positive().max(2147483647)).max(50).optional()
+        .describe('Issue numbers to associate. Existing and duplicate associations are harmless.'),
+      removeIssues: z.array(z.number().int().positive().max(2147483647)).max(50).optional()
+        .describe('Issue numbers to disassociate. Removal wins over addition in the same call.'),
+    },
+    outputSchema: {
+      proposalId: z.number(),
+      appSlug: z.string(),
+      linkedIssues: z.array(z.number()),
+      addedIssues: z.array(z.number()),
+      removedIssues: z.array(z.number()),
+      changed: z.boolean(),
+      prBodyUpdated: z.boolean(),
+      prBodyStatus: z.string(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ proposalId, addIssues, removeIssues }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const adds = Array.isArray(addIssues) ? addIssues : [];
+    const removes = Array.isArray(removeIssues) ? removeIssues : [];
+    if (!adds.length && !removes.length) {
+      return toolError('invalid_request', 'Pass at least one issue number in addIssues or removeIssues. Nothing was written.');
+    }
+    const result = await callPlatform(
+      baseUrl,
+      accessToken,
+      'PATCH',
+      `/api/sessions/${proposalId}/linked-issues`,
+      { addIssues: adds, removeIssues: removes }
+    );
+    if (!result.ok) return platformError(result);
+    const body = result.body || {};
+    const prNote = body.prBodyStatus === 'github_unavailable'
+      ? ' The Usernode association was saved, but the pull-request body could not be synchronized; repeat this same idempotent call to retry it.'
+      : (body.prBodyStatus === 'imported_pr'
+        ? ' The imported pull request body belongs to its external author and was left unchanged.'
+        : '');
+    return toolResult({
+      proposalId: Number(body.proposalId || proposalId),
+      appSlug: String(body.appSlug || ''),
+      linkedIssues: Array.isArray(body.linkedIssues) ? body.linkedIssues : [],
+      addedIssues: Array.isArray(body.addedIssues) ? body.addedIssues : [],
+      removedIssues: Array.isArray(body.removedIssues) ? body.removedIssues : [],
+      changed: body.changed === true,
+      prBodyUpdated: body.prBodyUpdated === true,
+      prBodyStatus: String(body.prBodyStatus || 'unknown'),
+      webPath: `${origin}/#app/${body.appSlug || ''}/dev/sessions/${proposalId}`,
+      nextStep: `The proposal now carries the returned linkedIssues set. No code or votes changed.${prNote}`,
+    });
   });
 
   // ── list_my_proposals ────────────────────────────────────────────────
