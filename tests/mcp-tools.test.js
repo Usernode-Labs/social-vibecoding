@@ -1096,6 +1096,63 @@ test('a proposal update keeps its own wording', async () => {
   }
 });
 
+// #2138. The connector half of the fix for a connector-opened proposal that
+// could never take its own title or description back. The rule lives in
+// services/proposal-update.js (a pull request the platform opened for the
+// caller is the caller's own) and is tested there; this is what the answer
+// reads once the platform stops refusing. Until then every such revision
+// read "opened by another GitHub account ... belongs to that author" — about
+// a pull request the platform's own bot had opened for the very caller.
+
+test('a revision whose title and description landed is told so, not that another account owns them', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const answer = (over) => ({
+    updated: true, proposalId: 4208, appSlug: 'recipe-box', prNumber: 91, votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: true, ...over,
+  });
+  const revise = async (platformAnswer) => {
+    const { handlers, restore } = connector(() => platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+    try {
+      return await handlers.get('submit_work')({
+        proposalId: 4208, branch: 'my-fix',
+        title: 'Snap cards to the grid, and remember the toggle',
+        description: 'The toggle now survives a reload.',
+      });
+    } finally {
+      restore();
+    }
+  };
+  try {
+    const own = await revise(answer({ titleUpdated: true, descriptionUpdated: true }));
+    assert.equal(own.structuredContent.titleUpdated, true);
+    assert.equal(own.structuredContent.titleRejected, null);
+    assert.equal(own.structuredContent.descriptionUpdated, true);
+    assert.equal(own.structuredContent.descriptionRejected, null);
+    const step = own.structuredContent.nextStep;
+    assert.match(step, /\(PR #91\) now carries your title/);
+    assert.match(step, /description now reads as you submitted it/);
+    assert.doesNotMatch(step, /another GitHub account|belongs to that author|NOT applied/,
+      'the sentence every connector-opened revision used to read back');
+
+    // The refusal is not gone — it is reserved for a pull request a DIFFERENT
+    // person authored, and it still says so in the same words.
+    const theirs = await revise(answer({
+      titleUpdated: false, titleRejected: 'imported_pr',
+      descriptionUpdated: false, descriptionRejected: 'imported_pr',
+    }));
+    assert.equal(theirs.structuredContent.titleRejected, 'imported_pr');
+    assert.equal(theirs.structuredContent.descriptionRejected, 'imported_pr');
+    assert.match(theirs.structuredContent.nextStep, /Your title was NOT applied: .*another GitHub account/);
+    assert.match(theirs.structuredContent.nextStep, /Your description was NOT applied: .*another GitHub account/);
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
 // ── submit_work `propose: true` — the review boundary, on the owner's ask ──
 //
 // A session continuation deliberately lands quietly; until now the ONLY way

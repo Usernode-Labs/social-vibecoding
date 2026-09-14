@@ -140,16 +140,41 @@ function authorCanPush(session, viewerLogin) {
   return externalAgentHead.sameLogin(owner, login);
 }
 
+// Did the platform open this imported row's pull request ITSELF, on the
+// author's behalf (#2138)? That is how every connector submission is
+// recorded: submit_work's mirror rung copies the author's verified fork
+// branch into a `usernode/from-…` branch of the APP repository, its patch
+// rung applies their patch onto a `usernode/patch-…` one
+// (services/external-agent-patch.js), and both open a same-repo pull request
+// from it with the platform's credential and import it under the submitting
+// user's name. The row's `user_id` is that user and its `imported_pr_author`
+// is the bot — whose login nothing records — so the head sitting in the app
+// repository under one of the platform's own prefixes, which nothing else
+// writes, is the honest signal, and it needs no login. A same-repo pull
+// request a person pushed by hand — a collaborator's `feature/…` branch
+// imported from the board — is not in that namespace and keeps answering
+// from its head repository's owner, in callerOwnsPr below.
+function platformOpenedPr(session) {
+  return branchHomeOf(session) === 'app_repo' && platformOwnedBranch(session && session.branch_name);
+}
+
 // Is the pull request under this row the CALLER's OWN (#1319)? Only an
 // imported row can carry somebody else's — a native proposal's PR is one the
-// platform opened for this author — and for an imported one the honest test
-// is the head repository's owner against the caller's freshly-read GitHub
-// login, the same comparison authorCanPush makes. An unknown owner or an
-// unknown login leaves nothing to disprove, and ownershipGate has already
-// established that the caller owns the row, so it answers true rather than
-// refusing an author their own name.
+// platform opened for this author — and a mirrored row's is that same pull
+// request under `source='imported'` (#2138): the platform opened it for the
+// row's author, whom ownershipGate has already established the caller to be.
+// The login comparison alone could not see that: a mirrored head's repository
+// is the APP's, so its owner is whoever owns the app and its GitHub author is
+// the bot, and every connector-opened proposal was refused its own title and
+// description as if a stranger had written it (proposals 4185 and 4208). For
+// a head in a fork the honest test is still the head repository's owner
+// against the caller's freshly-read GitHub login, the same comparison
+// authorCanPush makes. An unknown owner or an unknown login leaves nothing to
+// disprove, and ownershipGate has already established that the caller owns
+// the row, so it answers true rather than refusing an author their own name.
 function callerOwnsPr(session, viewerLogin) {
   if (String(session && session.source) !== 'imported') return true;
+  if (platformOpenedPr(session)) return true;
   const owner = headRepoOwnerOf(session);
   const login = String(viewerLogin == null ? '' : viewerLogin).trim();
   if (!owner || !login) return true;
@@ -815,10 +840,16 @@ async function updateLinkedIssues({
   // miss the merge. Only numbers the body does not already declare are
   // appended, via the same parser the migrate-time backfill trusts, so a
   // hand-written "Fixes #N" is never doubled. Imported PRs are skipped:
-  // that body belongs to its external author on GitHub. Best-effort like
-  // the GitHub rename above — the row is the source of truth either way.
+  // that body belongs to its external author on GitHub — unless the platform
+  // opened the pull request itself, for this author (#2138): a
+  // connector-opened proposal is `source='imported'` too, and skipping it
+  // left every such proposal's `Closes #N` unwritten while the tool said the
+  // body belonged to somebody else. Only that login-free half of callerOwnsPr
+  // is asked here, because the linked-issues route shares this seam and reads
+  // no GitHub login to hold a fork's owner against. Best-effort like the
+  // GitHub rename above — the row is the source of truth either way.
   if (!session.pr_number) return result;
-  if (String(session.source) === 'imported') {
+  if (String(session.source) === 'imported' && !platformOpenedPr(session)) {
     result.prBodyStatus = 'imported_pr';
     return result;
   }
