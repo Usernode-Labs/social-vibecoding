@@ -369,7 +369,7 @@ function isPlatformRepo(parsed, config) {
 function refuseIfSelfHosted(app, res) {
   if (!app || !app.self_hosted) return false;
   res.status(403).json({
-    error: 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
+    error: 'The Homeroom platform deploys via GitHub Actions; this action does not apply to the self-app row.',
   });
   return true;
 }

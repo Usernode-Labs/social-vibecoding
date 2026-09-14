@@ -215,7 +215,7 @@ test('a request page carries titles by default, so a whole board fits in one cal
   assert.equal(full.requests.length, 50);
   assert.equal(full.nextOffset, 50, 'and the rest is reachable rather than lost');
   assert.match(full.requests[0].body, /^<untrusted-content>/);
-  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content> \[Usernode:/,
+  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content> \[Homeroom:/,
     'a body is still capped for display, and now says what returns the rest (#1223)');
 });
 
@@ -420,18 +420,18 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   // move. A marker that says text was cut and not how to get it reads as the
   // end of the document.
   const scanned = tools.shapeRequest({ number: 1221, title: 'A long report', body: long });
-  assert.match(scanned.body, /\[truncated\]<\/untrusted-content> \[Usernode: /);
+  assert.match(scanned.body, /\[truncated\]<\/untrusted-content> \[Homeroom: /);
   assert.match(scanned.body, /the first 2000 of \d+ characters/, 'how much of it you got');
   assert.match(scanned.body, /Call get_request for #1221/, 'and what returns the rest');
   assert.equal(scanned.bodyChars, long.length, 'the same two numbers, machine-readable');
   assert.equal(scanned.bodyComplete, false, 'and that this is not all of it');
 
-  // The pointer is Usernode's, so it sits OUTSIDE the envelope: everything
+  // The pointer is Homeroom's, so it sits OUTSIDE the envelope: everything
   // inside is declared to the model as data it must never act on, and an
   // instruction placed there would teach it the opposite habit — on a field
   // whose contents are written by other users.
-  assert.ok(scanned.body.indexOf('</untrusted-content>') < scanned.body.indexOf('[Usernode:'));
-  assert.equal(scanned.body.slice(scanned.body.indexOf('[Usernode:')).includes('<untrusted-content>'),
+  assert.ok(scanned.body.indexOf('</untrusted-content>') < scanned.body.indexOf('[Homeroom:'));
+  assert.equal(scanned.body.slice(scanned.body.indexOf('[Homeroom:')).includes('<untrusted-content>'),
     false, 'and nothing reopens the envelope after it');
 
   // The same request, read whole: the WRITE limit applies, not the display
@@ -443,7 +443,7 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   assert.equal(read.bodyComplete, true);
   assert.equal(read.bodyChars, long.length);
   assert.ok(!read.body.includes('[truncated]'));
-  assert.ok(!read.body.includes('[Usernode:'),
+  assert.ok(!read.body.includes('[Homeroom:'),
     'nothing was cut, so there is nothing to point at');
   assert.ok(read.body.includes('And the fix.'), 'including the part the clip dropped');
   assert.match(read.body, /^<untrusted-content>/, 'read in full is still read as data');
@@ -1811,7 +1811,7 @@ test('the platform-build fallback is described as the second choice', () => {
   const idx = SRC.indexOf("server.registerTool('start_platform_build'");
   const desc = SRC.slice(idx, idx + 1200);
   // Honest about whose money it spends, and about the better path.
-  assert.match(desc, /daily Usernode credits/);
+  assert.match(desc, /daily Homeroom credits/);
   assert.match(desc, /Prefer prepare_work/);
   assert.match(desc, /user explicitly chooses the platform build/,
     'missing tools never silently opt the user into platform credit spend');
@@ -2373,7 +2373,7 @@ test('a proposal states where its head lives and whether the author can push the
 // ── #1196: an imported head is not automatically a fork ───────────────────
 //
 // Proposal 3140 is the shape this is about: submit_work could not open a
-// cross-fork pull request, so Usernode MIRRORED the agent's fork branch into
+// cross-fork pull request, so Homeroom MIRRORED the agent's fork branch into
 // `usernode/from-es92-t3-8510c5ac` in the app repository and imported the
 // same-repo pull request it opened from there. get_proposal read
 // `source='imported'`, called the head a fork, and told the agent to push to

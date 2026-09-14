@@ -3,7 +3,7 @@
 // ── Updating a proposal that is already up for a vote (#1054) ──────────
 //
 // Until this existed, a connector-submitted proposal was a one-shot: an agent
-// pushed a branch to its own fork, Usernode copied that branch into the app's
+// pushed a branch to its own fork, Homeroom copied that branch into the app's
 // own repository and opened a pull request, and from then on the proposal
 // tracked a BOT-OWNED branch the agent had no way to write to. The advice in
 // get_proposal's own description — "fix the named tests and push again to the
@@ -15,9 +15,9 @@
 // there is a path for its author to advance it:
 //
 //   the author pushes to their own fork, as always
-//     → Usernode verifies the fork branch is theirs and sits AHEAD of the
+//     → Homeroom verifies the fork branch is theirs and sits AHEAD of the
 //       proposal's current head
-//     → Usernode pushes that branch onto the proposal's bot-owned branch
+//     → Homeroom pushes that branch onto the proposal's bot-owned branch
 //       under a `--force-with-lease`, with the platform's own credentials
 //     → the EXISTING head-moved machinery clears the votes, posts the
 //       "please re-review" note and rebuilds the preview and the checks.
@@ -169,7 +169,7 @@ function renameHeadFailure(result, branch) {
   if (result.code === 'fork_mismatch') {
     return fail(
       'not_your_fork',
-      `${branch} was not found in a repository owned by the GitHub account linked to your Usernode profile. `
+      `${branch} was not found in a repository owned by the GitHub account linked to your Homeroom profile. `
       + 'A proposal is only advanced from its author\'s own fork. Push the branch to your fork and try again.',
       { retryable: false }
     );
@@ -177,7 +177,7 @@ function renameHeadFailure(result, branch) {
   if (result.code === 'branch_not_found') {
     return fail(
       'fork_branch_not_found',
-      `Your fork has no branch called ${branch}. Push it first: GitHub creates branches on push, and Usernode `
+      `Your fork has no branch called ${branch}. Push it first: GitHub creates branches on push, and Homeroom `
       + 'reads it from your fork rather than from your machine.',
       { retryable: true }
     );
@@ -316,7 +316,7 @@ async function updateProposalFromForkBranch(deps, params) {
   if (gate) return gate;
 
   if (!gh.isEnabled()) {
-    return fail('platform_unavailable', 'Usernode cannot reach GitHub right now. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom cannot reach GitHub right now. Try again shortly.', { retryable: true });
   }
   // An unconfigured deployment and an unlinked user are two different
   // refusals, and the deployment is checked first — otherwise an operator's
@@ -324,7 +324,7 @@ async function updateProposalFromForkBranch(deps, params) {
   if (!githubLink.isEnabled(config)) {
     return fail(
       'github_link_unavailable',
-      'This Usernode deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
+      'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
       + 'yours, and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
       + 'GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel.',
       { retryable: false }
@@ -338,7 +338,7 @@ async function updateProposalFromForkBranch(deps, params) {
   if (!link || !link.linked || !link.login) {
     return fail(
       'github_not_linked',
-      'Connect your GitHub account first: Usernode only advances a proposal from a fork it can confirm is yours.',
+      'Connect your GitHub account first: Homeroom only advances a proposal from a fork it can confirm is yours.',
       { ...(origin ? { settingsUrl: `${origin}/#settings/connectors` } : {}) }
     );
   }
@@ -422,7 +422,7 @@ async function reconcileManagedCommitUpload(deps, params) {
   if (revision.blocked) {
     return fail(
       revision.transient ? 'platform_unavailable' : 'proposal_closed',
-      revision.reason || 'Usernode could not reconcile the proposal revision.',
+      revision.reason || 'Homeroom could not reconcile the proposal revision.',
       { retryable: !!revision.transient }
     );
   }
@@ -432,7 +432,7 @@ async function reconcileManagedCommitUpload(deps, params) {
       'branch_moved',
       reconciledHead
         ? `The proposal branch moved again to commit ${reconciledHead.slice(0, 8)} while this upload was being reconciled.`
-        : 'Usernode could not pin the promoted proposal to the uploaded commit.',
+        : 'Homeroom could not pin the promoted proposal to the uploaded commit.',
       { retryable: false, ...(reconciledHead ? { headSha: reconciledHead } : {}) }
     );
   }
@@ -1021,7 +1021,7 @@ async function advanceAppRepoBranch(ctx) {
   if (!targetBranch || !head.validRef(targetBranch)) {
     return fail(
       'platform_unavailable',
-      'Usernode cannot tell which branch this proposal lives on, so it will not push anything. Its author can '
+      'Homeroom cannot tell which branch this proposal lives on, so it will not push anything. Its author can '
       + 'still open a new proposal.',
       { retryable: false }
     );
@@ -1071,12 +1071,12 @@ async function advanceAppRepoBranch(ctx) {
       log.warn('proposal-update', 'could not read the proposal branch head', {
         sessionId, targetBranch, err: err.message,
       });
-      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+      return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
     }
   }
   if (!firstLanding) {
     if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
-      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+      return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
     }
     liveHead = String(liveHead).trim().toLowerCase();
     if (expectedHeadSha && expectedHeadSha !== liveHead) {
@@ -1523,7 +1523,7 @@ async function advanceForkHead(ctx) {
 
   const prNumber = Number(session.pr_number);
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
-    return fail('platform_unavailable', 'Usernode cannot tell which pull request this proposal follows.', { retryable: false });
+    return fail('platform_unavailable', 'Homeroom cannot tell which pull request this proposal follows.', { retryable: false });
   }
 
   let pr;
@@ -1531,7 +1531,7 @@ async function advanceForkHead(ctx) {
     pr = await gh.getPR(owner, repo, prNumber);
   } catch (err) {
     log.warn('proposal-update', 'could not read the proposal pull request', { sessionId, prNumber, err: err.message });
-    return fail('platform_unavailable', 'Usernode could not read this proposal\'s pull request. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom could not read this proposal\'s pull request. Try again shortly.', { retryable: true });
   }
   if (!pr || pr.merged || (pr.state && pr.state !== 'open')) {
     return fail(
@@ -1550,7 +1550,7 @@ async function advanceForkHead(ctx) {
     return fail(
       'not_your_fork',
       `Pull request #${prNumber} comes from ${headOwner ? `${headOwner}'s` : 'another'} repository, not from your `
-      + 'fork. Usernode only advances a proposal from its author\'s own account.',
+      + 'fork. Homeroom only advances a proposal from its author\'s own account.',
       { retryable: false }
     );
   }
@@ -1633,7 +1633,7 @@ async function advanceForkHead(ctx) {
     log.error('proposal-update', 'imported head change failed', { sessionId, err: err.message });
     return fail(
       'platform_unavailable',
-      'Usernode could not record your new commit against this proposal. Your push is on GitHub either way, so try '
+      'Homeroom could not record your new commit against this proposal. Your push is on GitHub either way, so try '
       + 'again shortly.',
       { retryable: true }
     );
@@ -1689,7 +1689,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
     log.warn('proposal-update', 'ancestry comparison failed', { owner, repo, err: err.message });
     return fail(
       'platform_unavailable',
-      'Usernode could not check that your branch builds on this proposal\'s current commit, so it did not move it. '
+      'Homeroom could not check that your branch builds on this proposal\'s current commit, so it did not move it. '
       + 'Try again shortly.',
       { retryable: true }
     );
@@ -1697,7 +1697,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
   if (!cmp || !cmp.status) {
     return fail(
       'platform_unavailable',
-      'Usernode could not check that your branch builds on this proposal\'s current commit, so it did not move it. '
+      'Homeroom could not check that your branch builds on this proposal\'s current commit, so it did not move it. '
       + 'Try again shortly.',
       { retryable: true }
     );

@@ -215,7 +215,7 @@ test("detail: a mirrored proposal's conflict box never sends its author to a dev
     assert.match(html, /me<\/span>/, `${state}: names the creator`);
   }
   const conflict = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'conflict' }));
-  assert.match(conflict, /Usernode keeps this branch itself/, 'says the platform can sync it');
+  assert.match(conflict, /Homeroom keeps this branch itself/, 'says the platform can sync it');
   const failed = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'failed' }));
   assert.match(failed, /me<\/span> needs to bring the branch up to date/, 'after a failed resolve the author acts');
 });
@@ -226,7 +226,7 @@ test("detail: a fork-homed proposal's conflict box says the platform cannot sync
     merge_conflict_state: 'failed',
     conflict_files: ['src/app.js'],
   }));
-  assert.match(html, /own fork, which Usernode cannot write to/);
+  assert.match(html, /own fork, which Homeroom cannot write to/);
   assert.match(html, /me<\/span> needs to merge main into the branch and push it/);
   assert.match(html, /the proposal follows the push/);
   assert.doesNotMatch(html, /Sync with main/);
@@ -236,7 +236,7 @@ test('pill: the block reason for an imported proposal carries the same remedy', 
   const AppView = makeAppView(ME);
   const mirror = AppView.blockReasons(mirrorProposal({ merge_conflict_state: 'conflict' }));
   assert.equal(mirror[0].key, 'merge_conflict');
-  assert.match(mirror[0].detail, /Usernode keeps this branch itself/);
+  assert.match(mirror[0].detail, /Homeroom keeps this branch itself/);
   assert.doesNotMatch(mirror[0].detail, /dev session/);
   const fork = AppView.blockReasons(forkProposal({ merge_conflict_state: 'failed' }));
   assert.equal(fork[0].key, 'conflict_failed');

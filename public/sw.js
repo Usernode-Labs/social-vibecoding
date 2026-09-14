@@ -158,7 +158,12 @@
 // v19: Generate proposal becomes a short confirmation with its full model
 // catalog behind a separate search step. The dialog lives in the shell bundle,
 // so an installed client needs a new shell cache to receive the redesign.
-const SW_VERSION = 'v19';
+//
+// v20: the platform rename to Homeroom. The precached document's <title>
+// and /manifest.webmanifest's name/short_name both changed, and both are
+// served from the shell cache — without this bump every existing install
+// keeps showing the old name in the tab and on the home screen indefinitely.
+const SW_VERSION = 'v20';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

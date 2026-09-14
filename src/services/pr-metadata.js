@@ -347,7 +347,7 @@ function renderPrMetadataDraft(draft, {
     return {
       ...safeDraft,
       title: safeDraft.title || `${username}'s changes`,
-      body: `Dev session by ${username} via Usernode${suffix}`,
+      body: `Dev session by ${username} via Homeroom${suffix}`,
       summary: '',
       fallback: true,
     };

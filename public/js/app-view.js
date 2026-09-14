@@ -7830,7 +7830,7 @@ const AppView = {
   //
   // The venue was decided once, at creation, from a preference the user set
   // somewhere else — and then never mentioned again, so a board full of
-  // cards looked identical whether the work was billed to Usernode credits,
+  // cards looked identical whether the work was billed to Homeroom credits,
   // an OpenRouter key or a laptop. Naming it on the card is the cheapest
   // place to make that visible; the sheet behind it is the same one every
   // other surface opens (public/js/build-venues.js).
@@ -10060,11 +10060,11 @@ const AppView = {
       }
     } else if (home === 'app_repo') {
       parts = mode === 'failed'
-        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Usernode keeps this branch itself, so the merge is retried once the update lands.']
-        : ['Usernode keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
+        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.']
+        : ['Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
           { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
     } else {
-      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Usernode cannot write to, so it cannot sync it itself. ',
+      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
         { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
     }
     // The pill's plain-text detail. A native row keeps the sentence the pill
@@ -14499,7 +14499,7 @@ const AppView = {
     if (!name) return '';
     const label = (value === 'claude-code' || value === 'codex')
       ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Homeroom opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
