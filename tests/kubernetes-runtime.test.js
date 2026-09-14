@@ -481,7 +481,9 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
   assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
     requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
-    limits: { cpu: '8', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+    // 6Gi: the pool is sixteen pages now (services/visuals.js CAPTURE_MEMORY
+    // and tests/checks-budget.test.js carry the sizing).
+    limits: { cpu: '8', memory: '6Gi', 'ephemeral-storage': '4Gi' },
   });
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
