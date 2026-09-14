@@ -51,6 +51,12 @@ function defaultHandler(sql, params = []) {
   if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql) || /pg_advisory_xact_lock/.test(sql)) {
     return { rows: [] };
   }
+  // App-delete authorization now has a per-app sole-contributor path, so
+  // this test supplies a real non-owned app for the view-only admin rather
+  // than relying on the old global pre-gate.
+  if (/SELECT \* FROM apps WHERE slug = \$1/.test(sql)) {
+    return { rows: scenario.deleteApp ? [scenario.deleteApp] : [] };
+  }
   // GET /api/admin/users list.
   if (/FROM users u/.test(sql)) return { rows: scenario.userList || [] };
   // Per-user app-quota edit locks and reads the current value before writing.
@@ -117,12 +123,20 @@ test('PUT /api/admin/users/:id/app-quota — view-only admin 403, full admin ok'
 
 test('DELETE /api/apps/:slug — view-only admin 403, full admin passes the gate', async () => {
   currentUser = VIEW_ADMIN;
+  scenario.deleteApp = {
+    id: 17,
+    slug: 'demo',
+    created_by: NORMAL.id,
+    runtime_name: null,
+    container_id: null,
+  };
   let res = await req('DELETE', '/api/apps/demo');
   assert.equal(res.status, 403);
 
   // Full admin clears the capability gate; the app doesn't exist in the
   // stub so it falls through to 404 — the point is it's NOT 403.
   currentUser = FULL_ADMIN;
+  scenario.deleteApp = null;
   res = await req('DELETE', '/api/apps/demo');
   assert.notEqual(res.status, 403);
 });
