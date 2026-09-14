@@ -1491,7 +1491,7 @@ test('the cell height still matches the app tile it is derived from', () => {
   // and the tightening has to OUT-SPECIFY Tailwind's own p-3 utility,
   // since tailwind.css is linked after app.css (see the rule's comment).
   assert.match(grid, /\bp-2\b/);
-  assert.match(CSS, /\.app-card\.app-card \{ padding: 0\.5rem; \}/);
+  assert.match(CSS, /\.app-card\.app-card:not\(\.home-discover-card\) \{ padding: 0\.5rem; \}/);
   assert.match(CSS, /--home-cell-h: 7\.25rem/);
   // …and the phone cap override is GONE with the cap itself (#968 introduced
   // it: a block's phone footprint was a single grid row, so a two-cell cap
@@ -2005,6 +2005,16 @@ test('the Discover rail is a fixed-width row that bleeds to both screen edges', 
   // puts the first card back on the text edge; the two must move together.
   assert.match(css, /\.home-discover-rail \{[^}]*margin-inline: -0\.75rem/);
   assert.match(css, /\.home-discover-rail \{[^}]*padding-inline: 0\.75rem/);
+  // …and the snap position has to agree with that padding. Without it
+  // `scroll-snap-align: start` snaps the first card to the scrollport edge,
+  // and iOS applies the snap on layout: the rail arrived pre-scrolled with the
+  // first card stuck to the screen edge instead of on the keyline.
+  assert.match(css, /\.home-discover-rail \{[^}]*scroll-padding-inline: 0\.75rem/);
+  // The ART IS FULL BLEED. The phone launcher tightens `.app-card` padding,
+  // and the Discover card carries `.app-card` as its wiring contract, so that
+  // rule has to exclude it or the illustration sits inset in a frame of tint.
+  assert.match(css, /\.app-card\.app-card:not\(\.home-discover-card\) \{ padding: 0\.5rem; \}/);
+  assert.doesNotMatch(css, /\.app-card\.app-card \{/);
   // #home-screen states `overflow-x: hidden` (pinned by
   // tests/home-vertical-scroll-only.test.js), which is what clips that
   // overhang instead of letting it widen the feed.
