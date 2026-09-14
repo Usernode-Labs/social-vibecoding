@@ -46,6 +46,9 @@ COPY --chown=node:node --from=shell /build/public/index.html ./public/index.html
 COPY --chown=node:node --from=shell /build/public/shell/assets/ ./public/shell/assets/
 COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 
-USER node
+# The node:22-alpine `node` account is UID/GID 1000. Keep that identity
+# numeric in the image metadata so a generic Kubernetes `runAsNonRoot` pod
+# can verify it before the container starts.
+USER 1000:1000
 EXPOSE 3000
 CMD ["node", "server.js"]
