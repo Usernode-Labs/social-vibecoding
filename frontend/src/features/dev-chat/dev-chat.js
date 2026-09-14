@@ -874,9 +874,10 @@ const DevChat = {
       // Re-read only in that mismatched state so the modal and the server do
       // not choose different providers for the same request.
       if (prefs.defaultBackend !== 'codex_openrouter') prefs = await readPreferences();
-      return prefs;
+      return { ...prefs, openrouterCredentialSource: status.source || null };
     }
 
+    let openrouterCredentialSource = null;
     const provisionResponse = await fetch('/api/me/credentials/openrouter/managed', {
       method: 'POST',
       credentials: 'same-origin',
@@ -892,6 +893,7 @@ const DevChat = {
       // without a usable credential is a real problem and remains visible.
       if (['byok_configured', 'already_issued'].includes(provisioned.code)) {
         status = await readCredentialStatus();
+        openrouterCredentialSource = status.source || null;
       }
       if (status.configured !== true || status.status !== 'valid') {
         const err = new Error(
@@ -901,6 +903,10 @@ const DevChat = {
         err.code = provisioned.code || 'provision_failed';
         throw err;
       }
+    } else {
+      // This request created the company-funded key, even on older servers
+      // whose successful response predates the explicit `source` field.
+      openrouterCredentialSource = provisioned.source || 'usernode_managed';
     }
 
     if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
@@ -908,7 +914,7 @@ const DevChat = {
     if (prefs.defaultBackend !== 'codex_openrouter') {
       throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
     }
-    return prefs;
+    return { ...prefs, openrouterCredentialSource };
   },
 
   async _loadCodingAgentChoiceData({ forceRefresh = false } = {}) {
@@ -1560,15 +1566,14 @@ const DevChat = {
   // the general coding pick at any size, #809; Fable is for design and
   // taste judgment plus the most difficult coding work). Both helpers
   // take a
-  // `{ label, changeSize }` meta object and are shared with the
-  // Generate-proposal popup in app-view.js, so the two pickers can't
-  // drift. Nothing measured feeds either one.
+  // `{ label, changeSize }` meta object. Generate proposal now consumes the
+  // short guidance directly, but these helpers remain safe for an older
+  // cached shell during a rolling update. Nothing measured feeds either one.
 
   MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
-  // server sent no guidance (e.g. an older payload) — a picker that
-  // shows only names still works perfectly.
+  // server sent no guidance (e.g. an older payload).
   modelOptionText(meta) {
     if (!meta || typeof meta !== 'object') return String(meta || '');
     const label = meta.label || '';
@@ -1577,13 +1582,9 @@ const DevChat = {
     return `${label}: ${hint}`;
   },
 
-  // Full-sentence caption for a model. The COMPOSER no longer renders one
-  // (#1353): the sentence it painted under the dropdown restated, at
-  // greater length, the guidance already on the option the user had just
-  // chosen, and it did it on every render of every session. This is still
-  // the Generate-proposal popup's caption (app-view.js), where the picker
-  // is met once and the reader has not seen the option list. Returns ''
-  // when there's no guidance to show, and the caller hides the line.
+  // Full-sentence caption retained for an older cached shell during a rolling
+  // update. Neither the composer nor the simplified Generate-proposal dialog
+  // renders it now. Returns '' when there's no guidance to show.
   modelNoteText(meta) {
     if (!meta || typeof meta !== 'object') return '';
     const label = meta.label || '';
