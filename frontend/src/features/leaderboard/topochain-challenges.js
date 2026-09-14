@@ -222,8 +222,8 @@ const TopochainChallenges = {
         if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) {
           // The same event — most often the bar's own notification once its
           // event list lands. Nothing to reload and nothing to close, but a
-          // card's deadline line falls back to that list's `ends_at`
-          // (_deadlineOf), so a grid drawn before the list arrived is redrawn
+          // card's deadline line (_deadlineOf) and the season line over the
+          // grid (_seasonLine) read that list, so a grid drawn before the list arrived is redrawn
           // in place. Only the descriptor: _renderGrid would re-run the
           // screenshot and deep-link hooks.
           const store = TopochainChallenges._store;
@@ -445,6 +445,7 @@ const TopochainChallenges = {
       return {
         kind: 'cards',
         summary: `${onboarding.completed} of ${onboarding.total} onboarding challenges completed`,
+        points: TopochainChallenges._myPoints(),
         notice: onboarding.unlocked
           ? 'Persistent and weekly challenges are unlocked.'
           : 'Complete these introductory challenges to unlock persistent and weekly challenges.',
@@ -466,11 +467,12 @@ const TopochainChallenges = {
 
     return {
       kind: 'cards',
-      // Always present when the grid has rows (including "0 of 8" and
-      // "8 of 8"), so the declared dapp.json check can anchor on
+      // Always present when the grid has rows (including "0/8 done" and
+      // "8/8 done"), so the declared dapp.json check can anchor on
       // #tc-se-challenge-summary whatever the selected event's data happens
       // to be.
-      summary: `${doneCount} of ${ordered.length} challenges completed`,
+      summary: TopochainChallenges._seasonLine(doneCount, ordered.length),
+      points: TopochainChallenges._myPoints(),
       groups,
     };
   },
@@ -543,6 +545,45 @@ const TopochainChallenges = {
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
     return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+  },
+
+  // The line over the grid, in the board's words: "Season 2 · 3/9 done ·
+  // ends 1 Sep", or "ended 30 Jun" once the event is over. The name and the
+  // end come off the event bar's list, which can land after the grid does;
+  // the onChange redraw in open() fills them in then. A clause the data
+  // cannot back is left out, so the bare tally "3/9 done" is always there.
+  _seasonLine(done, total) {
+    const ctx = window.TopochainEventContext;
+    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    const parts = [];
+    const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+    if (name) parts.push(name);
+    parts.push(`${done}/${total} done`);
+    const ends = ev ? TopochainChallenges._endDate(ev.ends_at) : null;
+    if (ends) parts.push(`${Date.parse(ev.ends_at) <= Date.now() ? 'ended' : 'ends'} ${ends}`);
+    return parts.join(' · ');
+  },
+
+  // "1 Sep": an end date in the viewer's own calendar, as the board writes
+  // it. Spelled out rather than toLocaleDateString('en-GB'), whose short
+  // September is "Sept" on current ICU. Null for a missing or unparseable date.
+  _endDate(raw) {
+    const t = raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(t)) return null;
+    const d = new Date(t);
+    return `${d.getDate()} ${'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[d.getMonth()]}`;
+  },
+
+  // Your points on this event's challenges ("4,200 pts"), summed off the
+  // session-authed decoration read. Null when signed out or before anything
+  // scores, so the season line's right-hand figure is simply not drawn.
+  _myPoints() {
+    let sum = 0;
+    for (const m of TopochainChallenges._mine.values()) {
+      const n = Number(m && m.activities_total);
+      if (Number.isFinite(n) && n > 0) sum += n;
+    }
+    return sum > 0 ? TopochainChallenges._pts(sum) : null;
   },
 
   // The card's rail: which of the three states a challenge is in, the one

@@ -100,7 +100,7 @@ type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; summary: string; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
+  | { kind: 'cards'; summary: string; points?: string | null; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -161,6 +161,10 @@ type ProfileView =
 const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
 const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';
+// Baseline, not centre: a long event name wraps, and the points belong beside
+// its first line rather than floating in the middle of three.
+const SEASON_ROW = 'flex items-baseline justify-between gap-3 py-1.5 mb-1 '
+  + 'text-[0.8125rem] leading-5 font-medium text-zinc-600 dark:text-zinc-400';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
   + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
 
@@ -224,12 +228,15 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   }
   return (
     <>
-      <p
-        id="tc-se-challenge-summary"
-        className="text-sm text-zinc-500 dark:text-zinc-400 mb-3"
-      >
-        {view.summary}
-      </p>
+      {/*
+          The season line, as the board draws it: what and how far on the
+          left, your points on the right. The id stays on the text, where the
+          declared dapp.json check anchors.
+      */}
+      <div className={SEASON_ROW}>
+        <p id="tc-se-challenge-summary" className="min-w-0">{view.summary}</p>
+        {view.points ? <span className="shrink-0 tabular-nums">{view.points}</span> : null}
+      </div>
       {view.notice ? (
         <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
       ) : null}

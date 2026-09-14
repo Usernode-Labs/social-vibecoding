@@ -601,6 +601,40 @@ test('an open card says how long it has left: its own end, else the event’s', 
   assert.equal(pane._timeLeft(null), null);
 });
 
+// The season line over the grid (ITERATION 03 S3): the board's words, with
+// every clause the data cannot back left out. Dates are built in local time
+// because the line speaks the viewer's calendar.
+test('the grid opens on the season line: event, tally, end date and your points', () => {
+  const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._renderGrid();
+  assert.equal(store.get().grid.summary, '2/3 done', 'no event known yet: the bare tally');
+  assert.equal(store.get().grid.points, null, 'and nothing scored, no points');
+
+  context.selectedEvent = () => ({
+    id: 900500, name: 'Season 2', ends_at: new Date(2099, 8, 1, 12).toISOString(),
+  });
+  pane._mine = new Map([
+    [900500, { id: 900500, activities_total: 1200 }],
+    [900511, { id: 900511, activities_total: 3000 }],
+    [900514, { id: 900514, activities_total: 0 }],
+  ]);
+  pane._renderGrid();
+  assert.equal(store.get().grid.summary, 'Season 2 · 2/3 done · ends 1 Sep');
+  assert.equal(store.get().grid.points, '4,200 pts', 'your points across the event');
+
+  context.selectedEvent = () => ({
+    id: 900500, name: 'Season 1', ends_at: new Date(2020, 5, 30, 12).toISOString(),
+  });
+  pane._renderGrid();
+  assert.equal(store.get().grid.summary, 'Season 1 · 2/3 done · ended 30 Jun', 'over: ended');
+
+  context.selectedEvent = () => ({ id: 900500, name: '  ', ends_at: 'not a date' });
+  pane._renderGrid();
+  assert.equal(store.get().grid.summary, '2/3 done', 'a blank name and a bad date are left out');
+  assert.equal(pane._endDate(null), null);
+  delete context.selectedEvent;
+});
+
 test('the grid’s card descriptors carry the rail and never re-sort by it', () => {
   const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._mine = new Map([[900500, { id: 900500, activities_total: 50, activities: rows(1, 50) }]]);

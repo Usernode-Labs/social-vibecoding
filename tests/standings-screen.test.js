@@ -413,7 +413,12 @@ test('the challenges grid summarises and groups the completed set', () => {
   // declared dapp.json check lose its anchor.
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
-  assert.match(chJs, /challenges completed/, 'and states the tally in words');
+  // ITERATION 03 (S3) moved the tally into the season line, in the board's
+  // words ("Season 2 · 3/9 done · ends 1 Sep") rather than "3 of 9 challenges
+  // completed". This pin moved with it, deliberately.
+  assert.match(chJs, /`\$\{done\}\/\$\{total\} done`/, 'and states the tally in words');
+  assert.match(chJs, /summary: TopochainChallenges\._seasonLine\(doneCount, ordered\.length\)/,
+    'which is what the summary line carries');
   assert.match(chTsx, /\{g\.heading\}/,
     'the grouping subheading renders');
   assert.match(chJs, /heading: 'Completed'/,
