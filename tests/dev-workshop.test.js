@@ -1574,8 +1574,8 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // Opening a card about your own session used to navigate to the session
   // — the row's page link and the delegated #dev-body handler both went to
   // /dev/sessions/<id>. It is a card like every other now: the row unfolds
-  // it in place, "Open on its own page" is the change's page, and the
-  // session is a link INSIDE the open card, beside that one.
+  // it in place, the change's page is the open card's pill (#1886), and the
+  // session is a link INSIDE the open card — the one line under the sheet.
   const mine = { id: 51, session_title: 'Bottom tabs', status: 'active', pr_number: null, linked_issues: [],
     created_at: at(1), last_activity_at: at(0) };
   const AppView = makeAppView();
@@ -1594,16 +1594,33 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   assert.ok(!folded.includes('dev-ws-sheet-actions'), 'and there is no line under a row to carry a link');
 
   // Unfolded — through the deep link the declared check uses — it is the
-  // card, and under it the line with the change's page and the session.
+  // card: its pill in the action band, and under the sheet one line, the
+  // session's.
   AppView._workshopShot = 'mine-session';
   assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 'mine', key: 'mine:my-session:51' });
   const open = workshopHtml(AppView);
   assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
     'the open card, hook intact');
-  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/proposals\/51" class="dev-ws-link">Open on its own page ›<\/a><span class="dev-ws-sheet-sep" aria-hidden="true">·<\/span><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div>/,
-    'the change\u2019s page first, the session beside it');
+  // The change's page is the pill's, not a line under the sheet (#1886):
+  // "Open card" opens the card's sections here, and once they are open the
+  // same pill is "Open page ›", the link to the change's page.
+  assert.match(open, /<button type="button" class="gc-vote-btn dev-ws-open-btn" aria-expanded="false" data-ws-open-card="mine:my-session:51">Open card<\/button>/,
+    'the open card carries the pill');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'and open, the pill is the page link');
+  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
+  // Under the sheet, the session — alone. #2030's point was that two
+  // controls both reading "Open" confused; the session is a different
+  // destination from the page the pill opens, so it keeps its own link,
+  // and it is the one thing the line holds: no separator, nothing beside it.
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div><\/div>/,
+    'the session link is the line under the sheet, and the last thing in it');
+  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
   assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
-  assert.match(CSS, /\.dev-ws-sheet-sep \{ color: var\(--text-muted\); \}/);
+  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
+    'the separator went with the second link');
+  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
+    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
 
   // The helpers, from the bundle: the card's page is the change's, and only
   // a hook for one of YOUR sessions names a session — an imported PR of
@@ -1637,12 +1654,16 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // from the text-only board check that owned the busy mock row rather than
   // added: the manifest sits at its ceiling (services/app-manifest.js keeps
   // 20 slots clear of MAX_DECLARED_TESTS), so one check owns that row before
-  // and after — as the card it opens into, with the session beside it.
+  // and after — as the card it opens into, with the session inside it. The
+  // selector walks the markup above: the lane, the open wrapper, the sheet,
+  // the card by its hook, and the line under it — a later sibling of the
+  // card, past the thread — holding the session link alone (the page link
+  // it once had to pass on the way is the pill's now, #1886).
   const check = dapp.tests.find((t) => /#1887/.test(t.name));
   assert.ok(check, 'a declared check pins it');
   assert.equal(check.path, '/?demo=1&shot=mine-session#app/usernode-2d5619/workshop');
-  assert.match(check.expectSelector, /\[data-ws-lane="mine"\] > \.dev-ws-rowwrap-open > \.dev-ws-sheet > \.dev-card-dense\[data-session-chip\]/);
-  assert.match(check.expectSelector, /a\.dev-ws-link\[href\*="\/dev\/proposals\/"\] ~ a\.dev-ws-link\[data-ws-open-session\]\[href\*="\/dev\/sessions\/"\]/);
+  assert.equal(check.expectSelector,
+    '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
   assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');
   assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
   assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,

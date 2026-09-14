@@ -130,8 +130,8 @@ export function openHref(slug: string, card: DevCardModel): string | null {
  * owner's dev chat, at its own route. Only `data-session-chip` names one —
  * an imported PR of the viewer's wears `data-shared-session-row` and has no
  * dev chat (#846) — and `openHref` never answers with it: a tap on the row
- * unfolds the card, "Open on its own page" is the change's page, and the
- * session is this link INSIDE the open card (#1887).
+ * unfolds the card, the open card's "Open page ›" pill is the change's page
+ * (#1886), and the session is this link INSIDE the open card (#1887).
  */
 export function sessionHref(slug: string, card: DevCardModel): string | null {
   const a = card.attrs || {};
@@ -382,9 +382,9 @@ export function UnfoldedRow({
   // sheet — "Open on its own page ›" — beside a pill that also said Open,
   // which read as the same action twice. Folding the card back is the fold
   // mark's job, as it is on the Board. A card about the viewer's own
-  // session still carries a link under the sheet, to the session itself
-  // (#1887) — a different destination than the pill's page link, so it
-  // stays beside it rather than being folded into the same control.
+  // session still carries one link under the sheet, to the session itself
+  // (#1887) — a different destination than the pill's page link, so it is
+  // not folded into that control, and it is the only line drawn there.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
