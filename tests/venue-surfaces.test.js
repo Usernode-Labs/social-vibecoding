@@ -174,25 +174,20 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
     'no second writer on a node the component renders');
 });
 
-test('each in-chat provider gets its own model control, and other venues get none', () => {
-  // Claude and OpenRouter do not share a selector: the former picks the
-  // platform chat model, while an OpenRouter session pins one catalog model
-  // to chat and coding. Local / web / imported venues render neither.
-  // #1078: each control is a NULLABLE field of the composer's model, which
-  // is the same provider split expressed where it can be read as data —
-  // and it is what removes the null-guard this test used to look for: an
-  // absent control is `null` in the model, not a getElementById that has to
-  // be checked before an addEventListener.
-  assert.match(DEV_CHAT_SRC, /if \(DevChat\._currentVenueId\(\) !== 'usernode-claude'\) return null;/,
-    'the Claude picker is provider-specific');
-  assert.match(DEV_CHAT_SRC, /if \(DevChat\._currentVenueId\(\) !== 'usernode-openrouter'\) return null;/,
-    'the OpenRouter row is provider-specific');
+test('in-chat providers share one key-explicit selector, and other venues get none', () => {
+  assert.match(DEV_CHAT_SRC,
+    /venue !== 'usernode-claude' && venue !== 'usernode-openrouter'\) return null;/,
+    'only in-chat venues receive the grouped selector');
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
-  assert.match(COMPOSER_TSX, /id="dc-openrouter-model"/,
-    'the pinned OpenRouter model is visible');
-  assert.match(COMPOSER_TSX, /id="dc-openrouter-model-change"/,
-    'the OpenRouter catalog can be reopened directly');
+  assert.match(COMPOSER_TSX, /<select[\s\S]*id="dc-model-select"/,
+    'the control is inside the composer');
+  assert.match(COMPOSER_TSX, /s\.models\.groups\.map/,
+    'provider provenance is rendered as native optgroups');
+  assert.match(DEV_CHAT_SRC, /label: 'OpenRouter key'[\s\S]*label: 'Anthropic key'/,
+    'OpenRouter is listed before Anthropic');
+  assert.match(DEV_CHAT_SRC, /Add more OpenRouter models/,
+    'the full catalog is reachable from the selector');
   assert.match(
     DEV_CHAT_SRC,
     /_switchCurrentCodingAgent\(null, \{ fixedBackend: 'codex_openrouter' \}\)/,
@@ -324,7 +319,7 @@ test('every class these surfaces render has a rule', () => {
   for (const cls of [
     'dc-venue-slot', 'dc-venue-select', 'dc-venue-name',
     'dc-venue-caret', 'dc-venue-note', 'dc-venue-detail', 'dc-venue-chip',
-    'dc-openrouter-model', 'dc-openrouter-model-change',
+    'dc-model-select', 'dc-model-caret',
   ]) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),
       `.${cls} has no rule in app.css`);

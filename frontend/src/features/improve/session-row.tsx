@@ -63,6 +63,8 @@ export type SessionRowView = {
   href: string;
   status: string | null;
   busy: boolean;
+  /** Waiting on the user — see awaitsInput in ./improve-controller.js (#1959). */
+  awaitingInput: boolean;
   lastActivityAt?: string | null;
 };
 
@@ -81,7 +83,14 @@ export type SessionRowView = {
  *     turn is in flight. The amber is the platform's own "something is
  *     building" colour, borrowed from the header's deploy dot.
  *   - READY, solid emerald once it stops: the success green that says the
- *     change is back with you.
+ *     change is back with you. It reads "Ready for your input" ONLY when the
+ *     session is actually waiting on the user — a question with answer chips
+ *     still up, or a finished spec whose Questions section is open (#1959,
+ *     `awaitingInput`). A finished spec with nothing to ask and a finished
+ *     build are plain "Ready": the feedback that asked for the longer label
+ *     asked for it to be true, and a pill that says "for your input" on
+ *     every idle row says it on none. Same state, same tone, same badge —
+ *     the words carry the qualification, not a fourth colour.
  *   - HANDED OFF, outlined, for a work order (#1417). Its agent runs on the
  *     user's own machine, where the platform cannot see whether a turn is in
  *     flight, so the row states what it knows instead of borrowing a liveness
@@ -126,7 +135,7 @@ function stateOf(session: SessionRowView): {
     };
   }
   return {
-    label: 'Ready',
+    label: session.awaitingInput ? 'Ready for your input' : 'Ready',
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
     badge: 'bg-emerald-500',
     spinner: false,
