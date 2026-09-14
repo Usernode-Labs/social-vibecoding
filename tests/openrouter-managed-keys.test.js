@@ -140,7 +140,7 @@ test('default-open managed provisioning stores the key internally and returns on
     write: credentialStore.writeOpenRouterCodingAgentOnClient,
     createKey: managementClient.createKey,
     listModels: agentModels.listOpenRouterModels,
-    notify: notifications.notifyManagedOpenRouterAdmins,
+    notify: notifications.notifyManagedOpenRouterReviewAdmins,
   };
   t.after(() => {
     credentialStore.withTransaction = originals.withTransaction;
@@ -148,7 +148,7 @@ test('default-open managed provisioning stores the key internally and returns on
     credentialStore.writeOpenRouterCodingAgentOnClient = originals.write;
     managementClient.createKey = originals.createKey;
     agentModels.listOpenRouterModels = originals.listModels;
-    notifications.notifyManagedOpenRouterAdmins = originals.notify;
+    notifications.notifyManagedOpenRouterReviewAdmins = originals.notify;
   });
   const allowanceReads = stubAllowance(t, { weeklyCents: 17500 });
 
@@ -194,7 +194,10 @@ test('default-open managed provisioning stores the key internally and returns on
     };
   };
   agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3-flash' });
-  notifications.notifyManagedOpenRouterAdmins = async () => { notificationsSent += 1; return []; };
+  notifications.notifyManagedOpenRouterReviewAdmins = async () => {
+    notificationsSent += 1;
+    return [];
+  };
   const pool = {
     query: async (sql) => ({
       rows: /RETURNING id/.test(String(sql)) ? [{ id: 17 }] : [],
@@ -234,7 +237,8 @@ test('default-open managed provisioning stores the key internally and returns on
     'defaultModel', 'keyInfo', 'managed', 'revision',
   ]);
   assert.equal(result.managed.status, 'active');
-  assert.equal(notificationsSent, 1);
+  assert.equal(notificationsSent, 0,
+    'successful issuance is an admin record, not an actionable notification');
 });
 
 test('an account whose platform weekly allowance is zero cannot claim a company key', async (t) => {
@@ -320,13 +324,13 @@ test('the opt-in verification policy rejects an unverified account before provid
 });
 
 test('identity-loss review notifications follow the same opt-in policy', async (t) => {
-  const originalNotify = notifications.notifyManagedOpenRouterAdmins;
+  const originalNotify = notifications.notifyManagedOpenRouterReviewAdmins;
   let notificationsSent = 0;
-  notifications.notifyManagedOpenRouterAdmins = async () => {
+  notifications.notifyManagedOpenRouterReviewAdmins = async () => {
     notificationsSent += 1;
     return [];
   };
-  t.after(() => { notifications.notifyManagedOpenRouterAdmins = originalNotify; });
+  t.after(() => { notifications.notifyManagedOpenRouterReviewAdmins = originalNotify; });
 
   let stateReads = 0;
   const pool = {
