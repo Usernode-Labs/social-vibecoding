@@ -28,18 +28,24 @@
 //
 // ── Copy never wraps ───────────────────────────────────────────────────
 //
-// The rail and the chip share one row, and the row is narrow: a 360px phone
-// leaves the card's body about 210px, a 320px phone 170px. Measured at 210px,
-// "Done" + "Earned 1,000 pts" and "Started" + "Up to 2,000 pts" fit on one
-// line whole with 0.5rem pill padding. Below that no width cap works — a 60%
-// cap left "D…" of the state word at 320px — so the row (in
-// ./challenges-pane.tsx) is `flex-wrap`: the rail is `flex-auto` from its
-// label's own width and the chip `shrink-0` at its own, and when the two do
-// not fit side by side the chip moves to a second line. Text itself never
-// wraps: each pill is one line, and only a label or reward longer than the
-// whole row ends in an ellipsis. The labels are composed short in
-// ./topochain-challenges.js (`_stateOf`), because the icon already says which
-// state it is.
+// The rail and the reward share ONE capsule (the board's shape): a 2px-padded
+// outer pill holding the rail segment on the left and a lighter reward
+// segment on the right, so they read as one control rather than two pills
+// side by side. A phone-width card leaves the capsule about 210px, a 320px
+// phone 170px. The rail segment is `basis-auto` from its label's own width and
+// truncates; the reward segment is `shrink-0` at its own. When the two do not
+// fit side by side the reward segment moves to a second row INSIDE the
+// capsule, which grows to hold it — and fills that row's width, so a wrapped
+// capsule reads as two stacked full-width rows rather than a small segment
+// beside an empty grey block. The grow factors do that: the rail grows at
+// 999 and the reward at 1, so while both share a row the reward gains at most
+// a thousandth of the free space and stays content-sized, and alone on its
+// row its factor of 1 takes all of it. (A lone factor below 1 would not: CSS
+// hands an item only that fraction of the free space, which is why the
+// reward's factor is a whole 1 and the rail's is the large one.) Text itself never wraps: only a label or
+// reward longer than the whole capsule ends in an ellipsis. The labels are
+// composed short in ./topochain-challenges.js (`_stateOf`), because the icon
+// already says which state it is.
 //
 // Every class below is a complete literal: Tailwind's extractor is a regex
 // over source text, so a computed class name never compiles.
@@ -51,19 +57,24 @@ import { CheckIcon } from '@/components/ui/icons';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
-const RAIL = 'relative flex h-9 min-w-0 flex-auto items-center gap-1.5 overflow-hidden rounded-lg px-2 '
+// Segment radius 10px inside the capsule's 12px with 2px of padding, so the
+// corners stay concentric.
+const RAIL = 'relative flex h-9 min-w-0 shrink grow-[999] basis-auto items-center gap-1.5 overflow-hidden rounded-[0.625rem] px-2.5 '
   + 'text-[0.8125rem] font-medium';
 const RAIL_TONE: Record<ChallengeState, string> = {
-  new: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
-  progress: 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  new: 'bg-zinc-200/70 text-zinc-700 dark:bg-zinc-700/60 dark:text-zinc-300',
+  progress: 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-700/60 dark:text-zinc-100',
   done: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
 };
 const RAIL_FILL = 'absolute inset-y-0 left-0 bg-violet-500/25';
 const RAIL_LABEL = 'relative min-w-0 truncate';
 
-const CHIP = 'flex h-9 max-w-full shrink-0 items-center rounded-lg px-2 text-[0.8125rem] font-medium';
-const CHIP_REWARD = 'bg-amber-500/10 text-amber-800 dark:text-amber-300';
-const CHIP_EARNED = 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
+const CHIP = 'flex h-9 max-w-full shrink-0 grow items-center rounded-[0.625rem] px-2.5 text-[0.8125rem] font-medium';
+// The reward segment is the capsule's lighter half: the surface colour, with
+// the reward's amber (or the earned emerald) as its ink.
+const CHIP_REWARD = 'bg-white text-amber-800 dark:bg-zinc-900 dark:text-amber-300';
+const CHIP_EARNED = 'bg-white text-emerald-700 dark:bg-zinc-900 dark:text-emerald-400';
+const CAPSULE = 'flex flex-wrap items-stretch gap-0.5 rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -149,26 +160,18 @@ export type ChallengeCardView = {
   earned: string | null;
 };
 
-const CARD = 'flex items-start gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
+const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
   + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
   + 'transition-colors';
 
-// The card: tile, title, and the rail + reward row — nothing else. The task
-// is not on the card (the tab's detail overlay carries it in full), so the
-// card is balanced on two lines rather than three.
+// The card: tile, title, and the rail + reward capsule — nothing else. The
+// task is not on the card (the tab's detail overlay carries it in full).
 //
-// THE BALANCE. The tile stays 5rem, because the 4rem illustrations it is
-// sized for need its padding. The body stretches to the tile's height and
-// spreads its two lines to the edges (`self-stretch justify-between`), so the
-// title's line box starts where the tile starts and the rail ends where the
-// tile ends: 24px title + 36px rail inside the tile's 80px leaves a steady
-// 20px between them, the same on every card. The rail and chip are 2.25rem
-// tall — the board's pill height — which is what fills the space the removed
-// line left without adding anything to read. When the chip wraps under the
-// rail (a long reward, or any card on a 320px phone) the body outgrows the
-// tile, and the tile stays at the TOP, level with the title, rather than
-// centring: in a list where some cards wrap and some do not, every title then
-// sits the same distance from its card's top edge.
+// TITLE AND RAIL ARE ONE GROUP. They sit 8px apart and the pair is centred
+// against the tile as a unit, rather than stretched to the tile's top and
+// bottom edges: the title belongs to its rail, not to the illustration beside
+// it. With one row the group is 76px against the 80px tile; when the reward
+// wraps inside the capsule the group grows and the tile stays centred on it.
 export function ChallengeCard({ view, className, ...rest }: {
   view: ChallengeCardView;
   className?: string;
@@ -177,9 +180,9 @@ export function ChallengeCard({ view, className, ...rest }: {
   return (
     <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
       <ChallengeTile icon={view.icon} />
-      <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5 self-stretch">
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100">{view.goal}</div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className={CAPSULE}>
           <ProgressRail state={view.state} label={view.stateLabel} fill={view.fill} name={view.goal} />
           {chip ? <RewardChip text={chip} earned={!!view.earned} /> : null}
         </div>

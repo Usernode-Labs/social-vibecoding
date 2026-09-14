@@ -430,6 +430,7 @@ test('render: a done row reads Done and says what the viewer earned', () => {
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
   assert.match(card, /aria-valuetext="Done"/);
   assert.match(card, /bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400/, 'the green done rail');
+  assert.match(card, /bg-white text-emerald-700 dark:bg-zinc-900 dark:text-emerald-400/, 'and the earned segment in emerald ink');
   assert.match(card, />Earned 250 pts</, 'the chip says what was earned, not what is on offer');
   assert.doesNotMatch(card, /home-panel-glyph/, 'the old filled ✓ disc is retired');
 });
@@ -587,7 +588,7 @@ test("Home draws the Challenges tab's card, not a card of its own", () => {
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
   assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card"/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
-  assert.match(card, /^home-challenge-card flex items-start gap-3 bg-white dark:bg-zinc-900 rounded-2xl/);
+  assert.match(card, /^home-challenge-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl/);
   assert.match(card, /h-20 w-20 rounded-2xl/, "the tab's 80px tile");
   assert.match(card, /data-challenge-id="1"/);
 });
@@ -998,7 +999,8 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   assert.doesNotMatch(card, /<p /, 'and there is no task line to wrap');
   assert.match(card, /<span class="relative min-w-0 truncate">543\/720 Blocks produced<\/span>/, 'the rail label truncates');
   assert.match(card, /<span class="min-w-0 truncate">Up to 6,500 pts<\/span>/, 'the reward truncates inside a chip that never shrinks');
-  assert.match(card, /<div class="flex flex-wrap items-center gap-1\.5">/, 'the pills wrap as units');
+  assert.match(card, /<div class="flex flex-wrap items-stretch gap-0\.5 rounded-lg bg-zinc-100 p-0\.5 dark:bg-zinc-800">/,
+    'the reward wraps as a segment inside the capsule');
 });
 
 test('the title bar and the footer controls are single-line too', () => {
