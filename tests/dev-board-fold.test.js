@@ -208,7 +208,9 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
-  assert.match(WORKSHOP, /import \{ CardRowView, callAppView \} from '\.\.\/card\/fold';/);
+  // (`openHref` rides the same import since the Needs-you feed: its item title
+  // links to the card's own page by the fold's rule, not a second one.)
+  assert.match(WORKSHOP, /import \{ CardRowView, callAppView, openHref \} from '\.\.\/card\/fold';/);
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
     assert.ok(!WORKSHOP.includes(fn), `${fn} is not also in workshop.tsx`);
@@ -419,9 +421,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // top two by users and used to lead the directory. It asserts the absence of
   // the tier headings too, because "one list in its own order" is the half of
   // the change that a Show-more selector alone would not catch.
+  // 605 → 606: the Needs-you feed replaces the deck. The ask-box check now walks
+  // to the rail's Ask control (the box lives on a sheet), the vote check to
+  // the rail's Vote control, and one new check pins the item's own order:
+  // title, then the sentence a voter reads, then the caption.
+  // 606 → 607: both of the above landed, on either side of a merge.
   // 607 → 610: #2061 adds three checks for the merge-requirements checklist
   // — the locked-app gate that had no UI at all, the "nobody has to act"
-  // wording, and the steps listed AFTER the one a proposal is stuck on.
+  // wording, and the steps listed AFTER the one a proposal is stuck on,
+  // landing on the other side of a second merge.
   assert.equal(DAPP.tests.length, 610);
 });
 
@@ -587,7 +595,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-scroll > \.gc-vote-item:has\(\+ \.dev-ws-needs-summary\) button\.dev-vote-btn/);
+  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
+  // control; a second check pins the item's own order (title, then the
+  // sentence, then the caption) with the same `+`/`~` direction.
+  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
+  assert.match(byName(/leads with its title, then the sentence a voter reads/).expectSelector, /\.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption > \.dev-ws-item-by/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
