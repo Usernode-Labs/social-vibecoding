@@ -190,7 +190,11 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
   assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
   assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
-  assert.match(FOLD, /\{href && mode === 'inline' \? \(\s*<div className="dev-ws-sheet-actions">/, 'the line under the sheet is the Workshop\u2019s');
+  // #1886: no second link under the sheet any more — the Workshop's pill is
+  // the page link once the card is open.
+  assert.ok(!FOLD.includes('dev-ws-sheet-actions'), 'no "Open on its own page" line under the sheet');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'the open Workshop card\u2019s pill is the page link');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
   assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and

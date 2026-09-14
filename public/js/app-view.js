@@ -2480,8 +2480,8 @@ const AppView = {
       if (e.target.closest('a, button, input, form')) return;
       // A card inside a fold wrapper — the Workshop's rows, and the Board's
       // columns since they fold too (card/fold.tsx) — is the fold's: its own
-      // handler opens and closes it, and "Open on its own page" is the route
-      // out. Both sizes keep their data-*-row hooks so the checks and the
+      // handler opens and closes it, and the open card's "Open page ›" pill
+      // (#1886) is the route out. Both sizes keep their data-*-row hooks so the checks and the
       // lookups below still find the item; this is what stops a click on
       // them opening it full-screen. See _inFoldWrapper for why it reads the
       // event's path rather than the target's ancestors.
@@ -3172,8 +3172,12 @@ const AppView = {
     // next to them. Forks cannot be updated by the platform worker.
     let main = rows.find((r) => ['sync', 'behind', 'conflict', 'mergeability'].includes(r.key));
     if (!main) {
-      const behind = item.freshness_behind_by ?? item.behind_main;
-      main = { key: 'main', label: 'Main', tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? `${behind} commits behind main.` : (item.freshness_checked_at && behind === 0 ? 'Up to date with main.' : 'Main freshness has not been verified yet.')] };
+      // Through the one reader, so this row and the pill agree on which
+      // measurement — #2038's integration record or the legacy freshness
+      // columns — is the current one.
+      const fresh = AppView._freshnessOf(item);
+      const behind = fresh.behindBy;
+      main = { key: 'main', label: 'Main', tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : (fresh.checkedAt && behind === 0 ? 'Up to date with main.' : 'Main freshness has not been verified yet.')] };
       const reviewIndex = rows.findIndex((r) => r.key === 'votes');
       rows.splice(reviewIndex < 0 ? rows.length : reviewIndex, 0, main);
     }
@@ -3188,7 +3192,7 @@ const AppView = {
       const checks = rows.find((r) => r.key === 'checks');
       if (item.check_state === 'failing' && checks) checks.text = ['Required checks need attention before this change can be proposed.'];
       if (main.key === 'behind') {
-        const behind = item.freshness_behind_by ?? item.behind_main ?? main.count;
+        const behind = AppView._freshnessOf(item).behindBy ?? main.count;
         main.label = 'Main';
         main.sub = null;
         main.text = [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : 'Main has moved ahead.'];
@@ -3516,11 +3520,24 @@ const AppView = {
   },
   // Everything the ⋯ under `key` lists right now: the folded pills first,
   // then the registered descriptors.
-  _cardMenuItems(key) {
+  //
+  // `own` is the card's own page, when the trigger offers it: the Needs-you
+  // feed's ⋯ (workshop.tsx NeedsFeed) carries the href as
+  // `data-card-menu-open`, because there the item IS the screen and nothing
+  // on it reads as "the card" to tap. It leads the list. Every reader of the
+  // list passes the same value, so a row's index means the same descriptor
+  // in the menu that was opened and in the one refreshed under it.
+  _cardMenuItems(key, own) {
     const list = AppView._cardMenus[key] || [];
     const folded = AppView._foldedCardActions[key] || [];
-    if (!folded.length) return list;
-    return folded.map((a) => AppView._foldedMenuItem(a)).concat(list);
+    const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
+    if (!own) return rows;
+    return [{
+      label: 'Open card',
+      icon: 'open',
+      title: 'The card on its own page',
+      act: () => { window.location.hash = own; },
+    }].concat(rows);
   },
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
@@ -3585,6 +3602,7 @@ const AppView = {
     chat: '💬',       // 💬 matches the message-count badge
     archive: '📦',    // 📦
     campaign: '📊',   // 📊
+    open: '▢',             // ▢ the card on its own page
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.
@@ -3681,7 +3699,9 @@ const AppView = {
 
   _toggleCardMenu(trigger) {
     const key = trigger.dataset.cardMenu;
-    const items = AppView._cardMenuItems(key);
+    // Only an in-app route is honoured as the card's own page.
+    const own = /^#app\//.test(trigger.dataset.cardMenuOpen || '') ? trigger.dataset.cardMenuOpen : null;
+    const items = AppView._cardMenuItems(key, own);
     // Re-clicking the open trigger closes it (the popover idiom).
     const wasOpen = AppView._openCardMenu && AppView._openCardMenu.key === key;
     AppView._closeCardMenu();
@@ -3718,7 +3738,7 @@ const AppView = {
       // the menu opened: a repaint re-registers under the same key, and the
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
-      const live = AppView._cardMenuItems(key);
+      const live = AppView._cardMenuItems(key, own);
       const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
@@ -3729,7 +3749,7 @@ const AppView = {
       }
     });
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._openCardMenu = { key, el: menu, trigger };
+    AppView._openCardMenu = { key, el: menu, trigger, own };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },
@@ -3800,7 +3820,7 @@ const AppView = {
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key));
+    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key, open.own));
     AppView._positionCardMenu(open.el, trigger);
   },
 
@@ -7501,7 +7521,7 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    // `slug` is what the open card's "Open on its own page" link is built
+    // `slug` is what the open card's page link ("Open page ›") is built
     // from; `unfolded` is the ?cards=open state (every card at full size).
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
     return {
@@ -13637,6 +13657,17 @@ const AppView = {
   // clients. Neither is authoritative over the other; a row is simply
   // whichever the caller had. Everything is nullable, and null means NOT
   // MEASURED, which is never the same as measured-and-fine.
+  //
+  // #2038 added a third shape, and made it the one the merge gate decides
+  // from: the `integration_*` record, measured from the local mirror on every
+  // merge attempt and every queue pass. The freshness sweep that kept the
+  // columns above current was retired with it, so on a proposal up for vote
+  // they are usually NULL — and a card that read only them said "Main
+  // freshness has not been verified yet" under a gate that had just measured
+  // "3 commits behind" (#2100's "the UI is not matching up"). The newer
+  // measurement wins, whichever shape carried it; a live `freshness` patch
+  // therefore still shows through, and a row that predates the record reads
+  // exactly as before.
   _freshnessOf(pr) {
     const p = pr || {};
     const f = (p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
@@ -13648,13 +13679,31 @@ const AppView = {
       }
       return null;
     };
-    const files = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+    const when = (v) => {
+      const t = v ? Date.parse(v) : NaN;
+      return Number.isFinite(t) ? t : null;
+    };
+    const legacyCheckedAt = f.checkedAt || p.freshness_checked_at || null;
+    const integrationAt = when(p.integration_measured_at);
+    const integrationWins = integrationAt !== null
+      && (when(legacyCheckedAt) === null || integrationAt >= when(legacyCheckedAt));
+    const legacyFiles = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
       : (Array.isArray(p.mergeability_files) ? p.mergeability_files : []);
-    const complete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
+    const legacyComplete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
       ? f.mergeabilityFilesComplete : p.mergeability_files_complete;
+    const legacyMergeability = p.mergeability || f.mergeability || null;
+    // The integration record's verdict is a real merge, so its answer is
+    // complete by construction; the legacy one was GitHub's estimate.
+    const integrationMergeability = p.integration_merges_clean === true ? 'clean'
+      : p.integration_merges_clean === false ? 'conflict' : null;
+    const integrationFiles = Array.isArray(p.integration_conflict_paths) ? p.integration_conflict_paths : [];
+    const useIntegrationMerge = integrationWins && integrationMergeability !== null;
+    const files = useIntegrationMerge ? integrationFiles : legacyFiles;
+    const complete = useIntegrationMerge ? true : legacyComplete;
+    const integrationBehind = num(p.integration_behind_by);
     return {
-      checkedAt: f.checkedAt || p.freshness_checked_at || null,
-      mergeability: p.mergeability || f.mergeability || null,
+      checkedAt: integrationWins ? p.integration_measured_at : legacyCheckedAt,
+      mergeability: useIntegrationMerge ? integrationMergeability : legacyMergeability,
       files: files.filter((x) => typeof x === 'string'),
       filesComplete: complete === undefined ? null : complete,
       baseVerdict: p.checks_base_verdict || f.checksBaseVerdict || null,
@@ -13662,8 +13711,10 @@ const AppView = {
       // The measured count wins over the column frozen at submission, which
       // is the whole point of #1442. `behind_main` is the last fallback, and
       // it is still what the merge gate reads.
-      behindBy: num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
-      error: f.error || p.freshness_error || null,
+      behindBy: (integrationWins && integrationBehind !== null)
+        ? integrationBehind
+        : num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
+      error: integrationWins ? (p.integration_error || null) : (f.error || p.freshness_error || null),
     };
   },
 
