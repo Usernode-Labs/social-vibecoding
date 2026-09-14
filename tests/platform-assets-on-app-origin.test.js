@@ -147,11 +147,18 @@ test('the asset backend runs the platform image and is not mistaken for an app',
   const container = deployment.spec.template.spec.containers[0];
   assert.equal(container.image, 'registry.example/social-vibecoding@sha256:abc',
     'the image comes from the running platform Deployment, so the assets track the platform');
-  // Through the CNB launcher: the image is kpack/Paketo-built, and a bare
-  // `node` bypasses the buildpack launch environment, so the container never
-  // starts and the ingress answers 503 on every asset path.
-  assert.deepEqual(container.command, ['/cnb/lifecycle/launcher']);
-  assert.deepEqual(container.args, ['node scripts/serve-platform-assets.js']);
+  // Dockerfile.kubernetes uses node:22-alpine with USER node. Kubernetes
+  // needs its numeric UID to enforce runAsNonRoot, and this platform image
+  // launches Node directly (it has no CNB launcher).
+  assert.deepEqual(deployment.spec.template.spec.securityContext, {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    runAsGroup: 1000,
+    fsGroup: 1000,
+    seccompProfile: { type: 'RuntimeDefault' },
+  });
+  assert.deepEqual(container.command, ['node', 'scripts/serve-platform-assets.js']);
+  assert.deepEqual(container.args || [], []);
   assert.ok(deployment.spec.replicas >= 2, 'no single-replica restart gap on every app page load');
   assert.equal(deployment.spec.strategy.rollingUpdate.maxUnavailable, 0);
 
