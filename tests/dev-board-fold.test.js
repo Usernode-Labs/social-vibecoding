@@ -479,7 +479,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // screenshot whose macOS-style name used to make its download 500. Same
   // base as #2089's bump, on the other side of a merge: two branches each
   // took 617 to 618 independently, so together they land on 619.
-  assert.equal(DAPP.tests.length, 619);
+  // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
+  // Codex CLI block's config.toml entry and one for the generic MCP-client
+  // walkthrough.
+  assert.equal(DAPP.tests.length, 621);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -170,6 +170,18 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'Homeroom apps are built by groups, so who is working on what is shared information. claim_request marks a request as being worked on by this user and puts them on the app\'s board; prepare_work does it for you when you pass it a requestNumber, so call claim_request directly when work starts some other way, or to renew a claim on a job that is running long. Its `note` posts a progress update on the request\'s own discussion thread, in the user\'s name, for the whole group to read — that is how a long build stays visibly alive, and posting one also keeps the claim from lapsing. A claim is not a lock: many people can claim the same request, so `alsoClaimedBy` in the result and `inProgress` on get_request are worth reading before starting, and finding somebody there is something to tell the user about rather than an error to work around. Claims lapse on their own once a request goes quiet; release_request clears this user\'s claim deliberately, and only ever theirs.',
   },
   {
+    // Charter-only (#2136). A person finds a proposal by its pull request
+    // number — on GitHub, on the Dev board, in the proposal's heading — while
+    // the proposal id is a session id that lives in a URL, so an agent that
+    // answered "proposal 4223 is failing" sent the person looking for a
+    // number they could not find. The rule is cross-cutting (every answer
+    // that names a proposal), which is what puts it here rather than on one
+    // tool; the two lookup keys themselves are documented on get_proposal.
+    id: 'naming-proposals',
+    title: 'Two numbers name a proposal; quote the pull request number',
+    text: 'Every proposal has two numbers. `prNumber` is its pull request number: the number a person sees on GitHub and on the app\'s Dev board, and the one they will search for. `proposalId` is Homeroom\'s own id for it: the last number in `webPath`, and the argument submit_work, prepare_work and update_proposal_issues take. Every answer that describes a proposal carries both, and its prose names the proposal as "PR #2151 (proposal 4223)". Do the same when you talk to a person: lead with the PR number, keep the proposal id beside it when they may need it for a later call, and never quote the proposal id alone. get_proposal takes either key — `proposalId`, or `prNumber` with `slug` when the same number could be a pull request on more than one of the user\'s apps. Requests already go by their GitHub issue number, so a request and a pull request are both quoted as the person finds them on GitHub. A shared in-progress card has no pull request until it is proposed: it is named by its session id alone, and its `prNumber` is null.',
+  },
+  {
     // Charter-only: it applies at a moment (a proposal already up for a vote)
     // that a conversation reaches after several other tool calls, by which
     // time get_connector_guidance has had every opportunity to be called.

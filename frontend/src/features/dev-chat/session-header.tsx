@@ -5,7 +5,7 @@
 
 import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
+import { EllipsisHorizontalIcon, EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -16,9 +16,14 @@ import {
   type MergeLife,
   type SessionHeaderState,
 } from './session-header-store';
+import type { SessionAction } from './session-list-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
+}
+
+function platformUi(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
 /**
@@ -266,6 +271,106 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   );
 }
 
+/**
+ * The session's own actions — Pause / Free worker / Resume / Unarchive /
+ * Archive — behind a ⋯ at the strip's right edge (#1904).
+ *
+ * ── Why a menu, and why these rows ────────────────────────────────────
+ *
+ * Those buttons live on the session's row in the list, and opening the
+ * session put every one of them out of reach: the strip carried the name,
+ * the PR link, the venue and the mode switch, and nothing that acted on the
+ * session itself. The rows here are THE LIST'S — `DevChat._sessionRow`
+ * decides them once and the store carries them (see
+ * ./session-header-store.ts) — so the two surfaces cannot disagree about
+ * what is offered or how Archive is gated, and each row dispatches the same
+ * `DevChat` method by name the list's button does, confirm dialog included.
+ *
+ * ── One call, both idioms ─────────────────────────────────────────────
+ *
+ * `PlatformUI.menu` is the venue dropdown's own presenter (BuildVenues.open):
+ * a bottom action sheet on touch, an anchored popover on desktop, from one
+ * actionSheet-shaped call. The rows are handed to the kit rather than
+ * rendered here for the reason that sheet gives — the kit reparents what it
+ * is handed, and a React subtree under it would reconcile against a parent
+ * that no longer holds it.
+ *
+ * With nothing to offer — a viewer who does not own the session, a merged
+ * one — there is no button at all, rather than a menu with no rows.
+ */
+
+/** A row as `PlatformUI.menu` takes it — the kit's own actionSheet shape. */
+export interface SessionActionItem {
+  label: string;
+  title?: string;
+  destructive: boolean;
+  handler: () => void;
+}
+
+/**
+ * The rows the ⋯ hands the kit, from the store's actions. Each `handler` is
+ * the list button's click: the named `DevChat` method, with the row's own
+ * args — so Archive still goes through `_sessionListArchive`'s confirm, and
+ * Free worker still answers "Worker freed". The list flashed that answer on
+ * the button it was about to replace; a menu row is gone by then, so the
+ * answer becomes a toast.
+ */
+export function sessionActionItems(actions: SessionAction[]): SessionActionItem[] {
+  return actions.map((a) => ({
+    label: a.label,
+    ...(a.title ? { title: a.title } : null),
+    destructive: a.tone === 'danger',
+    handler: () => {
+      const dc = controller();
+      if (!dc || typeof dc[a.fn] !== 'function') return;
+      void Promise.resolve(dc[a.fn](...a.args)).then((flash: unknown) => {
+        if (flash) platformUi()?.toast?.(String(flash));
+      });
+    },
+  }));
+}
+
+/**
+ * Present the rows against the trigger. Resolves once the menu has settled
+ * — a pick or a dismissal — which is what the trigger's `aria-expanded`
+ * follows. Nothing to present without the kit, the same silent degradation
+ * the venue sheet has.
+ */
+export async function openSessionActionsMenu(
+  actions: SessionAction[],
+  anchorEl?: HTMLElement | null,
+): Promise<void> {
+  const pu = platformUi();
+  if (!pu || typeof pu.menu !== 'function') return;
+  await pu.menu({ anchorEl: anchorEl || undefined, items: sessionActionItems(actions) });
+}
+
+function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (!actions.length) return null;
+  return (
+    <button
+      type="button"
+      id="dc-session-actions"
+      className={'shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full '
+        + 'text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 '
+        + 'dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 un-touch-target'}
+      data-session-actions="1"
+      aria-haspopup="menu"
+      aria-expanded={open ? 'true' : 'false'}
+      aria-label="Session actions"
+      title="Session actions"
+      onClick={(e: MouseEvent<HTMLButtonElement>) => {
+        if (open) return;
+        setOpen(true);
+        void openSessionActionsMenu(actions, e.currentTarget).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="w-4 h-4" aria-hidden="true" />
+    </button>
+  );
+}
+
 export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(sessionHeaderStore);
   return (
@@ -316,6 +421,10 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           is what gives way. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
       {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
+      {/* #1904: the session's own actions, last — the far right of the strip,
+          beside the two switchers. Absent, not empty, when there is nothing
+          to offer. */}
+      <SessionActionsMenu actions={s.actions || []} />
     </>
   );
 }

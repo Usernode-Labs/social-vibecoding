@@ -342,9 +342,15 @@ function buildDuplicateNotice({ issueNumber, openProposals }) {
 
   const lead = list.find((p) => p.mine) || list[0];
   const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
+  // The pull request number leads when there is one (#2136): it is the number
+  // the person can find on GitHub, and the proposal id stays beside it because
+  // it is what the continuation is asked for by.
+  const named = Number(lead.prNumber) > 0
+    ? `PR #${Number(lead.prNumber)} (proposal ${lead.proposalId})`
+    : `proposal ${lead.proposalId}`;
   const head = lead.mine
-    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — proposal ${lead.proposalId}.`
-    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — proposal ${lead.proposalId}, opened${who}.`;
+    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — ${named}.`
+    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — ${named}, opened${who}.`;
   const tail = lead.mine
     ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
     : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';
@@ -440,10 +446,28 @@ function buildGuidance({
   // attached to the user's ACCOUNT, not to this conversation, so a Claude
   // Code session has it too. The human is no longer the courier; they are
   // told what to expect and what to do if it doesn't happen.
-  steps.push(
-    'It\'ll submit the change to Homeroom itself when it\'s done — ask me any time and I\'ll check. '
-    + 'If it says it can\'t submit, come back and tell me.'
-  );
+  //
+  // #1892: what to do when it says it has no Homeroom tools differs by
+  // product, and "go to Settings → Connectors" alone was not an answer. A
+  // Claude account adds the connector on claude.ai and a NEW Claude Code
+  // session picks it up. Codex cannot add it today: Codex on the web has no
+  // custom MCP setting, and the Codex CLI's sign-in uses a localhost callback
+  // the hosted connector refuses (see the Codex block on Settings →
+  // Connectors), so the branch comes back by hand. Folded into this step
+  // rather than added as one, because the host numbers the steps and the
+  // tests pin this one as last.
+  if (agent === 'codex') {
+    steps.push(
+      'It\'ll submit the change to Homeroom itself when it\'s done if it has the connector, and you can ask me any time to check. '
+      + 'Codex can\'t add the Homeroom connector today, so if it says it can\'t submit, paste back the branch name it prints and I\'ll submit it.'
+    );
+  } else {
+    steps.push(
+      'It\'ll submit the change to Homeroom itself when it\'s done, and you can ask me any time to check. '
+      + 'If it says it has no Homeroom tools, add the connector on claude.ai (Settings → Connectors on Homeroom shows how) and start a new session. '
+      + 'If it says it can\'t submit, come back and tell me.'
+    );
+  }
   return steps;
 }
 
@@ -486,6 +510,32 @@ function buildWorkOrder({
   // Rendered as its own indented line, like a command, so a host that
   // re-wraps prose still leaves the URL intact and copyable.
   const connectorsPage = settingsUrl ? [`${CMD}${settingsUrl}`] : [];
+  // #1892: the connector URL itself, `${origin}/mcp`, derived from the same
+  // origin, so the agent can tell the user the one value the claude.ai
+  // dialog asks for without a round trip to the settings page.
+  const connectorUrl = (() => {
+    try { return webPath ? `${new URL(webPath).origin}/mcp` : null; } catch { return null; }
+  })();
+  const connectorUrlLine = connectorUrl ? [`${CMD}${connectorUrl}`] : [];
+  // What a session with no Homeroom tools tells the user, per product
+  // (#1892). Claude Code on the web: the connector lives on the claude.ai
+  // account and a NEW session picks it up. Codex: nothing to add today,
+  // Codex on the web has no custom MCP setting and the Codex CLI's sign-in
+  // uses a localhost callback the hosted connector refuses, which is what
+  // the Codex block on Settings → Connectors says. Shared by both work-order
+  // variants below so the two cannot drift.
+  const noToolsRemedy = [
+    '   How the user adds it depends on the product you are:',
+    '   - Claude Code on the web: on claude.ai, add a custom connector named',
+    '     `homeroom` with the URL below, then start a NEW Claude Code session;',
+    '     this one will not pick it up.',
+    ...connectorUrlLine,
+    '   - Codex: there is no way to add it today. Codex on the web has no custom',
+    '     MCP setting, and the Codex CLI\'s sign-in uses a localhost callback the',
+    '     hosted connector refuses, so hand the branch back as below.',
+    '   Settings → Connectors on Homeroom has the click-by-click steps:',
+    ...connectorsPage,
+  ];
 
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
@@ -814,9 +864,14 @@ function buildWorkOrder({
     '  the Claude or ChatGPT account you are running in (it is per account, so a',
     '  second account does not inherit the first one\'s). That is not a reason to',
     '  stop: the excerpt below is enough to build with, and step 6 under WHEN',
-    '  YOU ARE DONE says how to finish. The user adds it on Homeroom at',
-    '  Settings → Connectors, which has the connector URL and the click-by-click',
-    '  steps for Claude and for ChatGPT:',
+    '  YOU ARE DONE says how to finish. For Claude Code on the web, the user',
+    '  adds it on claude.ai as a custom connector named `homeroom` with the URL',
+    '  below, and a NEW Claude Code session picks it up (this one will not).',
+    '  Codex cannot add it today: Codex on the web has no custom MCP setting,',
+    '  and the Codex CLI\'s sign-in uses a localhost callback the hosted',
+    '  connector refuses. Settings → Connectors on Homeroom has the',
+    '  click-by-click steps:',
+    ...connectorUrlLine,
     ...connectorsPage
   );
 
@@ -964,10 +1019,8 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
-      '   user they can add the connector on Homeroom at Settings → Connectors,',
-      '   which has the connector URL and the click-by-click steps:',
-      ...connectorsPage,
+      '   first one\'s. Push the branch anyway; the work is not lost.',
+      ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
       ...(startedFromWalkthrough
@@ -1105,10 +1158,8 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
-      '   user they can add the connector on Homeroom at Settings → Connectors,',
-      '   which has the connector URL and the click-by-click steps:',
-      ...connectorsPage,
+      '   first one\'s. Push the branch anyway; the work is not lost.',
+      ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
       // How the hand-off started decides who finishes it without a

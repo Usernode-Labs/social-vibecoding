@@ -245,6 +245,11 @@ function getSelfHostedRefuseList() {
 // decides what the group votes on.
 function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
   const name = appName || slug || 'this app';
+  // #1892: the connector URL and the settings page, from the same
+  // USERNODE_DOMAIN getAppConventions() resolves, falling back to the hosted
+  // platform where it is unset (local dev, tests) because a chat cannot use
+  // a relative path.
+  const origin = platformOrigin() || 'https://my.onhomeroom.com';
   const continuing = Number.isInteger(Number(targetProposalId)) && Number(targetProposalId) > 0;
   return [
     `You are making a change to "${name}" on Homeroom (app \`${slug}\`).`,
@@ -278,8 +283,13 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
     '',
     'If you have no Homeroom tools at all, the connector was never added to the',
     'account you are running in. Say so rather than improvising a base commit:',
-    'the user adds it at https://my.onhomeroom.com/#settings/connectors, and',
-    'without it nothing you push can be submitted as a proposal.',
+    'without it nothing you push can be submitted as a proposal. For Claude,',
+    'the user adds it on claude.ai as a custom connector named `homeroom` with',
+    `the URL ${origin}/mcp, and a NEW Claude Code session picks it up. Codex`,
+    'cannot add it today (Codex on the web has no custom MCP setting, and the',
+    'Codex CLI sign-in uses a localhost callback the hosted connector refuses),',
+    'so push and hand the branch back. The click-by-click steps are at',
+    `${origin}/#settings/connectors.`,
   ].join('\n');
 }
 

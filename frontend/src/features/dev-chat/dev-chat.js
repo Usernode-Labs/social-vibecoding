@@ -8061,6 +8061,25 @@ const DevChat = {
       DevChat.renderSessionList();
     }
     await DevChat.loadActiveSessions();
+    // #1904: the strip's ⋯ ends here too, and it acts on the OPEN session.
+    DevChat._syncCurrentSessionFromList();
+  },
+
+  // #1904: fold the reloaded row's status back into the open session and
+  // repaint the strip. The list's own buttons never needed this — their row
+  // is replaced by the publish above — but the strip's ⋯ calls the same
+  // methods on `currentSession`, whose `status` would otherwise still
+  // describe the session from before the click, leaving Archive on offer for
+  // a session that was just archived. (`_sessionListPause` already sets the
+  // paused status ahead of its round trip and keeps doing so; this is the
+  // answer for the other two.)
+  _syncCurrentSessionFromList() {
+    const current = DevChat.currentSession;
+    if (!current || !Array.isArray(DevChat.sessions)) return;
+    const row = DevChat.sessions.find((s) => Number(s.id) === Number(current.id));
+    if (!row) return;
+    current.status = row.status;
+    DevChat._repaintSessionHeader();
   },
 
   // Pause / Free-worker / Resume. One method, dispatched on `action`, so we
@@ -8240,7 +8259,36 @@ const DevChat = {
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
       life: DevChat._headerLife(session),
       venue: DevChat._headerVenue(session),
+      // #1904: the strip's ⋯ menu — see _headerActions.
+      actions: DevChat._headerActions(session),
     };
+  },
+
+  // The rows behind the strip's ⋯ (#1904).
+  //
+  // THE LIST'S rows, not a second set: `_sessionRow` is the one place that
+  // decides which of Pause / Free worker / Resume / Unarchive / Archive a
+  // session gets, and why Archive is gated apart from the rest, so the menu
+  // cannot offer what the list would not.
+  //
+  // Owner-only, like auto-resume (see `_ownsSession`): pause, archive and
+  // unarchive are all owner-scoped on the server, so for anyone else reading
+  // the session there is no button at all rather than a menu of calls that
+  // can only fail.
+  //
+  // `warm` comes from the LIST'S row rather than from `currentSession`.
+  // Whether a promoted session still has a worker to FREE is computed by
+  // GET /api/apps/:slug/sessions and by nothing else — the single-session
+  // payload `currentSession` is built from has no such column — so deriving
+  // it here would drop "Free worker" from the menu while the list two panes
+  // away still offered it. Everything else stays `currentSession`'s, whose
+  // status is the fresher of the two: `openSession` flips paused → active on
+  // auto-resume before any list reload.
+  _headerActions(session) {
+    if (!DevChat._ownsSession(session)) return [];
+    const rows = Array.isArray(DevChat.sessions) ? DevChat.sessions : [];
+    const row = rows.find((r) => Number(r.id) === Number(session.id));
+    return DevChat._sessionRow(row ? { ...session, warm: row.warm } : session).actions;
   },
 
   // Repaint the header strip WITHOUT re-rendering the view.
