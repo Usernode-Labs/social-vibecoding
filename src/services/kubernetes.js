@@ -591,18 +591,14 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
           spec: {
             serviceAccountName: cfg.generatedAppServiceAccount,
             automountServiceAccountToken: false,
-            securityContext: podSecurityContext(),
+            // Dockerfile.kubernetes declares USER node; Kubernetes needs
+            // the numeric UID to verify runAsNonRoot before starting it.
+            securityContext: nodePodSecurityContext(),
             containers: [{
               name: 'assets', image, imagePullPolicy: 'IfNotPresent',
-              // Through the CNB launcher, NOT a bare `node`. The image is
-              // built by kpack/Paketo, and a command that bypasses
-              // /cnb/lifecycle/launcher does not get the buildpack's launch
-              // environment (PATH to the node layer among it), so the
-              // container never starts and the Service has no ready
-              // endpoints — which the ingress answers as 503 on every asset
-              // path. See the buildEnv comment above on launcher env.
-              command: ['/cnb/lifecycle/launcher'],
-              args: ['node scripts/serve-platform-assets.js'],
+              // The platform's node:22-alpine image provides Node on PATH.
+              // The CNB launcher belongs to kpack-built child-app images.
+              command: ['node', 'scripts/serve-platform-assets.js'],
               ports: [{ name: 'http', containerPort: 3000 }],
               startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 20 },
               readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
