@@ -6106,9 +6106,14 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   status               VARCHAR(24) NOT NULL DEFAULT 'provisioning'
                          CHECK (status IN ('provisioning', 'active', 'disabled',
                                            'deleted', 'needs_review')),
+  -- The allowance per reset period. Named for the daily cadence keys were
+  -- issued with before #2119; the column keeps that name because renaming it
+  -- would need a data migration for nothing, and limit_reset is what labels
+  -- it ('weekly' for keys issued under the current policy, 'daily' for
+  -- older ones until they are migrated).
   daily_limit_usd      NUMERIC(18,8) NOT NULL CHECK (daily_limit_usd > 0),
   limit_reset          VARCHAR(16) NOT NULL DEFAULT 'daily'
-                         CHECK (limit_reset = 'daily'),
+                         CHECK (limit_reset IN ('daily', 'weekly')),
   last_error_code      VARCHAR(64),
   issued_at            TIMESTAMPTZ,
   disabled_at          TIMESTAMPTZ,
@@ -6116,6 +6121,15 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- #2119: databases created before the weekly policy carry the original
+-- CHECK (limit_reset = 'daily') under PostgreSQL's generated name. Replace
+-- it by that name on every boot; a fresh database gets the same name from
+-- the inline CHECK above, so there this is a no-op.
+ALTER TABLE credentials.managed_openrouter_keys
+  DROP CONSTRAINT IF EXISTS managed_openrouter_keys_limit_reset_check;
+ALTER TABLE credentials.managed_openrouter_keys
+  ADD CONSTRAINT managed_openrouter_keys_limit_reset_check
+  CHECK (limit_reset IN ('daily', 'weekly'));
 CREATE INDEX IF NOT EXISTS managed_openrouter_keys_status_idx
   ON credentials.managed_openrouter_keys (status, updated_at DESC);
 COMMENT ON TABLE credentials.managed_openrouter_keys IS 'staging:private';
@@ -7496,6 +7510,27 @@ COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
 -- the same transaction and can share a timestamp.
 CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
   ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);
+
+-- Durable manifest of a checks run whose containers are in flight
+-- (services/check-runs.js). Written just before the capture / unit-suite
+-- Jobs are created, heartbeated by the owning process while they run, and
+-- deleted once the verdict is stored. Its only reader is the harvester
+-- (services/check-harvest.js), which adopts a row whose owner has stopped
+-- heartbeating — a platform rollout replaced the Pod — and settles the run
+-- from the Job's own output instead of starting the suite over. The
+-- manifest holds everything the verdict needs that is not in the log:
+-- the dispatch table, the capture targets, the staging origin, the trigger.
+CREATE TABLE IF NOT EXISTS check_runs (
+  run_id       UUID PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_sha   VARCHAR(40),
+  owner        TEXT NOT NULL,
+  manifest     JSONB NOT NULL,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE check_runs IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
 -- ────────────────────────────────────────────────────────────────────
 -- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.

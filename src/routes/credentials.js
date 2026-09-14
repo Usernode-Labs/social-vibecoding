@@ -99,15 +99,25 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     try {
-      const [meta, managedRow] = await Promise.all([
-        credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER }),
-        managedOpenRouter.stateForUser(pool, req.user.id),
-      ]);
+      // #2119: the included key carries the platform's weekly allowance for
+      // this user. It is resolved once here, for the claim card and for the
+      // sync, and the managed state is synced before the credential's
+      // key-info is read, because that merged key-info is what the settings
+      // limit line renders.
+      const allowance = config.openrouterManagementApiKey
+        ? await managedOpenRouter.resolveAllowance(pool, req.user.id)
+        : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET, identityGated: false };
+      const managedRow = await managedOpenRouter.syncAllowance({
+        pool, userId: req.user.id, config, allowance,
+        state: await managedOpenRouter.stateForUser(pool, req.user.id),
+      });
+      const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
       const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
       const verificationRequired = managedOpenRouter.requiresVerifiedIdentity(config);
       const identityEligible = !verificationRequired || !!managedRow.verified;
+      const hasAllowance = allowance.cents > 0;
       res.json({
         configured,
         status: meta?.status || null,
@@ -122,17 +132,66 @@ function credentialRoutes(config) {
           verified: !!managedRow.verified,
           verificationRequired,
           alreadyIssued: !!managed,
-          canClaim: available && identityEligible && !managed && !configured,
-          dailyLimitUsd: config.openrouterManagedDailyLimitUsd,
+          canClaim: available && identityEligible && hasAllowance && !managed && !configured,
+          limitUsd: allowance.limitUsd,
+          limitReset: allowance.limitReset,
+          identityGated: !!allowance.identityGated,
           reason: !betaAllowed(req.user.id) ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
               : (!identityEligible ? 'verification_required'
-                : (managed ? 'already_issued' : (configured ? 'personal_key_configured' : null)))),
+                : (managed ? 'already_issued'
+                  : (!hasAllowance ? 'no_allowance'
+                    : (configured ? 'personal_key_configured' : null))))),
         },
       });
     } catch (err) {
       log.error('credentials', 'openrouter status read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── OpenRouter allowance, read live ────────────────────────────────
+  // What the dev-chat composer's meter shows for an OpenRouter session
+  // (#2118): how much of the key's limit OpenRouter says is left right now.
+  // `keyInfo` on the status route above is the snapshot taken when the key
+  // was saved or issued, and a managed key's remaining figure moves with
+  // every turn, so this asks OpenRouter each time. The response is
+  // allowlisted like the status route's: figures and the last4, never key
+  // material. A key OpenRouter reports no limit for comes back with null
+  // figures, which the meter draws as nothing rather than a guess.
+  router.get('/api/me/credentials/openrouter/allowance', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.setHeader('Cache-Control', 'no-store');
+    let meta;
+    let apiKey;
+    try {
+      meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
+      if (!meta || meta.status !== 'valid') return res.json({ configured: false });
+      apiKey = await credentialStore.readSecret({
+        pool, userId: req.user.id, ...OPENROUTER, dataKey: config.dataEncryptionKey,
+      });
+      if (!apiKey) return res.json({ configured: false });
+    } catch (err) {
+      log.error('credentials', 'openrouter allowance credential read failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const info = await openrouterClient.validateKey(apiKey, {
+        baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin,
+      });
+      res.json({
+        configured: true,
+        source: meta.metadata?.source || 'personal',
+        last4: meta.secret_last4 || null,
+        limit: info.limit,
+        limitRemaining: info.limitRemaining,
+        limitReset: info.limitReset,
+      });
+    } catch (err) {
+      // A transient provider failure leaves the meter blank for this read;
+      // the next usage event or session open asks again.
+      log.warn('credentials', 'openrouter allowance read failed', { userId: req.user.id, err: err.message });
+      res.status(502).json({ error: 'OpenRouter did not report the key\u2019s allowance.' });
     }
   });
 

@@ -3065,6 +3065,8 @@ const App = {
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
+      // A challenge's detail page claims it as "up to the grid".
+      if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
       // A dev SESSION claims it as "back to the Board" (Streamlined
       // Concept); declines when no session is open.
       if (App.currentApp && window.DevChat?.handleBack?.()) return;
@@ -3099,7 +3101,7 @@ const App = {
     // frontend/src/features/dialogs/feedback-controller.js, which the island
     // `init()`s from its layout effect. That module also re-publishes
     // `App.openFeedbackModal`, so `App._applyFeedbackShot` and the Dev "+"
-    // menu's "New issue" item still reach the dialog by name.
+    // menu's "File an issue" item still reach the dialog by name.
 
     // The header's App/Dev segmented switch (#app-mode-switch) used to be
     // wired here. THE UI OVERHAUL retired it: an app is just an app now, and

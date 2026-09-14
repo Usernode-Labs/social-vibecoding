@@ -4849,7 +4849,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // opening ask. The call is scheduled at turn end (below), after the
       // main turn has settled, so its fresh billing check sees the real
       // remaining allowance instead of racing the main model call.
-      // OpenRouter sessions deliberately make no Anthropic side calls.
+      // OpenRouter sessions deliberately make no Anthropic side calls —
+      // they are named without a model call at the top of their branch
+      // below (#1949).
       const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
       // Pre-PR turn-end refresh re-titles from the full request history +
       // latest spec draft. Once a PR exists applyPrMetadata owns the name.
@@ -4908,8 +4910,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // OpenRouter is a complete, single-provider session path. The
         // selected OpenRouter model receives the user's message directly
         // and can either answer it or edit the repository; no Anthropic
-        // Mayor, wrap-up, title, or quick-reply generation runs around it.
+        // Mayor, wrap-up, or quick-reply generation runs around it, and
+        // the session is named without a model call (#1949, below).
         if (isOpenRouterSession) {
+          // #1949: the Haiku titler never runs for these sessions, so they
+          // kept their branch name ("dev/evan-1789…") for life. Name the
+          // session from its opening ask instead — the same trim
+          // applyPrMetadata gives its PR title, so the name holds when the
+          // PR lands. No payer to resolve, so it fires before the busy
+          // gate: the message is already in the transcript whatever
+          // happens next. Fire-and-forget; the helper never rejects.
+          sessionTitles.titleFromFirstMessage({ pool, session, message: messageText, send });
           const agentIdentity = codingAgentRuntimeIdentity(session, null, config);
           const directSpec = await loadSessionSpec(pool, session.id);
           turnHasSpec = !!String(directSpec || '').trim();
@@ -4999,19 +5010,28 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             hasPr: session.pr_number != null,
             hasSpec: turnHasSpec,
           });
+          // #2118: what the turn cost, as the ledger estimated it from the
+          // model's list price (agent_turns.estimated_cost_usd, summed over
+          // the turn's attempts). It rides on the reply row so the row's
+          // "reply ~$x" label survives a reload, flagged as an estimate.
+          const directCostCents = Number.isFinite(toolResult.estimatedCostCents)
+            && toolResult.estimatedCostCents > 0
+            ? toolResult.estimatedCostCents
+            : null;
           const directMeta = JSON.stringify({
             ...(directPills ? { quickReplies: directPills } : {}),
             quickRepliesSource: 'static',
             ...(directKind ? { quickRepliesKind: directKind } : {}),
             openRouterDirect: true,
+            ...(directCostCents != null ? { costEstimated: true } : {}),
           });
           const directModel = agentIdentity.model
             ? `openrouter/${agentIdentity.model}`
             : null;
           const insertDirectReply = (client) => client.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4)`,
-            [session.id, directText, directModel, directMeta],
+            `INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+            [session.id, directText, directModel, directCostCents, directMeta],
           );
           let replyApplied = true;
           if (toolResult.turnId) {
@@ -5031,6 +5051,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
           if (replyApplied) {
             send('mayor_reasoning', { text: directText });
+            // The usage receipt follows the reply on purpose: the client
+            // attaches it to the assistant bubble on screen, and before
+            // mayor_reasoning that bubble is one the next status line
+            // discards. It is also what feeds the composer's "this turn"
+            // figure for an OpenRouter session (#2118).
+            if (directCostCents != null) {
+              send('usage', { costCents: directCostCents, model: directModel, byok: true, estimated: true });
+            }
             if (directPills) send('quick_replies', { replies: directPills });
           }
 
@@ -12296,6 +12324,13 @@ function describeMarkerlessExit(cause) {
 // a human is present to re-dispatch — and a user-stopped turn is a
 // deliberate end, not a failure to retry.
 
+// #2118: USD to fractional cents at six decimal dollars, the precision the
+// ledger's own estimate is read at, so the composer's meter and the reply
+// row never disagree with agent_turns.
+function codexCostCents(usd) {
+  return Math.round(usd * 1e6) / 1e4;
+}
+
 // ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
 // Encapsulates the logical-turn + per-attempt accounting for BOTH the
 // scout and build call sites so a retry cannot be merged into the prior
@@ -12316,8 +12351,18 @@ async function runCodexAttemptLoop({
   if (runtimeContext?.error) return { error: runtimeContext.error, logicalTurnId };
   if (!runtimeContext) return null; // Claude turn — caller handles it.
 
+  // #2118: what the turn cost, as the ledger recorded it. completeCodexAttempt
+  // already estimates each attempt from its immutable pricing snapshot
+  // (agent_turns.estimated_cost_usd); this sums those over the logical turn
+  // and is where the figure becomes visible: published on the session's
+  // in-memory progress entry so the /status poll's `spend` carries it while
+  // the session is busy (the channel Claude Code's live tracker feeds), and
+  // returned so the caller can send the usage receipt and persist it on the
+  // reply. Null until an attempt reports a finite estimate: an unpriced
+  // model stays unknown, never a false zero.
+  let estimatedCostUsd = null;
   const completeAttempt = async (attempt, result, status, err) => {
-    await agentTurn.completeCodexAttempt({
+    const completion = await agentTurn.completeCodexAttempt({
       pool,
       turnUuid: attempt.turnUuid,
       status,
@@ -12333,6 +12378,14 @@ async function runCodexAttemptLoop({
         : result?.agentRetryFresh ? 'resume_thread_missing' : null,
       errorDetail: err ? agentTurn.sanitizeError(err) : null,
     });
+    const attemptUsd = completion?.estimatedCost?.estimatedCostUsd;
+    if (typeof attemptUsd === 'number' && Number.isFinite(attemptUsd)) {
+      estimatedCostUsd = (estimatedCostUsd || 0) + attemptUsd;
+      workerProgress.setSpend(session.id, {
+        costCents: codexCostCents(estimatedCostUsd),
+        estimated: true,
+      });
+    }
   };
 
   let lastResult = null;
@@ -12449,7 +12502,7 @@ async function runCodexAttemptLoop({
     if (retryFresh) attemptResumeThreadId = null;
     allowRetryPendingForAttempt = retryFresh;
   }
-  return { result: lastResult, error: lastError, logicalTurnId };
+  return { result: lastResult, error: lastError, logicalTurnId, estimatedCostUsd };
 }
 
 
@@ -13065,6 +13118,10 @@ async function runClaudeCodeTool({
   let executionAgentName = agentIdentity.agentName;
   let executionAgentMeta = agentIdentity.metadata;
   let durableTurnId = null;
+  // #2118: the turn's ledger estimate (USD), summed by runCodexAttemptLoop
+  // over its attempts; null for a Claude turn or an unpriced model. Function
+  // scope on purpose: the return below reads it outside the dispatch block.
+  let codexEstimatedCostUsd = null;
 
   // #937: the single way this tool ends on a stop — used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -14034,6 +14091,7 @@ ${buildGuidance.testingGuidance}`;
         }
       } else {
         result = routed.result;
+        codexEstimatedCostUsd = routed.estimatedCostUsd ?? null;
       }
       }
     } catch (e) {
@@ -14706,9 +14764,20 @@ ${buildGuidance.testingGuidance}`;
     // debit BYOK runs against the platform limit by mistake).
     if (isCodexSession) {
       // Codex/OpenRouter spend is billed to the user's OpenRouter account
-      // directly (review #3) — never the Anthropic llm_usage ledger.
-      if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+      // directly (review #3) — never the Anthropic llm_usage ledger. It is
+      // recorded on agent_turns by completeCodexAttempt, and what the chat
+      // gets is that ledger estimate (#2118). A direct session turn's
+      // receipt is the caller's to send, after its reply row is on screen:
+      // sent from here it would precede the completion status line below,
+      // and the client attaches a usage event to the bubble a status line
+      // then discards.
+      if (!directSessionTurn && codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0) {
+        send('usage', {
+          costCents: codexCostCents(codexEstimatedCostUsd),
+          model: `codex-openrouter/${turnModel}`,
+          byok: true,
+          estimated: true,
+        });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -14853,6 +14922,12 @@ ${buildGuidance.testingGuidance}`;
     isError,
     commitSha: commitHash || null,
     turnId: durableTurnId,
+    // #2118: an OpenRouter turn's ledger estimate in fractional cents, for
+    // the direct-turn caller's reply row and usage receipt. Null for a
+    // Claude turn (settled above) and for an unpriced model.
+    estimatedCostCents: codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0
+      ? codexCostCents(codexEstimatedCostUsd)
+      : null,
   };
 }
 

@@ -12,7 +12,11 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
-const { buildCodexModelCatalog } = require('../worker/build-codex-model-catalog');
+const {
+  NEUTRAL_IDENTITY_INSTRUCTION,
+  buildCodexModelCatalog,
+  neutralizeBundledBaseInstructions,
+} = require('../worker/build-codex-model-catalog');
 
 const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
 const CLAUDE_RUNNER = path.join(__dirname, '..', 'worker', 'run-cc.sh');
@@ -35,8 +39,8 @@ test('worker runtime contract invalidates warm images from before the new runner
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 8,
-    'pre-v8 containers cannot consume the complete resume-fallback prompt and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 11,
+    'pre-v11 containers retain the misleading GPT identity and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');
@@ -214,13 +218,19 @@ test('runner: generated config is deterministic TOML and never expands the worke
 cat >/dev/null
 exit 1
 `;
-  const { env } = makeEnv(fakeCodex);
+  const { dir, env } = makeEnv(fakeCodex);
   env.MODE = 'build';
-  env.AGENT_MODEL = '~deepseek/deepseek-v4-flash-latest';
-  env.AGENT_MODEL_NAME = 'DeepSeek V4 Flash Latest';
+  env.AGENT_MODEL = 'z-ai/glm-5.3-flash';
+  env.AGENT_MODEL_NAME = 'GLM 5.3 Flash';
   env.AGENT_MODEL_CONTEXT_WINDOW = '1048576';
   env.AGENT_REASONING_EFFORT = 'medium';
   env.CONFIG_INJECTION_SENTINEL = 'must-never-enter-codex-config';
+  const bundledCatalogPath = path.join(dir, 'bundled-models.json');
+  fs.writeFileSync(bundledCatalogPath, JSON.stringify({ models: [{
+    slug: 'gpt-test',
+    base_instructions: 'You are Codex, an agent based on GPT-5. Keep every repository tool instruction after the identity sentence.',
+  }] }));
+  env.CODEX_BUNDLED_MODELS_PATH = bundledCatalogPath;
   // Let build mode reach the shared config writer without needing a real
   // remote branch. Codex exits non-zero immediately afterward, before the
   // runner's commit/push block.
@@ -237,7 +247,7 @@ exit 1
   const catalogPath = path.join(env.CODEX_HOME, 'openrouter-model-catalog.json');
   assert.equal(config, [
     'model_provider = "usernode_openrouter"',
-    'model = "~deepseek/deepseek-v4-flash-latest"',
+    'model = "z-ai/glm-5.3-flash"',
     `model_catalog_json = "${catalogPath}"`,
     'model_reasoning_effort = "medium"',
     '',
@@ -266,6 +276,8 @@ exit 1
     '',
   ].join('\n'));
   assert.doesNotMatch(config, /CONFIG_INJECTION_SENTINEL|must-never-enter-codex-config/);
+  assert.doesNotMatch(config, /(?:^|\n)(?:models|fallbacks)\s*=/m,
+    'the direct OpenRouter config does not authorize model fallbacks');
   assert.doesNotMatch(config, /sk-or-v1-test/,
     'the provider credential is never persisted into the generated config');
   assert.equal(fs.statSync(path.join(env.CODEX_HOME, 'config.toml')).mode & 0o777, 0o600,
@@ -273,14 +285,31 @@ exit 1
 
   const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
   assert.equal(catalog.models.length, 1);
-  assert.equal(catalog.models[0].slug, '~deepseek/deepseek-v4-flash-latest');
-  assert.equal(catalog.models[0].display_name, 'DeepSeek V4 Flash Latest');
+  assert.equal(catalog.models[0].slug, 'z-ai/glm-5.3-flash');
+  assert.equal(catalog.models[0].display_name, 'GLM 5.3 Flash');
   assert.equal(catalog.models[0].context_window, 1_048_576);
   assert.equal(catalog.models[0].default_reasoning_level, 'medium');
-  assert.ok(catalog.models[0].base_instructions.length > 100);
+  assert.equal(catalog.models[0].base_instructions,
+    `${NEUTRAL_IDENTITY_INSTRUCTION} Keep every repository tool instruction after the identity sentence.`);
+  assert.doesNotMatch(catalog.models[0].base_instructions, /\bGPT(?:[-\w.]*)?\b/i);
   assert.doesNotMatch(JSON.stringify(catalog), /CONFIG_INJECTION_SENTINEL|sk-or-v1-test/);
   assert.equal(fs.statSync(catalogPath).mode & 0o777, 0o600,
     'the generated model catalog remains private to the worker user');
+});
+
+test('OpenRouter model catalog removes only the bundled GPT identity sentence', () => {
+  const bundled = [
+    'You are Codex, an agent based on GPT-5.3-Codex.',
+    'You and the user share one workspace. Keep the complete tool policy.',
+  ].join(' ');
+  assert.equal(
+    neutralizeBundledBaseInstructions(bundled),
+    `${NEUTRAL_IDENTITY_INSTRUCTION} You and the user share one workspace. Keep the complete tool policy.`,
+  );
+
+  const custom = 'You are a repository agent supplied by another runtime. Keep this exact policy.';
+  assert.equal(neutralizeBundledBaseInstructions(custom), custom,
+    'future non-Codex base prompts remain untouched');
 });
 
 test('model catalog omits reasoning levels for a non-reasoning OpenRouter model', () => {

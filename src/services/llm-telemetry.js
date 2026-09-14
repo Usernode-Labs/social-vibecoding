@@ -607,7 +607,7 @@ function normalizedCteSql() {
            'coding_agent' AS backend,
            a.metadata->>'telemetry_component' AS component,
            a.requested_model,
-           COALESCE(a.routed_model, a.requested_model) AS served_model,
+           a.routed_model AS served_model,
            'openrouter_byok' AS billing_path,
            CASE WHEN a.provider_input_tokens_total IS NULL THEN NULL ELSE a.input_tokens END,
            CASE WHEN a.provider_cached_input_tokens_total IS NULL THEN NULL ELSE a.cached_input_tokens END,

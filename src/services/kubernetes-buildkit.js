@@ -42,6 +42,17 @@
 // the Job as an annotation, so a later deploy of the same revision reuses
 // the image without a build, as compatibleCompletedBuilds does for kpack).
 //
+// Availability. The lane is turned on in pieces — BUILD_ENGINE in the
+// platform's environment, the namespace/RBAC/Secret from the foundation
+// chart, the user-namespace sysctl on the nodes — and between any two of
+// them a build must still produce an image. So the Job script checks that
+// the daemon can start at all before it fetches anything and exits with
+// PREFLIGHT_EXIT if not, and a 403/404 from the lane's namespace is read
+// the same way; both surface as `err.engineUnavailable`, which
+// services/kubernetes.js turns into a kpack build under `auto` (and
+// remembers, see UNAVAILABLE_MEMO_MS). A failing Dockerfile never takes
+// that path: it is the app's failure, reported as such.
+//
 // Everything Kubernetes-client-shaped is injected by services/kubernetes.js
 // (`runtime` below) so this module stays testable with plain fakes and the
 // two files do not import each other.
@@ -65,6 +76,41 @@ const POLL_MS = 1000;
 const DIGEST_RE = /sha256:[a-f0-9]{64}/;
 // How much of the build log a failure report keeps (the tail).
 const FAILURE_LOG_BYTES = 64 * 1024;
+// EX_TEMPFAIL from the Job script: the daemon itself could not start on the
+// node, before any source was fetched. Distinguishes "this cluster cannot run
+// BuildKit (yet)" from "this Dockerfile does not build".
+const PREFLIGHT_EXIT = 75;
+// How long one such verdict keeps `auto` on kpack before the lane is tried
+// again — long enough that a cluster without user namespaces does not pay
+// for a doomed Job per build, short enough that the sysctl landing on the
+// nodes is picked up without a platform restart.
+const UNAVAILABLE_MEMO_MS = 10 * 60 * 1000;
+
+// The lane's last infrastructure verdict, if it is still fresh.
+let _unavailable = null;
+
+function unavailableReason(now = Date.now()) {
+  if (_unavailable && _unavailable.until > now) return _unavailable.reason;
+  _unavailable = null;
+  return null;
+}
+
+function noteUnavailable(err, now = Date.now()) {
+  _unavailable = { reason: String(err?.message || err || 'BuildKit unavailable'), until: now + UNAVAILABLE_MEMO_MS };
+}
+
+// A 403 or 404 from the API for the lane's own namespace: RBAC or the
+// namespace itself is not there. That is the lane missing, not the build.
+function isLaneMissing(err) {
+  const code = err?.code || err?.response?.statusCode || err?.response?.status || err?.statusCode;
+  return code === 403 || code === 404;
+}
+
+function markUnavailable(err, detail) {
+  err.engineUnavailable = true;
+  err.message = `BuildKit lane unavailable: ${detail}`;
+  return err;
+}
 
 // The Dockerfile the tree carries, first candidate wins; null when none.
 function selectDockerfile(config, sourceDir) {
@@ -118,8 +164,18 @@ const BUILD_SCRIPT = [
   'set -eu',
   'umask 022',
   'say() { printf \'[buildkit] %s\\n\' "$*"; }',
-  'say "fetching source $GIT_SHA"',
   'mkdir -p /workspace/repo /workspace/src',
+  // Can the daemon run on this node at all? Under RootlessKit that is
+  // "can uid 1000 create a user namespace" (user.max_user_namespaces),
+  // which is a property of the node, not of the Dockerfile. A distinct
+  // exit code lets the platform tell the two apart and build with kpack
+  // instead of failing the app's preview; see PREFLIGHT_EXIT.
+  'if ! buildctl-daemonless.sh debug workers >/workspace/preflight.log 2>&1; then',
+  '  say "buildkitd cannot run here"',
+  '  tail -n 40 /workspace/preflight.log',
+  '  exit 75',
+  'fi',
+  'say "fetching source $GIT_SHA"',
   'cd /workspace/repo',
   'git init -q',
   'git -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA"',
@@ -290,6 +346,13 @@ function digestFromPod(pod) {
   return m ? m[0] : null;
 }
 
+// The build container's exit code once it has terminated, else null.
+function exitCodeFromPod(pod) {
+  const status = pod?.status?.containerStatuses?.find((c) => c.name === CONTAINER);
+  const code = status?.state?.terminated?.exitCode;
+  return Number.isInteger(code) ? code : null;
+}
+
 async function findPod(core, namespace, jobName) {
   const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${jobName}` });
   const items = Array.isArray(pods?.items) ? pods.items : [];
@@ -379,6 +442,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     await core.createNamespacedSecret({ namespace, body: secretBody });
   } catch (err) {
     if (!isConflict(err)) {
+      if (isLaneMissing(err)) markUnavailable(err, `cannot create Secrets in ${namespace} (${err.message})`);
       err.buildFailed = true;
       err.buildLog = runtime.boundedText(err.message);
       err.message = runtime.boundedText(err.message);
@@ -395,6 +459,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     } catch (err) {
       if (!isConflict(err)) {
         await runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace).catch(() => {});
+        if (isLaneMissing(err)) markUnavailable(err, `cannot create Jobs in ${namespace} (${err.message})`);
         err.buildFailed = true;
         err.buildLog = runtime.boundedText(err.message);
         err.message = runtime.boundedText(err.message);
@@ -522,6 +587,12 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {
         if (reason === 'DeadlineExceeded') {
           err.killed = true;
           err.buildTimeoutSeconds = cfg.activeDeadlineSeconds;
+        } else {
+          const pod = await findPod(core, namespace, name).catch(() => null);
+          if (pod) podName = podName || pod.metadata?.name || null;
+          if (exitCodeFromPod(pod) === PREFLIGHT_EXIT) {
+            markUnavailable(err, `buildkitd cannot start on ${pod?.spec?.nodeName || 'the node'} (Job ${name} preflight)`);
+          }
         }
         throw err;
       }
@@ -613,5 +684,12 @@ module.exports = {
   deleteFailedBuilds,
   selectEngine,
   selectDockerfile,
-  _forTest: { BUILD_SCRIPT, jobManifest, recipeOf, progressFromLine, digestFromPod, repoOwnerAndName, requireConfig },
+  laneEnabled,
+  unavailableReason,
+  noteUnavailable,
+  _forTest: {
+    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, digestFromPod, exitCodeFromPod,
+    repoOwnerAndName, requireConfig,
+    resetUnavailable() { _unavailable = null; },
+  },
 };
