@@ -2163,3 +2163,23 @@ test('app.css: the body wrapper carries the budget’s geometry', () => {
   // a list nothing draws.
   assert.doesNotMatch(css, /\.home-panel-fill[ .{]/);
 });
+
+test('a Home challenge card opens that challenge’s page on the Challenges tab, not the list', () => {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const read = (p) => fs.readFileSync(pathMod.join(__dirname, '..', p), 'utf8');
+  const ui = read('frontend/src/features/home/panels/challenges.tsx');
+  assert.match(ui, /data-challenge-id=\{row\.id\}\s*onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/,
+    'each card deep-links to its own challenge');
+  assert.equal((ui.match(/goToChallenges\?\.\(\)/g) || []).length, 1,
+    'only the empty state still goes to the list (the bar link lives in ui.tsx)');
+  const panels = read('frontend/src/features/home/home-panels.js');
+  const fn = panels.slice(panels.indexOf('  goToChallenge(eventId, challengeId) {'));
+  assert.ok(fn.length > 0, 'goToChallenge is defined');
+  assert.match(fn, /location\.hash = `#leaderboard\/challenges\/\$\{ev\}\/\$\{ch\}`;/,
+    'the Challenges tab’s own deep link, which the router resolves');
+  assert.match(fn.slice(0, fn.indexOf('location.hash')), /HomePanels\.goToChallenges\(\);/,
+    'a row without an event id falls back to the list');
+  assert.match(panels, /eventId: Number\.isSafeInteger\(eventId\) && eventId > 0 \? eventId : null,/,
+    'the row view carries the event id from the payload');
+});
