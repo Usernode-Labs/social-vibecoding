@@ -472,10 +472,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // what is left on the key and one for what the turn cost.
   // 616 → 617: #2154 adds the settled half of the app-launch fixture, proving
   // a terminal status that beats the detail response removes the spinner.
-  // 616 → 617: #2089 adds one board check opened through `?q=` on a word
+  // 617 → 618: #2089 adds one board check opened through `?q=` on a word
   // that appears only in a mock issue's BODY, pinning that the search now
   // reads past the title.
-  assert.equal(DAPP.tests.length, 617);
+  assert.equal(DAPP.tests.length, 618);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
