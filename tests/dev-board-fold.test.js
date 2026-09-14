@@ -458,23 +458,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conflict resolution kept and the repo unit suite then caught. A literal is
   // the right shape for this assertion precisely because that mismatch is
   // otherwise silent; it is the arithmetic that needed saying, not the check.
-  // 609 → 609: #2090 keeps the All items pane — and the search box in it —
+  // 609 → 610: #1823's Challenges row in the app menu, under Discover.
+  // 610 → 610: #2090 keeps the All items pane — and the search box in it —
   // on screen when a search matches nothing. It RETARGETS the Workshop
   // search-bar check rather than adding one (same box, the pane now opened
   // already narrowed by `?q=` to a search nothing matches, with the note
   // under it proving the search applied), so the count is unchanged.
-  // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
+  // 610 → 612: the two #1960 checks on the draft-delete shot, one for the
   // count the trash left behind and one for which draft is still standing.
-  // 611 → 613: #1956 adds one direct hamburger-menu check for issue cards
+  // 612 → 614: #1956 adds one direct hamburger-menu check for issue cards
   // and one for proposal cards, both exercising the Share to Messages row.
-  // 613 → 615: the two #2118 checks on the OpenRouter spend shot, one for
+  // 614 → 616: the two #2118 checks on the OpenRouter spend shot, one for
   // what is left on the key and one for what the turn cost.
-  // 615 → 616: #2154 adds the settled half of the app-launch fixture, proving
+  // 616 → 617: #2154 adds the settled half of the app-launch fixture, proving
   // a terminal status that beats the detail response removes the spinner.
-  // 616 → 618: the two #1892 checks on Settings → Connectors, one for the
+  // 617 → 619: the two #1892 checks on Settings → Connectors, one for the
   // Codex CLI block's config.toml entry and one for the generic MCP-client
   // walkthrough.
-  assert.equal(DAPP.tests.length, 618);
+  assert.equal(DAPP.tests.length, 619);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -505,7 +506,7 @@ test('a tap on the merge-requirements checklist opens the checklist, not the fol
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
   assert.match(view,
     /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-ws-detail, \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
-    'the open card\u2019s guard excludes the disclosure, and folds on everything else');
+    'the open card’s guard excludes the disclosure, and folds on everything else');
   // The checklist itself is untouched: the native disclosure, its open state
   // seeded from the model and then the reader's, and neither a
   // stopPropagation (the guard is the seam, as for every other control) nor
