@@ -67,9 +67,9 @@ test('the chip holds its own width, and the row wraps it rather than squeezing a
   assert.match(html, /<span class="min-w-0 truncate">Up to 2,000 pts<\/span>/);
   const earned = renderToHtml(createElement(Card.RewardChip, { text: 'Earned 500 pts', earned: true }));
   assert.match(earned, /bg-emerald-500\/10/, 'an earned chip reads as done, not as a reward on offer');
-  const paneTsx = require('node:fs').readFileSync(
-    require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
-  assert.match(paneTsx, /<div className="flex flex-wrap items-center gap-1\.5">\s*<ProgressRail/,
+  const cardTsx = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/challenge-card.tsx'), 'utf8');
+  assert.match(cardTsx, /<div className="flex flex-wrap items-center gap-1\.5">\s*<ProgressRail/,
     'the card row wraps the chip to a second line when the two pills do not fit');
 });
 
@@ -86,4 +86,26 @@ test('the tile is an empty neutral face: the group headings carry the category',
   assert.match(html, /h-20 w-20 rounded-2xl/, 'the xl IconTile');
   assert.match(html, /aria-hidden="true"/, 'decorative until it holds artwork');
   assert.doesNotMatch(html, /<span/, 'no category text inside it');
+});
+
+test('ChallengeCard is one card for both surfaces: tile, goal, task, rail and chip', () => {
+  const view = {
+    goal: 'Try apps', task: 'Open three apps', reward: '500 pts', icon: '🧪',
+    state: 'progress', stateLabel: '2/3 tried', fill: 2 / 3, earned: null,
+  };
+  const html = renderToHtml(createElement(Card.ChallengeCard, {
+    view, className: 'home-challenge-card', 'data-challenge-id': '7',
+  }));
+  assert.match(html, /^<div class="home-challenge-card flex items-center gap-3 bg-white/, 'the surface class leads');
+  assert.match(html, /data-challenge-id="7"/);
+  assert.match(html, />🧪<\/span>/, 'the kind icon sits in the tile');
+  assert.match(html, />Open three apps<\/p>/, 'the task is a visible line');
+  assert.match(html, /aria-valuetext="2\/3 tried"/);
+  assert.match(html, />500 pts</);
+  assert.doesNotMatch(html, /title=/, 'no tooltips');
+  const bare = renderToHtml(createElement(Card.ChallengeCard, {
+    view: { ...view, task: null, icon: null, reward: null },
+  }));
+  assert.doesNotMatch(bare, /<p /, 'no empty task line');
+  assert.doesNotMatch(bare, /bg-amber-500/, 'no empty reward chip');
 });

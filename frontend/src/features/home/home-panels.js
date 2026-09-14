@@ -577,49 +577,46 @@ const HomePanels = {
     return !!(c && c.metric && c.progress && c.progress.target != null);
   },
 
-  // TWO LINES, 56px: the well, then goal · count · reward on line one and the
-  // track on line two. Category, task, the organiser CTA and the earned-points
-  // line are deliberately absent — they don't fit at this density and all four
-  // live one tap away on the Challenges screen.
-  //
-  // EVERY ROW HAS A METER. A yes-or-no challenge gets a two-state one — 0 of 1
-  // or 1 of 1 — so the list is one repeated shape rather than some rows with a
-  // bar and some rows with a gap where a bar would be. `binary` is what tells
-  // the row not to print "1/1" beside it: the ✓ and the full track already say
-  // it, and a count on a challenge that was never counted is noise.
+  // ONE CARD ON BOTH SURFACES. Home's Challenges block draws the Challenges
+  // tab's card (features/leaderboard/challenge-card.tsx), so a row carries the
+  // descriptor that tab's controller builds: the rail's state, its one short
+  // label, its fill, and "Earned N pts" on a finished challenge the viewer
+  // scored on. The words are the tab's ("Not started", "3/8 apps tested",
+  // "Started", "Done"), composed here so a number and its unit stay one text
+  // node. Progress is this payload's own — resolveProgress on the server,
+  // which reads snapshot blocks — so "Not started" is a counted fact here.
+  // The organiser CTA and the category stay off the card; the task is its
+  // second line.
   challengeRowView(c) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
-    const current = numeric ? (Number(c.progress.current) || 0) : (done ? 1 : 0);
-    const target = numeric ? Number(c.progress.target) : 1;
+    const target = numeric ? Number(c.progress.target) : null;
+    const current = numeric ? Math.max(0, Number(c.progress.current) || 0) : 0;
+    const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
+    let rail;
+    if (done) {
+      rail = { state: 'done', stateLabel: 'Done', fill: 1 };
+    } else if (numeric && target > 1 && current > 0) {
+      const count = Math.min(current, target);
+      const unit = c.metric.label ? ` ${c.metric.label}` : '';
+      rail = { state: 'progress', stateLabel: `${count}/${target}${unit}`, fill: count / target };
+    } else if (points) {
+      rail = { state: 'progress', stateLabel: 'Started', fill: null };
+    } else {
+      rail = { state: 'new', stateLabel: 'Not started', fill: 0 };
+    }
     return {
       id: String(c.id),
-      // The card's picture, from the challenge's KIND (see challenge_kinds.icon
-      // in schema.sql — one setting gives every challenge of a kind the same
-      // face). Null on a kind that has none, and on a template with no kind,
-      // which is what the category below is the fallback for.
+      // The tile's picture, from the challenge's KIND (challenge_kinds.icon —
+      // one setting gives every challenge of a kind the same face). Null on a
+      // kind that has none; the tile is then an empty neutral face.
       icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
-      // The organiser's category, upper-cased — the fallback the well draws
-      // when there is no icon. Free text on the template (a VARCHAR, not an
-      // enum), so it is normalised here and capped: the well is a 62px square
-      // and a 50-character category would fill the card with a word.
-      label: String(c.label || 'OTHER').toUpperCase().slice(0, 18),
       goal: String(c.goal || ''),
-      // The task is the row's tooltip — the one place the dropped detail still
-      // surfaces without costing height.
-      tip: c.task ? `${c.goal || ''}: ${c.task}` : (c.goal || ''),
+      task: c.task ? String(c.task) : null,
       done,
-      reward: HomePanels.formatReward(c.reward),
-      meter: {
-        current,
-        target,
-        label: (numeric && c.metric.label) ? ` ${c.metric.label}` : '',
-        // A binary challenge is 0 or 100 by construction; progressPercent
-        // would answer the same thing, and does, but saying so here is what
-        // keeps a target of 1 from looking like a coincidence.
-        pct: numeric ? HomePanels.progressPercent(current, target) : (done ? 100 : 0),
-        binary: !numeric,
-      },
+      reward: HomePanels.formatReward(c.reward) || null,
+      ...rail,
+      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
     };
   },
 
@@ -654,6 +651,10 @@ const HomePanels = {
       lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
       sub: hasPoints ? counted : null,
       deadline: HomePanels.seasonDeadline(panel),
+      // The ring's second line: the count (when the points lead) and how long
+      // the season has left, as one string. The deadline used to repeat on
+      // every card's pill; it is one fact about the block, so it is said once.
+      detail: [hasPoints ? counted : null, HomePanels.seasonDeadline(panel)].filter(Boolean).join(' · ') || null,
       label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
     };
   },

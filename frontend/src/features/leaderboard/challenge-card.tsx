@@ -10,9 +10,19 @@
 // uses; its reward tan is the amber of the shell's medium-priority chip. No
 // hue is added and nothing in tailwind.config.js moved.
 //
-// ── Why these are feature-local, not @/components/ui ───────────────────
+// ── One card, two surfaces ─────────────────────────────────────────────
 //
-// Two callers, both on this screen: the card, and (next) the detail overlay.
+// `ChallengeCard` below is the whole card, and both places that list
+// challenges draw it: the Leaderboard screen's Challenges tab
+// (./challenges-pane.tsx) and Home's Challenges block
+// (../home/panels/challenges.tsx). They used to be two designs of one thing —
+// a white card with a rail here, a tinted card with a count capsule and a
+// deadline on Home — and a viewer moving between them read two different
+// states for the same challenge. Each surface keeps its own root class
+// (`tc-se-card`, `home-challenge-card`) because declared checks and legacy
+// hooks select on them; everything inside is this file.
+//
+// It is not in @/components/ui: it is a domain card, not a primitive.
 // `Chip` and `ActionPill` in the ui kit are `aria-pressed` toggle buttons,
 // which a reward label is not, so neither is reused.
 //
@@ -34,7 +44,7 @@
 // Every class below is a complete literal: Tailwind's extractor is a regex
 // over source text, so a computed class name never compiles.
 
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
 import { CheckIcon } from '@/components/ui/icons';
@@ -116,10 +126,56 @@ export function RewardChip({ text, earned = false }: { text: string; earned?: bo
   );
 }
 
-// The 5rem artwork tile, an empty neutral face until the challenge carries an
-// illustration. It holds no category: the grid's group headings ("Get
-// started", "Persistent challenges", …) already name it, and saying it twice
-// on every card is noise on a phone.
-export function ChallengeTile(): ReactNode {
-  return <IconTile size="xl" aria-hidden="true" />;
+// The 5rem artwork tile, a neutral face holding the challenge kind's icon when
+// the payload carries one (Home's does, from `challenge_kinds.icon`) and empty
+// otherwise, until per-challenge illustrations land. It never holds the
+// category: headings name it, and a category word in an 80px square was the
+// "ONBOARDIN / G" break on both surfaces.
+export function ChallengeTile({ icon = null }: { icon?: string | null }): ReactNode {
+  return (
+    <IconTile size="xl" aria-hidden="true">
+      {icon ? <span className="text-[2.5rem] leading-none">{icon}</span> : null}
+    </IconTile>
+  );
+}
+
+export type ChallengeCardView = {
+  goal: string;
+  task?: string | null;
+  reward: string | null;
+  icon?: string | null;
+  state: ChallengeState;
+  stateLabel: string;
+  fill: number | null;
+  earned: string | null;
+};
+
+const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
+  + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
+  + 'transition-colors';
+
+// The card: tile, goal, one truncating task line, and the rail + reward row.
+// The row wraps the chip to a second line when the two pills do not fit (a
+// 320px phone); no text in it ever wraps. The task is a visible line, never a
+// tooltip — both surfaces are mobile first, and a phone has no hover.
+export function ChallengeCard({ view, className, ...rest }: {
+  view: ChallengeCardView;
+  className?: string;
+} & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
+  const chip = view.earned || view.reward;
+  return (
+    <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
+      <ChallengeTile icon={view.icon} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="truncate text-base font-medium text-zinc-900 dark:text-zinc-100">{view.goal}</div>
+        {view.task ? (
+          <p className="truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{view.task}</p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <ProgressRail state={view.state} label={view.stateLabel} fill={view.fill} name={view.goal} />
+          {chip ? <RewardChip text={chip} earned={!!view.earned} /> : null}
+        </div>
+      </div>
+    </div>
+  );
 }

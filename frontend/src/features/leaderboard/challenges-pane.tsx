@@ -46,7 +46,7 @@ import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { ChallengeTile, ProgressRail, RewardChip } from './challenge-card';
+import { ChallengeCard } from './challenge-card';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 
@@ -78,6 +78,7 @@ type CardView = {
   goal: string;
   task: string;
   reward: string | null;
+  icon?: string | null;
   // From TopochainChallenges._stateOf: the rail's state, its one short line,
   // its fill (null = indeterminate), and "Earned N pts" on a finished
   // challenge the viewer scored on.
@@ -131,11 +132,10 @@ type ProfileView =
 // ── Class strings ───────────────────────────────────────────────────────
 //
 // The grid, overlays and rows are carried over verbatim from the retired
-// templates. The card is ITERATION 03's: a white surface at the 1.25rem
-// radius, the artwork tile, the goal, and the rail + reward row — its parts
-// live in ./challenge-card.tsx. A finished card is no longer dimmed; its
-// state is on the rail. The featured ring is unchanged, and it is also the
-// only source of the `ring-violet-500/40` sentinel tests/tailwind-build.test.js
+// templates. The card itself is ./challenge-card.tsx's `ChallengeCard`, the
+// same one Home's Challenges block draws; this file only gives it the
+// `tc-se-card` root class and the featured ring. That ring is also the only
+// source of the `ring-violet-500/40` sentinel tests/tailwind-build.test.js
 // compiles for.
 
 // Columns by the CONTAINER, not the viewport. The screen caps content at
@@ -144,9 +144,6 @@ type ProfileView =
 // rail and reward chip to fit whole. A column is never narrower than 21rem
 // while there are two or more; below that the grid is one full-width column.
 const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
-const CARD = 'tc-se-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl border '
-  + 'border-zinc-200 dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 '
-  + 'dark:hover:border-violet-600 transition-colors';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
 // The detail overlay's category line. It used to glue two strings into
 // `dark:text-violet-400dark:text-violet-400`, a class nothing compiles, so the
@@ -172,24 +169,12 @@ const TIMES = '×';
 // ── Grid ────────────────────────────────────────────────────────────────
 
 function Card({ view }: { view: CardView }): ReactNode {
-  const chip = view.earned || view.reward;
   return (
-    <div
-      className={CARD + (view.featured ? CARD_FEATURED : '')}
+    <ChallengeCard
+      view={view}
+      className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
       onClick={() => controller()?._openIdx(view.idx)}
-    >
-      <ChallengeTile />
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="truncate text-base font-medium text-zinc-900 dark:text-zinc-100">{view.goal}</div>
-        {view.task ? (
-          <p className="truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{view.task}</p>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <ProgressRail state={view.state} label={view.stateLabel} fill={view.fill} name={view.goal} />
-          {chip ? <RewardChip text={chip} earned={!!view.earned} /> : null}
-        </div>
-      </div>
-    </div>
+    />
   );
 }
 

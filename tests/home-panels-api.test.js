@@ -804,7 +804,7 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
 
   // The #911 check must keep running unchanged: four challenges leave no room
   // to fill, so that payload's markup is untouched by this change.
-  assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-panel-bar-fill/.test(t.expectSelector)),
+  assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-challenge-card \[role=progressbar\]/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
 
   // #1824, both directions. The `few` route shows every challenge it has, so

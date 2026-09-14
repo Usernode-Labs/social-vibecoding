@@ -150,6 +150,15 @@ const TopochainChallenges = {
     return String(s == null ? '' : s);
   },
 
+  // Rewards are organiser prose, rendered verbatim, except that a bare number
+  // gets " pts" — Home's HomePanels.formatReward rule, so the same challenge
+  // reads the same reward on both surfaces. Null for an empty reward.
+  formatReward(reward) {
+    const s = String(reward == null ? '' : reward).trim();
+    if (!s) return null;
+    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+  },
+
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
   // This is the ONE guard React does not make redundant. Rendering through a
   // component stops attribute breakout for free, but it does NOT stop a
@@ -452,7 +461,7 @@ const TopochainChallenges = {
       // "Next:" line in. Not a tooltip: this screen is mobile first, a phone
       // has no hover, and the full text is in the detail overlay a tap away.
       task: str(cp.task || ''),
-      reward: cp.reward ? str(cp.reward) : null,
+      reward: TopochainChallenges.formatReward(cp.reward),
       ...TopochainChallenges._stateOf(c),
     };
   },

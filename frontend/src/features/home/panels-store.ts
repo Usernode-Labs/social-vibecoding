@@ -91,21 +91,19 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
-  /**
-   * The card's picture, from the challenge's kind — null when that kind has
-   * none, or the template names no kind. `label` is what the well draws in
-   * its place.
-   */
+  /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
   icon: string | null;
-  /** The organiser's category, upper-cased — the well's fallback. */
-  label: string;
   goal: string;
-  /** The task, folded into the row's tooltip — the one place it still shows. */
-  tip: string;
+  /** The task, the card's second line. */
+  task: string | null;
   done: boolean;
-  reward: string;
-  /** NEVER null: every row draws a track, so no row reserves space for one. */
-  meter: ChallengeMeterView;
+  reward: string | null;
+  /** The shared rail (features/leaderboard/challenge-card.tsx). */
+  state: 'new' | 'progress' | 'done';
+  stateLabel: string;
+  fill: number | null;
+  /** "Earned N pts" on a finished challenge the viewer scored on. */
+  earned: string | null;
 }
 
 /** The ring at the top of the card — how far through the season you are. */
@@ -118,6 +116,8 @@ export interface SeasonView {
   lead: string;
   /** "1 of 6 challenges done", or null when `lead` already says it. */
   sub: string | null;
+  /** The ring's second line: `sub` and the deadline, joined; null when neither. */
+  detail?: string | null;
   /** The whole fact in one string, for the ring's accessible name. */
   label: string;
   /**
