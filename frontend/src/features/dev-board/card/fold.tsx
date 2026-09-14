@@ -17,7 +17,11 @@
  * de-chromed under it (#1799 did that; it read as a third object belonging
  * to neither size). The open card carries an "Open card" toggle at the end
  * of its facts line that reveals the topic screen's own sections under it,
- * and an "Open on its own page" link for the item's full-screen route.
+ * and an "Open on its own page" link for the item's full-screen route. A
+ * card about the viewer's OWN session carries one more link beside that
+ * one, "Open session", to the dev chat behind it (#1887): the session is a
+ * destination inside the open card, never what a tap on the row does —
+ * that tap unfolds the card, as it does for every other kind.
  *
  * ── The item's hooks stay on, at both sizes ──────────────────────────
  *
@@ -118,6 +122,20 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
   if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
   return null;
+}
+
+/**
+ * Where the SESSION behind a card about the viewer's own session lives: the
+ * owner's dev chat, at its own route. Only `data-session-chip` names one —
+ * an imported PR of the viewer's wears `data-shared-session-row` and has no
+ * dev chat (#846) — and `openHref` never answers with it: a tap on the row
+ * unfolds the card, "Open on its own page" is the change's page, and the
+ * session is this link INSIDE the open card (#1887).
+ */
+export function sessionHref(slug: string, card: DevCardModel): string | null {
+  const a = card.attrs || {};
+  if (!slug || !a['data-session-chip']) return null;
+  return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
 }
 
 /** How many of the card's own chips ride along on a folded row. */
@@ -334,6 +352,7 @@ export function UnfoldedRow({
   const key = row.card.key;
   useEffect(() => { setDetail(null); }, [key]);
   const href = openHref(slug, row.card);
+  const session = sessionHref(slug, row.card);
   const toggleDetail = () => {
     if (detail) { setDetail(null); return; }
     const body = readAppView<TopicBody>('_workshopCardBody', key);
@@ -355,8 +374,9 @@ export function UnfoldedRow({
   // point of the fold.
   //
   // The one thing the fold still cannot do: the item's own page, for a link
-  // somebody wants to share. On the Workshop it is the link under the sheet;
-  // on the Board "Open card" itself is that link.
+  // somebody wants to share. On the Workshop it is the link under the sheet
+  // — with the session beside it on a card about your own (#1887); on the
+  // Board "Open card" itself is that link.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
@@ -392,6 +412,16 @@ export function UnfoldedRow({
       {href && mode === 'inline' ? (
         <div className="dev-ws-sheet-actions">
           <a href={href} className="dev-ws-link">Open on its own page ›</a>
+          {/* The viewer's own session, one link along (#1887). A real link,
+              so what a bookmark of it holds is the route this opens; the
+              wrapper's click guard excludes anchors, so it does not fold the
+              card on its way out. */}
+          {session ? (
+            <>
+              <span className="dev-ws-sheet-sep" aria-hidden="true">·</span>
+              <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>Open session ›</a>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
