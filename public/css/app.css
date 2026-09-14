@@ -6788,6 +6788,24 @@ span.gc-vote-btn-icon { cursor: default; }
   overscroll-behavior: contain;
 }
 .gc-mention-menu.hidden { display: none; }
+/* #2145: the Activity feed's reply box (features/dev-board/card/
+   feed-thread.tsx) opens this same menu from its own `@`. Its composer is a
+   React island with one field per row, so the list is a sibling of the
+   textarea inside the form (position: relative there) rather than the
+   body-level element group-chat.js measures — placed above the field, as
+   the chat composers' are, and stopping short of the 36px send disc and its
+   8px gap on the right. `-below` is the flip for a field with no room above
+   it (a short thread in the Needs-you comments sheet, whose body scrolls). */
+.gc-mention-menu.dev-feed-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 44px;
+  bottom: calc(100% + 4px);
+}
+.gc-mention-menu.dev-feed-mention-menu-below {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
 .gc-mention-option {
   display: flex;
   align-items: center;
