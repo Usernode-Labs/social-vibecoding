@@ -219,6 +219,38 @@ test('shell side handles the same LLM message family', () => {
   assert.match(shell, /showLlmConsentModal/);
 });
 
+// #1909: the relay's source gate. The shell owns THREE app frames
+// (SAFE_AREA_FRAME_IDS) and this family used to carry its own two-entry
+// copy of that list, so a `requestLlmAccess()` from the landing viewer was
+// dropped before the ack — no dialog, and the bridge rejecting 15s later
+// as "not running inside the platform". The executed proof is in
+// tests/dev-modals-render.test.js; these pin the shape it relies on.
+test('the LLM relay answers every frame the shell owns, and always answers', () => {
+  const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
+  const relay = shell.slice(
+    shell.indexOf('async handleLlmBridgeMessage'),
+    shell.indexOf('── App file storage relay')
+  );
+  assert.ok(relay.length > 0);
+  // One list, one lookup — not a second allow-list to forget a frame in.
+  assert.match(relay, /AppView\.ownedFrameFor\(e\.source\)/);
+  assert.doesNotMatch(relay, /getElementById\('app-iframe'\)/,
+    'the frames come from SAFE_AREA_FRAME_IDS, not from a private copy');
+  assert.match(shell, /ownedFrameFor\(source\) \{[\s\S]{0,400}?AppView\.SAFE_AREA_FRAME_IDS\.find/);
+  // The app is named per FRAME: appData is the App tab's record and is null
+  // on the landing screen, which keeps its own (see mountViewerCover).
+  assert.match(relay, /AppView\.appSlugForFrame\(frameId\)/);
+  assert.match(shell, /AppView\._viewerApp = \{ frame: iframe, slug:/);
+  // Ack BEFORE anything that can decline to answer: a request the shell has
+  // recognised must never be left to time out as "there is no shell here".
+  assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('appSlugForFrame'),
+    'the ack precedes the slug resolution');
+  assert.match(relay, /reply\(null, 'This app could not be identified[^']*'\)/);
+  assert.match(relay, /Sign in to Homeroom to give an app access to AI/);
+  // Session-authenticated, same-origin — the bridge holds no credential.
+  assert.match(relay, /credentials: 'same-origin'/);
+});
+
 // Floating "Open in Usernode" pill on chromeless share views — additive
 // within v1. Shown only on a production app subdomain
 // (<label>.<platformHost>, no "--" in the label, platform host derived
