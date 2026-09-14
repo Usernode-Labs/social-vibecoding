@@ -12615,12 +12615,31 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-move { display: none; }
 .dev-ws-keys { display: none; }
 
-/* ── The sheets ───────────────────────────────────────────────────────
+/* ── The Needs-you deck's sheets ──────────────────────────────────────
    Fixed, which inside the lifted strip means the strip's own box: from
    under the header to the foot of the screen, which is the area a sheet
    should cover. The pill hides while one is up — a bar floating over a
-   sheet's answers is a bar in the way. */
-.dev-ws-sheet { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; justify-content: flex-end; }
+   sheet's answers is a bar in the way.
+
+   KEYED ON `.dev-ws-sheet-modal`, AND NOT ON `.dev-ws-sheet`, WHICH IS A
+   DIFFERENT OBJECT. `.dev-ws-sheet` is the OPEN CARD — the sheet a folded
+   row unfolds into (card/fold.tsx, `.dev-ws-rowwrap-open > .dev-ws-sheet >
+   .gc-vote-item`), and it has carried that name since the Workshop shipped;
+   two declared checks select it that way. #2080 gave the deck's three
+   dialogs the same bare class, so this rule landed on every unfolded card on
+   every Workshop surface: the card left its column or its strip, became a
+   full-viewport `position: fixed` box at `z-index: 30` painting its own fill
+   over the board, and swallowed every click underneath it. That is "the
+   whole board goes opaque and stops responding" on By stage and By category,
+   and "the card opens but the layout is wrong" on Current status — one rule,
+   three screens.
+
+   So the deck's dialogs carry a base class of their own and the bare name
+   stays the fold's. The `.dev-ws-sheet-*` PARTS below (card, handle, head,
+   title, sub, x, body) are the deck's either way — they appear in no folded
+   card — as are the breakpoint rules further down, which were already keyed
+   on the -vote / -ask / -comments modifiers. */
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; justify-content: flex-end; }
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);
