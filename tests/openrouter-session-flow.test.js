@@ -91,8 +91,10 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '_showAutoSessionModal(issueNumber, models, preselect, modalOptions = {})',
     '// "Start session from proposal"',
   );
-  assert.match(modal, /OpenRouter model/);
-  assert.match(modal, /does not use platform Claude credits/);
+  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
+  assert.match(modal, /Uses your included daily credits/);
+  assert.match(modal, /Uses your OpenRouter account/);
+  assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });
 
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {

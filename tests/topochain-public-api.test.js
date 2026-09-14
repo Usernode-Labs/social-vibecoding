@@ -147,6 +147,10 @@ const CHALLENGES = [
     id: 10, season_event_id: 100, challenge_template_id: 1, goal: null, task: null, reward: null,
     description: null, requirements: null, schedule_start: null, schedule_end: null, reward_logic: null,
     cta_button: null, cta_label: null, cta_link: null, enabled: true, display_order: 1, kind: null,
+    // A metric set on the CHALLENGE row over a template with none: the list
+    // item's `metric` must be this effective one, while `activity_type`
+    // stays the template's by contract.
+    metric_type: 'count', metric_target: '3.0000', metric_label: 'bugs filed',
   },
   {
     // Organiser-FINISHED (#981): the one fixture carrying `completed`, so the
@@ -538,6 +542,7 @@ function joinChallengeTemplate(c, t) {
     goal: c.goal, task: c.task, reward: c.reward, description: c.description, requirements: c.requirements,
     schedule_start: c.schedule_start, schedule_end: c.schedule_end, reward_logic: c.reward_logic,
     cta_button: c.cta_button, cta_label: c.cta_label, cta_link: c.cta_link,
+    metric_type: c.metric_type, metric_target: c.metric_target, metric_label: c.metric_label,
     t_id: t.id, t_category: t.category, t_goal: t.goal, t_task: t.task, t_reward: t.reward,
     t_description: t.description, t_requirements: t.requirements, t_schedule_start: t.schedule_start,
     t_schedule_end: t.schedule_end, t_reward_logic: t.reward_logic, t_cta_button: t.cta_button,
@@ -975,6 +980,24 @@ test('GET /season-events/:id/challenges: only enabled challenges, override/effec
   assert.equal(overridden.overrides.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.effective.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.detail_modal.cta_type, 'link'); // always from the template, never overridden
+});
+
+test('GET /season-events/:id/challenges: each item carries its EFFECTIVE metric beside the template', async () => {
+  // The challenge card counts toward this target ("0/3 bugs filed") for every
+  // viewer, signed out included, so it must be the organiser's override when
+  // there is one — the same merge Home's panel and /challenges-api apply.
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const overridden = body.data.find((c) => c.id === 10);
+  assert.deepEqual(overridden.metric, { kind: 'count', target: 3, label: 'bugs filed' },
+    'the challenge row\'s metric, with the target as a number');
+  assert.equal(overridden.activity_type.metric_type, null, '`activity_type` stays the template, by contract');
+
+  const fromTemplate = body.data.find((c) => c.id === 11);
+  assert.deepEqual(fromTemplate.metric, { kind: 'blocks_produced', target: 1, label: 'blocks' },
+    'no override: the template\'s metric');
 });
 
 test('GET /season-events/:id/challenges: publishes the organiser `completed` flag, coerced to a real boolean', async () => {

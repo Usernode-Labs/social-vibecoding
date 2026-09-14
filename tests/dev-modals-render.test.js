@@ -110,6 +110,16 @@ const autoHtml = (view) => {
   m.autoSessionModalStore.set({ view });
   return renderToHtml(createElement(m.AutoSessionModal));
 };
+const pickerHtml = (view, selectedId = view.preselect) => {
+  const m = mod();
+  return renderToHtml(createElement(m.AutoSessionModelPicker, {
+    view,
+    selectedId,
+    onBack: () => {},
+    onCancel: () => {},
+    onUse: () => {},
+  }));
+};
 const creditsHtml = (view) => {
   const m = mod();
   m.creditOptionsModalStore.set({ view });
@@ -121,99 +131,118 @@ const consentHtml = (view) => {
   return renderToHtml(createElement(m.LlmConsentModal));
 };
 
-const MODELS = [{ id: 'opus' }, { id: 'sonnet' }];
+const MODELS = [
+  { id: 'opus', label: 'Opus', changeSize: { short: 'general coding work' } },
+  { id: 'sonnet', label: 'Sonnet', changeSize: { short: 'simple, small changes' } },
+];
 
 // ── Generate proposal ───────────────────────────────────────────────────
 
-test('the Generate-proposal dialog names the issue, the venue and the models', () => {
+test('the Generate-proposal dialog is a short summary of the issue, model and billing', () => {
   const { AppView, published } = makeAppView();
   AppView._showAutoSessionModal(42, MODELS, 'sonnet');
   const view = lastView(published);
   assert.equal(view.issueNumber, 42);
-  assert.equal(view.pickerLabel, 'Chat model');
   assert.equal(view.preselect, 'sonnet');
+  assert.equal(view.billingNote, 'Uses your available Usernode credits.');
   assert.deepEqual(view.options.map((o) => o.id), ['opus', 'sonnet']);
 
   const html = autoHtml(view);
   assert.match(html, /Generate proposal for issue #42\?/);
-  assert.match(html, /headless AI session/);
-  assert.match(html, /Building in <b>Usernode<\/b>/, 'the venue is named before you confirm');
-  assert.match(html, /id="auto-session-model"/);
-  assert.match(html, /<option value="opus">opus — 40-60%<\/option>/);
-  assert.match(html, /selected/, 'the preselected model is the one selected');
-  assert.match(html, /Experimental/);
+  assert.match(html, /inspect the issue and repository, then create a proposal for review/);
+  assert.match(html, />Sonnet</);
+  assert.match(html, /simple, small changes/);
+  assert.match(html, /Uses your available Usernode credits/);
+  assert.match(html, />Change model</);
+  assert.doesNotMatch(html, /Experimental|Building in|billed to you/);
+  assert.doesNotMatch(html, /<select|type="search"|Favorites|Refresh/,
+    'the catalog controls stay out of the normal confirmation');
 });
 
-test("the picker's caption is the SELECTED model's, with its tooltip", () => {
+test('the OpenRouter summary is concise and accurately names a managed or personal payer', () => {
   const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'sonnet');
+  const models = [{
+    id: 'z-ai/glm-5.3-flash',
+    name: 'GLM 5.3 Flash',
+    provider: 'z-ai',
+    costTier: 'low',
+    isRecommended: true,
+    isFavorite: true,
+  }];
+  AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter', openrouterCredentialSource: 'usernode_managed',
+  });
   const view = lastView(published);
-  // #800: each option carries its own resolved caption, so the change
-  // handler that used to rewrite one <p> is component state.
-  assert.equal(view.options[1].note, 'sonnet does medium changes');
-  assert.equal(view.options[1].noteTitle, 'How to read these');
+  assert.equal(view.options[0].name, 'GLM 5.3 Flash');
+  assert.equal(view.options[0].summary, 'Recommended · Low cost');
+  assert.equal(view.options[0].isRecommended, true);
+  assert.equal(Object.hasOwn(view.options[0], 'isFavorite'), false,
+    'favorites are not part of this dialog');
+  assert.equal(view.billingNote, 'Uses your included daily credits.');
   const html = autoHtml(view);
-  assert.match(html, /id="auto-session-model-note"[^>]*title="How to read these"/);
-  assert.match(html, /sonnet does medium changes/);
-  assert.doesNotMatch(html, /opus does medium changes/, 'only the selected one is shown');
+  assert.match(html, /Uses your included daily credits/);
+  assert.doesNotMatch(html, /OpenRouter model|\$1\/Mtok|unverified|Experimental/);
+
+  const personal = makeAppView();
+  personal.AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter', openrouterCredentialSource: 'personal',
+  });
+  assert.equal(lastView(personal.published).billingNote, 'Uses your OpenRouter account.');
 });
 
-test('the OpenRouter branch swaps the copy, the label and the caption source', () => {
-  const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'opus', { provider: 'openrouter' });
-  const view = lastView(published);
-  assert.equal(view.pickerLabel, 'OpenRouter model');
-  assert.equal(view.options[0].label, 'opus (openrouter)');
-  assert.equal(view.options[0].note, 'opus costs $1/Mtok. Tool use supported');
-  assert.equal(view.options[0].noteTitle, '', 'the Claude guidance tooltip is Claude-only');
-  const html = autoHtml(view);
-  assert.match(html, /does not use platform Claude credits/);
-  assert.doesNotMatch(html, /headless AI session/);
-});
-
-test('the OpenRouter proposal picker exposes search, favorites, recommendations and freshness', () => {
+test('the model chooser starts with recommendations and search uses the full catalog', () => {
   const { AppView, published } = makeAppView();
   const models = [
     {
-      id: 'deepseek/deepseek-v4.1-flash',
-      name: 'DeepSeek V4.1 Flash',
-      provider: 'deepseek',
-      canonicalSlug: 'deepseek/deepseek-v4.1-flash',
-      isFavorite: true,
+      id: 'z-ai/glm-5.3-flash',
+      name: 'GLM 5.3 Flash',
+      provider: 'z-ai',
+      costTier: 'low',
       isRecommended: true,
     },
-    { id: 'openai/gpt-6-astra', name: 'GPT-6 Astra', provider: 'openai' },
+    {
+      id: 'openai/gpt-6-astra',
+      name: 'GPT-6 Astra',
+      provider: 'openai',
+      canonicalSlug: 'openai/gpt-6-astra',
+      costTier: 'high',
+      isFavorite: false,
+    },
   ];
   AppView._showAutoSessionModal(42, models, models[0].id, {
     provider: 'openrouter',
-    catalogRefreshedAt: new Date().toISOString(),
-    catalogTotalModels: 317,
   });
   const view = lastView(published);
 
   assert.equal(view.openRouter, true);
-  assert.equal(view.catalogTotalModels, 317);
-  assert.equal(view.options[0].isFavorite, true);
   assert.equal(view.options[0].isRecommended, true);
-  assert.match(view.options[0].searchText, /DeepSeek V4\.1 Flash deepseek\/deepseek-v4\.1-flash deepseek/);
+  assert.match(view.options[1].searchText, /GPT-6 Astra openai\/gpt-6-astra openai/);
 
-  const html = autoHtml(view);
-  assert.match(html, /placeholder="Filter by model or provider…"/);
-  assert.match(html, /★ Favorites/, 'a recommended preselection opens the short list');
-  assert.match(html, />Refresh</);
-  assert.match(html, /★ deepseek\/deepseek-v4\.1-flash \(openrouter\) · Recommended/);
-  assert.doesNotMatch(html, /openai\/gpt-6-astra/, 'non-favorites stay behind the All-models toggle');
-  assert.match(html, /1 of 317 models · Updated just now/);
-  assert.match(html, /Remove selected model from favorites/);
-  assert.match(html, /Platform recommendations start in Favorites/);
+  const initial = mod().proposalModelMatches(view.options, '', view.preselect, true);
+  assert.deepEqual(initial.map((option) => option.id), ['z-ai/glm-5.3-flash'],
+    'an empty search is the recommended shortlist');
+  const searched = mod().proposalModelMatches(view.options, 'gpt', view.preselect, true);
+  assert.deepEqual(searched.map((option) => option.id), ['openai/gpt-6-astra'],
+    'typing searches non-recommended, non-favorite models in the full catalog');
+
+  const html = pickerHtml(view);
+  assert.match(html, /Choose a model/);
+  assert.match(html, /placeholder="Search all available models…"/);
+  assert.match(html, /GLM 5\.3 Flash/);
+  assert.doesNotMatch(html, /GPT-6 Astra/, 'the broad catalog stays behind search');
+  assert.doesNotMatch(html, /Favorites|Refresh|\$0\.07|unverified/);
 });
 
-test('no build-venues module leaves the venue line empty rather than broken', () => {
-  const { AppView, published } = makeAppView({ venue: false });
-  AppView._showAutoSessionModal(42, MODELS, 'opus');
-  const view = lastView(published);
-  assert.equal(view.venue, null);
-  assert.doesNotMatch(autoHtml(view), /Building in/);
+test('a saved non-recommended model remains visible before searching', () => {
+  const options = [
+    { id: 'recommended', name: 'Recommended', summary: 'Recommended', searchText: 'recommended', isRecommended: true },
+    { id: 'current', name: 'Current', summary: 'High cost', searchText: 'current' },
+    { id: 'hidden', name: 'Hidden', summary: 'Low cost', searchText: 'hidden' },
+  ];
+  assert.deepEqual(
+    mod().proposalModelMatches(options, '', 'current', true).map((option) => option.id),
+    ['recommended', 'current'],
+  );
 });
 
 test('the dialog resolves through the named calls its buttons dispatch', async () => {

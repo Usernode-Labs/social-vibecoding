@@ -154,7 +154,11 @@
 // between panes. The whole surface is app.css and the shell bundle again, and
 // v17 is already installed on the devices that previewed the marker — so
 // without this bump the fix reaches nobody who saw the bug.
-const SW_VERSION = 'v18';
+//
+// v19: Generate proposal becomes a short confirmation with its full model
+// catalog behind a separate search step. The dialog lives in the shell bundle,
+// so an installed client needs a new shell cache to receive the redesign.
+const SW_VERSION = 'v19';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
