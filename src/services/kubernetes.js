@@ -6,9 +6,33 @@ const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
+const buildkit = require('./kubernetes-buildkit');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
+
+// How often a build or rollout is re-read while it is being waited on. The
+// wait is a cheap GET against a cached object; what the interval buys is
+// how long a finished step sits unnoticed, which at 2-3s was a visible
+// slice of a ~25s preview turnaround.
+const BUILD_POLL_MS = 1000;
+const ROLLOUT_POLL_MS = 1000;
+
+// The app container's health probes. The startup probe decides how soon a
+// booted container is seen (its period is the latency, its threshold the
+// boot budget: 120s for an app, 60s for the asset server); the readiness
+// probe decides how soon after that the Pod is Ready — the kubelet runs it
+// on its own period once startup has passed, so 5s there was up to 5s of
+// waiting on a container already answering /health. 2s is still one GET
+// every 2s per pod in steady state. Liveness stays coarse.
+function httpProbes({ startupFailureThreshold }) {
+  const health = { httpGet: { path: '/health', port: 'http' } };
+  return {
+    startupProbe: { ...health, periodSeconds: 1, failureThreshold: startupFailureThreshold },
+    readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
+    livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
+  };
+}
 
 let clients;
 
@@ -177,11 +201,33 @@ async function compatibleCompletedBuilds(config, body, repository) {
   }
 }
 
+// What services/kubernetes-buildkit.js needs from this module: the shared
+// client, naming, label and diagnostics helpers, handed over rather than
+// imported so the two files stay one-directional.
+function buildkitRuntime() {
+  return {
+    getClients, clientsLogApi, attachLineObserver, labels, dnsName, withSuffix, deleteIfPresent, isNotFound,
+    collectPodDiagnostics, boundedText,
+    getCloneUrl: (owner, name) => require('./github').getCloneUrl(owner, name),
+  };
+}
+
+// The builder for this tree under BUILD_ENGINE (see config.js): a kpack
+// Build, or a BuildKit Job when the source carries a Dockerfile and the
+// engine setting admits it. Both return the same `{ buildRef, imageRef,
+// requestedTag, phases, reused }` and fail with the same buildFailed/buildLog
+// contract, so nothing downstream tells them apart.
+async function createBuild(config, params) {
+  const { engine } = buildkit.selectEngine(config, params.sourceDir);
+  if (engine === buildkit.ENGINE) return buildkit.createBuild(config, params, buildkitRuntime());
+  return createKpackBuild(config, params);
+}
+
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
 // phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
 // is running, how long the finished ones took, and the last line the running
 // phase printed. Best-effort throughout; a status read that fails is skipped.
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
+async function createKpackBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -397,7 +443,10 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
         throw err;
       }
       await observe(build);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // One status read a second: each kpack phase boundary and the final
+      // Succeeded flip used to wait up to 3s to be noticed, ~2s on average
+      // over a build, for a read that costs the API server nothing.
+      await new Promise((resolve) => setTimeout(resolve, BUILD_POLL_MS));
     }
     const err = new Error(`Timed out waiting for kpack Build ${name}`);
     err.killed = true;
@@ -600,9 +649,7 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
               // The CNB launcher belongs to kpack-built child-app images.
               command: ['node', 'scripts/serve-platform-assets.js'],
               ports: [{ name: 'http', containerPort: 3000 }],
-              startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 20 },
-              readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
-              livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
+              ...httpProbes({ startupFailureThreshold: 60 }),
               resources: { requests: { cpu: '25m', memory: '64Mi' }, limits: { cpu: '500m', memory: '256Mi' } },
               securityContext: containerSecurityContext(),
             }],
@@ -681,9 +728,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
               : [],
             envFrom: [{ secretRef: { name: secretName } }],
-            startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 40 },
-            readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
-            livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
+            ...httpProbes({ startupFailureThreshold: 120 }),
             resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
             securityContext: containerSecurityContext(),
           }],
@@ -764,7 +809,7 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
         && status.updatedReplicas === desired && status.replicas === desired
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
   }
   const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
   err.rolloutDetails = rolloutDetails;
@@ -882,6 +927,7 @@ async function deleteBuilds(config, appId) {
     plural: 'builds', labelSelector: `social.usernode.io/app-id=${appId}`,
     propagationPolicy: 'Background',
   });
+  await buildkit.deleteBuilds(config, appId, buildkitRuntime());
 }
 
 async function deleteFailedBuilds(config) {
@@ -898,7 +944,11 @@ async function deleteFailedBuilds(config) {
   for (const build of failed) {
     await deleteBuild(config, build.metadata.name);
   }
-  return { examined: items.length, deleted: failed.length };
+  const jobs = await buildkit.deleteFailedBuilds(config, buildkitRuntime()).catch((err) => {
+    log.warn('kubernetes', 'Failed BuildKit Job sweep skipped', { err: err.message });
+    return { examined: 0, deleted: 0 };
+  });
+  return { examined: items.length + jobs.examined, deleted: failed.length + jobs.deleted };
 }
 
 function buildApiParams(config) {
