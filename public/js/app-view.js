@@ -8386,7 +8386,11 @@ const AppView = {
   _issueCommentsView(comments, truncated, htmlUrl) {
     const list = Array.isArray(comments) ? comments : [];
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (str) => DevChat.renderMarkdown(str)
+      // GitHub issue comments can carry both Markdown image syntax and the
+      // raw <img ...> form GitHub writes when a screenshot is resized. The
+      // shared renderer keeps images opt-in and rebuilds that raw form from
+      // its safe src/alt fields before sanitizing it.
+      ? (str) => DevChat.renderMarkdown(str, { images: true })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
     return {
       comments: list.map((c, i) => ({

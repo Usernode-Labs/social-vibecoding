@@ -7327,6 +7327,7 @@ const DevChat = {
 
     if (!DevChat._markdownReady) {
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escAttr = (s) => esc(s).replace(/"/g, '&quot;');
 
       marked.use({
         breaks: true,
@@ -7350,6 +7351,24 @@ const DevChat = {
             return `<code class="dc-inline-code">${esc(text)}</code>`;
           },
           html({ text }) {
+            // GitHub emits a dragged/resized issue-comment screenshot as a
+            // raw <img ...> tag rather than Markdown image syntax. Raw HTML
+            // stays escaped everywhere by default. On an image-enabled
+            // surface, accept only one standalone image tag, extract only its
+            // quoted src/alt values, re-check the same URL policy as the
+            // Markdown image renderer, and rebuild controlled markup. Width,
+            // event handlers, styles and every other supplied attribute are
+            // deliberately discarded before DOMPurify sees the result.
+            const tag = String(text || '').trim();
+            if (DevChat._renderImagesInline && /^<img\b[^>]*\/?>$/i.test(tag)) {
+              const srcMatch = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+              const altMatch = /\salt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+              const src = srcMatch ? (srcMatch[1] ?? srcMatch[2] ?? '') : '';
+              const alt = altMatch ? (altMatch[1] ?? altMatch[2] ?? '') : '';
+              if (/^https:\/\//i.test(src) || /^\/[^/]/.test(src)) {
+                return `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+              }
+            }
             return esc(text);
           },
           // F3: real heading hierarchy. # → h3 (largest), ## → h4,
@@ -7427,7 +7446,7 @@ const DevChat = {
             const inlineOk = DevChat._renderImagesInline
               && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
             if (inlineOk) {
-              return `<img class="dc-inline-img" src="${esc(href)}" alt="${safeText}" loading="lazy">`;
+              return `<img class="dc-inline-img" src="${escAttr(href)}" alt="${escAttr(text || '')}" loading="lazy">`;
             }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
