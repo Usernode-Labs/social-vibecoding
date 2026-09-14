@@ -4713,7 +4713,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // opening ask. The call is scheduled at turn end (below), after the
       // main turn has settled, so its fresh billing check sees the real
       // remaining allowance instead of racing the main model call.
-      // OpenRouter sessions deliberately make no Anthropic side calls.
+      // OpenRouter sessions deliberately make no Anthropic side calls —
+      // they are named without a model call at the top of their branch
+      // below (#1949).
       const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
       // Pre-PR turn-end refresh re-titles from the full request history +
       // latest spec draft. Once a PR exists applyPrMetadata owns the name.
@@ -4772,8 +4774,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // OpenRouter is a complete, single-provider session path. The
         // selected OpenRouter model receives the user's message directly
         // and can either answer it or edit the repository; no Anthropic
-        // Mayor, wrap-up, title, or quick-reply generation runs around it.
+        // Mayor, wrap-up, or quick-reply generation runs around it, and
+        // the session is named without a model call (#1949, below).
         if (isOpenRouterSession) {
+          // #1949: the Haiku titler never runs for these sessions, so they
+          // kept their branch name ("dev/evan-1789…") for life. Name the
+          // session from its opening ask instead — the same trim
+          // applyPrMetadata gives its PR title, so the name holds when the
+          // PR lands. No payer to resolve, so it fires before the busy
+          // gate: the message is already in the transcript whatever
+          // happens next. Fire-and-forget; the helper never rejects.
+          sessionTitles.titleFromFirstMessage({ pool, session, message: messageText, send });
           const agentIdentity = codingAgentRuntimeIdentity(session, null, config);
           const directSpec = await loadSessionSpec(pool, session.id);
           turnHasSpec = !!String(directSpec || '').trim();
