@@ -9528,8 +9528,10 @@ const DevChat = {
       } catch { return; }
     }
     // Did the user change anything while we were waiting? If so this list
-    // predates that change and cannot be trusted to retire tombstones.
-    const snapshotIsCurrent = ownFetch && DevChat._draftSeq(sessionId) === seqAtFetch;
+    // predates that change: it cannot be trusted to retire tombstones, nor
+    // to say that a synced row it lacks was deleted elsewhere.
+    const noLocalChange = DevChat._draftSeq(sessionId) === seqAtFetch;
+    const snapshotIsCurrent = ownFetch && noLocalChange;
 
     const mirror = DevChat._readDraftMirror(sessionId);
     const tombstoned = new Set(mirror.tombstones.map((t) => t.id));
@@ -9560,10 +9562,13 @@ const DevChat = {
     // no longer lists was deleted elsewhere (#1960/#1961): every DELETE
     // pushes a drafts-changed event to the account's other devices, so
     // re-uploading it here would resurrect the draft on all of them.
+    // Only a list with no local change across its wait may say so, though:
+    // a draft saved mid-reconcile can upload and mark itself synced before
+    // the older list arrives, and that list lacks it merely for being older.
     const union = new Map();
     for (const d of mirror.drafts) {
       if (tombstoned.has(d.id)) continue;
-      if (d.synced && !serverById.has(d.id)) continue;
+      if (d.synced && !serverById.has(d.id) && noLocalChange) continue;
       union.set(d.id, d);
     }
     for (const [id, d] of serverById) {
