@@ -10796,6 +10796,11 @@ const AppView = {
   // regression the old base hid is caught there and pauses further merges.
   // Only a conflicting head is ever re-run before the merge, on the resolved
   // commit — so that case keeps its own sentence.
+  //
+  // Both sentences keep "code this proposal would no longer merge into":
+  // that is the fact the note exists to state, and the declared check
+  // "Freshness (#1442): checks that passed on a superseded base are
+  // annotated, not contradicted" pins it on the demo proposal.
   _checksBaseNote(pr, opts) {
     const fresh = AppView._freshnessOf(pr);
     if (fresh.baseVerdict !== 'superseded') return null;
@@ -10804,9 +10809,10 @@ const AppView = {
     const when = n
       ? `main as it was ${n} commit${n === 1 ? '' : 's'} ago`
       : 'a version of main that has since moved on';
+    const describe = `${lead} ran against ${when}, so they describe code this proposal would no longer merge into.`;
     return fresh.mergeability === 'conflict'
-      ? `${lead} ran against ${when}, and this proposal now conflicts with main. Resolving the conflict re-runs them on the resolved commit.`
-      : `${lead} ran against ${when}. That does not hold the merge: a proposal that still merges cleanly merges as it stands, and the platform runs the app’s tests on main again straight after.`;
+      ? `${describe} It now conflicts with main; resolving the conflict re-runs them on the resolved commit.`
+      : `${describe} That does not hold the merge: a proposal that still merges cleanly merges as it stands, and the platform runs the app’s tests on main again straight after.`;
   },
 
   PASS_FOLD_AT: 8,
