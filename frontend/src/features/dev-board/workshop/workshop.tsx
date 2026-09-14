@@ -1223,7 +1223,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       setKb((cur) => (cur === taken ? cur : taken));
       // The body under the field shrank with the sheet; keep the field in it.
       const active = document.activeElement as HTMLElement | null;
-      if (taken > 0 && active && active.closest('.dev-ws-sheet')) active.scrollIntoView({ block: 'nearest' });
+      if (taken > 0 && active && active.closest('.dev-ws-sheet-modal')) active.scrollIntoView({ block: 'nearest' });
     };
     const onChange = () => { if (!raf) raf = window.requestAnimationFrame(measure); };
     vv.addEventListener('resize', onChange);
@@ -1575,7 +1575,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
               sheet from the floor on a phone, a popover on this button on a
               wide window (app.css). Decide later closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
-            <div className="dev-ws-sheet dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
+            <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
               <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
@@ -1614,7 +1614,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           composer is the dev session's own (`.dc-card`), as far as this pane
           needs it — see the note on `sendBtn`. */}
       {row && shown === 'ask' ? (
-      <div className="dev-ws-sheet dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item" {...leavingAttr}>
+      <div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item" {...leavingAttr}>
       <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
       <section className="dev-ws-ask dev-ws-sheet-card" data-ws-ask="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
@@ -1693,7 +1693,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           slot is the legacy filler's host, pointed at this sheet when it
           opens. */}
       {row && shown === 'comments' ? (
-      <div className="dev-ws-sheet dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments" {...leavingAttr}>
+      <div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments" {...leavingAttr}>
       <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
       <section className="dev-ws-sheet-card" data-ws-comments="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
