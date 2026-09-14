@@ -456,14 +456,14 @@ test('a finished challenge the viewer scored on says what they earned', () => {
     { state: 'done', stateLabel: 'Done', fill: 1, earned: 'Earned 1,000 pts' });
 });
 
-test('the task is on the card and in full in the detail overlay, never a tooltip', () => {
+test('the task is not on the card; the detail overlay carries it in full, never a tooltip', () => {
   const ch = [{ id: 1, completed: false, card_preview: { goal: 'Try apps', task: 'Open three apps from the directory and use each one' } }];
   const { pane, store } = loadPane({ challenges: ch, eventId: 900500 });
   pane._renderGrid();
-  assert.equal(store.get().grid.groups[0].cards[0].task, 'Open three apps from the directory and use each one');
+  assert.equal(store.get().grid.groups[0].cards[0].task, undefined, 'the card is title and rail only');
   pane._openIdx(0);
   assert.equal(store.get().detail.task, 'Open three apps from the directory and use each one',
-    'the card truncates it, so a tap must reveal all of it');
+    'a tap reveals the task the card leaves out');
   assert.doesNotMatch(require('node:fs').readFileSync(
     require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8'), /title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');

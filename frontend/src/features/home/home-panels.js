@@ -585,8 +585,9 @@ const HomePanels = {
   // "Started", "Done"), composed here so a number and its unit stay one text
   // node. Progress is this payload's own — resolveProgress on the server,
   // which reads snapshot blocks — so "Not started" is a counted fact here.
-  // The organiser CTA and the category stay off the card; the task is its
-  // second line.
+  // The card is the title and the rail only: the organiser CTA, the category
+  // and the task stay off it, and all three are a tap away on the Challenges
+  // tab.
   challengeRowView(c) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
@@ -612,7 +613,6 @@ const HomePanels = {
       // kind that has none; the tile is then an empty neutral face.
       icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
       goal: String(c.goal || ''),
-      task: c.task ? String(c.task) : null,
       done,
       reward: HomePanels.formatReward(c.reward) || null,
       ...rail,

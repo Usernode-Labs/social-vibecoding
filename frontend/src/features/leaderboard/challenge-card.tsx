@@ -51,7 +51,7 @@ import { CheckIcon } from '@/components/ui/icons';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
-const RAIL = 'relative flex h-8 min-w-0 flex-auto items-center gap-1.5 overflow-hidden rounded-lg px-2 '
+const RAIL = 'relative flex h-9 min-w-0 flex-auto items-center gap-1.5 overflow-hidden rounded-lg px-2 '
   + 'text-[0.8125rem] font-medium';
 const RAIL_TONE: Record<ChallengeState, string> = {
   new: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
@@ -61,7 +61,7 @@ const RAIL_TONE: Record<ChallengeState, string> = {
 const RAIL_FILL = 'absolute inset-y-0 left-0 bg-violet-500/25';
 const RAIL_LABEL = 'relative min-w-0 truncate';
 
-const CHIP = 'flex h-8 max-w-full shrink-0 items-center rounded-lg px-2 text-[0.8125rem] font-medium';
+const CHIP = 'flex h-9 max-w-full shrink-0 items-center rounded-lg px-2 text-[0.8125rem] font-medium';
 const CHIP_REWARD = 'bg-amber-500/10 text-amber-800 dark:text-amber-300';
 const CHIP_EARNED = 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
 
@@ -141,7 +141,6 @@ export function ChallengeTile({ icon = null }: { icon?: string | null }): ReactN
 
 export type ChallengeCardView = {
   goal: string;
-  task?: string | null;
   reward: string | null;
   icon?: string | null;
   state: ChallengeState;
@@ -150,14 +149,26 @@ export type ChallengeCardView = {
   earned: string | null;
 };
 
-const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
+const CARD = 'flex items-start gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
   + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
   + 'transition-colors';
 
-// The card: tile, goal, one truncating task line, and the rail + reward row.
-// The row wraps the chip to a second line when the two pills do not fit (a
-// 320px phone); no text in it ever wraps. The task is a visible line, never a
-// tooltip — both surfaces are mobile first, and a phone has no hover.
+// The card: tile, title, and the rail + reward row — nothing else. The task
+// is not on the card (the tab's detail overlay carries it in full), so the
+// card is balanced on two lines rather than three.
+//
+// THE BALANCE. The tile stays 5rem, because the 4rem illustrations it is
+// sized for need its padding. The body stretches to the tile's height and
+// spreads its two lines to the edges (`self-stretch justify-between`), so the
+// title's line box starts where the tile starts and the rail ends where the
+// tile ends: 24px title + 36px rail inside the tile's 80px leaves a steady
+// 20px between them, the same on every card. The rail and chip are 2.25rem
+// tall — the board's pill height — which is what fills the space the removed
+// line left without adding anything to read. When the chip wraps under the
+// rail (a long reward, or any card on a 320px phone) the body outgrows the
+// tile, and the tile stays at the TOP, level with the title, rather than
+// centring: in a list where some cards wrap and some do not, every title then
+// sits the same distance from its card's top edge.
 export function ChallengeCard({ view, className, ...rest }: {
   view: ChallengeCardView;
   className?: string;
@@ -166,11 +177,8 @@ export function ChallengeCard({ view, className, ...rest }: {
   return (
     <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
       <ChallengeTile icon={view.icon} />
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="truncate text-base font-medium text-zinc-900 dark:text-zinc-100">{view.goal}</div>
-        {view.task ? (
-          <p className="truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{view.task}</p>
-        ) : null}
+      <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5 self-stretch">
+        <div className="truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100">{view.goal}</div>
         <div className="flex flex-wrap items-center gap-1.5">
           <ProgressRail state={view.state} label={view.stateLabel} fill={view.fill} name={view.goal} />
           {chip ? <RewardChip text={chip} earned={!!view.earned} /> : null}

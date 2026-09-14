@@ -94,8 +94,6 @@ export interface ChallengeRowView {
   /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
   icon: string | null;
   goal: string;
-  /** The task, the card's second line. */
-  task: string | null;
   done: boolean;
   reward: string | null;
   /** The shared rail (features/leaderboard/challenge-card.tsx). */

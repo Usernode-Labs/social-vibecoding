@@ -51,7 +51,7 @@ test('the rail is a progressbar; indeterminate rails omit aria-valuenow', () => 
 test('rail copy never wraps: the rail may shrink and its label truncates', () => {
   const html = rail({ state: 'progress', label: '180/500 blocks produced this week', fill: 0.36, name: 'x' });
   const railClass = classOf(html, 'role="progressbar"');
-  for (const cls of ['min-w-0', 'flex-auto', 'overflow-hidden', 'h-8']) {
+  for (const cls of ['min-w-0', 'flex-auto', 'overflow-hidden', 'h-9']) {
     assert.ok(railClass.split(' ').includes(cls), `rail has ${cls}`);
   }
   assert.match(html, /<span class="relative min-w-0 truncate">180\/500 blocks produced this week<\/span>/,
@@ -61,7 +61,7 @@ test('rail copy never wraps: the rail may shrink and its label truncates', () =>
 test('the chip holds its own width, and the row wraps it rather than squeezing a pill', () => {
   const html = renderToHtml(createElement(Card.RewardChip, { text: 'Up to 2,000 pts' }));
   const cls = html.match(/^<span class="([^"]*)"/)[1].split(' ');
-  for (const c of ['shrink-0', 'max-w-full', 'h-8', 'bg-amber-500/10', 'text-amber-800']) {
+  for (const c of ['shrink-0', 'max-w-full', 'h-9', 'bg-amber-500/10', 'text-amber-800']) {
     assert.ok(cls.includes(c), `chip has ${c}`);
   }
   assert.match(html, /<span class="min-w-0 truncate">Up to 2,000 pts<\/span>/);
@@ -88,7 +88,7 @@ test('the tile is an empty neutral face: the group headings carry the category',
   assert.doesNotMatch(html, /<span/, 'no category text inside it');
 });
 
-test('ChallengeCard is one card for both surfaces: tile, goal, task, rail and chip', () => {
+test('ChallengeCard is one card for both surfaces: tile, title, rail and chip — no task line', () => {
   const view = {
     goal: 'Try apps', task: 'Open three apps', reward: '500 pts', icon: '🧪',
     state: 'progress', stateLabel: '2/3 tried', fill: 2 / 3, earned: null,
@@ -96,16 +96,20 @@ test('ChallengeCard is one card for both surfaces: tile, goal, task, rail and ch
   const html = renderToHtml(createElement(Card.ChallengeCard, {
     view, className: 'home-challenge-card', 'data-challenge-id': '7',
   }));
-  assert.match(html, /^<div class="home-challenge-card flex items-center gap-3 bg-white/, 'the surface class leads');
+  assert.match(html, /^<div class="home-challenge-card flex items-start gap-3 bg-white/, 'the surface class leads');
   assert.match(html, /data-challenge-id="7"/);
   assert.match(html, />🧪<\/span>/, 'the kind icon sits in the tile');
-  assert.match(html, />Open three apps<\/p>/, 'the task is a visible line');
+  assert.doesNotMatch(html, /Open three apps/, 'the card holds no description, even when handed one');
+  assert.doesNotMatch(html, /<p /, 'and no second text line at all');
+  // Balanced on two lines: the body spans the tile's height and spreads the
+  // title and the rail to its edges.
+  assert.match(html, /flex min-w-0 flex-1 flex-col justify-between gap-1\.5 self-stretch/);
+  assert.match(html, /truncate text-base font-medium leading-6/);
   assert.match(html, /aria-valuetext="2\/3 tried"/);
   assert.match(html, />500 pts</);
   assert.doesNotMatch(html, /title=/, 'no tooltips');
   const bare = renderToHtml(createElement(Card.ChallengeCard, {
-    view: { ...view, task: null, icon: null, reward: null },
+    view: { ...view, icon: null, reward: null },
   }));
-  assert.doesNotMatch(bare, /<p /, 'no empty task line');
   assert.doesNotMatch(bare, /bg-amber-500/, 'no empty reward chip');
 });

@@ -76,7 +76,6 @@ type CardView = {
   done: boolean;
   label: string;
   goal: string;
-  task: string;
   reward: string | null;
   icon?: string | null;
   // From TopochainChallenges._stateOf: the rail's state, its one short line,

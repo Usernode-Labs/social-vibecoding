@@ -557,8 +557,8 @@ test("a row carries the Challenges tab's rail descriptor", () => {
   const row = HP.challengeRowView(challenge({ reward: '1500', icon: ' 🐞 ' }));
   assert.equal(row.reward, '1500 pts', 'the same reward rule as the tab');
   assert.equal(row.icon, '🐞');
-  assert.equal(row.task, 'Find and file a reproducible bug report.');
-  assert.equal(row.tip, undefined, 'no tooltip field: the task is a visible line');
+  assert.equal(row.task, undefined, 'no task on the row: the card is title and rail only');
+  assert.equal(row.tip, undefined, 'and no tooltip field');
   assert.equal(row.label, undefined, 'no category: the tile never shows it');
 });
 
@@ -587,12 +587,12 @@ test("Home draws the Challenges tab's card, not a card of its own", () => {
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
   assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card"/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
-  assert.match(card, /^home-challenge-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl/);
+  assert.match(card, /^home-challenge-card flex items-start gap-3 bg-white dark:bg-zinc-900 rounded-2xl/);
   assert.match(card, /h-20 w-20 rounded-2xl/, "the tab's 80px tile");
   assert.match(card, /data-challenge-id="1"/);
 });
 
-test('render: the card shows the kind icon and the task, never the category or a CTA', () => {
+test('render: the card shows the kind icon and the title, never the task, the category or a CTA', () => {
   const p = panel({
     challenges: [challenge({
       label: 'COMMUNITY',
@@ -605,9 +605,9 @@ test('render: the card shows the kind icon and the task, never the category or a
   const card = cardOf(html);
   assert.match(card, /<span class="text-\[2\.5rem\] leading-none">🐞<\/span>/, 'the kind icon sits in the tile');
   assert.doesNotMatch(card, />COMMUNITY</, 'the category never does ("ONBOARDI / NG" was the old well)');
-  assert.match(card, /<p class="truncate text-\[0\.8125rem\][^"]*">Find and file a reproducible bug report\.<\/p>/,
-    'the task is a visible line');
-  assert.doesNotMatch(card, /\btitle="/, 'and not a tooltip: a phone has no hover');
+  assert.doesNotMatch(card, /Find and file a reproducible bug report/,
+    'no description on the card: the title and the rail are the whole card');
+  assert.doesNotMatch(card, /\btitle="/, 'and no tooltip either: a phone has no hover');
   assert.doesNotMatch(html, /<a href=/, 'still no per-challenge Start button');
   assert.doesNotMatch(html, /example\.invalid/);
 });
@@ -990,12 +990,12 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
 
-  // Every text-bearing element on the card opts out of wrapping: the goal,
-  // the task, the rail's label and the reward. The row itself may wrap its two
-  // pills onto two lines; their text never does.
+  // Every text-bearing element on the card opts out of wrapping: the title,
+  // the rail's label and the reward. The row itself may wrap its two pills
+  // onto two lines; their text never does.
   const card = cardOf(html);
   assert.match(card, /class="truncate text-base font-medium[^"]*">Produce Every Block - June 2026</, 'the goal truncates');
-  assert.match(card, /<p class="truncate text-\[0\.8125rem\]/, 'the task truncates');
+  assert.doesNotMatch(card, /<p /, 'and there is no task line to wrap');
   assert.match(card, /<span class="relative min-w-0 truncate">543\/720 Blocks produced<\/span>/, 'the rail label truncates');
   assert.match(card, /<span class="min-w-0 truncate">Up to 6,500 pts<\/span>/, 'the reward truncates inside a chip that never shrinks');
   assert.match(card, /<div class="flex flex-wrap items-center gap-1\.5">/, 'the pills wrap as units');

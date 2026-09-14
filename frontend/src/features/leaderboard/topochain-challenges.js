@@ -457,10 +457,6 @@ const TopochainChallenges = {
       done: TopochainChallenges._isDone(c),
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
-      // One truncating line under the goal, in the slot the board drew its
-      // "Next:" line in. Not a tooltip: this screen is mobile first, a phone
-      // has no hover, and the full text is in the detail overlay a tap away.
-      task: str(cp.task || ''),
       reward: TopochainChallenges.formatReward(cp.reward),
       ...TopochainChallenges._stateOf(c),
     };
@@ -741,9 +737,9 @@ const TopochainChallenges = {
     return {
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
-      // The card truncates the task to one line, so the overlay carries it in
-      // full; before ITERATION 03 the card showed two lines and the overlay
-      // never needed it.
+      // The card shows only the title and the rail, so the overlay is where
+      // the task is read; before ITERATION 03 the card showed it and the
+      // overlay never needed it.
       task: cp.task ? str(cp.task) : null,
       description: dm.description ? str(dm.description) : null,
       mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts to this.` : null,
