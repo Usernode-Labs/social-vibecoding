@@ -165,9 +165,13 @@ test('the Job manifest: privileged mode, registry credentials and a plain-HTTP r
     name: 'bk', tag: 't', cacheRef: 'c', recipe: 'r', inputSecretName: 'bk-input',
   });
   const pod = body.spec.template.spec;
-  assert.deepEqual(pod.securityContext, {});
+  // Root, so buildctl-daemonless.sh skips RootlessKit: this mode must not
+  // depend on the user namespaces the rootless one exists to avoid needing.
+  assert.deepEqual(pod.securityContext, { runAsUser: 0, runAsGroup: 0 });
   assert.deepEqual(pod.containers[0].securityContext, { privileged: true });
   const env = Object.fromEntries(pod.containers[0].env.map((e) => [e.name, e.value ?? e.valueFrom]));
+  assert.equal(env.BUILDKITD_FLAGS, '', 'root keeps the process sandbox');
+  assert.equal(pod.containers[0].volumeMounts.find((m) => m.name === 'buildkitd').mountPath, '/var/lib/buildkit');
   assert.equal(env.REGISTRY_ATTRS, ',registry.insecure=true');
   assert.equal(env.DOCKER_CONFIG, '/var/run/buildkit-registry');
   const mount = pod.containers[0].volumeMounts.find((m) => m.name === 'registry-auth');

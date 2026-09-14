@@ -487,8 +487,9 @@ function load() {
       buildkitImage: process.env.BUILDKIT_IMAGE || '',
       // `rootless` (default): buildkitd under RootlessKit as uid 1000, no
       // capabilities, seccomp/AppArmor unconfined; needs the node to allow
-      // unprivileged user namespaces. `privileged`: a privileged container,
-      // for clusters that cannot enable them.
+      // unprivileged user namespaces (user.max_user_namespaces > 0).
+      // `privileged`: buildkitd as root in a privileged container, no user
+      // namespaces involved, for clusters that cannot enable them.
       buildkitMode: process.env.BUILDKIT_MODE || 'rootless',
       // Name of a kubernetes.io/dockerconfigjson Secret in the BuildKit
       // namespace with push credentials for the image and cache

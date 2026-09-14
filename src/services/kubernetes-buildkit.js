@@ -24,8 +24,10 @@
 // AppArmor unconfined — what `unshare`/`mount` inside the user namespace
 // need — in a namespace of its own whose Pod Security level admits that;
 // `BUILDKIT_MODE=privileged` is the fallback for a cluster that cannot
-// allow unprivileged user namespaces. RUN steps execute as a mapped fake
-// root inside nested user namespaces either way.
+// allow unprivileged user namespaces: buildkitd as root in a privileged
+// container, RUN steps as real root behind runc's namespaces and the Pod
+// boundary only. Rootless keeps RUN steps inside a user namespace as a
+// mapped fake root; prefer it.
 //
 // Source. The Job fetches the pinned commit itself (shallow, by SHA) from
 // the clone URL `github.getCloneUrl` hands out — the same seam the
@@ -162,7 +164,13 @@ function resources() {
 
 function securityContexts(cfg) {
   if (cfg.buildkitMode === 'privileged') {
-    return { pod: {}, container: { privileged: true } };
+    // As root, buildctl-daemonless.sh starts buildkitd directly instead of
+    // under RootlessKit, so this mode needs no user namespaces at all —
+    // which is the point of it on a node with user.max_user_namespaces=0.
+    // RUN steps then execute as real root inside runc's mount/pid
+    // namespaces in a privileged container: the Pod boundary is the
+    // isolation, not a user namespace.
+    return { pod: { runAsUser: 0, runAsGroup: 0 }, container: { privileged: true } };
   }
   return {
     // RootlessKit maps uid 1000 to root inside the user namespace and needs
@@ -195,6 +203,7 @@ function jobManifest(cfg, runtime, {
     [RECIPE_LABEL]: recipe,
   };
   const security = securityContexts(cfg);
+  const rootless = cfg.buildkitMode !== 'privileged';
   const env = [
     { name: 'REPO_URL', valueFrom: { secretKeyRef: { name: inputSecretName, key: 'REPO_URL' } } },
     { name: 'GIT_SHA', value: revision },
@@ -202,15 +211,17 @@ function jobManifest(cfg, runtime, {
     { name: 'IMAGE_TAG', value: tag },
     { name: 'CACHE_REF', value: cacheRef },
     { name: 'REGISTRY_ATTRS', value: cfg.buildkitInsecureRegistry ? ',registry.insecure=true' : '' },
-    // Kubernetes has no `systempaths=unconfined`; this is the documented
-    // trade for it (examples/kubernetes/job.rootless.yaml).
-    { name: 'BUILDKITD_FLAGS', value: '--oci-worker-no-process-sandbox' },
+    // Rootless: Kubernetes has no `systempaths=unconfined`, and this is the
+    // documented trade for it (examples/kubernetes/job.rootless.yaml). As
+    // root the daemon can build its process sandbox, so it keeps it.
+    { name: 'BUILDKITD_FLAGS', value: rootless ? '--oci-worker-no-process-sandbox' : '' },
   ];
   const volumeMounts = [
     { name: 'workspace', mountPath: '/workspace' },
     // The daemon's store must be a real volume: the image's VOLUME does
-    // not survive a nosuid,nodev mount on some node images.
-    { name: 'buildkitd', mountPath: '/home/user/.local/share/buildkit' },
+    // not survive a nosuid,nodev mount on some node images. Where the
+    // store is depends on who runs the daemon.
+    { name: 'buildkitd', mountPath: rootless ? '/home/user/.local/share/buildkit' : '/var/lib/buildkit' },
   ];
   const volumes = [
     { name: 'workspace', emptyDir: {} },
