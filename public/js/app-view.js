@@ -6275,7 +6275,7 @@ const AppView = {
       mySessions: AppView._mySessions || [],
       sharedSessions: AppView._sharedSessions || [],
     });
-    const f = AppView._kanbanFilters || {};
+    const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
     const match = (kind, item) => !filtering || AppView._devCardMatches(matchKind(kind), item, f);
@@ -7289,6 +7289,38 @@ const AppView = {
     return it.username || '';
   },
 
+  // #2089: the longer text a card carries beyond its title — what the
+  // search reads in addition to title, author and number. Issues and
+  // governance rows carry `body`; promoted and merged proposals carry the
+  // summary and the pull-request body the /promoted and /merged payloads
+  // already ship. Sessions contribute nothing: their spec never travels
+  // with the list (has_spec is a boolean by design, #894).
+  _devCardSearchText(kind, item) {
+    const it = item || {};
+    let parts;
+    if (kind === 'issue' || kind === 'gov') parts = [it.body];
+    else if (kind === 'session') parts = [];
+    else parts = [it.pr_summary_md, it.pr_body]; // proposal | merged
+    return parts.filter((p) => typeof p === 'string' && p !== '').join('\n').toLowerCase();
+  },
+
+  // #2089: whether a card's discussion matched the search. `hits` is the
+  // server's answer for one exact query — { issues: [GitHub numbers],
+  // sessions: [chat_sessions ids], gov: [issues ids] } — so a card is looked
+  // up by the key its thread is filed under, mirroring the
+  // thread_type / thread_ref pairs chat.js writes.
+  _devCardInCommentHits(kind, item, hits) {
+    const it = item || {};
+    const h = hits || {};
+    const has = (list, v) => v != null && Array.isArray(list)
+      && list.some((x) => String(x) === String(v));
+    if (kind === 'issue') return has(h.issues, it.number);
+    if (kind === 'gov') return has(h.gov, it.id);
+    if (kind === 'merged' && it.row_type === 'close_issue') return has(h.gov, it.id);
+    // proposal | merged PR | session — all chat_sessions rows.
+    return has(h.sessions, it.id);
+  },
+
   _devCardMatches(kind, item, filters) {
     const f = filters || {};
     const it = item || {};
@@ -7320,17 +7352,24 @@ const AppView = {
         num = it.pr_number != null ? it.pr_number : it.id;
       }
       const author = AppView._devCardAuthor(kind, it);
+      // #2089: the search reads past the title — an issue's description, a
+      // proposal's summary and pull-request body (_devCardSearchText), and
+      // the discussion under any card, which arrives as `commentHits`: the
+      // server's answer for this exact query (see _syncKanbanCommentHits).
+      const text = AppView._devCardSearchText(kind, it);
       // A leading '#' targets the issue/PR number ("#482" and "482" both
       // match); the number check is substring-based like the text checks.
       const qNum = q.replace(/^#/, '');
       let hit = String(title).toLowerCase().includes(q)
         || String(author).toLowerCase().includes(q)
+        || (text !== '' && text.includes(q))
         || (qNum !== '' && num != null && String(num).includes(qNum));
       // A session has no number of its own worth searching, but it does
       // carry the issue numbers it's working on.
       if (!hit && kind === 'session' && qNum !== '' && Array.isArray(it.linked_issues)) {
         hit = it.linked_issues.some((v) => String(v).includes(qNum));
       }
+      if (!hit && f.commentHits) hit = AppView._devCardInCommentHits(kind, it, f.commentHits);
       if (!hit) return false;
     }
     // The Workshop's theme, matched on the same key the themes name cards by.
@@ -7534,6 +7573,79 @@ const AppView = {
     }, 150);
   },
 
+  // #2089: comments live on the server. Bodies ride the board payload, so
+  // they filter in place; a discussion does not (a thread loads when its
+  // card opens), so the search asks /board-search which threads on this app
+  // contain the query and folds the answer in as `commentHits` on the next
+  // paint. One outstanding query at a time: a stale answer is dropped, and
+  // an answer for the query still in the box repaints the surface it
+  // arrived for — only when it names a card, since an empty answer changes
+  // nothing the board already shows. Under two characters nothing is asked:
+  // a one-letter search would match every thread and buy only a round trip.
+  KANBAN_COMMENT_SEARCH_MIN: 2,
+  _kanbanCommentHits: null,
+  _kanbanCommentHitsSeq: 0,
+  _kanbanCommentHitsPending: null,
+
+  // The hits for `q`, or null when the answer is for another query, another
+  // app, or has not arrived.
+  _kanbanCommentHitsFor(q) {
+    const h = AppView._kanbanCommentHits;
+    const want = String(q || '').trim().toLowerCase();
+    return h && h.slug === App.currentApp && h.q === want ? h : null;
+  },
+
+  // The filter object the predicate sees: the stored filters plus the
+  // comment hits for the query in the box. Every surface repaint builds its
+  // filters through here, which is also what keeps the hits current.
+  _kanbanMatchFilters() {
+    AppView._syncKanbanCommentHits();
+    const f = AppView._kanbanFilters || {};
+    return { ...f, commentHits: AppView._kanbanCommentHitsFor(f.q) };
+  },
+
+  _syncKanbanCommentHits() {
+    const slug = App.currentApp;
+    const q = String((AppView._kanbanFilters || {}).q || '').trim().toLowerCase();
+    if (!slug || q.length < AppView.KANBAN_COMMENT_SEARCH_MIN) {
+      AppView._kanbanCommentHitsSeq += 1; // drops an answer still in flight
+      AppView._kanbanCommentHits = null;
+      return;
+    }
+    if (AppView._kanbanCommentHitsFor(q)) return;
+    // Asked already and still waiting: a second paint does not ask again.
+    const pending = AppView._kanbanCommentHitsPending;
+    if (pending && pending.slug === slug && pending.q === q) return;
+    const seq = ++AppView._kanbanCommentHitsSeq;
+    AppView._kanbanCommentHitsPending = { slug, q };
+    // An assist, not the search: a paint never fails because the request
+    // could not be made (the board still filters on what it holds).
+    let request;
+    try {
+      const demo = String(AppView._demoQS() || '').replace(/^\?/, '');
+      const url = `/api/apps/${encodeURIComponent(slug)}/board-search?q=${encodeURIComponent(q)}`
+        + (demo ? `&${demo}` : '');
+      request = fetch(url, { credentials: 'same-origin' });
+    } catch { AppView._kanbanCommentHitsPending = null; return; }
+    const settle = () => {
+      if (seq === AppView._kanbanCommentHitsSeq) AppView._kanbanCommentHitsPending = null;
+    };
+    Promise.resolve(request)
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((j) => {
+        settle();
+        if (seq !== AppView._kanbanCommentHitsSeq || !j) return;
+        const list = (v) => (Array.isArray(v) ? v : []);
+        const hits = { slug, q, issues: list(j.issues), sessions: list(j.sessions), gov: list(j.gov) };
+        AppView._kanbanCommentHits = hits;
+        if (App.currentApp !== slug) return;
+        if (hits.issues.length || hits.sessions.length || hits.gov.length) {
+          AppView._repaintBoardSurface();
+        }
+      })
+      .catch(settle);
+  },
+
   _kanbanFilterSeq: 0,
 
   // A chip's × — remove exactly one filter. The dialog-owned keys just null
@@ -7704,7 +7816,7 @@ const AppView = {
     // card's lifecycle placement stays identical to the unfiltered board —
     // filtering the inputs instead would let a hidden proposal change
     // which column its issue lands in.
-    const f = AppView._kanbanFilters || {};
+    const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const kIssues = filtering
       ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))

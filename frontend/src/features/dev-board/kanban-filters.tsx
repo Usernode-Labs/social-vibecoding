@@ -79,7 +79,7 @@ export function KanbanFiltersView({
         key={`q${seq}`}
         id="dev-kanban-search"
         type="search"
-        placeholder="Search title, author, or #"
+        placeholder="Search cards, comments, or #"
         defaultValue={q}
         aria-label="Filter cards"
         className={SEARCH_CLS}

@@ -1977,6 +1977,11 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
+      "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
+      "path": "/?demo=1&cards=open&q=viewport#app/usernode-2d5619/board",
+      "expectSelector": "#dev-body [data-issue-row=\"900003\"]"
+    },
+    {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
