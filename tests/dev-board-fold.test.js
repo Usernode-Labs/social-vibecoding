@@ -458,6 +458,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conflict resolution kept and the repo unit suite then caught. A literal is
   // the right shape for this assertion precisely because that mismatch is
   // otherwise silent; it is the arithmetic that needed saying, not the check.
+  // 609 → 609: #2090 keeps the All items pane — and the search box in it —
+  // on screen when a search matches nothing. It RETARGETS the Workshop
+  // search-bar check rather than adding one (same box, the pane now opened
+  // already narrowed by `?q=` to a search nothing matches, with the note
+  // under it proving the search applied), so the count is unchanged.
   // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
   // count the trash left behind and one for which draft is still standing.
   assert.equal(DAPP.tests.length, 611);
