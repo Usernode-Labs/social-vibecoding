@@ -391,6 +391,35 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
   return 'Worked out from the board; the model writes one on the next pass.';
 }
 
+/**
+ * The no-items note, drawn where the items would have been.
+ *
+ * Two screens say it — the status tab over its strips, and the All items pane
+ * under its toolbar — and the second of those is the fix for #2090. The pane
+ * used to be gated on having a theme to draw, so a search that matched
+ * nothing unmounted the whole pane: the grouping tabs, the "+", and the
+ * toolbar whose host the search field lives in. The one control that could
+ * undo the search left the screen with the rows, and the viewer was stuck on
+ * a board they could not widen back out. Now the pane stays, and this note
+ * takes the rows' place beneath the box it is talking about.
+ */
+function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: boolean }): ReactNode {
+  return (
+    <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
+      {filtered ? (
+        'Nothing here matches the current search and filters.'
+      ) : (
+        <>
+          {loadFailed ? "Couldn't load open issues right now. " : ''}
+          {'Nothing on the board yet. Press '}
+          <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+          {' to propose a change or file an issue.'}
+        </>
+      )}
+    </div>
+  );
+}
+
 function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
   const list = themes.slice();
   const real = list.filter((t) => !t.ungrouped);
@@ -2170,18 +2199,7 @@ export function DevWorkshop(): ReactNode {
       {tab === 'status' ? (
       <>
       {v.emptyNote ? (
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          {v.emptyNote.filtered ? (
-            'Nothing here matches the current search and filters.'
-          ) : (
-            <>
-              {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
-              {'Nothing on the board yet. Press '}
-              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-              {' to propose a change or file an issue.'}
-            </>
-          )}
-        </div>
+        <EmptyNote filtered={!!v.emptyNote.filtered} loadFailed={v.emptyNote.loadFailed} />
       ) : null}
 
       {/* ── One pane: where the app is, and what moved while you were away ──
@@ -2357,7 +2375,13 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {tab === 'all' && themes.length ? (
+      {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
+          was `tab === 'all' && themes.length`, and the second half was #2090:
+          a search that matched nothing emptied `themes`, the whole pane went
+          with them, and the search box — a node of the toolbar the pane's
+          head renders — was gone before it could be cleared. The pane is the
+          tab; its body is what may be empty (see EmptyNote). */}
+      {tab === 'all' ? (
         <>
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
@@ -2434,6 +2458,14 @@ export function DevWorkshop(): ReactNode {
             <div className="dev-ws-board" data-ws-stage="">
               <DevKanban />
             </div>
+          ) : !themes.length ? (
+            /* The rows' place, under the controls that emptied it. `filtered`
+               is the live filter state rather than `emptyNote`'s: that note
+               is about the BOARD having no entries, and a board whose every
+               open item a search has hidden still has them, so it stays null
+               while the theme list is bare. The stage pane needs none of
+               this — the columns say "No matching cards" for themselves. */
+            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} />
           ) : (
           <>
           <div className="dev-ws-sort">
