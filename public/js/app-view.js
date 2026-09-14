@@ -4549,6 +4549,11 @@ const AppView = {
         AppView.openImportPrModal();
       }, { signal });
     }
+    const appSettingsBtn = menu.querySelector('[data-plus="app-settings"]');
+    appSettingsBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
