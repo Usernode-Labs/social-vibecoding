@@ -441,6 +441,41 @@ test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and 
   assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
 });
 
+test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
+  // #2080 gave the Needs-you deck's three dialogs the bare `.dev-ws-sheet` —
+  // the name the fold's OPEN CARD has carried since the Workshop shipped —
+  // so the dialog's geometry landed on every unfolded card on every Workshop
+  // surface: `position: fixed; inset: 0` at `z-index: 30`, which took the
+  // card out of its column or its strip, painted its own fill across the
+  // viewport and swallowed every click underneath. On By stage and By
+  // category that reads as the whole board going opaque and dead; on Current
+  // status the card opens over the tiles it should be sitting under.
+  //
+  // One rule, three screens — so the full-screen geometry is keyed on the
+  // deck's OWN base class and the bare name stays the fold's.
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+    'the deck’s dialogs are the fixed, full-screen thing');
+  assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
+    'and nothing is keyed on the bare name, which is one open card sitting in its row');
+  for (const kind of ['vote', 'ask', 'comments']) {
+    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
+      `the ${kind} dialog carries the deck’s base class`);
+  }
+  assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
+    'and none of the three carries the fold’s');
+  // The open card keeps the bare name, because two declared checks select it
+  // that way — which is also why the deck is the side that moved.
+  assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
+  // Nothing is DECLARED for the geometry itself, and nothing can be: a
+  // selector cannot read a computed position — the card stayed inside its
+  // column in the DOM the whole time it was painting over the board — and the
+  // manifest holds its last 20 slots clear (tests/proposal-tests-manifest.test.js).
+  // What the gate does pin is the name, twice, which is why the deck is the
+  // side that moved rather than the fold.
+  const onTheSheet = DAPP.tests.filter((t) => /\.dev-ws-rowwrap-open > \.dev-ws-sheet/.test(t.expectSelector || ''));
+  assert.ok(onTheSheet.length >= 2, 'the declared checks still select the open card as `.dev-ws-sheet`');
+});
+
 // ── The card's controls and lines, after the fold (#1787) ─────────────────
 //
 // With both surfaces drawing one card, the card itself was reworked: blue
