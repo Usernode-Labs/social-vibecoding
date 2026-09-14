@@ -426,7 +426,6 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // title, then the sentence a voter reads, then the caption.
   // 606 → 607: both of the above landed, on either side of a merge.
   assert.equal(DAPP.tests.length, 607);
-  assert.equal(DAPP.tests.length, 607);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
