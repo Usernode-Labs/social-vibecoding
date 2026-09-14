@@ -310,12 +310,19 @@ test('a server without the field contributes no rows instead of throwing', () =>
 
 // ── The seam it leaves for #1405 ───────────────────────────────────────
 
-test('the row can already say "Needs you" when that state arrives', () => {
-  // statusLabel maps awaiting_input / needs_input to "Needs you", which is
-  // exactly the state #1405's notify_awaiting_input publishes. Recorded so
-  // the next change wires a value rather than inventing a display path.
-  const fn = CONTROLLER.slice(CONTROLLER.indexOf('function statusLabel('));
-  assert.match(fn.slice(0, 400), /awaiting_input|needs_input/);
+test('the row says "Needs you" from a wired value, and the status seam stays', () => {
+  // statusLabel mapped awaiting_input / needs_input to "Needs you" as the
+  // seam for #1405's notify_awaiting_input, recorded so the next change would
+  // wire a value rather than invent a display path. #1959 was that change:
+  // the caption and the pill now read ONE predicate, awaitsInput, fed by the
+  // `awaiting_input` verdict /api/me/active-sessions ships — and the two
+  // status values live inside it, so a row arriving in that state still
+  // reads right.
+  const label = CONTROLLER.slice(CONTROLLER.indexOf('function statusLabel('));
+  assert.match(label.slice(0, 400), /awaitsInput\(session\)/);
+  const pred = CONTROLLER.slice(CONTROLLER.indexOf('function awaitsInput('));
+  assert.match(pred.slice(0, 400), /awaiting_input === true/);
+  assert.match(pred.slice(0, 400), /awaiting_input|needs_input/);
 });
 
 test('the service, not the route, owns the external_agent_tasks query', () => {
