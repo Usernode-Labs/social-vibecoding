@@ -3212,6 +3212,11 @@ const Home = {
           : 'Lock this app. An admin yes vote will also be required to merge changes.',
         run: () => Home._menuToggleLock(app),
       });
+    }
+    // The server computes this from the shared contributor definition and
+    // rechecks it on DELETE. Keep the full-admin fallback for older payloads
+    // already in memory while a deployment rolls over.
+    if (user.canAdminWrite || app.can_delete) {
       items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
     }
     return items;
