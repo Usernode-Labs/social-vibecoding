@@ -3390,6 +3390,9 @@ module.exports = {
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,
+  // The phases a pending run can be in, exported so the connector's output
+  // schema can be held to the same vocabulary (tests/mcp-tools.test.js, #2137).
+  CHECK_PHASES,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,

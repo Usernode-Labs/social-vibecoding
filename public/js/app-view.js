@@ -637,6 +637,48 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
   TOKEN_REQUEST_TIMEOUT_MS: 15000,
 
+  // A newly-created app can finish while its first /api/apps/:slug detail
+  // request is still in flight. `app_status` is newer than that request's
+  // snapshot, but App.handleAppStatusUpdate cannot apply it until appData
+  // exists; dropping it leaves the stale `creating` snapshot on screen until
+  // a full-page refresh. Keep just the latest terminal event per slug across
+  // that narrow gap. A later `creating` phase means a retry started, so it
+  // invalidates any terminal event from the previous attempt.
+  _pendingAppStatus: Object.create(null),
+
+  _rememberPendingAppStatus(data) {
+    if (!data || !data.slug) return;
+    if (data.status === 'creating') {
+      delete AppView._pendingAppStatus[data.slug];
+      return;
+    }
+    if (!['running', 'error', 'awaiting_secrets'].includes(data.status)) return;
+    AppView._pendingAppStatus[data.slug] = {
+      status: data.status,
+      url: data.url || null,
+      errorReason: data.errorReason || null,
+      missingSecrets: Array.isArray(data.missingSecrets) ? [...data.missingSecrets] : null,
+    };
+  },
+
+  _applyPendingAppStatus(appData) {
+    const slug = appData && appData.slug;
+    if (!slug) return appData;
+    const pending = AppView._pendingAppStatus[slug];
+    delete AppView._pendingAppStatus[slug];
+    if (!pending) return appData;
+
+    const reconciled = { ...appData, status: pending.status };
+    if (pending.status === 'running' && pending.url) reconciled.url = pending.url;
+    if (pending.status === 'error' && pending.errorReason) {
+      reconciled.errorReason = pending.errorReason;
+    }
+    if (pending.status === 'awaiting_secrets' && pending.missingSecrets) {
+      reconciled.missingSecrets = pending.missingSecrets;
+    }
+    return reconciled;
+  },
+
   /**
    * Load an app's record and stand its view up.
    *
@@ -667,7 +709,11 @@ const AppView = {
       AppView._teardownLaunch();
       return;
     }
-    const { app: appData } = await res.json();
+    const { app: fetchedAppData } = await res.json();
+    // A terminal WS event may have landed after this request began but before
+    // its older snapshot came back. It is the later fact, so reconcile it
+    // before any consumer can paint the stale spinning-up state.
+    const appData = AppView._applyPendingAppStatus(fetchedAppData);
     // #1010: local "being applied" state is per-app and per-page-visit —
     // proposal ids are global, but a stale entry carried into another app
     // would spin a card whose apply this client never started. Cleared on
@@ -1982,6 +2028,36 @@ const AppView = {
     // and the app glyph takes the slot the rest of the time. A raw unhide
     // here used to leave a home icon on these fixtures; React reconciles it
     // away on its next render anyway, so it was a write with no reader.
+  },
+
+  // #2154: the resolved half of `?shot=app-launching&settle=1`. Reproduce
+  // the first-open ordering without a real deployment: the terminal status
+  // lands while appData is absent, then an older `creating` detail snapshot
+  // returns. The same reconciliation used by open() must turn that pair into
+  // a running app before renderAppTab paints anything.
+  showSettledLaunchShot() {
+    const slug = 'staging-demo-status-race';
+    AppView.appData = null;
+    AppView._rememberPendingAppStatus({
+      slug,
+      status: 'running',
+      url: location.origin,
+    });
+    AppView.appData = AppView._applyPendingAppStatus({
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '🚀',
+      status: 'creating',
+      url: null,
+      self_hosted: false,
+    });
+    // Keep the fixture on a tiny same-origin document, not the platform SPA
+    // nested inside itself. The assertion is about replacing the placeholder
+    // with a frame, not about depending on a live user app.
+    AppView.pendingInnerPath = '/health';
+    AppView.renderAppTab();
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
   },
 
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
@@ -4473,6 +4549,11 @@ const AppView = {
         AppView.openImportPrModal();
       }, { signal });
     }
+    const appSettingsBtn = menu.querySelector('[data-plus="app-settings"]');
+    appSettingsBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
@@ -4811,10 +4892,14 @@ const AppView = {
     // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
     // inserts a newline (default). On touch the on-screen return key
     // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. Bubble phase, so the autocomplete's
-    // capture-phase keydown still owns Enter while its dropdown is open.
+    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
+    // included: the chord every other composer on the platform answers to,
+    // and the one way to send from a hardware keyboard on a touch screen.
+    // Bubble phase, so the autocomplete's capture-phase keydown still owns
+    // Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+      if (e.key !== 'Enter') return;
+      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
         e.preventDefault();
         submitGeneral();
       }

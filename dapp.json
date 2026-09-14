@@ -984,6 +984,11 @@
       "expectText": "Opening…"
     },
     {
+      "name": "A newly started app replaces its spinner when terminal status beats its detail response (#2154)",
+      "path": "/?shot=app-launching&settle=1",
+      "expectSelector": "#app-iframe[src*=\"/health\"]"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",
@@ -2104,15 +2109,16 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The model picker opens a sheet, like the venue control above it",
+      "name": "The in-composer selector names the Anthropic key for a direct model (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "button#dc-model-select[aria-haspopup=\"menu\"] .dc-model-name",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"] optgroup[label=\"Anthropic key\"] option[value=\"anthropic:claude-opus-5\"]:checked",
+      "expectText": "Anthropic key · Opus 5"
     },
     {
-      "name": "…so no native dropdown is left in the composer (#1589 still holds)",
+      "name": "The first group can open the full OpenRouter catalog (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-composer-controls:not(:has(select))"
+      "expectSelector": "select#dc-model-select > optgroup:first-child[label=\"OpenRouter key\"] option[value=\"openrouter:__add_more__\"]",
+      "expectText": "Add more OpenRouter models…"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
@@ -3408,10 +3414,10 @@
       "expectText": "Homeroom · Claude"
     },
     {
-      "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
+      "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
-      "expectText": "openai/gpt-5.3-codex"
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
+      "expectText": "OpenRouter key"
     },
     {
       "name": "An OpenRouter session's composer says what is left on its key (#2118)",

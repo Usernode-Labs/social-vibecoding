@@ -107,13 +107,13 @@ async function stateForUser(pool, userId) {
   return rows[0] || { verified: false };
 }
 
-async function notifyAdmins(pool, args) {
+async function notifyReviewAdmins(pool, args) {
   try {
-    await notifications.notifyManagedOpenRouterAdmins(pool, args);
+    await notifications.notifyManagedOpenRouterReviewAdmins(pool, args);
   } catch (err) {
-    log.warn('openrouter-managed', 'admin notification failed', {
+    log.warn('openrouter-managed', 'admin review notification failed', {
       sourceUserId: args.sourceUserId, managedKeyId: args.managedKeyId,
-      kind: args.kind, err: err.message,
+      err: err.message,
     });
   }
 }
@@ -126,8 +126,8 @@ async function markNeedsReview(pool, id, userId, err) {
       WHERE id = $1`,
     [id, code],
   ).catch(() => {});
-  await notifyAdmins(pool, {
-    sourceUserId: userId, managedKeyId: id, kind: 'openrouter_key_review',
+  await notifyReviewAdmins(pool, {
+    sourceUserId: userId, managedKeyId: id,
   });
 }
 
@@ -274,11 +274,6 @@ async function provision({ pool, userId, config }) {
     });
 
     agentModels.invalidateUser(userId);
-    await notifyAdmins(pool, {
-      sourceUserId: userId,
-      managedKeyId: reservation.id,
-      kind: 'openrouter_key_created',
-    });
     // Close the unlink-during-provision race when verification is required.
     // There is deliberately no automatic revocation; a second, deduplicated
     // review notification is emitted only if the user lost their final proof
@@ -405,10 +400,9 @@ async function notifyIdentityReview({ pool, userId, config }) {
   const state = await stateForUser(pool, userId);
   if (state.verified || !state.managed_key_id
       || !['active', 'disabled'].includes(state.managed_status)) return false;
-  await notifyAdmins(pool, {
+  await notifyReviewAdmins(pool, {
     sourceUserId: userId,
     managedKeyId: state.managed_key_id,
-    kind: 'openrouter_key_review',
   });
   return true;
 }
