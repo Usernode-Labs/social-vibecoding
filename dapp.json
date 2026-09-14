@@ -3837,8 +3837,8 @@
     {
       "name": "The instructions themselves are on the card, for a clipboard that refuses",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] details.dc-flow-order pre[data-flow-order]",
-      "expectText": "Call prepare_work"
+      "expectSelector": "[data-flow-wizard] details.dc-flow-order:not([open]) > summary + pre[data-flow-order]",
+      "expectText": "Instructions"
     },
     {
       "name": "Without a connector the hand-off asks for one, because the agent needs it",
