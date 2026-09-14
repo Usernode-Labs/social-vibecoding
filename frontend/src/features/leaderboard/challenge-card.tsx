@@ -23,29 +23,32 @@
 // hooks select on them; everything inside is this file.
 //
 // It is not in @/components/ui: it is a domain card, not a primitive.
-// `Chip` and `ActionPill` in the ui kit are `aria-pressed` toggle buttons,
-// which a reward label is not, so neither is reused.
+//
+// ── Title, meta line, rail ─────────────────────────────────────────────
+//
+// Under the title, ONE meta line says when the challenge ends and what it
+// pays: "5d left · 500 pts", or "Earned 900 pts" in emerald on a finished
+// challenge the viewer scored on. It takes the slot a description would —
+// never the task, which the tab's detail overlay carries. The deadline part
+// stays until deadline bands group the cards by when they end (the later
+// grouping slice); then the band heading says it and the line keeps only the
+// reward. A finished card has nothing to count down to.
+//
+// The RAIL IS CLEAN: its own full-width row holding the state and nothing
+// else — the ring, the label, and for a counted challenge (a target above
+// one) a bar drawn from zero, with a stub at the left edge so "0/3 Apps tried"
+// reads as a track not yet run. A yes-or-no challenge has no steps to fill and
+// keeps its words ("Not started", "Started", "Done").
 //
 // ── Copy never wraps ───────────────────────────────────────────────────
 //
-// The rail and the reward share ONE capsule (the board's shape): a 2px-padded
-// outer pill holding the rail segment on the left and a lighter reward
-// segment on the right, so they read as one control rather than two pills
-// side by side. A phone-width card leaves the capsule about 210px, a 320px
-// phone 170px. The rail segment is `basis-auto` from its label's own width and
-// truncates; the reward segment is `shrink-0` at its own. When the two do not
-// fit side by side the reward segment moves to a second row INSIDE the
-// capsule, which grows to hold it — and fills that row's width, so a wrapped
-// capsule reads as two stacked full-width rows rather than a small segment
-// beside an empty grey block. The grow factors do that: the rail grows at
-// 999 and the reward at 1, so while both share a row the reward gains at most
-// a thousandth of the free space and stays content-sized, and alone on its
-// row its factor of 1 takes all of it. (A lone factor below 1 would not: CSS
-// hands an item only that fraction of the free space, which is why the
-// reward's factor is a whole 1 and the rail's is the large one.) Text itself never wraps: only a label or
-// reward longer than the whole capsule ends in an ellipsis. The labels are
-// composed short in ./topochain-challenges.js (`_stateOf`), because the icon
-// already says which state it is.
+// Every line is one line. A 320px phone leaves the card body about 170px.
+// The title truncates; on the meta line the deadline never shrinks (a short
+// token — even a season-long "183d left" is about 60px) and the reward
+// truncates after it; the rail is the body's
+// full width and its label truncates inside it. The labels are composed short
+// in ./topochain-challenges.js (`_stateOf`), because the ring already says
+// which state it is.
 //
 // Every class below is a complete literal: Tailwind's extractor is a regex
 // over source text, so a computed class name never compiles.
@@ -57,9 +60,7 @@ import { CheckIcon } from '@/components/ui/icons';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
-// Segment radius 10px inside the capsule's 12px with 2px of padding, so the
-// corners stay concentric.
-const RAIL = 'relative flex h-9 min-w-0 shrink grow-[999] basis-auto items-center gap-1.5 overflow-hidden rounded-[0.625rem] px-2.5 '
+const RAIL = 'relative flex h-9 w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-lg px-2.5 '
   + 'text-[0.8125rem] font-medium';
 const RAIL_TONE: Record<ChallengeState, string> = {
   new: 'bg-zinc-200/70 text-zinc-700 dark:bg-zinc-700/60 dark:text-zinc-300',
@@ -67,14 +68,19 @@ const RAIL_TONE: Record<ChallengeState, string> = {
   done: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
 };
 const RAIL_FILL = 'absolute inset-y-0 left-0 bg-violet-500/25';
+// The least a drawn bar ever is: 6px against the rail's left edge, inside its
+// 10px padding, so it sits clear of the state ring. It is the whole bar at 0
+// of N, and the floor under a small real fraction — 1 of 50 is 2%, about 3px
+// on a phone, and a first step must never look like less than none.
+const RAIL_STUB = '0.375rem';
 const RAIL_LABEL = 'relative min-w-0 truncate';
 
-const CHIP = 'flex h-9 max-w-full shrink-0 grow items-center rounded-[0.625rem] px-2.5 text-[0.8125rem] font-medium';
-// The reward segment is the capsule's lighter half: the surface colour, with
-// the reward's amber (or the earned emerald) as its ink.
-const CHIP_REWARD = 'bg-white text-amber-800 dark:bg-zinc-900 dark:text-amber-300';
-const CHIP_EARNED = 'bg-white text-emerald-700 dark:bg-zinc-900 dark:text-emerald-400';
-const CAPSULE = 'flex flex-wrap items-stretch gap-0.5 rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800';
+const TITLE = 'truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100';
+const META = 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5';
+const META_DEADLINE = 'shrink-0 text-zinc-500 dark:text-zinc-400';
+const META_DOT = 'shrink-0 text-zinc-400 dark:text-zinc-500';
+const META_REWARD = 'min-w-0 truncate font-medium text-amber-800 dark:text-amber-300';
+const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -101,13 +107,19 @@ function StateMark({ state }: { state: ChallengeState }): ReactNode {
 // it out, which is what the ARIA pattern means by indeterminate. An empty
 // label draws the bare ring, for a challenge whose progress this screen
 // cannot see (block production; see _stateOf).
-export function ProgressRail({ state, label, fill, name }: {
+//
+// `counted` is what draws the bar: a challenge with a target above one,
+// from 0 of N (the stub) up to one short of done. A finished rail is the
+// green tone instead, and an uncounted one is words alone.
+export function ProgressRail({ state, label, fill, name, counted = false }: {
   state: ChallengeState;
   label: string;
   fill: number | null;
   name: string;
+  counted?: boolean;
 }): ReactNode {
   const pct = fill == null ? null : Math.round(Math.max(0, Math.min(fill, 1)) * 100);
+  const bar = counted && state !== 'done' && pct != null;
   return (
     <div
       role="progressbar"
@@ -120,20 +132,10 @@ export function ProgressRail({ state, label, fill, name }: {
       aria-label={label ? (name ? `${name}: ${label}` : label) : name}
       className={`${RAIL} ${RAIL_TONE[state]}`}
     >
-      {state === 'progress' && pct ? <span className={RAIL_FILL} style={{ width: `${pct}%` }} /> : null}
+      {bar ? <span className={RAIL_FILL} style={{ width: pct ? `max(${RAIL_STUB}, ${pct}%)` : RAIL_STUB }} /> : null}
       <StateMark state={state} />
       {label ? <span className={RAIL_LABEL}>{label}</span> : null}
     </div>
-  );
-}
-
-// The reward, or — on a finished challenge the viewer scored on — what they
-// earned. A static label, never a control.
-export function RewardChip({ text, earned = false }: { text: string; earned?: boolean }): ReactNode {
-  return (
-    <span className={`${CHIP} ${earned ? CHIP_EARNED : CHIP_REWARD}`}>
-      <span className="min-w-0 truncate">{text}</span>
-    </span>
   );
 }
 
@@ -157,6 +159,10 @@ export type ChallengeCardView = {
   state: ChallengeState;
   stateLabel: string;
   fill: number | null;
+  /** A target above one: the rail draws a bar, from zero. */
+  counted?: boolean;
+  /** "5d left"; null on a finished card or with no end in the future. */
+  deadline?: string | null;
   earned: string | null;
 };
 
@@ -164,28 +170,42 @@ const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl bord
   + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
   + 'transition-colors';
 
-// The card: tile, title, and the rail + reward capsule — nothing else. The
-// task is not on the card (the tab's detail overlay carries it in full).
+// The card: tile, then title, the meta line ("5d left · 500 pts") and the
+// rail — nothing else. The task is not on the card (the tab's detail overlay
+// carries it in full).
 //
-// TITLE AND RAIL ARE ONE GROUP. They sit 8px apart and the pair is centred
-// against the tile as a unit, rather than stretched to the tile's top and
-// bottom edges: the title belongs to its rail, not to the illustration beside
-// it. With one row the group is 76px against the 80px tile; when the reward
-// wraps inside the capsule the group grows and the tile stays centred on it.
+// TITLE AND RAIL ARE ONE GROUP. The title and its meta line sit 8px above the
+// rail and the whole group is centred against the tile as a unit, rather than
+// stretched to the tile's top and bottom edges: the title belongs to its
+// rail, not to the illustration beside it. With a meta line the group is 88px
+// against the 80px tile, without one 68px, at every width — nothing in it
+// wraps.
 export function ChallengeCard({ view, className, ...rest }: {
   view: ChallengeCardView;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
-  const chip = view.earned || view.reward;
+  const reward = view.earned || view.reward;
   return (
     <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
       <ChallengeTile icon={view.icon} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100">{view.goal}</div>
-        <div className={CAPSULE}>
-          <ProgressRail state={view.state} label={view.stateLabel} fill={view.fill} name={view.goal} />
-          {chip ? <RewardChip text={chip} earned={!!view.earned} /> : null}
+        <div className="min-w-0">
+          <div className={TITLE}>{view.goal}</div>
+          {view.deadline || reward ? (
+            <div className={META}>
+              {view.deadline ? <span className={META_DEADLINE}>{view.deadline}</span> : null}
+              {view.deadline && reward ? <span aria-hidden="true" className={META_DOT}>·</span> : null}
+              {reward ? <span className={view.earned ? META_EARNED : META_REWARD}>{reward}</span> : null}
+            </div>
+          ) : null}
         </div>
+        <ProgressRail
+          state={view.state}
+          label={view.stateLabel}
+          fill={view.fill}
+          name={view.goal}
+          counted={!!view.counted}
+        />
       </div>
     </div>
   );

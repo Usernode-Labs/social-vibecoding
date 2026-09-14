@@ -430,7 +430,8 @@ test('render: a done row reads Done and says what the viewer earned', () => {
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
   assert.match(card, /aria-valuetext="Done"/);
   assert.match(card, /bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400/, 'the green done rail');
-  assert.match(card, /bg-white text-emerald-700 dark:bg-zinc-900 dark:text-emerald-400/, 'and the earned segment in emerald ink');
+  assert.match(card, /text-emerald-700 dark:text-emerald-400">Earned 250 pts<\/span>/,
+    'and the meta line says it in emerald ink');
   assert.match(card, />Earned 250 pts</, 'the chip says what was earned, not what is on offer');
   assert.doesNotMatch(card, /home-panel-glyph/, 'the old filled ✓ disc is retired');
 });
@@ -449,11 +450,13 @@ test('render: a numeric row gets the count on the rail with truthful aria values
   assert.match(card, /aria-valuenow="38"/);
   assert.match(card, /aria-valuetext="3\/8 Apps tested"/, 'the spoken value is the visible count');
   assert.match(card, /aria-label="Report a reproducible bug: 3\/8 Apps tested"/);
-  assert.match(card, /style="width:38%"/, 'the fill is drawn at the same fraction');
+  assert.match(card, /style="width:max\(0\.375rem, 38%\)"/, 'the fill is drawn at the same fraction');
   assert.match(card, />3\/8 Apps tested</);
 });
 
-test('render: a numeric row at zero reads Not started, with no fill', () => {
+test('render: a counted row at zero shows its count and a stub of bar, not Not started', () => {
+  // Evan's "0/3" capsule: a challenge with steps reads as a track not yet
+  // run, so it is told apart from a yes-or-no challenge before anyone starts.
   const p = panel({
     challenges: [challenge({
       metric: { kind: 'count', label: 'Kudos', target: 5 },
@@ -461,10 +464,11 @@ test('render: a numeric row at zero reads Not started, with no fill', () => {
     })],
   });
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /aria-valuetext="Not started"/);
+  assert.match(card, /aria-valuetext="0\/5 Kudos"/);
   assert.match(card, /aria-valuenow="0"/);
-  assert.doesNotMatch(card, /style="width/, 'nothing to fill yet');
-  assert.doesNotMatch(card, />0\/5</, 'a count of nothing reads as the state word instead');
+  assert.match(card, /style="width:0\.375rem"/, 'the stub: a track with nothing run yet');
+  assert.match(card, />0\/5 Kudos</, 'the count is shown from zero');
+  assert.doesNotMatch(card, />Not started</);
 });
 
 // ── The bar's breathing room ──────────────────────────────────────
@@ -495,19 +499,80 @@ test('the retired pill, capsule and category well leave nothing behind', () => {
     'the script that measured the capsule went with it');
 });
 
-test('the season deadline is said once, beside the ring, not on every card', () => {
-  const ends = new Date(Date.now() + 3 * 86400000 - 3600000).toISOString();
+test('every open card says how long it has left; the ring does not repeat it', () => {
+  // Until deadline bands group the cards by when they end, the line under
+  // each title carries it: the challenge's own end when it has one, else the
+  // season's. A finished challenge has nothing to count down to.
+  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: ends },
-      total: 2,
-      challenges: [challenge({ id: 1 }), challenge({ id: 2, goal: 'Share the announcement' })],
+      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+      total: 3,
+      challenges: [
+        challenge({ id: 1 }),
+        challenge({ id: 2, goal: 'Share the announcement', ends_at: inHours(23) }),
+        challenge({ id: 3, goal: 'Say hello', progress: { done: true, current: null, target: null } }),
+      ],
     })],
   });
-  assert.equal((html.match(/3 days left/g) || []).length, 1, 'one deadline for the block');
-  assert.ok(html.indexOf('3 days left') < html.indexOf('home-challenge-card'),
-    'and it is on the ring, above the cards');
+  const ring = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-challenge-card'));
+  assert.doesNotMatch(ring, /\d+[dh] left/, 'the ring no longer carries the deadline');
+  const cardById = (id) => {
+    const at = html.indexOf(`data-challenge-id="${id}"`);
+    assert.ok(at > 0, `card ${id} renders`);
+    const next = html.indexOf('home-challenge-card', at);
+    return html.slice(at, next > at ? next : html.indexOf('home-panel-footer', at));
+  };
+  assert.match(cardById(1),
+    /<span class="shrink-0 text-zinc-500 dark:text-zinc-400">3d left<\/span><span aria-hidden="true"[^>]*>·<\/span><span class="[^"]*text-amber-800[^"]*">250 pts<\/span>/,
+    'the season end, beside the reward, on a challenge with no end of its own');
+  assert.match(cardById(2), />23h left</, 'a challenge’s own earlier end wins');
+  assert.doesNotMatch(cardById(3), /\d+[dh] left/, 'nothing to count down on a finished challenge');
+
+  // The same words as the Challenges tab (TopochainChallenges._timeLeft).
+  const { HP } = makeHomePanels({ slots: [] });
+  for (const [h, want] of [
+    [0.2, '1h left'], [7.5, '8h left'], [23, '23h left'], [23.5, '1d left'],
+    [25, '2d left'], [71, '3d left'], [5 * 24 - 1, '5d left'], [-1, null],
+  ]) {
+    assert.equal(HP.timeLeft(inHours(h)), want, `${h}h`);
+  }
+  assert.equal(HP.timeLeft('not a date'), null);
+  assert.equal(HP.timeLeft(null), null);
+});
+
+test('a target of one is a yes-or-no on Home too: words, no count, no bar', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const row = HP.challengeRowView(challenge({
+    metric: { kind: 'count', label: 'Votes', target: 1 },
+    progress: { done: false, current: 0, target: 1 },
+  }));
+  assert.equal(row.stateLabel, 'Not started');
+  assert.equal(row.counted, false);
+});
+
+test('a challenge the expanded list carries while not open shows no countdown', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const ends = new Date(Date.now() + 71 * 3600000).toISOString();
+  const p = panel({ season: { id: 1, name: 'Season 1', ends_at: ends } });
+  assert.equal(HP.challengeRowView(challenge(), p).deadline, '3d left', 'open: the season end');
+  assert.equal(HP.challengeRowView(challenge({ open: false }), p).deadline, null,
+    'organiser-closed or outside its window: no "3d left" on a challenge nobody can do');
+});
+
+test('when no card on screen shows a deadline, the ring says how long the season has left', () => {
+  const ends = new Date(Date.now() + 71 * 3600000).toISOString();
+  const { HP } = makeHomePanels({ slots: [] });
+  const allDone = HP.challengesView(panel({
+    season: { id: 1, name: 'Season 1', ends_at: ends },
+    total: 1, done: 1,
+    challenges: [challenge({ progress: { done: true, current: null, target: null } })],
+  }));
+  assert.equal(allDone.season.sub, '3d left', 'every card finished: the fact moves back to the ring');
+  const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
+  assert.equal(open.season.sub, null, 'an open card says it, so the ring does not repeat it');
+  assert.equal(open.rows[0].deadline, '3d left');
 });
 
 test('the lane is gone, and a row carries the rail instead of a meter', () => {
@@ -992,15 +1057,15 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
 
   // Every text-bearing element on the card opts out of wrapping: the title,
-  // the rail's label and the reward. The row itself may wrap its two pills
-  // onto two lines; their text never does.
+  // the meta line's reward and the rail's label. Nothing on the card wraps,
+  // not even as a row: the reward rides the meta line and the rail is alone.
   const card = cardOf(html);
   assert.match(card, /class="truncate text-base font-medium[^"]*">Produce Every Block - June 2026</, 'the goal truncates');
   assert.doesNotMatch(card, /<p /, 'and there is no task line to wrap');
   assert.match(card, /<span class="relative min-w-0 truncate">543\/720 Blocks produced<\/span>/, 'the rail label truncates');
-  assert.match(card, /<span class="min-w-0 truncate">Up to 6,500 pts<\/span>/, 'the reward truncates inside a chip that never shrinks');
-  assert.match(card, /<div class="flex flex-wrap items-stretch gap-0\.5 rounded-lg bg-zinc-100 p-0\.5 dark:bg-zinc-800">/,
-    'the reward wraps as a segment inside the capsule');
+  assert.match(card, /<span class="min-w-0 truncate font-medium text-amber-800 dark:text-amber-300">Up to 6,500 pts<\/span>/,
+    'the reward truncates on the meta line');
+  assert.doesNotMatch(card, /flex-wrap/, 'and no row on the card wraps');
 });
 
 test('the title bar and the footer controls are single-line too', () => {

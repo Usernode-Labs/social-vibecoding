@@ -79,12 +79,15 @@ type CardView = {
   reward: string | null;
   icon?: string | null;
   // From TopochainChallenges._stateOf: the rail's state, its one short line,
-  // its fill (null = indeterminate), and "Earned N pts" on a finished
-  // challenge the viewer scored on.
+  // its fill (null = indeterminate), whether it is counted (a bar, from zero),
+  // and "Earned N pts" on a finished challenge the viewer scored on.
   state: ChallengeState;
   stateLabel: string;
   fill: number | null;
+  counted: boolean;
   earned: string | null;
+  // "5d left" (TopochainChallenges._deadlineOf); null when done.
+  deadline: string | null;
 };
 
 type GroupView = { key: string; heading: string | null; cards: CardView[] };
@@ -139,8 +142,9 @@ type ProfileView =
 
 // Columns by the CONTAINER, not the viewport. The screen caps content at
 // max-w-5xl, so the old `sm:grid-cols-2 lg:grid-cols-3` left a 204px card body
-// at three columns and 180px at two on a 640px window — too narrow for the
-// rail and reward chip to fit whole. A column is never narrower than 21rem
+// at three columns and 180px at two on a 640px window — narrow enough that
+// the title, the "5d left · 500 pts" line and the rail label all truncate.
+// A column is never narrower than 21rem
 // while there are two or more; below that the grid is one full-width column.
 const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';

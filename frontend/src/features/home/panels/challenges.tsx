@@ -22,9 +22,11 @@
  * root class `home-challenge-card` and `data-challenge-id` are this block's,
  * because the declared checks and the tests select on them.
  *
- * THE DEADLINE IS SAID ONCE, beside the ring. Every open challenge ends when
- * the season does, so it is one fact about the block rather than a line on
- * every card.
+ * THE DEADLINE IS ON EVERY OPEN CARD, on the line under its title beside the
+ * reward ("5d left · 500 pts"): the challenge's own end, else its event's,
+ * else the season's. The ring says the season's only when no card on screen
+ * shows one. It stays on the cards until deadline bands group the challenges
+ * by when they end; then the band heading says it.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
@@ -70,9 +72,9 @@ function SeasonRing({ view }: { view: SeasonView }) {
         <div className="truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
           {view.lead}
         </div>
-        {view.detail ? (
+        {view.sub ? (
           <div className="truncate whitespace-nowrap text-[12.5px] leading-tight text-zinc-500 dark:text-zinc-400">
-            {view.detail}
+            {view.sub}
           </div>
         ) : null}
       </div>

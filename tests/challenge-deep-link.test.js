@@ -358,6 +358,29 @@ test('a real event switch still reloads and clears the overlay', () => {
     'and the previous event’s detail is torn down');
 });
 
+test('the event list landing after the grid redraws the deadline lines, reloading and closing nothing', () => {
+  // A deep link can load the grid before the event bar's list lands, and a
+  // card's deadline falls back to that list's `ends_at`. The bar's tail
+  // notification carries the same event, so it must redraw the cards in place.
+  const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._open = false;
+  let reloads = 0;
+  pane.loadChallenges = () => { reloads += 1; pane._loadedEventId = context.eventId; };
+  pane.open();
+  pane._challenges = [{ id: 900500, completed: false, card_preview: { goal: 'Report a bug' } }];
+  pane._challengesLoading = false;
+  pane._renderGrid();
+  const deadline = () => store.get().grid.groups[0].cards[0].deadline;
+  assert.equal(deadline(), null, 'no event list yet: no line');
+  pane.openFromHash(900500, 900500);
+
+  context.selectedEvent = () => ({ id: 900500, ends_at: inHours(71) });
+  context.notify(); // the list landed — same event
+  assert.equal(reloads, 1, 'no refetch');
+  assert.equal(deadline(), '3d left', 'the cards now say how long is left');
+  assert.equal(pane._detailChallenge?.id, 900500, 'and the open overlay survives');
+});
+
 test('_loadedEventId tracks the event the grid belongs to', () => {
   assert.match(CHALLENGES_SRC,
     /TopochainChallenges\._loadedEventId = eventId;/,
@@ -440,13 +463,50 @@ test('ledger-credited block production and yes/no challenges are indeterminate, 
     { state: 'progress', stateLabel: 'Started', fill: null, earned: null });
 });
 
-test('a zero-point ledger row is not progress', () => {
+test('points decide an uncounted challenge; rows are the count of a counted one, as on Home', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   pane._mine = new Map([[900500, {
     id: 900500, activities_total: 0, activities: rows(2, 0),
     metric: { kind: 'apps_tested', label: 'tried', target: 8 },
   }]]);
-  assert.equal(stateOf(pane, CH[0]).state, 'new', 'points, not rows — the Flutter rule');
+  assert.deepEqual(stateOf(pane, CH[0]),
+    { state: 'progress', stateLabel: '2/8 tried', fill: 0.25, earned: null },
+    'two ledger rows are two of eight whatever they paid — Home’s server count is the same COUNT(*)');
+  pane._mine = new Map([[900500, { id: 900500, activities_total: 0, activities: rows(2, 0), metric: null }]]);
+  assert.deepEqual(stateOf(pane, CH[0]), { state: 'new', stateLabel: 'Not started', fill: 0, earned: null },
+    'points, not rows, for a yes-or-no challenge — the Flutter rule');
+  pane._mine = new Map([[900500, {
+    id: 900500, activities_total: 0, activities: [], metric: { kind: 'count', label: 'votes', target: 1 },
+  }]]);
+  assert.equal(stateOf(pane, CH[0]).stateLabel, 'Not started', 'a target of one is a yes-or-no');
+  assert.equal(pane._stateOf(CH[0]).counted, false);
+});
+
+test('a counted challenge shows its count before personalization lands, and signed out', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const counted = {
+    id: 7, completed: false, card_preview: {},
+    activity_type: { metric_type: 'apps_tested', metric_target: 8, metric_label: 'tried' },
+    metric: { kind: 'apps_tested', target: 8, label: 'tried' },
+  };
+  assert.deepEqual(stateOf(pane, counted), { state: 'new', stateLabel: '0/8 tried', fill: 0, earned: null },
+    'the public row’s effective metric, with no personalization row');
+  assert.equal(pane._stateOf(counted).counted, true);
+  // An organiser override on the challenge row wins over the template for
+  // EVERY viewer — the public row's `metric` is the effective one, so a
+  // signed-out visitor never sees the template's target.
+  const overriddenToYesNo = { ...counted, metric: { kind: 'count', target: 1, label: 'votes' } };
+  assert.equal(stateOf(pane, overriddenToYesNo).stateLabel, 'Not started', 'template 8, override 1: a yes-or-no');
+  const overriddenToCounted = {
+    ...counted, activity_type: { metric_type: null, metric_target: null, metric_label: null },
+    metric: { kind: 'count', target: 3, label: 'votes' },
+  };
+  assert.equal(stateOf(pane, overriddenToCounted).stateLabel, '0/3 votes', 'no template metric, override 3: counted');
+  pane._mine = new Map([[7, {
+    id: 7, activities_total: 400, activities: rows(2, 200),
+    metric: { kind: 'apps_tested', label: 'apps tried', target: 5 },
+  }]]);
+  assert.equal(stateOf(pane, counted).stateLabel, '2/5 apps tried', 'and the override-aware row wins once it lands');
 });
 
 test('a finished challenge the viewer scored on says what they earned', () => {
@@ -490,13 +550,55 @@ test('per-viewer progress on the public row drives the rail, blocks included', (
   assert.deepEqual(stateOf(pane, untouched),
     { state: 'new', stateLabel: 'Not started', fill: 0, earned: null },
     'with progress present, Not started is a counted fact, not a guess');
+  assert.equal(pane._stateOf(untouched).counted, false, 'a yes-or-no rail draws no bar');
   const binary = { id: 3, completed: false, progress: { done: false, current: null, target: null }, card_preview: {} };
   assert.equal(stateOf(pane, binary).stateLabel, 'Not started');
+  // A COUNTED challenge shows its count from zero — "0/3 Apps tried", which is
+  // what an anonymous visitor to Pre Season 2 gets for "Try Three Apps".
+  const zero = {
+    id: 6, completed: false, activity_type: { metric_label: 'Apps tried' },
+    progress: { done: false, current: 0, target: 3 }, card_preview: {},
+  };
+  assert.deepEqual(stateOf(pane, zero),
+    { state: 'new', stateLabel: '0/3 Apps tried', fill: 0, earned: null },
+    'a challenge with steps never reads as a plain Not started');
+  assert.equal(pane._stateOf(zero).counted, true, 'and its rail draws the bar from zero');
+  assert.equal(pane._stateOf(blocks).counted, true);
   const mineDone = { id: 4, completed: false, progress: { done: true, current: 1, target: 1 }, card_preview: {} };
   assert.equal(stateOf(pane, mineDone).state, 'done', 'Done is the viewer’s own when progress says so');
   const archived = { id: 5, completed: true, progress: { done: false, current: 0, target: 3 }, card_preview: {} };
   assert.equal(stateOf(pane, archived).state, 'new',
     'an organiser archive flag does not mark the viewer’s onboarding step done');
+});
+
+// The deadline line's words, pinned by the same table as HomePanels.timeLeft
+// in tests/home-panels-render.test.js, so both surfaces say one thing.
+const TIME_LEFT = [
+  [0.2, '1h left'], [7.5, '8h left'], [23, '23h left'], [23.5, '1d left'],
+  [25, '2d left'], [71, '3d left'], [5 * 24 - 1, '5d left'], [-1, null],
+];
+const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+
+test('an open card says how long it has left: its own end, else the event’s', () => {
+  const { pane, context } = loadPane({ challenges: CH, eventId: 900500 });
+  context.selectedEvent = () => ({ id: 900500, ends_at: inHours(71) });
+  const open = { id: 900500, completed: false, card_preview: { goal: 'Report a bug' } };
+  assert.equal(pane.cardView(open, 0).deadline, '3d left', 'the event’s end when the challenge sets none');
+  const own = { ...open, effective: { schedule_end: inHours(23) } };
+  assert.equal(pane.cardView(own, 0).deadline, '23h left', 'the challenge’s own end wins');
+  assert.equal(pane.cardView(CH[1], 1).deadline, null, 'a finished card counts down to nothing');
+  const notYet = { ...open, effective: { schedule_start: inHours(20), schedule_end: inHours(71) } };
+  assert.equal(pane.cardView(notYet, 0).deadline, null, 'not open yet: no countdown, as on Home');
+  const closedStep = { ...open, completed: true, progress: { done: false, current: 0, target: 3 } };
+  assert.equal(pane.cardView(closedStep, 0).deadline, null,
+    'an organiser-closed step the viewer never finished: no countdown either');
+  context.selectedEvent = () => ({ id: 900500, ends_at: inHours(-5) });
+  assert.equal(pane.cardView(open, 0).deadline, null, 'an ended event gives no line');
+  delete context.selectedEvent;
+  assert.equal(pane.cardView(open, 0).deadline, null, 'and no event known, no line');
+  for (const [h, want] of TIME_LEFT) assert.equal(pane._timeLeft(inHours(h)), want, `${h}h`);
+  assert.equal(pane._timeLeft('not a date'), null);
+  assert.equal(pane._timeLeft(null), null);
 });
 
 test('the grid’s card descriptors carry the rail and never re-sort by it', () => {

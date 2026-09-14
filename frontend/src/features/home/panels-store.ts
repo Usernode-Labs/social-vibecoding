@@ -100,6 +100,14 @@ export interface ChallengeRowView {
   state: 'new' | 'progress' | 'done';
   stateLabel: string;
   fill: number | null;
+  /** A target above one: the rail draws its count and bar from zero. */
+  counted: boolean;
+  /**
+   * "5d left" on the meta line under the title, beside the reward — the
+   * challenge's own end, else its event's, else the season's; null on a
+   * finished or not-open challenge, or with no end in the future.
+   */
+  deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
   earned: string | null;
 }
@@ -112,16 +120,19 @@ export interface SeasonView {
   fraction: string;
   /** "3,900 pts left" — what is still on the table, or the count if none. */
   lead: string;
-  /** "1 of 6 challenges done", or null when `lead` already says it. */
+  /**
+   * "1 of 6 challenges done", or null when `lead` already says it. When no
+   * card on screen shows a deadline, challengesView adds the season's to it
+   * ("1 of 6 challenges done · 3d left", or "3d left" alone).
+   */
   sub: string | null;
-  /** The ring's second line: `sub` and the deadline, joined; null when neither. */
-  detail?: string | null;
   /** The whole fact in one string, for the ring's accessible name. */
   label: string;
   /**
-   * "7 days left" — how long the SEASON has to run, or null between seasons
-   * and when the payload carries no end date. One fact about the block, not
-   * a field on each row: every open challenge ends when the season does.
+   * "7d left" — how long the SEASON has to run, or null between seasons
+   * and when the payload carries no end date. Each open card says its own
+   * deadline (ChallengeRowView.deadline), so the ring adds this to `sub` only
+   * when no card on screen shows one.
    */
   deadline: string | null;
 }

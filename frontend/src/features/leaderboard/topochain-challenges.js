@@ -201,7 +201,20 @@ const TopochainChallenges = {
     if (window.TopochainEventContext?.onChange) {
       TopochainChallenges._unsub = TopochainEventContext.onChange(() => {
         if (!TopochainChallenges._open) return;
-        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) return;
+        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) {
+          // The same event — most often the bar's own notification once its
+          // event list lands. Nothing to reload and nothing to close, but a
+          // card's deadline line falls back to that list's `ends_at`
+          // (_deadlineOf), so a grid drawn before the list arrived is redrawn
+          // in place. Only the descriptor: _renderGrid would re-run the
+          // screenshot and deep-link hooks.
+          const store = TopochainChallenges._store;
+          const grid = store && store.get().grid;
+          if (grid && grid.kind === 'cards') {
+            store.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+          }
+          return;
+        }
         TopochainChallenges.closeChallengeDetail();
         TopochainChallenges.closeUserProfile();
         TopochainChallenges.loadChallenges();
@@ -459,7 +472,50 @@ const TopochainChallenges = {
       goal: str(cp.goal || ''),
       reward: TopochainChallenges.formatReward(cp.reward),
       ...TopochainChallenges._stateOf(c),
+      deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
+        ? null : TopochainChallenges._deadlineOf(c),
     };
+  },
+
+  // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
+  // src/routes/home-panels.js): not marked over by the organiser, and inside
+  // its effective schedule window. The public list carries every enabled
+  // challenge, so a card that is not open gets no countdown, on either surface.
+  _isOpen(c) {
+    if (!c || c.completed === true) return false;
+    const eff = c.effective || {};
+    const now = Date.now();
+    const start = eff.schedule_start ? Date.parse(eff.schedule_start) : NaN;
+    const end = eff.schedule_end ? Date.parse(eff.schedule_end) : NaN;
+    return !(start > now) && !(end < now);
+  },
+
+  // The deadline on a card's meta line: "5d left". The challenge's own end
+  // (`effective.schedule_end`, the organiser's override over the template's)
+  // when one is set, else the selected event's `ends_at`. It stays on every
+  // open card until deadline bands group the grid by when challenges end;
+  // then the band heading says it.
+  _deadlineOf(c) {
+    const own = c && c.effective && c.effective.schedule_end;
+    const ctx = window.TopochainEventContext;
+    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    return TopochainChallenges._timeLeft(own || (ev && ev.ends_at));
+  },
+
+  // The same rule and words as HomePanels.timeLeft, so a challenge says the
+  // same thing on both surfaces. Short, the board's form: whole days rounded
+  // UP ("5d left"; 23.5 hours is "1d left"), hours under a day ("7h left", at
+  // least "1h left"), and null once past or on an unparseable date rather
+  // than a negative count. A copy rather than an import because this module
+  // runs import-free; both test files pin the same table of cases.
+  _timeLeft(raw) {
+    if (!raw) return null;
+    const ends = Date.parse(raw);
+    if (!Number.isFinite(ends)) return null;
+    const ms = ends - Date.now();
+    if (ms <= 0) return null;
+    const hours = Math.ceil(ms / 3600000);
+    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
   },
 
   // The card's rail: which of the three states a challenge is in, the one
@@ -469,9 +525,11 @@ const TopochainChallenges = {
   //             carries onboarding progress, otherwise the organiser's
   //             `completed` flag. The same meaning the summary tally and the
   //             grouping use, so the rail can never disagree with them.
-  //   progress  the viewer has POINTS on it (activities_total > 0). Points,
-  //             not a row: a zero-point ledger row is not progress, which is
-  //             the Flutter app's hasEarnedPoints rule.
+  //   progress  something credited. For a COUNTED challenge (a target above
+  //             one) that is any ledger row, because rows are the count on
+  //             both surfaces. For an uncounted one it is POINTS
+  //             (activities_total > 0): a zero-point row is not progress
+  //             there, which is the Flutter app's hasEarnedPoints rule.
   //   new       everything else, including every card an anonymous visitor
   //             sees that is not done.
   //
@@ -492,9 +550,10 @@ const TopochainChallenges = {
   // slice.
   //
   // Every label is SHORT on purpose, and the words are the board's ("Not
-  // started", "Done"). The rail shares a ~210px row with the reward chip on a
-  // 360px phone and truncates rather than wraps; the icon carries the state,
-  // so the words never repeat it ("In progress · 3/8" wrapped).
+  // started", "Done"). The rail is alone on its row at the card body's full
+  // width (~170px on a 320px phone) and truncates rather than wraps; the ring
+  // carries the state, so the words never repeat it ("In progress · 3/8"
+  // wrapped).
   // PER-VIEWER PROGRESS FIRST. The public row carries `progress`
   // ({ done, current, target }) for the season's onboarding steps, computed
   // server-side by services/topochain/challenge-onboarding.js — including
@@ -502,48 +561,79 @@ const TopochainChallenges = {
   // platform has actually counted, so "Not started" is a fact rather than a
   // guess, and the count and fill come from it. Everything below the
   // `if (p)` block is the fallback for rows without it.
+  //
+  // A COUNTED RAIL STARTS AT ZERO. Whenever the count is known — a target
+  // above one — the card shows it from the first moment ("0/3 Apps tried",
+  // with a stub of bar; `counted: true` is what draws it) instead of "Not
+  // started", so a challenge with steps is told apart from a yes-or-no one
+  // before anyone begins. "Not started" is the yes-or-no challenge's word.
   _stateOf(c) {
     const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
     const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
     const p = (c && c.progress) || null;
     if (TopochainChallenges._isDone(c)) {
       const earned = points ? `Earned ${points.toLocaleString('en-US')} pts` : null;
-      return { state: 'done', stateLabel: 'Done', fill: 1, earned };
+      return { state: 'done', stateLabel: 'Done', fill: 1, counted: false, earned };
     }
     if (p) {
       const target = Number(p.target);
-      const current = p.current == null ? 0 : Number(p.current) || 0;
-      if (p.current != null && Number.isFinite(target) && target > 1 && current > 0) {
+      const current = p.current == null ? 0 : Math.max(0, Number(p.current) || 0);
+      if (p.current != null && Number.isFinite(target) && target > 1) {
         const count = Math.min(current, target);
         // The count honours challenge-row overrides (the server COALESCEs
         // metric_type/metric_target), so the unit must too: the personalization
         // row's label is override-aware, the public row's `activity_type` is
         // the template's alone.
         const label = (m && m.metric && m.metric.label)
+          || (c.metric && c.metric.label)
           || (c.activity_type && c.activity_type.metric_label);
         const unit = label ? ` ${TopochainChallenges.str(label)}` : '';
-        return { state: 'progress', stateLabel: `${count}/${target}${unit}`, fill: count / target, earned: null };
+        return {
+          state: count > 0 || points > 0 ? 'progress' : 'new',
+          stateLabel: `${count}/${target}${unit}`,
+          fill: count / target,
+          counted: true,
+          earned: null,
+        };
       }
-      if (current > 0 || points > 0) return { state: 'progress', stateLabel: 'Started', fill: null, earned: null };
-      return { state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+      if (current > 0 || points > 0) {
+        return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+      }
+      return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
     }
     const metric = (m && m.metric) || null;
-    // The metric kind from either row: the personalization row lands after
-    // first paint (and never, signed out or on failure), so the public row's
-    // template kind is what keeps a block challenge from claiming "Not
-    // started" in the meantime.
-    const kind = (metric && metric.kind) || (c && c.activity_type && c.activity_type.metric_type) || null;
+    const at = (c && c.activity_type) || null;
+    // The metric, override-aware from either row: the personalization row's
+    // once it lands (never, signed out or on failure), else the public row's
+    // `metric`, which is the effective one — so a counted challenge shows its
+    // count on first paint and to a signed-out visitor, with the organiser's
+    // target rather than the template's. The template's `activity_type` kind
+    // is the last resort for the block guard only, keeping a block challenge
+    // from claiming "Not started" on a payload without `metric`.
+    const src = metric || (c && c.metric) || null;
+    const kind = (src && src.kind) || (at && at.metric_type) || null;
     if (!points && kind === 'blocks_produced') {
-      return { state: 'new', stateLabel: '', fill: null, earned: null };
+      return { state: 'new', stateLabel: '', fill: null, counted: false, earned: null };
     }
-    if (!points) return { state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
-    const target = metric ? Number(metric.target) : NaN;
-    const counted = !!metric && metric.kind !== 'blocks_produced'
-      && Number.isFinite(target) && target > 1;
-    if (!counted) return { state: 'progress', stateLabel: 'Started', fill: null, earned: null };
-    const count = Math.min(Array.isArray(m.activities) ? m.activities.length : 0, target);
-    const unit = metric.label ? ` ${TopochainChallenges.str(metric.label)}` : '';
-    return { state: 'progress', stateLabel: `${count}/${target}${unit}`, fill: count / target, earned: null };
+    const target = Number(src ? src.target : NaN);
+    if (kind && kind !== 'blocks_produced' && Number.isFinite(target) && target > 1) {
+      // ROWS are the count, the way Home's server count works (one ledger row
+      // per unit), so both surfaces print the same number: a zero-point row is
+      // still one of the eight. Points decide only an uncounted challenge.
+      const count = Math.min(m && Array.isArray(m.activities) ? m.activities.length : 0, target);
+      const label = (src && src.label) || (at && at.metric_label);
+      const unit = label ? ` ${TopochainChallenges.str(label)}` : '';
+      return {
+        state: count > 0 || points > 0 ? 'progress' : 'new',
+        stateLabel: `${count}/${target}${unit}`,
+        fill: count / target,
+        counted: true,
+        earned: null,
+      };
+    }
+    if (points) return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+    // Points, not rows: a zero-point ledger row is not a step taken.
+    return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
   },
 
   // A card click, by its index in the flat ordered array. Recomputed rather
