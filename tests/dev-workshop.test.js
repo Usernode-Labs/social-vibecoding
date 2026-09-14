@@ -30,6 +30,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
+const { loadTsx } = require('./lib/render-tsx');
 const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
@@ -1569,6 +1570,106 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
 });
 
+test('#1887: a card about your own session opens the CARD, with the session a link inside it', () => {
+  // Opening a card about your own session used to navigate to the session
+  // — the row's page link and the delegated #dev-body handler both went to
+  // /dev/sessions/<id>. It is a card like every other now: the row unfolds
+  // it in place, the change's page is the open card's pill (#1886), and the
+  // session is a link INSIDE the open card — the one line under the sheet.
+  const mine = { id: 51, session_title: 'Bottom tabs', status: 'active', pr_number: null, linked_issues: [],
+    created_at: at(1), last_activity_at: at(0) };
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [{ ...mine }];
+  const v = AppView._workshopView();
+  const row = v.mine.rows.find((r) => r.t === 'card' && r.card.attrs['data-session-chip'] === '51');
+  assert.ok(row, 'the session is on the lander, carrying the hook the checks name it by');
+  assert.equal(row.key, 'mine:my-session:51');
+
+  // Folded, it is a disclosure like every other row: no destination of its
+  // own, and nothing on the lander links to the session.
+  const folded = workshopHtml(AppView);
+  assert.match(folded, /class="dev-ws-row[^"]*"[^>]*aria-expanded="false"[^>]*data-ws-row="mine:my-session:51"[^>]*data-session-chip="51"/);
+  assert.ok(!folded.includes('/dev/sessions/51'), 'folded, the session is linked from nowhere');
+  assert.ok(!folded.includes('dev-ws-sheet-actions'), 'and there is no line under a row to carry a link');
+
+  // Unfolded — through the deep link the declared check uses — it is the
+  // card: its pill in the action band, and under the sheet one line, the
+  // session's.
+  AppView._workshopShot = 'mine-session';
+  assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 'mine', key: 'mine:my-session:51' });
+  const open = workshopHtml(AppView);
+  assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
+    'the open card, hook intact');
+  // The change's page is the pill's, not a line under the sheet (#1886):
+  // "Open card" opens the card's sections here, and once they are open the
+  // same pill is "Open page ›", the link to the change's page.
+  assert.match(open, /<button type="button" class="gc-vote-btn dev-ws-open-btn" aria-expanded="false" data-ws-open-card="mine:my-session:51">Open card<\/button>/,
+    'the open card carries the pill');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'and open, the pill is the page link');
+  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
+  // Under the sheet, the session — alone. #2030's point was that two
+  // controls both reading "Open" confused; the session is a different
+  // destination from the page the pill opens, so it keeps its own link,
+  // and it is the one thing the line holds: no separator, nothing beside it.
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div><\/div>/,
+    'the session link is the line under the sheet, and the last thing in it');
+  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
+  assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
+  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
+    'the separator went with the second link');
+  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
+    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
+
+  // The helpers, from the bundle: the card's page is the change's, and only
+  // a hook for one of YOUR sessions names a session — an imported PR of
+  // yours has no dev chat, and nobody else's session is yours to open.
+  const { openHref, sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(openHref('demo-app', row.card), '#app/demo-app/dev/proposals/51');
+  assert.equal(sessionHref('demo-app', row.card), '#app/demo-app/dev/sessions/51');
+  for (const hook of ['data-shared-session-row', 'data-proposal-row', 'data-issue-row', 'data-gov-row']) {
+    assert.equal(sessionHref('demo-app', { attrs: { [hook]: '51' } }), null, `${hook} is not a session of yours`);
+  }
+  assert.equal(sessionHref('', row.card), null, 'and no app, no route');
+
+  // A tap outside a fold — the delegated #dev-body handler — opens the
+  // change's page too, never the session (#2020). The session's own route
+  // stays for the links that hold it: the one above, and a bookmark.
+  const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("const sessionChip = e.target.closest('[data-session-chip]');"));
+  assert.match(click.slice(0, 400), /AppView\.openTopic\('proposal', parseInt\(sessionChip\.dataset\.sessionChip, 10\)\);/);
+  assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
+    'no card hook navigates to the session any more');
+
+  // On the Board the open card's "Open card" is the change's page as well,
+  // and there is no line under the card: that page carries the workspace.
+  const board = makeAppView({ location: { search: '?cards=open', hash: '', href: 'http://localhost/?cards=open' } });
+  seed(board);
+  board._mySessions = [{ ...mine }];
+  const bh = kanbanHtml(board);
+  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
+  assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
+
+  // Declared: the deep link, on the Workshop, reaching the link. RETARGETED
+  // from the text-only board check that owned the busy mock row rather than
+  // added: the manifest sits at its ceiling (services/app-manifest.js keeps
+  // 20 slots clear of MAX_DECLARED_TESTS), so one check owns that row before
+  // and after — as the card it opens into, with the session inside it. The
+  // selector walks the markup above: the lane, the open wrapper, the sheet,
+  // the card by its hook, and the line under it — a later sibling of the
+  // card, past the thread — holding the session link alone (the page link
+  // it once had to pass on the way is the pill's now, #1886).
+  const check = dapp.tests.find((t) => /#1887/.test(t.name));
+  assert.ok(check, 'a declared check pins it');
+  assert.equal(check.path, '/?demo=1&shot=mine-session#app/usernode-2d5619/workshop');
+  assert.equal(check.expectSelector,
+    '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
+  assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');
+  assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
+  assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,
+    'the shot is read where the other Workshop shots are');
+});
+
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
   // `statusLead` put a caller's control at the right end of the facts line
   // and moved the card's own pills up beside it. Nothing passed one once the
@@ -1889,20 +1990,29 @@ test('the sheet CSS moved host with the entry, and the Workshop has its own', ()
 
 test('workshop replaced feed as a mode, and the retired names resolve onto it', () => {
   const AppView = makeAppView();
-  assert.deepEqual(plain(AppView.VIEW_MODES), ['workshop', 'kanban']);
+  assert.deepEqual(plain(AppView.VIEW_MODES), ['workshop']);
   assert.equal(AppView._migrateViewMode('feed'), 'workshop');
   assert.equal(AppView._migrateViewMode('list'), 'workshop');
-  assert.equal(AppView._migrateViewMode('pm'), 'kanban');
+  // 'pm' and 'report' were board-shaped and resolved to the Board; the Board
+  // mode has retired in turn, so the chain ends at the one mode left — as does
+  // 'kanban' itself, which is what a viewer who last left the Dev screen on
+  // the Board still has stored.
+  assert.equal(AppView._migrateViewMode('pm'), 'workshop');
+  assert.equal(AppView._migrateViewMode('report'), 'workshop');
+  assert.equal(AppView._migrateViewMode('kanban'), 'workshop');
   assert.equal(AppView._getViewMode(), 'workshop', 'the default on every width');
   assert.ok(!APP_VIEW_SRC.includes('_rerenderFeed()'), 'the feed renderer is gone');
   assert.ok(!APP_VIEW_SRC.includes('_feedView()'), 'and its view model');
   assert.match(APP_VIEW_SRC, /_rerenderWorkshop\(\)/);
 });
 
-test('the strip is App | Workshop | Board, and the segments are anchors at their routes', () => {
-  assert.match(VIEW_TABS, /data-context-row="app"[\s\S]*data-context-row="workshop"[\s\S]*data-context-row="board"/);
+test('the strip is App | Workshop, and the Workshop is an anchor at its route', () => {
+  assert.match(VIEW_TABS, /data-context-row="app"[\s\S]*data-context-row="workshop"/);
   assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/);
   assert.ok(!VIEW_TABS.includes('data-context-row="activity"'), 'the Activity segment retired');
+  assert.ok(!VIEW_TABS.includes('data-context-row="board"'),
+    'and the Board segment after it — the Workshop and the kanban are one '
+    + 'screen in two layouts, so the layout is not a destination in the strip');
   assert.match(VIEW_TABS, />Workshop</);
 });
 
@@ -1969,8 +2079,25 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
     assert.ok(!/#dev-(kanban|body)[^,]*gc-explore-chat-btn/.test(t.expectSelector || ''),
       `${t.name}: nor for Explore on a card face`);
   }
-  const strip = byName(/three views in order: App, Workshop, Board/);
-  assert.ok(strip && /workshop.*board/.test(strip.expectSelector));
+  const strip = byName(/two views in order: App, then Workshop/);
+  assert.ok(strip && /workshop/.test(strip.expectSelector)
+    && !/board/.test(strip.expectSelector),
+    'the order check lost its Board segment along with the segment');
+  // The board route keeps a check of its own, because removing a segment can
+  // leave a segmented control with NOTHING selected — which reads as broken
+  // rather than as "you are somewhere else". It marks Workshop there instead.
+  //
+  // A PLAIN CHAIN, for the reason this file gives above: `:has()` resolved
+  // perfectly in this repo's own Chromium and failed 6 of 6 runs on the gate.
+  // The ABSENCE of the Board segment is pinned in the unit tests (this file,
+  // dev-board-island, improve-session-segment) rather than in a selector that
+  // blocks merge.
+  const onBoard = byName(/marks Workshop on the board route/);
+  assert.ok(onBoard && /\[data-context-row="workshop"\]\[aria-current="page"\]/
+    .test(onBoard.expectSelector), 'the strip is never blank on the board route');
+  assert.match(onBoard.path, /#app\/[\w-]+\/board$/, 'and the URL names that route');
+  assert.ok(!onBoard.expectSelector.includes(':has('),
+    'no :has() on a gate that blocks merge');
   for (const t of dapp.tests) {
     assert.ok(!/#dev-feed\b/.test(t.expectSelector || ''), `${t.name}: no check selects the retired #dev-feed`);
   }
@@ -2131,18 +2258,31 @@ test('the board view model is built only for the pane that shows it', () => {
     'and published before the mount');
 });
 
-test('the tabs are additive: the Board view mode and its control are untouched', () => {
-  // #1995-era decision, recorded here because the next change to this screen
-  // is the one that would quietly drop the standalone board.
-  assert.ok(APP_VIEW_SRC.includes("VIEW_MODES: ['workshop', 'kanban']")
-    || /VIEW_MODES:\s*\['workshop', 'kanban'\]/.test(APP_VIEW_SRC),
-    'both dev view modes still exist');
-  assert.match(VIEW_TABS, /board/i, 'the Improve panel still offers the Board row');
-  // The two surfaces can never be on screen together — `_repaintDevBody`
-  // gives #dev-body to exactly one of them — which is why both can render
-  // #dev-kanban without a duplicate id.
+test('the tabs are no longer additive: the Board view mode retired onto them', () => {
+  // The #1995-era decision was that the grouping tabs were ADDITIVE and the
+  // standalone board was untouched, and this test existed because "the next
+  // change to this screen is the one that would quietly drop the standalone
+  // board". That change is this one, and it is not quiet: the stage pane
+  // renders the same <DevKanban/> from the same published view model, so the
+  // Board view mode was a second surface for something the lander contains.
+  assert.match(APP_VIEW_SRC, /VIEW_MODES: \['workshop'\]/, 'one dev view mode');
+  assert.ok(!/VIEW_MODES: \['workshop', 'kanban'\]/.test(APP_VIEW_SRC),
+    'the Board mode is gone from the list, not merely unreachable by default');
+  assert.match(APP_VIEW_SRC, /kanban: 'workshop'/,
+    'and a stored preference naming it migrates rather than being forgotten');
+  assert.ok(!/data-context-row="board"/.test(VIEW_TABS),
+    'the Improve panel offers no Board segment');
+  // WHAT IS NOT REMOVED. The columns, the route and the old deep link all
+  // still resolve — onto the stage pane — and the standalone surface's own
+  // code is still here, now unreachable, to be swept separately rather than
+  // torn out alongside a routing change.
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-kanban-board"><\/div>'/);
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-workshop"><\/div>'/);
+  assert.match(APP_VIEW_SRC, /_overrideWorkshopGroup\(group\) \{/,
+    'the retired board ROUTE has a landing');
+  const board = dapp.tests.find((t) => /board resolves onto the stage pane/.test(t.name || ''));
+  assert.ok(board && /\[data-ws-stage\]/.test(board.expectSelector),
+    'and a declared check proves that landing draws the columns');
 });
 
 test('the grouping preference lasts, and an unknown stored value is category', () => {
@@ -2155,6 +2295,82 @@ test('the grouping preference lasts, and an unknown stored value is category', (
   assert.equal(AppView._getWorkshopGroup(), 'category', 'an unknown mode falls back');
   store.devWorkshopGroup = 'themes';
   assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
+});
+
+test('a retired Board preference opens on the columns, not on the categories', () => {
+  // The other half of retiring the Board VIEW MODE. RETIRED_VIEW_MODES stops a
+  // stored 'kanban' naming a mode that no longer exists — but on its own it
+  // forgets what the viewer actually chose, which was the COLUMNS, and hands
+  // them the categories instead. The three board-shaped values therefore open
+  // on the stage pane.
+  for (const mode of ['kanban', 'pm', 'report']) {
+    const AppView = makeAppView({ localStorage: { devViewMode: mode } });
+    assert.equal(AppView._getViewMode(), 'workshop', `${mode} migrates to the one mode left`);
+    assert.equal(AppView._getWorkshopGroup(), 'stage', `${mode} still opens on the columns`);
+  }
+  // The Workshop's own predecessors get its own default pane: those viewers
+  // never chose columns.
+  for (const mode of ['feed', 'list', 'workshop']) {
+    const AppView = makeAppView({ localStorage: { devViewMode: mode } });
+    assert.equal(AppView._getWorkshopGroup(), 'category', `${mode} lands on the lander`);
+  }
+  // A grouping the viewer actually chose outranks the migration — it is read
+  // first, so the migration only ever fills a gap.
+  const chosen = makeAppView({
+    localStorage: { devViewMode: 'kanban', devWorkshopGroup: 'category' },
+  });
+  assert.equal(chosen._getWorkshopGroup(), 'category');
+  // READ-TIME, like every other migration here: nothing is written back, so
+  // the day they pick a pane that choice is what persists.
+  const store = { devViewMode: 'kanban' };
+  const fresh = makeAppView({ localStorage: store });
+  assert.equal(fresh._getWorkshopGroup(), 'stage');
+  assert.ok(!('devWorkshopGroup' in store), 'the migration stores nothing');
+});
+
+test('reaching the retired Board takes BOTH answers: the All items tab and the stage pane', () => {
+  // THE BUG THIS GUARDS, which cost a full round of the merge gate. Those
+  // columns are the `stage` grouping OF THE `all` TAB. A first attempt set the
+  // grouping alone — and the lander then opens on its DEFAULT tab, where the
+  // grouping control is not rendered at all, so the pane never mounts and all
+  // 69 declared checks that select #dev-kanban on a board route failed at once.
+  // Every way in has to supply both halves, and the test above proves that
+  // ('all', 'stage') is what puts the board's own markup on screen verbatim.
+  const at = (o) => {
+    const A = makeAppView(o);
+    return [A._workshopTab(), A._getWorkshopGroup()].join('/');
+  };
+  const loc = (search) => ({
+    location: { search, hash: '', href: `http://localhost/${search}` },
+  });
+
+  // 1. The route alias, driven exactly as app.js's restoreFromHash drives it.
+  const route = makeAppView({ localStorage: {} });
+  route._overrideWorkshopTab('all');
+  route._overrideWorkshopGroup('stage');
+  assert.equal([route._workshopTab(), route._getWorkshopGroup()].join('/'),
+    'all/stage', '#app/<slug>/board');
+
+  // 2. The retired deep link, which named one thing and meant two.
+  assert.equal(at(loc('?view=kanban')), 'all/stage', '?view=kanban');
+
+  // 3. The stored preference of somebody who last left the Dev screen on it.
+  for (const mode of ['kanban', 'pm', 'report']) {
+    assert.equal(at({ localStorage: { devViewMode: mode } }), 'all/stage', mode);
+  }
+
+  // ...and none of those three may drag anybody else onto the board.
+  assert.equal(at({ localStorage: {} }), 'status/category', 'the lander default');
+  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status/category',
+    'the Workshop replaced feed: that viewer never chose columns');
+
+  // The parameters still being offered, and the viewer's own taps, outrank
+  // every hop above — each half independently.
+  assert.equal(at(loc('?view=kanban&ws=needs')), 'needs/stage', 'an explicit tab wins');
+  assert.equal(at(loc('?view=kanban&group=category')), 'all/category', 'an explicit pane wins');
+  assert.equal(at({
+    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs', devWorkshopGroup: 'category' },
+  }), 'needs/category', 'and choices they have actually made win over the migration');
 });
 
 test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
@@ -2604,15 +2820,9 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
 test('the ask composer keeps a visible send, and opens with it in the bottom-right corner', () => {
   // The whole controls row used to sit behind focus, which took the send
   // circle with it and left a card that looked like a text box and nothing
-  // else — no sign it would do anything. That half still holds: SHUT, the
-  // send is on the resting line, so a one-row card still says it sends.
-  //
-  // OPEN, it is the last thing in the card. A composer's send belongs in the
-  // bottom-right corner — it is where `.dc-card-row` puts the dev session's
-  // own — and the earlier rule that pinned it to the resting line in BOTH
-  // states was protecting a press that cannot happen: the button is disabled
-  // until there is a draft, and there is no draft until the field has been
-  // tapped, which is the same tap that opens the row.
+  // else — no sign it would do anything. The card has no shut state any
+  // more, so the circle has ONE home: the bottom-right corner, where
+  // `.dc-card-row` puts the dev session's own.
   const send = /const sendBtn = \(([\s\S]*?)\n  \);/.exec(WORKSHOP);
   assert.ok(send, 'the circle is written ONCE, so its two homes cannot drift');
   assert.match(send[1], /className="dc-send-btn dc-circle-send dev-ws-ask-send"/);
@@ -2620,10 +2830,10 @@ test('the ask composer keeps a visible send, and opens with it in the bottom-rig
   const line = /<div className="dev-ws-ask-line">([\s\S]*?)<\/div>/.exec(WORKSHOP);
   assert.ok(line, 'the composer has a resting line');
   assert.match(line[1], /id="dev-ws-ask-input"/, 'the field is on it');
-  assert.match(line[1], /\{expanded \? null : sendBtn\}/,
-    'and the circle, while the card is one row');
-  const row = /\{expanded \? \(\s*<div className="dev-ws-ask-row">([\s\S]*?)\n          <\/div>/.exec(WORKSHOP);
-  assert.ok(row, 'the controls row is gated on `expanded`');
+  assert.ok(!/\{expanded/.test(WORKSHOP),
+    'nothing in the composer waits for a tap: the controls row is always there');
+  const row = /<div className="dev-ws-ask-row">([\s\S]*?)\n          <\/div>/.exec(WORKSHOP);
+  assert.ok(row, 'the controls row is written once, ungated');
   assert.match(row[1], /data-ws-ask-model/, 'the model picker is in it');
   assert.match(row[1], /\{sendBtn\}/, 'and the circle, as the row\'s last child');
   assert.ok(row[1].indexOf('data-ws-ask-model') < row[1].indexOf('{sendBtn}'),
@@ -2759,19 +2969,14 @@ test('since-your-last-visit shows three and reveals the rest, like the week walk
   assert.ok(!quiet.includes('data-ws-since-more'));
 });
 
-test('the composer opens expanded on a desktop and stays one line on a phone', () => {
-  // The pane is a third of a tall window with nothing competing for it, the
-  // one-line form hid the model picker behind a click nobody knew to make,
-  // and no keyboard is about to take half the screen — so above the
-  // breakpoint the box opens the way it will be used. Below it the deck is a
-  // fitted screen and the second row is height the card in front of you wants
-  // back, so it stays the one line it was until the field is tapped.
-  assert.match(WORKSHOP, /const expanded = wide \|\| focused \|\| engaged;/);
+test('the composer shows its model picker and send circle at every width', () => {
+  // It used to open expanded above the breakpoint and stay one line on a
+  // phone until the field was tapped. The tap was the problem: a picker
+  // behind it was a picker nobody knew was there. So there is no collapsed
+  // state and no `focused` flag to seed, or to lose again on blur.
+  assert.ok(!/const expanded = /.test(WORKSHOP), 'no expanded/collapsed state');
+  assert.ok(!/setFocused\(/.test(WORKSHOP), 'and no focus flag driving one');
   assert.match(WORKSHOP, /const wide = useWideLayout\(\);/);
-  // `wide` rather than a seeded `focused`, which is the part worth pinning:
-  // blur with an empty draft sets `focused` false, so seeding it would have
-  // shut the box again on the first click away.
-  assert.match(WORKSHOP, /onBlur=\{\(\) => \{ if \(!draft\.trim\(\)\) setFocused\(false\); \}\}/);
   // READ AT MOUNT, unlike `useRailHost` — nothing here is prerendered (the
   // Workshop mounts client-side into a host `_repaintDevBody()` creates), so
   // there is no first paint to disagree with, and a collapsed frame followed
@@ -2780,6 +2985,47 @@ test('the composer opens expanded on a desktop and stays one line on a phone', (
   // And guarded, because the render this suite does happens in node, where
   // there is no matchMedia at all.
   assert.match(WORKSHOP, /typeof window !== 'undefined' && typeof window\.matchMedia === 'function'/);
+});
+
+test('the sheets move, stop above the keyboard, and More opens the card page', () => {
+  // OPEN AND CLOSE ANIMATE. A sheet unmounts when it closes, so the leave
+  // needs the element kept for the animation's length: `leaving` holds the
+  // kind, `[data-ws-leaving]` marks it, and a timer drops it — instantly
+  // where motion is unwelcome, because app.css runs no animation there.
+  assert.match(WORKSHOP, /const \[leaving, setLeaving\] = useState<SheetKind \| null>\(null\);/);
+  assert.match(WORKSHOP, /const shown = sheet \|\| leaving;/);
+  assert.match(WORKSHOP, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+  assert.match(CSS, /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
+  assert.match(CSS, /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
+  // A panel slides in from the side it lives on; a popover pops. Same rule,
+  // different names, set where the panel and the popover are declared.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
+  assert.match(wide, /--ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;/);
+  assert.match(wide, /--ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out;/);
+  // THE KEYBOARD. Fixed elements are laid out against the layout viewport,
+  // which the on-screen keyboard does not shrink, so the card's floor — and
+  // the field on it — sat under the keys. The visual viewport does shrink;
+  // the difference lifts the sheet's floor, only while a sheet is up and only
+  // below the breakpoint.
+  assert.match(WORKSHOP, /window\.innerHeight - vv\.height - vv\.offsetTop/);
+  assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
+  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--ws-kb, 0px\);/);
+  assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
+  assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
+    'and the floor clears the home indicator');
+  // OPEN CARD. The item is the whole screen, so the card's own page is a row
+  // under More; the href rides on the trigger and app-view.js reads it.
+  assert.match(WORKSHOP, /data-card-menu-open=\{cardHref \|\| undefined\}/);
+  assert.match(WORKSHOP, /const cardHref = row \? openHref\(slug, row\.card\) : null;/);
+  const appView = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(appView, /trigger\.dataset\.cardMenuOpen/);
+  // The row is part of the ONE descriptor list every reader of the menu
+  // uses, so a row's index means the same thing in the menu that opened and
+  // in the refreshed one under it — prepending it in only the opener once
+  // sent the first row's click to the wrong descriptor on a desktop.
+  assert.match(appView, /_cardMenuItems\(key, own\)/);
+  assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
+  assert.match(appView, /label: 'Open card',/);
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
@@ -2876,6 +3122,21 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // row is pinned in place with its confirmation until you move on.
   assert.ok(!/window\.setTimeout\(\(\) => setAt\(i \+ 1\)/.test(WORKSHOP), 'no auto-advance');
   assert.match(WORKSHOP, /pinsRef\.current\.set\(row\.key, \{ row, index: i \}\);/, 'the answered row is pinned');
+  // AND STAYS PINNED. The pins used to be dropped once the next card had
+  // settled, which removed the voted row from ABOVE the one in view: every
+  // index after it moved, the counter re-numbered, the index-keyed tint
+  // flipped, and the scroll correction — a `scrollTop` assignment under the
+  // scroller's `scroll-behavior: smooth` — animated the card back into place.
+  // That was "the card I just arrived on resets a second later".
+  assert.ok(!/dropPins|settleRef/.test(WORKSHOP), 'no pin is dropped on a move');
+  assert.match(WORKSHOP, /const tintRef = useRef<Map<string, 'a' \| 'b'>>\(new Map\(\)\);/,
+    'a row\'s tint is decided once, from where it first stood');
+  assert.match(WORKSHOP, /tint=\{tints\[k\]\}/);
+  assert.match(WORKSHOP, /tint = prev === 'a' \? 'b' : 'a'; seen\.set\(r\.key, tint\);/,
+    'a row seen for the first time takes the opposite of the row above it');
+  assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
+  assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
+    'a position correction is instant, whatever the scroller\'s own behaviour');
   assert.match(WORKSHOP, /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
     'and the eyebrow becomes the confirmation');
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
