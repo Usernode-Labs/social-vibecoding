@@ -128,7 +128,7 @@ test('the tile still shows the app, and is no longer a positioning context', () 
 
 // ── The declared checks follow the markup ──────────────────────────────
 
-test('the two mock rows are the rendered evidence, and no check was added', () => {
+test('the two mock rows are the rendered evidence, with one check per row', () => {
   const at = (href) => MANIFEST.tests.filter((t) =>
     (t.expectSelector || '').includes(`/sessions/${href}"]`));
 
@@ -145,7 +145,8 @@ test('the two mock rows are the rendered evidence, and no check was added', () =
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'the arc is still what it selects — #1597\'s check, narrowed');
 
-  // Both RETARGET. The manifest is 20 slots clear of its ceiling and staying
-  // there is the point (see tests/improve-session-spinner.test.js).
-  assert.equal(MANIFEST.tests.length, 616);
+  // Both RETARGET rather than duplicate: the exact one-per-row assertions
+  // above pin that invariant. Manifest-wide headroom belongs to
+  // improve-session-spinner.test.js and checks-budget.test.js; an absolute
+  // total here makes unrelated declared checks break this regression.
 });
