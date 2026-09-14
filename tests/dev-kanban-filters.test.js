@@ -530,6 +530,35 @@ test('persistence helpers survive a storage-less environment', () => {
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
 });
 
+test('?q= seeds the search on the first load, and only the first (#2090)', () => {
+  const store = makeMemoryStore();
+  const sandbox = makeCtx({ sessionStorage: store });
+  const AppView = sandbox.__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  // The sandbox has no URL of its own; hand it the deep link.
+  sandbox.location = { search: '?demo=1&q=%20ripple%20' };
+  sandbox.URLSearchParams = URLSearchParams;
+  // A falsy slug never touches storage — and does not spend the seed either.
+  assert.deepEqual(plain(AppView._loadKanbanFilters('')), none);
+  assert.equal(AppView._loadKanbanFilters('my-app').q, 'ripple', 'trimmed, over the stored set');
+  // Written straight to storage, so a surface switch restores it exactly as
+  // it would a typed search…
+  assert.equal(JSON.parse(store.getItem(key)).q, 'ripple');
+  // …and the viewer's clearing of it is the last word, though the URL still
+  // says `?q=ripple` on every one of these loads. Held rather than consumed,
+  // the seed would put the search straight back — #2090 in a new coat.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(AppView._loadKanbanFilters('my-app').q, '', 'a cleared search stays cleared');
+  assert.equal(AppView._loadKanbanFilters('other-app').q, '', 'and no other app inherits it');
+  // Blank is absent: nothing seeded, nothing written.
+  const blank = makeCtx({ sessionStorage: makeMemoryStore() });
+  blank.location = { search: '?q=%20%20' };
+  blank.URLSearchParams = URLSearchParams;
+  assert.deepEqual(plain(blank.__AppView._loadKanbanFilters('my-app')), none);
+  assert.equal(blank.sessionStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
+});
+
 // ── Session cards have only the filters their data supports ─────────────────
 // The In progress column now holds the viewer's pinned sessions (top) and
 // other users' shared sessions (bottom). The filter bar's vocabulary

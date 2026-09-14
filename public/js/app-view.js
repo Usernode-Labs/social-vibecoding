@@ -446,19 +446,53 @@ const AppView = {
   _defaultKanbanFilters() {
     return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
   },
+  // `?q=<text>` — a deep link to a surface already narrowed to a search, the
+  // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
+  // `_devCardMatches` as a substring and never used as a selector. It is
+  // what the declared check for #2090 navigates to: "a search that matches
+  // nothing" was a state only typing could reach.
+  //
+  // CONSUMED ON THE FIRST LOAD, NOT HELD. `?view=` and `?col=` stay live until
+  // the viewer chooses, because re-reading them is harmless. A held search is
+  // not: `_loadKanbanFilters` runs on every entry to a surface, and a seed it
+  // kept re-applying would put a search the viewer had just cleared straight
+  // back — #2090 in a new coat. So the first load folds it in and persists
+  // it, and from then on it is a typed search: edited, cleared and restored
+  // through the same paths as one, with the URL never consulted again.
+  _kanbanSearchUrlSeed: undefined,
+  _takeKanbanSearchSeed() {
+    if (AppView._kanbanSearchUrlSeed === undefined) {
+      try {
+        const raw = new URLSearchParams(window.location.search).get('q');
+        // Capped: it lands in the box and a chip label, not a document.
+        AppView._kanbanSearchUrlSeed = raw && raw.trim() ? raw.trim().slice(0, 200) : null;
+      } catch { AppView._kanbanSearchUrlSeed = null; }
+    }
+    const seed = AppView._kanbanSearchUrlSeed;
+    AppView._kanbanSearchUrlSeed = null;
+    return seed;
+  },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
   // defaults for a falsy slug, nothing stored, or any storage/parse failure.
+  // The `?q=` seed, the once it applies, goes over whichever of those came
+  // back and is written straight to storage, so a surface switch restores it
+  // exactly as it would a typed search.
   _loadKanbanFilters(slug) {
     const def = AppView._defaultKanbanFilters();
     if (!slug) return def;
+    const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
+    let stored = def;
     try {
-      const raw = window.sessionStorage.getItem(`${AppView.KANBAN_FILTERS_KEY}:${slug}`);
-      if (!raw) return def;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return def;
-      return { ...def, ...parsed };
-    } catch { return def; }
+      const raw = window.sessionStorage.getItem(key);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object') stored = { ...def, ...parsed };
+    } catch { stored = def; }
+    const seed = AppView._takeKanbanSearchSeed();
+    if (!seed) return stored;
+    const seeded = { ...stored, q: seed };
+    try { window.sessionStorage.setItem(key, JSON.stringify(seeded)); } catch {}
+    return seeded;
   },
   // Persist the current filters under the app slug. Clears the key when the
   // filters are at their defaults so a cleared board leaves no residue.
