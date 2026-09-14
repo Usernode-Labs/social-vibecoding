@@ -18,14 +18,21 @@
  * app that says what it is gets opened, and the directory is one tap away for
  * everything else.
  *
- * ── BOTH LANES SURVIVE, as two rails ──────────────────────────────────
+ * ── ONE LANE, NOT TWO ─────────────────────────────────────────────────
  *
- * Featured, then "Popular" (the most-used apps this viewer doesn't have).
- * The reference draws ONE rail, and merging the two would halve the block's
- * height — but the second lane is a deliberate decision (#949 hid it on
- * phones; the fix that brought it back at every width is asserted from
- * dapp.json), and a redesign is not the place to quietly undo it. Same card
- * in both, so the block reads as one idea at two levels of curation.
+ * Discover is ONE category. It used to draw two rails — the curated apps,
+ * then a "Popular" caption row, then the most-used apps this viewer doesn't
+ * have — and the caption was the only thing saying they were different. The
+ * distinction is an implementation detail of how the list is assembled, not
+ * something a reader of the home feed has to be told, so both sources now
+ * flow into a single continuous rail under the one "Discover" heading.
+ *
+ * What did NOT change: the ORDER. Curated first (by `featured_order`), then
+ * popular (by active users) — exactly the sequence the two rails drew in,
+ * concatenated. `discoverView` still derives the two lists separately and
+ * both counts are still stamped on the article, because they describe the
+ * block's composition and dapp.json selects on them; only the rendering is
+ * flat.
  *
  * ── The tiles keep Home's wiring ─────────────────────────────────────
  *
@@ -34,7 +41,10 @@
  * `.card-menu-btn`, so the CARD keeps those class names however it is drawn;
  * it attaches listeners and writes no markup, which is what keeps one owner
  * for the subtree. Per LANE, not per block: a lane whose cards were never
- * wired looks identical in a screenshot while every tap in it is dead.
+ * wired looks identical in a screenshot while every tap in it is dead. With
+ * the merge there is exactly one lane to hand it, which retires the whole
+ * class of bug where the sweep bound the first rail and left the second
+ * inert.
  *
  * It is also IDEMPOTENT (#1567), which the effect below now depends on: the
  * badge really does flip between renders since an add repaints in place, and
@@ -252,6 +262,14 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
  * continues (see `.home-discover-rail` in app.css).
  */
 export function DiscoverPanel({ view }: { view: DiscoverView }) {
+  // Curated first, then popular — the same order the two rails drew in, now
+  // as one list. Deduped by slug because the two derivations are independent:
+  // `popularApps` excludes `featured` today, but a flat lane is where that
+  // would show up as the same card twice rather than as one card per rail.
+  const seen = new Set<string>();
+  const tiles = [...view.featured, ...view.popular]
+    .filter((tile) => (seen.has(tile.slug) ? false : (seen.add(tile.slug), true)));
+
   return (
     <PanelShell
       panelKey={view.key}
@@ -259,8 +277,8 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       plate="none"
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
     >
-      {view.featured.length ? (
-        <Lane tiles={view.featured} />
+      {tiles.length ? (
+        <Lane tiles={tiles} />
       ) : (
         /* #1913: the empty state is a CARD, not a grey caption. It was one
            centred 12px line, which read as an error note where the rail of
@@ -268,16 +286,20 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
            tinted plate with a hairline — and the whole plate is the way on
            to the directory, the one thing there is to do here. A fixed tint
            rather than `cardTint`: it is not an app, so there is no slug to
-           hash, and a constant keeps the prerender and the client equal. The
-           wording keeps "Nothing featured right now", which dapp.json's
-           discover-empty check and the home tests read. */
+           hash, and a constant keeps the prerender and the client equal.
+
+           It is the WHOLE block's empty state now. With two rails it stood
+           in for the curated half only, so it could sit directly above six
+           perfectly good popular cards; one lane makes that a contradiction,
+           and the wording says "discover" because that is the category it is
+           reporting on. */
         <a
           href="#apps"
           className="home-discover-lane home-discover-empty home-tint-2 flex items-center gap-3"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
-              Nothing featured right now
+              Nothing to discover right now
             </span>
             <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
               Browse the directory to find an app to try.
@@ -286,18 +308,6 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
           <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
         </a>
       )}
-      {/*
-          No popular apps → no divider and no second rail, rather than a second
-          apology stacked under the first.
-      */}
-      {view.popular.length ? (
-        <>
-          <div className="home-discover-divider flex-none flex items-center px-2.5">
-            <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Popular</span>
-          </div>
-          <Lane tiles={view.popular} extraClass="home-discover-popular" />
-        </>
-      ) : null}
     </PanelShell>
   );
 }

@@ -2520,6 +2520,74 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   assert.ok(html.indexOf('data-discussion-row') < pane, 'and so is the discussion');
 });
 
+test('a search that matches nothing keeps the pane on screen, with the search box in it (#2090)', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+  assert.equal(v.themes.length, 0, 'no theme has a row left to draw');
+  assert.equal(v.meta.filtered, true);
+  const html = workshopHtml(AppView, 'all');
+  // THE PANE STAYS. It was gated on having a theme to draw, so a search that
+  // matched nothing unmounted the whole pane — the grouping tabs, the "+",
+  // and the toolbar whose host the search field lives in. The one control
+  // that could undo the search left the screen with the rows, and the viewer
+  // was stuck on a board they could not widen back out.
+  assert.ok(html.includes('data-ws-pane'), 'the pane renders');
+  assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
+  // The rows' place says why they are gone, UNDER the controls it is about.
+  assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
+  assert.ok(html.indexOf('id="dev-actions"') < html.indexOf('data-ws-empty'), 'beneath the toolbar');
+  assert.ok(html.indexOf('dev-ws-pane-body') < html.indexOf('data-ws-empty'), 'in the pane body');
+  // And nothing pretends there is a list: no sort row over an empty list, no
+  // "0 categories", no footnote about how they were drafted.
+  assert.ok(!html.includes('dev-ws-sort'), 'no sort row');
+  assert.ok(!html.includes('dev-ws-themes'), 'no empty theme list');
+  assert.ok(!html.includes('dev-ws-foot-note'), 'no grouping footnote');
+  // Widen the search back out and the list is back, the note gone.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  const back = workshopHtml(AppView, 'all');
+  assert.ok(back.includes('dev-ws-themes'), 'the themes return');
+  assert.ok(!back.includes('data-ws-empty'), 'and the note goes');
+  // The declared check runs this state in a browser: the pane opened already
+  // narrowed to a search nothing matches, through `?q=` (app-view.js, where
+  // the seed is consumed on the first load so it can never hold a cleared
+  // search). The note is what proves the search applied — without it the box
+  // alone would pass on a pane the URL never narrowed.
+  const check = dapp.tests.find((t) => /[?&]q=/.test(t.path || ''));
+  assert.ok(check, 'a declared check opens the pane narrowed by ?q=');
+  assert.match(check.path, /[?&]ws=all\b/, 'on All items');
+  assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search$/,
+    'and expects the search box, in the pane head');
+  assert.equal(check.expectText, 'Nothing here matches the current search and filters.');
+});
+
+test('an empty board still gets the All items pane, and the note names the "+" that is in it', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._ghIssues = [];
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._mergedTotal = 0;
+  const v = AppView._workshopView();
+  assert.equal(v.themes.length, 0);
+  assert.deepEqual(plain(v.emptyNote), { loadFailed: false, filtered: false });
+  const html = workshopHtml(AppView, 'all');
+  assert.ok(html.includes('data-ws-pane'), 'the pane renders');
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'with the toolbar');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+" the note points at');
+  assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.doesNotMatch(html, /Nothing here matches/, 'no filter is on, so it does not blame one');
+  // The status tab keeps its own copy of the note, over the strips.
+  const status = workshopHtml(AppView, 'status');
+  assert.match(status, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.ok(!status.includes('data-ws-pane'), 'and no pane: that is the All items tab');
+});
+
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {
   // #dev-actions, #dev-plus-btn and #dev-plus-menu are ids. Two copies on
   // screen would break _wirePlusMenu, which looks both up by getElementById.
