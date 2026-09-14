@@ -458,7 +458,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conflict resolution kept and the repo unit suite then caught. A literal is
   // the right shape for this assertion precisely because that mismatch is
   // otherwise silent; it is the arithmetic that needed saying, not the check.
-  assert.equal(DAPP.tests.length, 609);
+  // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
+  // count the trash left behind and one for which draft is still standing.
+  assert.equal(DAPP.tests.length, 611);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
