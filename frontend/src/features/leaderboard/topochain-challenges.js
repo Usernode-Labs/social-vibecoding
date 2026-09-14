@@ -470,6 +470,11 @@ const TopochainChallenges = {
       done: TopochainChallenges._isDone(c),
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
+      // #1914: the challenge kind's icon, the same face Home's block draws
+      // (HomePanels.challengeRowView). `ChallengeTile` renders an empty
+      // neutral square when this is null, which is what every card on this
+      // screen used to get — the payload simply never carried one.
+      icon: str(cp.icon || '').trim().slice(0, 8) || null,
       reward: TopochainChallenges.formatReward(cp.reward),
       ...TopochainChallenges._stateOf(c),
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
