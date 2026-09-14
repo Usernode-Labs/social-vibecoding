@@ -33,7 +33,7 @@
 (function () {
   'use strict';
 
-  // The venues with no Usernode chat. Kept as a list rather than derived
+  // The venues with no Homeroom chat. Kept as a list rather than derived
   // from `chat: false` in build-venues.js so this module still answers
   // correctly when it is loaded without that one (the test harness does
   // exactly that), and asserted against it in tests/launchpad.test.js so
@@ -78,7 +78,7 @@
   // The block the user copies into their own agent. It is deliberately
   // instructions for an AGENT rather than a description for a person: the
   // whole point of this venue is that the next thing to read it is a
-  // coding agent with the Usernode connector attached, and what it needs is
+  // coding agent with the Homeroom connector attached, and what it needs is
   // the two tool calls that bracket the job.
   //
   // `issueNumber` is chat_sessions.created_from_issue_number — the request
@@ -90,7 +90,7 @@
   // state rather than an impossible one:
   //
   //   'new'                  – nothing has been built here. The agent cuts
-  //                            a fresh branch on its own fork and Usernode
+  //                            a fresh branch on its own fork and Homeroom
   //                            opens a new proposal from it.
   //   'session' / 'proposal' – a turn HAS run here, so there is a branch
   //                            with commits on it. The agent must continue
@@ -128,10 +128,10 @@
 
     var lines = [];
     if (resume) {
-      lines.push('Continue work already started on the Usernode app `'
+      lines.push('Continue work already started on the Homeroom app `'
         + (slug || '<app slug>') + '`.');
     } else {
-      lines.push('Build a change to the Usernode app `' + (slug || '<app slug>') + '`.');
+      lines.push('Build a change to the Homeroom app `' + (slug || '<app slug>') + '`.');
     }
     lines.push('');
     if (hasIssue) {
@@ -145,9 +145,9 @@
     }
     lines.push('');
     if (resume) {
-      lines.push('IMPORTANT: this work already has a branch on Usernode, `'
+      lines.push('IMPORTANT: this work already has a branch on Homeroom, `'
         + resume.branch + '`, with commits on it.');
-      lines.push('Do not start over from the app’s default branch. Use the Usernode MCP');
+      lines.push('Do not start over from the app’s default branch. Use the Homeroom MCP');
       lines.push('connector, in this order:');
       lines.push('1. Call `prepare_work` with slug `' + (slug || '<app slug>')
         + '` and proposalId ' + resume.id + '.');
@@ -159,16 +159,16 @@
       lines.push('4. Call `submit_work` with the task id and the branch you pushed, plus');
       lines.push('   `testingPaths` naming the screens you changed.');
       if (resume.kind === 'proposal') {
-        lines.push('   Usernode moves the existing proposal onto your commit instead of');
+        lines.push('   Homeroom moves the existing proposal onto your commit instead of');
         lines.push('   opening a second one, and everyone who already approved it is asked');
         lines.push('   to re-review.');
       } else {
-        lines.push('   Usernode moves this session’s branch onto your commit instead of');
+        lines.push('   Homeroom moves this session’s branch onto your commit instead of');
         lines.push('   opening a second proposal for the same work.');
       }
       return lines.join('\n');
     }
-    lines.push('Use the Usernode MCP connector, in this order:');
+    lines.push('Use the Homeroom MCP connector, in this order:');
     lines.push('1. Call `prepare_work` with slug `' + (slug || '<app slug>') + '`'
       + (hasIssue ? ' and requestNumber ' + issue : '') + '.');
     lines.push('2. Follow the work order it returns EXACTLY. It names the repository, the');
@@ -176,7 +176,7 @@
     lines.push('   from. Do not substitute the fork’s default branch for that commit.');
     lines.push('3. Implement and test the change, then push your branch to your own fork.');
     lines.push('4. Call `submit_work` with the task id and the branch you pushed, plus');
-    lines.push('   `testingPaths` naming the screens you changed. Usernode opens the pull');
+    lines.push('   `testingPaths` naming the screens you changed. Homeroom opens the pull');
     lines.push('   request and puts it to the group’s vote.');
     return lines.join('\n');
   }
@@ -210,7 +210,7 @@
     }
     // A session with no branch yet is the normal case for a hand-off made
     // straight from the start screen (#1350). Say so plainly: there is
-    // nothing to resume, and no branch will ever be created on Usernode
+    // nothing to resume, and no branch will ever be created on Homeroom
     // for it, because the agent works on its own fork.
     if (String(s.targetKind || '') === 'new') {
       return ''
@@ -218,7 +218,7 @@
         + '<div class="dc-launchpad-resume-title">Starting new work</div>'
         + '<div class="dc-launchpad-resume-detail">Nothing has been built in this session '
         + 'yet, so there is nothing to resume. Your agent starts from the app’s current '
-        + 'code on its own fork, and Usernode opens the pull request when it '
+        + 'code on its own fork, and Homeroom opens the pull request when it '
         + 'submits.</div>'
         + '</div>';
     }
@@ -285,12 +285,12 @@
       + '<div class="dc-launchpad" data-launchpad="own-tools-pr">'
       + '<div class="dc-launchpad-lead">Building with your own tools</div>'
       + resumeBannerHtml(s)
-      + '<div class="dc-launchpad-sub">There is no Usernode chat for this one. The conversation '
-      + 'happens in your own agent. Usernode still opens the pull request, builds the preview '
+      + '<div class="dc-launchpad-sub">There is no Homeroom chat for this one. The conversation '
+      + 'happens in your own agent. Homeroom still opens the pull request, builds the preview '
       + 'and runs the checks.</div>'
       + '<div class="dc-launchpad-steps">'
-      + stepHtml(1, 'Connect your agent to Usernode',
-        '<div class="dc-launchpad-step-detail">Adds the Usernode MCP connector, so your agent can '
+      + stepHtml(1, 'Connect your agent to Homeroom',
+        '<div class="dc-launchpad-step-detail">Adds the Homeroom MCP connector, so your agent can '
         + 'read this app and submit work as you. Any MCP-capable agent can use the same URL.</div>'
         + copyBlockHtml(connect, 'Copy command', 'connect'))
       + stepHtml(2, 'Tell your agent what to build',

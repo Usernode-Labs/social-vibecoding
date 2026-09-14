@@ -1310,7 +1310,7 @@ module.exports = {
   },
 };
 
-// Scan existing imported apps for privacy violations. Usernode workers
+// Scan existing imported apps for privacy violations. Homeroom workers
 // run with zero GitHub credentials and rely on unauthenticated public
 // HTTPS clones; a private repo can't be cloned by the worker, so dev
 // sessions against it will fail at bootstrap. Surface those rows at
@@ -4827,7 +4827,7 @@ function startStalePrSweeper(config) {
       for (const session of rows) {
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         try {
-          // Native PR branches can be updated outside Usernode. Refresh their
+          // Native PR branches can be updated outside Homeroom. Refresh their
           // immutable reviewed revision before any timed governance decision,
           // including automatic rejection. Imported proposals retain their
           // existing imported-head synchronization behavior.

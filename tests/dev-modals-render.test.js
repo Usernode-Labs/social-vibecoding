@@ -63,7 +63,7 @@ function makeAppView(opts) {
     },
     Settings: { state: { hasApiKey: false } },
     BuildVenues: o.venue === false ? undefined
-      : { venue: () => ({ label: 'Usernode', blurb: 'Runs on the platform.' }) },
+      : { venue: () => ({ label: 'Homeroom', blurb: 'Runs on the platform.' }) },
     DevChat: {
       modelOptionText: (m) => `${m.id} — 40-60%`,
       modelNoteText: (m) => `${m.id} does medium changes`,
@@ -137,7 +137,7 @@ test('the Generate-proposal dialog names the issue, the venue and the models', (
   const html = autoHtml(view);
   assert.match(html, /Generate proposal for issue #42\?/);
   assert.match(html, /headless AI session/);
-  assert.match(html, /Building in <b>Usernode<\/b>/, 'the venue is named before you confirm');
+  assert.match(html, /Building in <b>Homeroom<\/b>/, 'the venue is named before you confirm');
   assert.match(html, /id="auto-session-model"/);
   assert.match(html, /<option value="opus">opus — 40-60%<\/option>/);
   assert.match(html, /selected/, 'the preselected model is the one selected');

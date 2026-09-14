@@ -200,7 +200,7 @@ export function init() {
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
     // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
-    // BOTH targets — "This app" and "Social Vibecoding Platform" alike file
+    // BOTH targets — "This app" and "Homeroom Platform" alike file
     // into a repository the platform tracks as an app, so either can carry a
     // bounty.
     const bountyRow = document.getElementById('feedback-bounty-row');
@@ -1044,7 +1044,7 @@ export function init() {
           }
           const filedAgainst = (target === 'app'
             ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
-            : 'Thanks! Filed against Social Vibecoding');
+            : 'Thanks! Filed against Homeroom');
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
           feedbackStatus.textContent = `${filedAgainst}.${bountyNotice}${stateNotice}`;

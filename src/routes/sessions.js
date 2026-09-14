@@ -163,7 +163,7 @@ const localAgentDemo = require('../services/local-agent-demo');
 // panel alongside their sessions. Owns external_agent_tasks, so the query
 // lives there rather than being restated here.
 const { listOpenWorkOrders } = require('../services/external-agent-tasks');
-// #945: Usernode-side issue / proposal discussion threads as agent
+// #945: Homeroom-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
 const threadContext = require('../services/thread-context');
@@ -933,7 +933,7 @@ Before dispatching ANY tool, check whether the user's request SUBSTANTIALLY dupl
 // started from the issue panel) wins; otherwise the first entry of the
 // Mayor-declared `linked_issues`. Both ride along on `SELECT cs.*`.
 //
-// Deliberately Usernode-thread ONLY — no GitHub comment fetch here.
+// Deliberately Homeroom-thread ONLY — no GitHub comment fetch here.
 // github.fetchIssueComments is uncached and pages the anonymous API (60
 // req/hr), so refetching it on every Mayor turn would add latency and
 // burn the shared rate limit. The GitHub half of the discussion reaches
@@ -1046,7 +1046,7 @@ async function persistScoutPublication({
     ? `Scout revised the spec (now ${lineCount} lines).`
     : `Scout drafted a ${lineCount}-line spec from the codebase.`;
   const scoutText = localAgentLabel
-    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Usernode credits were used.`
+    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
@@ -1118,8 +1118,8 @@ async function persistScoutPublication({
 // session creation fail rather than silently choosing another backend.
 //
 // Every one of those fallbacks used to be a server-side log line and
-// nothing else: the user had set "Usernode · OpenRouter" as their default,
-// got a Usernode · Claude session, and the only trace was in the operator's
+// nothing else: the user had set "Homeroom · OpenRouter" as their default,
+// got a Homeroom · Claude session, and the only trace was in the operator's
 // logs. The fallback stays LENIENT on purpose — a session that runs is
 // better than a 4xx — but it now names itself, so the caller can say so.
 // `fallbackReason` is one of 'flag_off' | 'not_in_beta' | 'model_unavailable'
@@ -1464,7 +1464,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900002], shared_at: null,
             created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
@@ -1478,7 +1478,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900011], shared_at: null,
             created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // Busy own session — exercises the "working…" state (spinner tag
           // beside the title, which the single-row shell keeps uncrushed).
@@ -1489,7 +1489,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: true,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: true,
           },
           // Visible (shared) own session — renders below the archived
           // toggle under the "Visible to everyone." caption, with the
@@ -1505,7 +1505,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: null,
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // The other half: visible AND transcript-published, so the card
           // renders the "Chat shared" toggle plus the "· chat readable"
@@ -1520,7 +1520,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #747: promoted own session whose id matches the first mock
           // proposal (stagingMockProposals in votes.js), which the
@@ -1535,7 +1535,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // A proposal-in-vote row so the dev drawer's violet "Proposed"
           // card state is reviewable in a demo preview. Unlike 9000001
@@ -1552,7 +1552,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #1808: the row PAST the relative form's seven-day floor. Every
           // other mock here is minutes or hours old, so the session rows'
@@ -1568,7 +1568,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           }
         );
       }
@@ -1599,7 +1599,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           agent: 'claude-code',
           created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
-          app_name: 'Usernode',
+          app_name: 'Homeroom',
           // The demo row carries an icon too, or the ONE work-order row a
           // preview can show is the one row whose tile falls back to a letter
           // — which is exactly the state a reviewer would read as the bug.
@@ -1799,7 +1799,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // The pair matters as a pair: `source='imported'` and
       // `external_agent` are what let the card tell "this is building on
-      // Usernode" apart from "this arrived from somewhere else", which is
+      // Homeroom" apart from "this arrived from somewhere else", which is
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
@@ -2039,7 +2039,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The GLOBAL ceiling has no admin tier — it's the host's coding-worker
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
-      // Usernode worker, so they do not spend this budget.
+      // Homeroom worker, so they do not spend this budget.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
@@ -2105,7 +2105,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessionId: rows[0].id,
       });
       // agentFallbackReason: the saved default could not be honoured and a
-      // Usernode · Claude session was created instead. The row itself only
+      // Homeroom · Claude session was created instead. The row itself only
       // records WHAT was chosen, so the reason rides alongside it and the
       // chat renders one sentence naming it. Absent when nothing fell back
       // — the client must not have to distinguish "no fallback" from
@@ -4355,7 +4355,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           });
           return res.status(503).json({
             error: err.userMessage
-              || 'Usernode could not prepare this session\'s branch. Send your message again in a moment.',
+              || 'Homeroom could not prepare this session\'s branch. Send your message again in a moment.',
           });
         }
       }
@@ -7571,7 +7571,7 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
   if (!list.length && !thread.length) return seed;
 
   // GitHub comments keep their own most-recent-N cap and per-comment clip;
-  // the Usernode half arrives already clipped by thread-context.
+  // the Homeroom half arrives already clipped by thread-context.
   const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
   const clippedGithub = kept.map((c) => ({
     author: (c.author || 'unknown').toString(),
@@ -7994,7 +7994,7 @@ async function runHeadlessSession({
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
     // the open-a-PR instruction (headless mode never opens one), plus the
-    // issue's comments (#150) and its Usernode-side Discussion thread
+    // issue's comments (#150) and its Homeroom-side Discussion thread
     // (#945) so answers to earlier clarifying questions are visible to this
     // run wherever the reporter left them. The thread load never throws —
     // it degrades to the comments-only seed.
@@ -10161,9 +10161,9 @@ const DRAFT_ISSUE_REPORT_TOOL = {
         type: 'string',
         enum: ['platform', 'app'],
         description:
-          'Where the issue is filed. "platform" = the Usernode platform\'s own tracker — use it for the '
+          'Where the issue is filed. "platform" = the Homeroom platform\'s own tracker — use it for the '
           + 'shared bridge, the mobile app, wallet/signing, the staging/preview pipeline, the checks gate, '
-          + 'or a missing platform capability, and whenever the user says "platform issue" or "Usernode '
+          + 'or a missing platform capability, and whenever the user says "platform issue" or "Homeroom '
           + 'issue". "app" = this app\'s own tracker — use it for a bug or request about the app this '
           + 'session is building. When the wording does not say, choose "app" unless the subject clearly '
           + 'lives outside this app\'s repo. On the platform\'s own app both resolve to the same repo.',
@@ -10836,7 +10836,7 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
 // the issue's own `note`. `commentsTruncated` is true when older comments
 // were omitted (long thread or kept-count cap).
 // `threadCtx` ({ pool, appId }, #945): when present, the issue's
-// Usernode-side Discussion thread rides along as `usernodeThread`. Call
+// Homeroom-side Discussion thread rides along as `usernodeThread`. Call
 // sites that can't supply it (or a lookup that finds nothing) simply omit
 // the field — the GitHub halves are unaffected either way.
 async function resolveGithubIssueToolResult(repoOwner, repoName, number, threadCtx = null) {
@@ -10944,7 +10944,7 @@ async function resolveDraftIssueToolResult(tu, ctx) {
 // or draft_issue_report (headless) omit it, and a get_prod_status call
 // without it resolves to not_eligible.
 // `threadCtx` ({ pool, appId }, #945) enriches get_github_issue with the
-// issue's Usernode Discussion thread. Omitted → the field is absent.
+// issue's Homeroom Discussion thread. Omitted → the field is absent.
 function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null, threadCtx = null) {
   if (tu.name === DRAFT_TOOL_NAME) {
     return resolveDraftIssueToolResult(tu, prodCtx);
@@ -14481,7 +14481,7 @@ ${buildGuidance.testingGuidance}`;
       // …"; the two together are how a reader of the transcript tells a local
       // spec turn from a local build turn months later.
       if (runLocally) {
-        statusText += ` Coding done on ${lease.label}, so no Usernode credits were used.`;
+        statusText += ` Coding done on ${lease.label}, so no Homeroom credits were used.`;
       }
       const completionMeta = {
         ...executionAgentMeta,
@@ -14624,7 +14624,7 @@ FILING ISSUES — a request to file one is a request for a DRAFT CARD:
 When the user explicitly asks you to create, file, open, log, or raise an issue / bug / ticket — "create a platform issue for step 2", "open an issue for this", "file a bug about the flaky preview", "put that on the tracker" — call draft_issue_report IMMEDIATELY. Write the title and body yourself from the conversation and the CURRENT SPEC DOC block below.
 - NEVER answer such a request by saying you can only read the issue tracker, NEVER offer Send Feedback as the alternative, and NEVER ask the user to choose between two paths. You can file issues; this tool is how.
 - Do NOT dispatch the coding agent to draft a report card. That is minutes of container time for something you do in-process.
-- Choosing target: "platform" for anything about Usernode itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Usernode issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
+- Choosing target: "platform" for anything about Homeroom itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Homeroom issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
 - Write a REAL issue body, not a one-liner: what is wrong or wanted, where, expected vs actual — or, when the request points at the spec ("an issue for step 2"), the relevant part of the spec in full. The card is what the user reads before tapping, and the body is what whoever works the issue gets.
 - CLARITY GATE carve-out: the card IS the clarification surface — the user reviews the drafted title and body and taps Report or Dismiss. So do not ask clarifying questions first when the subject is identifiable from the conversation or the spec. Ask only when the request has no referent at all.
 - After it returns, reply in 1-2 sentences naming the title and where it will be filed, ending with the confirm cue ("tap Report to platform on the card to file it"), and call suggest_replies as usual. NEVER say the issue has been filed or created — nothing reaches GitHub until the user taps. On a deduped result, name the existing issue instead of claiming you drafted a card. On not_configured / no_repo, say in one sentence that issue filing isn't available here and point at Send Feedback.
@@ -14685,7 +14685,7 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 ==== END PULL REQUEST ====`
     : '';
 
-  return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
+  return `You are the Mayor — a friendly project manager for the app "${appName}" on Homeroom.
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.

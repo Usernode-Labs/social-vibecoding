@@ -31,7 +31,7 @@ const BuildVenues = require('../public/js/build-venues.js');
 
 const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
 
-test('the launchpad venues are exactly the ones with no Usernode chat', () => {
+test('the launchpad venues are exactly the ones with no Homeroom chat', () => {
   // build-venues.js already answers this, per venue, with `chat`. This
   // module keeps its own list so it still works loaded alone — so the two
   // have to be asserted equal, or they are free to drift.
@@ -359,7 +359,7 @@ test('preparing reads the card first and the composer only as a fallback', () =>
 });
 
 test('dismissing a launchpad repaints BOTH halves of the swap', () => {
-  // "Build on Usernode instead" changes the SWAP. Repainting only the slot
+  // "Build on Homeroom instead" changes the SWAP. Repainting only the slot
   // would empty the launchpad and leave the composer still hidden behind it
   // — a session with no way to type at all.
   //

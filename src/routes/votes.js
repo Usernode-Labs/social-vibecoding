@@ -1942,7 +1942,7 @@ function voteRoutes(config) {
 
           // Native proposals are platform-owned drafts, so crossing the local
           // review boundary also marks them ready on GitHub. Imported PRs are
-          // externally owned: promotion changes only Usernode's local state
+          // externally owned: promotion changes only Homeroom's local state
           // and must not publish an external author's draft.
           if (!imported) {
             try {

@@ -10608,7 +10608,7 @@ body.is-offline [data-offline-disabled] {
   display: none;
 }
 
-/* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
+/* "Your OpenRouter key is not set, so this turn ran on Homeroom · Claude"
    — the one place a venue the user did not choose is confessed. A whole
    sentence, so it lives above the composer where it can wrap, rather than
    in the header control that names the venue. */

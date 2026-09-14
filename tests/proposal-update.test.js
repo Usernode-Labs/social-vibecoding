@@ -396,7 +396,7 @@ test('a branch that is not in the author\'s own fork is refused, and nothing is 
   }, {}, log);
   assert.equal(result.ok, false);
   assert.equal(result.code, 'not_your_fork', 'renamed for what the CALLER did, not for the mirror path');
-  assert.match(result.message, /owned by the GitHub account linked to your Usernode profile/);
+  assert.match(result.message, /owned by the GitHub account linked to your Homeroom profile/);
   assert.equal(log.push, undefined);
 });
 
@@ -2194,7 +2194,7 @@ test('an update that carries linkedIssues stores them before the tails, on every
   const result = await run({
     session, pool,
     gh: {
-      getPR: async () => ({ state: 'open', merged: false, body: 'Dev session by evan via Usernode' }),
+      getPR: async () => ({ state: 'open', merged: false, body: 'Dev session by evan via Homeroom' }),
       updatePR: async (owner, repo, prNumber, patch) => { order.push(['body', patch.body]); },
     },
     votes: {
@@ -2206,7 +2206,7 @@ test('an update that carries linkedIssues stores them before the tails, on every
   assert.deepEqual(session.linked_issues, [45]);
   assert.deepEqual(order.map((o) => o[0]), ['linked', 'body', 'reconcile'],
     'stored, then the live body patched, then the tail — never the other way round');
-  assert.equal(order[1][1], 'Dev session by evan via Usernode\n\nCloses #45');
+  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\nCloses #45');
 
   // Source half, for the ORDER on the paths the stubs above do not read
   // (same reasoning as the testing-metadata order test).
