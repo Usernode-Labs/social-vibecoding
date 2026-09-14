@@ -145,7 +145,10 @@ test('the two mock rows are the rendered evidence, and no check was added', () =
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'the arc is still what it selects — #1597\'s check, narrowed');
 
-  // Both RETARGET. The manifest is 20 slots clear of its ceiling and staying
-  // there is the point (see tests/improve-session-spinner.test.js).
-  assert.equal(MANIFEST.tests.length, 616);
+  // Both RETARGET: each mock row is owned by exactly one check (asserted
+  // above), so the change added no slot. The manifest's total is pinned in
+  // ONE place, tests/dev-board-fold.test.js, with its changelog; a second
+  // literal here went stale the moment other work landed beside this one
+  // (616 on the branch, 621 on main the day it merged) and turned the whole
+  // suite red for every proposal that followed.
 });
