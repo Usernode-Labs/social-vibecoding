@@ -466,9 +466,11 @@ const MAX_CHECK_ERROR_CHARS = 1000;
 // long as it is willing to poll. Everything needed to tell them apart was
 // already on the row and thrown away here:
 //
-//   phase     — which half of the run is in flight ('building' | 'testing').
-//               The web card has worded these two since #1144; the connector
-//               was the only surface that could not tell them apart.
+//   phase     — which half of the run is in flight ('building' | 'testing'),
+//               or 'deferred': no run at all, the verdict withheld while the
+//               head conflicts with main (#2137). The web card has worded the
+//               two halves since #1144; the connector was the only surface
+//               that could not tell them apart.
 //   trigger   — why this run started. A re-run the platform drove for itself
 //               (a boot reconcile, a stuck sweep) reads very differently from
 //               one the author's own push caused.
@@ -651,6 +653,70 @@ function pendingNextStep(checks) {
     + 'not that this proposal has no checks.';
 }
 
+// How many of the possibly-conflicting paths the deferred step names inline.
+// The full list (capped at MAX_LIST_ITEMS) is `freshness.mergeabilityFiles`;
+// the sentence only needs enough of it to point at the right place.
+const MAX_CONFLICT_PATHS_NAMED = 10;
+
+// A verdict the platform chose not to run (#2137). check_phase 'deferred'
+// (services/check-admission.js) is a promoted head that conflicts with main:
+// the preview was built and the verdict was not, because it would judge a
+// tree that cannot merge as it stands. Nothing is running and nothing will
+// until the head merges cleanly — so, unlike the two halves above, waiting
+// is not the whole answer. The way out is a head synced with main, and it
+// can come from either side: the merge queue's conflict lane
+// (services/merge-queue.js, rule C) pushes a resolution itself when it can
+// write the head — at once for an approved proposal or the first conflict of
+// this authored head, otherwise once the group approves it — while a
+// fork-hosted head, or one it has already failed to resolve, is the author's
+// to update. Either way the new head gets its own run.
+//
+// Until this branch existed the phase could not even be reported: the output
+// schema named the two halves of a run, the row carried the third, and the
+// SDK's structured-output validation rejected the WHOLE response — the
+// mergeability and the file list with it — on exactly the proposal an agent
+// most needed to read.
+function deferredNextStep(session, checks, branch) {
+  const freshness = require('./proposal-freshness').readFreshness(session);
+  const files = freshness.mergeabilityFiles;
+  const partial = freshness.mergeabilityFilesComplete === false ? ', and only a sample' : '';
+  const more = files.length > MAX_CONFLICT_PATHS_NAMED
+    ? ` and ${files.length - MAX_CONFLICT_PATHS_NAMED} more in freshness.mergeabilityFiles`
+    : '';
+  // Paths are named by whoever named the files, so they travel in the same
+  // envelope as every other borrowed string here.
+  const where = files.length
+    ? ' Files both sides changed since the merge base, which is where to look (an upper bound on the conflict, '
+      + `not the conflict itself${partial}): `
+      + `${untrusted(files.slice(0, MAX_CONFLICT_PATHS_NAMED).join(', '), MAX_BODY_CHARS)}${more}.`
+    : ' No conflicting paths are recorded in freshness.mergeabilityFiles yet; freshness.checkedAt says how old '
+      + 'that block is.';
+  // `checkedAt` on a deferred row is the deferral stamp itself
+  // (visuals.storeChecksDeferred): when the preview run reached the verdict
+  // and stopped.
+  const when = checks.checkedAt ? ` The verdict was deferred at ${checks.checkedAt}.` : '';
+  // The stamp clears no results, so a failing list here belongs to the commit
+  // before this one — the same caveat pendingNextStep makes.
+  const previous = (checks.failing && checks.failing.length)
+    ? ' The failing tests listed here are from a PREVIOUS run and may not reflect this commit.'
+    : '';
+  // Who syncs. The conflict lane only pushes to a head the platform owns.
+  const platform = branch.home === 'user_fork'
+    ? ' Homeroom cannot push to this head, so the sync is the author\'s to make.'
+    : ' Homeroom\'s merge queue resolves a conflict like this itself when it can — at once for an approved '
+      + 'proposal or the first conflict of this head, otherwise once the group approves it — by pushing a synced '
+      + 'head that gets its own run; poll get_proposal to see whether it has.';
+  const how = branch.youCanPush
+    ? `merge main into ${branch.name || 'this proposal\'s branch'} in your own fork (or rebase onto it), resolve `
+      + `the conflict, push, and call submit_work with proposalId ${session.id} and that branch`
+    : 'merge main into this change on a branch in your OWN fork (or rebase onto it), resolve the conflict, push, '
+      + `and call submit_work with proposalId ${session.id} and that branch: ${whyYouCannotPush(branch)}`;
+  return 'Checks are DEFERRED, not running: this proposal\'s head conflicts with main, so the platform built the '
+    + 'staging preview but did not run the verdict — it would judge a tree that cannot merge as it stands — and '
+    + `nothing runs until the head merges cleanly.${where}${when}${previous}${platform} To move it yourself, ${how}. The `
+    + 'checks then run against the synced head. Do not open a second proposal.';
+}
+
 // What the agent that wrote this code should do about it right now. Branches
 // on the BRANCH HOME, because the same failing check has two different fixes
 // and the platform is the only party that knows which (#1054): a fork-home
@@ -675,8 +741,13 @@ function shapeNextStep(session, checks) {
     return `This proposal is ${session.status || 'no longer open'}, so its code is frozen — anything further is a new `
       + 'change through prepare_work.';
   }
-  // Before either verdict: a run still in flight is not a verdict at all.
-  if (checks.state === 'pending') return pendingNextStep(checks);
+  // Before either verdict: a run still in flight is not a verdict at all,
+  // and a deferred one (#2137) is not even in flight.
+  if (checks.state === 'pending') {
+    return checks.phase === 'deferred'
+      ? deferredNextStep(session, checks, branch)
+      : pendingNextStep(checks);
+  }
   if (!failing) {
     // A verdict for a commit that is no longer the head is not a verdict for
     // this proposal's code. Previously indistinguishable from a current pass.
@@ -2022,16 +2093,27 @@ function registerTools(server, ctx) {
       // cuts every description at 2048 — and an outputSchema is not.
       checks: z.object({
         state: z.string().nullable()
-          .describe("'pending' (a run is in flight), 'passing', 'failing', 'error' (the build or preview broke "
-            + "before any test reported), or 'skipped'. Only 'passing' and 'skipped' mean this proposal can merge."),
+          .describe("'pending' (a run is in flight, or — phase 'deferred' — waiting to start), 'passing', 'failing', "
+            + "'error' (the build or preview broke before any test reported), or 'skipped'. Only 'passing' and "
+            + "'skipped' mean this proposal can merge."),
         // Closed vocabularies, normalised at the write boundary, so an
-        // unrecognised value arrives as null rather than as itself.
-        phase: z.enum(['building', 'testing']).nullable()
-          .describe("Which half of a pending run is in flight. 'building' means the staging preview is still being "
+        // unrecognised value arrives as null rather than as itself. This enum
+        // mirrors CHECK_PHASES in services/visuals.js — every value the row
+        // can carry — and tests/mcp-tools.test.js holds the two together: a
+        // phase the platform stores but the schema does not name fails the
+        // SDK's structured-output validation, which rejects the WHOLE
+        // response, not the one field (#2137).
+        phase: z.enum(['building', 'testing', 'deferred']).nullable()
+          .describe("Which stage a pending run is at. 'building' means the staging preview is still being "
             + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
             + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
             + "test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
-            + 'against the preview. Null on a row that predates the column. Neither is a reason to push again.'),
+            + "against the preview; 'deferred' means NO run is in flight: this head conflicts with the app's default "
+            + 'branch, so the preview was built but the verdict was not run — it would judge a tree that cannot '
+            + 'merge as it stands — and it runs once the head merges cleanly; `mergeability` and '
+            + '`freshness.mergeabilityFiles` say where, and nextStep says who syncs. Null on a row that predates '
+            + "the column. 'building' and 'testing' are not a reason to push again; 'deferred' ends only when "
+            + 'the head merges cleanly with main again, which in practice means a head synced with it.'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '
             + 'stuck-sweep. A run the platform drove for itself reads differently from one your own push caused.'),
