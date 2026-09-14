@@ -542,7 +542,10 @@ export interface DevWorkshopView {
     /** The shared filter bar is narrowing what the themes hold. */
     filtered: boolean;
   };
-  /** A row to open on paint (the ?shot= deep links) — theme id and item key. */
+  /**
+   * A row to open on paint (the ?shot= deep links): the row's scope — a
+   * theme id, or `mine` for "What you are working on" — and its key.
+   */
   autoExpand: { theme: string; key: string } | null;
 }
 
@@ -560,7 +563,7 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
-  /** The app, for the open card's "Open on its own page" link. */
+  /** The app, for the open card's page link ("Open page ›", #1886). */
   slug?: string;
   canPost?: boolean;
   /**
