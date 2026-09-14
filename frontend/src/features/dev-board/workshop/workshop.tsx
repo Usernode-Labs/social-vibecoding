@@ -964,10 +964,12 @@ function BeforeAfter({ v, near, onFull }: {
 
 /* ── One item of the feed ────────────────────────────────────────────── */
 
-function FeedItem({ row, index, count, near, voted, wide, slug, onFull }: {
+function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: {
   row: QueueRow;
   index: number;
   count: number;
+  /** 'a' or 'b': the row's own, for life (see `tintFor` in NeedsFeed). */
+  tint: 'a' | 'b';
   near: boolean;
   voted: string | null;
   wide: boolean;
@@ -981,7 +983,7 @@ function FeedItem({ row, index, count, near, voted, wide, slug, onFull }: {
   const summary = isVote ? row.summary : (row.body || null);
   const pct = Math.max(2, Math.round(((index + 1) / Math.max(1, count)) * 100));
   return (
-    <section className="dev-ws-item" data-ws-item={row.key} data-ws-kind={row.kind} data-ws-tint={index % 2 ? 'b' : 'a'}>
+    <section className="dev-ws-item" data-ws-item={row.key} data-ws-kind={row.kind} data-ws-tint={tint}>
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
         {voted ? (
@@ -1068,7 +1070,6 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   onDone: () => void;
 }): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const settleRef = useRef<number>(0);
   const [at, setAt] = useState(0);
   const [sheet, setSheet] = useState<SheetKind | null>(null);
   // The sheet on its way out. It stays mounted, marked `data-ws-leaving`,
@@ -1122,6 +1123,28 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const n = items.length;
   const i = Math.min(at, Math.max(0, n - 1));
   const row = n ? items[i] : null;
+  /**
+   * Each row's tint, decided the first time it is seen and kept for life.
+   * The tints alternate so a swipe reads as a new item, and a row seen for
+   * the first time takes the opposite of the row before it, so a list seen
+   * whole alternates perfectly and a row that arrives later still differs
+   * from its neighbour above. Keyed on the index of the moment instead, a
+   * row leaving above the one in view would flip every tint after it, and
+   * the card in front of the reader would change colour for nothing.
+   */
+  const tintRef = useRef<Map<string, 'a' | 'b'>>(new Map());
+  const tints = useMemo<Array<'a' | 'b'>>(() => {
+    const seen = tintRef.current;
+    const out: Array<'a' | 'b'> = [];
+    let prev: 'a' | 'b' | null = null;
+    for (const r of items) {
+      let tint = seen.get(r.key);
+      if (!tint) { tint = prev === 'a' ? 'b' : 'a'; seen.set(r.key, tint); }
+      out.push(tint);
+      prev = tint;
+    }
+    return out;
+  }, [items]);
   const voted = row ? answered[row.key] || null : null;
 
   /**
@@ -1140,7 +1163,16 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       if (idx >= 0) {
         if (idx !== at) {
           setAt(idx);
-          if (el && el.clientHeight) el.scrollTop = idx * el.clientHeight;
+          // INSTANTLY. The scroller has `scroll-behavior: smooth`, which
+          // applies to this assignment too, so the correction would ANIMATE
+          // from where the shifted rows left the view to where the row is —
+          // a card sliding through for a third of a second, which is the
+          // "reset" a viewer saw. Off for the one assignment, then back.
+          if (el && el.clientHeight) {
+            el.style.scrollBehavior = 'auto';
+            el.scrollTop = idx * el.clientHeight;
+            el.style.scrollBehavior = '';
+          }
         }
         return;
       }
@@ -1150,24 +1182,10 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     if (clamped !== at) setAt(clamped);
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Drop every pin but the current row's — called once a move has settled. */
-  const dropPins = () => {
-    const key = curKeyRef.current;
-    let dropped = false;
-    for (const k of [...pinsRef.current.keys()]) {
-      if (k !== key) { pinsRef.current.delete(k); dropped = true; }
-    }
-    if (dropped) setPinsVersion((v) => v + 1);
-  };
   const landOn = (idx: number) => {
     const c = Math.min(Math.max(idx, 0), Math.max(0, items.length - 1));
     curKeyRef.current = items[c] ? items[c].key : null;
     setAt(c);
-    // Pins go once the scroll has SETTLED, not on the first frame that
-    // crosses the halfway line — a snap in flight is not a place to remove
-    // the row it is leaving, and touch momentum would fight the correction.
-    window.clearTimeout(settleRef.current);
-    settleRef.current = window.setTimeout(dropPins, 220);
   };
   const onScroll = () => {
     const el = scrollRef.current;
@@ -1186,7 +1204,6 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     if (el && el.clientHeight) el.scrollTo({ top: idx * el.clientHeight, behavior: 'smooth' });
     landOn(idx);
   };
-  useEffect(() => () => window.clearTimeout(settleRef.current), []);
 
   const closeSheet = () => {
     if (!sheet) return;
@@ -1247,6 +1264,14 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
     if (row.kind === 'vote') {
+      // PINNED FOR THE SESSION, not until the next move. The vote makes the
+      // row leave `rows` (it is no longer owed), and the pin keeps it in its
+      // slot, so nothing under the viewer shifts: a row leaving ABOVE the
+      // one in view moves every index after it, and with it the counter,
+      // and the scroll position has to be corrected under the reader. The
+      // pins used to go once the next card had settled, which was exactly
+      // when that correction was most visible — the card you had just
+      // arrived on re-numbered and slid.
       if (!pinsRef.current.has(row.key)) {
         pinsRef.current.set(row.key, { row, index: i });
         setPinsVersion((v) => v + 1);
@@ -1469,6 +1494,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             row={r}
             index={k}
             count={n}
+            tint={tints[k]}
             near={Math.abs(k - i) <= 1}
             voted={answered[r.key] || null}
             wide={wide}

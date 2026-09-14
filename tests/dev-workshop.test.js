@@ -2906,6 +2906,21 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // row is pinned in place with its confirmation until you move on.
   assert.ok(!/window\.setTimeout\(\(\) => setAt\(i \+ 1\)/.test(WORKSHOP), 'no auto-advance');
   assert.match(WORKSHOP, /pinsRef\.current\.set\(row\.key, \{ row, index: i \}\);/, 'the answered row is pinned');
+  // AND STAYS PINNED. The pins used to be dropped once the next card had
+  // settled, which removed the voted row from ABOVE the one in view: every
+  // index after it moved, the counter re-numbered, the index-keyed tint
+  // flipped, and the scroll correction — a `scrollTop` assignment under the
+  // scroller's `scroll-behavior: smooth` — animated the card back into place.
+  // That was "the card I just arrived on resets a second later".
+  assert.ok(!/dropPins|settleRef/.test(WORKSHOP), 'no pin is dropped on a move');
+  assert.match(WORKSHOP, /const tintRef = useRef<Map<string, 'a' \| 'b'>>\(new Map\(\)\);/,
+    'a row\'s tint is decided once, from where it first stood');
+  assert.match(WORKSHOP, /tint=\{tints\[k\]\}/);
+  assert.match(WORKSHOP, /tint = prev === 'a' \? 'b' : 'a'; seen\.set\(r\.key, tint\);/,
+    'a row seen for the first time takes the opposite of the row above it');
+  assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
+  assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
+    'a position correction is instant, whatever the scroller\'s own behaviour');
   assert.match(WORKSHOP, /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
     'and the eyebrow becomes the confirmation');
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
