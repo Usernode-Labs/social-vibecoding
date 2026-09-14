@@ -151,6 +151,11 @@ secrets:
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""
   gmailOauthRefreshToken: ""
+  # Optional mobile push settings. Supply all four through encrypted external values.
+  mobilePushEnabled: false
+  pushEnv: ""
+  firebaseProjectId: ""
+  firebaseServiceAccountJsonB64: ""
 
 ingress:
   enabled: true
