@@ -94,6 +94,7 @@ export function BrowseScreen() {
     showClear?: boolean;
     sort: string;
     curated: boolean;
+    grouped: boolean;
     moreExpanded: boolean;
   };
   const onDetail = state.level === 'detail';
@@ -224,7 +225,7 @@ export function BrowseScreen() {
                 onRetry={() => browse()?._load?.()}
               />
             )
-            : <BrowseRows rows={state.rows} curated={state.curated} moreExpanded={state.moreExpanded} />}
+            : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
         <div
           id="browse-empty"
