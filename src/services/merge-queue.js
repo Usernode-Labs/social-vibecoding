@@ -31,6 +31,15 @@
 //     supersede primitive already existed in services/preview-lifecycle.js;
 //     it simply was not used here.
 //
+// ── How the line is worked ─────────────────────────────────────────────
+//
+// One candidate at a time, cheapest first (nextCandidate / effortOf), and a
+// pass stops the moment what happens next arrives as its own trigger — a
+// merge, a check run or a sync already in flight (passShouldStop). A sync
+// whose machinery failed backs its candidate off instead of costing every
+// pass the same timeout (noteSyncFailure), and each pass first retires any
+// 'integrating' a dead process left behind (retireStaleIntegrating).
+//
 // ── What is NOT here any more ──────────────────────────────────────────
 //
 // pollMergeable and waitForMergeableTrue — up to fourteen GitHub reads and
@@ -87,13 +96,25 @@ function enqueue(config, appId, options = {}) {
 }
 
 // The next proposal worth spending a worker turn on: promoted, eligible on
-// votes, and not the one we just merged. Ordered by the vote tally so the
-// group's strongest preference goes first, then longest-waiting.
+// votes, and not the one we just merged.
 //
-// Two more things a sync cannot fix are filtered here rather than discovered
-// after the worker turn has been spent. Both used to reach checkAndMerge,
-// which refused them at a gate the queue had no way to satisfy, and the
-// pass then moved on to the next candidate and synced that one too:
+// Ordered by how little stands between it and a merge (effortOf, below);
+// the vote tally and then waiting time break ties. Every candidate here is
+// one the group has already approved, so the tally is a tie-break rather
+// than the order. It WAS the order until the afternoon #2104 landed, when
+// the line for the platform app read: a proposal that CONFLICTED with main
+// (an AI resolution turn), then one whose worker could not mount its volume
+// (a warm-ready timeout, every pass), and only then one that was two commits
+// behind, merged clean and had passing checks on its pinned head. Each
+// merge restarts the platform and puts every sibling one further behind, so
+// the order the line is worked in decides how many syncs and rebuilds the
+// whole board costs — not just who waits.
+//
+// Three things a sync cannot fix are filtered here rather than discovered
+// after the worker turn has been spent. The first two used to reach
+// checkAndMerge, which refused them at a gate the queue had no way to
+// satisfy, and the pass then moved on to the next candidate and synced that
+// one too:
 //
 //   - a locked app with no admin yes vote in the current epoch. The lock
 //     gate is exactly the admin's say-so; integrating ahead of it spends
@@ -103,7 +124,9 @@ function enqueue(config, appId, options = {}) {
 //     "They re-run on the next push" — the author has to act, and a merge of
 //     main into a failing branch does not change that. A verdict about an
 //     OLDER commit is not a reason to skip: the pinned head still needs its
-//     rebuild, which the checks gate kicks.
+//     rebuild, which the checks gate kicks;
+//   - a sync turn that threw for it recently (noteSyncFailure). Infrastructure
+//     that failed a minute ago has usually not been fixed since.
 async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   const governance = require('./governance');
   const gov = await governance.getGovernance(pool, appId);
@@ -157,10 +180,103 @@ async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   const toMs = (v) => (v instanceof Date ? v.getTime()
     : typeof v === 'number' ? v : (Date.parse(v) || 0));
 
-  eligible.sort((a, b) => (b.yes_count - a.yes_count)
+  eligible.sort((a, b) => compareEffort(effortOf(a), effortOf(b))
+    || (b.yes_count - a.yes_count)
     || (toMs(a.promoted_at || a.created_at) - toMs(b.promoted_at || b.created_at)));
 
   return eligible[0] || null;
+}
+
+// What a candidate still costs before it can merge, from the columns the
+// integration record and the checks already keep. Compared field by field,
+// most decisive first:
+//
+//   conflict  0 merges clean · 1 never measured · 2 conflicts. A conflict is
+//             an AI resolution turn, then a tree nobody has tested, so a
+//             rebuild too — the most expensive thing the queue does.
+//   rebuild   0 when a settled verdict stands on the pinned head, so a
+//             mechanical sync carries it and the merge follows the sync
+//             directly; 1 when the merged commit will need the full run
+//             (the ~5 min of preview + browser checks + unit suite) first.
+//   behind    the sync's size, 0 meaning no sync at all. Unmeasured sorts last.
+//
+// Ties fall through to the tally and then to age, as before.
+function effortOf(row) {
+  const behind = parseInt(row.integration_behind_by, 10);
+  const settled = (row.check_state === 'passing' || row.check_state === 'skipped')
+    && sameSha(row.checks_commit_sha, row.reviewed_head);
+  return {
+    conflict: row.integration_merges_clean === true ? 0
+      : (row.integration_merges_clean == null ? 1 : 2),
+    rebuild: settled ? 0 : 1,
+    behind: Number.isFinite(behind) ? Math.max(0, behind) : Number.MAX_SAFE_INTEGER,
+  };
+}
+
+function compareEffort(a, b) {
+  return (a.conflict - b.conflict) || (a.rebuild - b.rebuild) || (a.behind - b.behind);
+}
+
+// ── Sync backoff ─────────────────────────────────────────────────────────
+//
+// A sync turn that THREW — the worker never came up, the push was refused,
+// the mirror was unreadable — says nothing about the proposal; it says the
+// machinery under it is broken right now. It is also the one refusal the
+// pass used to pay for again on every trigger: #2102's worker could not
+// mount its volume, so each pass sat through a warm-ready timeout (minutes)
+// to rediscover that, with every sibling waiting in line behind it. A thrown
+// sync now backs its candidate off — two minutes, doubling to a half-hour
+// ceiling — and a candidate inside its window is skipped the way lock- and
+// failing-blocked ones are, while the rest of the line moves.
+//
+// Deliberately in memory, per process. A restart is a fresh look, and on
+// this platform a restart usually IS the rollout that fixed the machinery.
+// A conflict verdict and a completed sync both clear the entry: those are
+// answers about the proposal, not about the infrastructure.
+const SYNC_BACKOFF_BASE_MS = 2 * 60 * 1000;
+const SYNC_BACKOFF_MAX_MS = 30 * 60 * 1000;
+const _syncBackoff = new Map(); // sessionId -> { until, failures, err }
+
+function noteSyncFailure(sessionId, err, now = Date.now()) {
+  const failures = ((_syncBackoff.get(sessionId) || {}).failures || 0) + 1;
+  const wait = Math.min(SYNC_BACKOFF_MAX_MS, SYNC_BACKOFF_BASE_MS * (2 ** (failures - 1)));
+  const entry = { until: now + wait, failures, err: (err && err.message) || String(err) };
+  _syncBackoff.set(sessionId, entry);
+  return entry;
+}
+
+// An expired entry stays until a sync completes: the failure count is what
+// makes the next wait longer, and a candidate that fails every time it is
+// retried should not start again from two minutes.
+function syncBackoffRemaining(sessionId, now = Date.now()) {
+  const entry = _syncBackoff.get(sessionId);
+  return entry ? Math.max(0, entry.until - now) : 0;
+}
+
+// The worker's own guard against two turns in one container. Reaching it
+// from the queue means a sync for this very proposal is already running —
+// in practice one the process resumed from its journal after a restart, a
+// few seconds before the startup drain asked for the same proposal. That
+// is not a failure and not a reason to back off: the row IS integrating.
+function isTurnInFlightError(err) {
+  return !!err && (err.code === 'TURN_IN_FLIGHT'
+    || /a turn is already in flight/.test(String(err.message || '')));
+}
+
+// The mode of the turn the worker is running for a session, from the durable
+// record every dispatch writes (chat_sessions.active_turn) — 'sync', 'build',
+// 'scout', …, or null when there is none to read. Never throws.
+async function inFlightTurnMode(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT active_turn->>'mode' AS mode FROM chat_sessions WHERE id = $1`,
+      [sessionId]
+    );
+    return (rows[0] && rows[0].mode) || null;
+  } catch (err) {
+    log.warn('merge-queue', 'active_turn read failed', { sessionId, err: err.message });
+    return null;
+  }
 }
 
 // Why a vote-eligible candidate is still not worth a worker turn, or null.
@@ -174,6 +290,7 @@ function unintegrableReason(row) {
   if ((row.check_state === 'failing' || row.check_state === 'error') && verdictIsCurrent) {
     return `checks_${row.check_state}`;
   }
+  if (syncBackoffRemaining(row.id) > 0) return 'sync_backoff';
   return null;
 }
 
@@ -215,10 +332,57 @@ function passShouldStop(outcome) {
   return outcome.reason === 'checks' && outcome.waiting === true;
 }
 
+// 'integrating' is the one block reason the server records rather than the
+// card derives, and it is only ever true of a sync some pass of THIS process
+// is running. A process that dies mid-pass leaves the word behind on the row
+// it was working on, and there is no pass left to take it back: after the
+// three platform restarts that followed #2104, six cards read "bringing up
+// to date with main" with one sync actually running, and stayed that way
+// until each row happened to get a turn. So every pass starts by retiring
+// the claim from any promoted row of the app that no live sync can account
+// for.
+//
+// Two things vouch for a live sync. `_inFlight` is this process's own
+// integrateOne, which set the flag moments ago and may not have dispatched
+// the worker yet. `active_turn` is the worker's durable turn record, which
+// every dispatch writes and a restart resumes from (server.js
+// resumeDetachedTurn): a row whose durable turn is a sync is one the
+// previous process was syncing when it died and this one is about to pick
+// back up — or has already. That row keeps its flag; the resumed turn's
+// completion hands it back to the queue, which clears it then.
+async function retireStaleIntegrating(pool, appId) {
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT id, integration_block_reasons
+         FROM chat_sessions
+        WHERE app_id = $1 AND status = 'promoted'
+          AND integration_block_reasons @> '["integrating"]'::jsonb
+          AND COALESCE(active_turn->>'mode', '') <> 'sync'`,
+      [appId]
+    ));
+  } catch (err) {
+    log.warn('merge-queue', 'stale-integrating scan failed', { appId, err: err.message });
+    return;
+  }
+  for (const row of rows) {
+    if (_inFlight.has(row.id)) continue;
+    const kept = (Array.isArray(row.integration_block_reasons) ? row.integration_block_reasons : [])
+      .filter((r) => r !== 'integrating');
+    log.info('merge-queue', "retiring an 'integrating' no live sync accounts for", {
+      appId, sessionId: row.id,
+    });
+    await integration.setBlockReasons(pool, row.id, kept);
+    broadcast({ id: row.id, app_id: appId }, { integrating: false });
+  }
+}
+
 async function runQueue(config, appId, { excludeSessionId = 0 } = {}) {
   const pool = getPool(config);
   const attempted = [];
   const seen = new Set();
+
+  await retireStaleIntegrating(pool, appId);
 
   // Termination is belt AND braces. The candidate query excludes what has
   // already been attempted, but this loop runs unattended in a background
@@ -332,11 +496,46 @@ async function integrateOneInner(config, pool, sessionId) {
       sessionRow: session, trigger: 'merge_queue',
     });
   } catch (err) {
-    log.error('merge-queue', 'sync turn threw', { sessionId, err: err.message });
+    if (isTurnInFlightError(err)) {
+      // The worker is already running a turn for this session. Which kind
+      // decides what the refusal means, and the durable turn record says.
+      const mode = await inFlightTurnMode(pool, session.id);
+      if (mode === 'sync') {
+        // A sync for this proposal is already running — the one this process
+        // resumed from its journal after the restart, typically. The row is
+        // integrating, so the flag stands; and the pass stops here, as it
+        // does for a check run in flight: the resumed turn's completion
+        // hands the proposal back to the queue (server.js
+        // resumeDetachedTurn), which is when the merge attempt belongs.
+        // Before this it was logged as a failure, the flag was cleared under
+        // a live sync, and the pass moved on to sync the next sibling.
+        log.info('merge-queue', 'a sync is already in flight for this proposal; waiting for it', {
+          sessionId,
+        });
+        return { ok: true, reason: 'in_progress' };
+      }
+      // Someone is working on the branch in its dev chat. Not integrating,
+      // not broken: the row goes back to how it was and the line moves on.
+      // The push that turn ends with re-measures and re-checks the proposal
+      // and brings it back round on its own.
+      log.info('merge-queue', 'a turn is in flight for this session; leaving it to finish', {
+        sessionId, mode: mode || 'unknown',
+      });
+      await integration.setBlockReasons(pool, session.id, []);
+      broadcast(session, { integrating: false });
+      return { ok: false, reason: 'turn_in_flight' };
+    }
+    const backoff = noteSyncFailure(session.id, err);
+    log.error('merge-queue', 'sync turn threw', {
+      sessionId, err: err.message,
+      failures: backoff.failures, retryAfterMs: backoff.until - Date.now(),
+    });
     await integration.setBlockReasons(pool, session.id, []);
     broadcast(session, { integrating: false });
     return { ok: false, reason: 'sync_threw' };
   }
+  // The turn ran to an answer about the proposal; the machinery works.
+  _syncBackoff.delete(session.id);
 
   if (sync.syncResult === 'conflict') {
     // The worker could not resolve it. This proposal leaves the queue: it
@@ -413,6 +612,9 @@ function broadcast(session, extra) {
     pushVoteUpdate({
       sessionId: session.id,
       appSlug: session.app_slug || null,
+      // The scan in retireStaleIntegrating has the app id, not its slug;
+      // the scoped broadcast accepts either.
+      ...(session.app_id != null && !session.app_slug ? { appId: session.app_id } : {}),
       merged: false,
       ...extra,
     });
@@ -441,4 +643,10 @@ module.exports = {
         ? trigger.excludeSessionId : (trigger.id || 0)),
     });
   },
+  // The ordering and the backoff, for the tests that pin them.
+  effortOf,
+  compareEffort,
+  noteSyncFailure,
+  syncBackoffRemaining,
+  _syncBackoff,
 };
