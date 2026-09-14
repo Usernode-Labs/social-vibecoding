@@ -1774,7 +1774,10 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // Seven in the queue, and the count rides the head: the back/forward pair
   // is gone, because Skip is the only way forward a decision screen needs.
   assert.match(html, /class="dev-ws-item-of">1 \/ 7</, 'the feed counts the whole queue');
-  assert.equal((html.match(/ data-ws-item="/g) || []).length, 7, 'and every item is in the DOM');
+  assert.equal((html.match(/ data-ws-item="(?:vote|need):/g) || []).length, 7, 'and every item is in the DOM');
+  // Plus the end card after them (#2172): one more snap slot, not a footer,
+  // and not one of the seven the counter counts.
+  assert.equal((html.match(/ data-ws-item="/g) || []).length, 8, 'and the end card is the slot after the last');
   assert.ok(!html.includes('data-ws-needs-nav'), 'no pager under the answers');
   assert.equal((html.match(/dev-card-dense|dev-card-topic/g) || []).length, 0,
     'and no dense card: an item is its title, the sentence a voter reads, and the caption');
@@ -1791,6 +1794,77 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // was already showing the top of.
   assert.ok(!APP_VIEW_SRC.includes('openBoardNeedingVote'), 'the navigation is gone');
   assert.ok(!WORKSHOP.includes('openBoardNeedingVote'), 'and nothing still calls it');
+});
+
+test('#2172: one card past the last item is the summary, and it is the screen when there is nothing', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals = [1, 2, 3].map((n) => ({
+    id: 100 + n, pr_number: 200 + n, pr_title: `Waiting ${n}`, status: 'promoted', username: 'carol',
+    created_at: at(3), promoted_at: at(3), last_message_at: at(3), linked_issues: [], my_vote: null,
+    votes_for: 1, votes_against: 0, yes_count: 1, no_count: 0,
+  }));
+  const v = AppView._workshopView();
+  assert.equal(v.queue.length, 5, 'three votes and the two unclaimed issues');
+  const html = workshopHtml(AppView, 'needs');
+  // THE LAST SLOT IN THE SCROLLER, after every item, with the item's own
+  // class so it is the same height and the same snap point: a swipe past the
+  // end lands on it the way a swipe landed on each decision.
+  const scroll = /data-ws-feed=""[\s\S]*?<\/section><\/div>/.exec(html);
+  assert.ok(scroll, 'the scroller');
+  const slots = scroll[0].match(/<section class="dev-ws-item[^"]*" data-ws-item="([^"]+)"/g);
+  assert.equal(slots.length, 6, 'five items and the end card');
+  assert.match(slots[5], /class="dev-ws-item dev-ws-needs-done" data-ws-item="done"/, 'and the end card is LAST');
+  assert.match(html, /data-ws-item="done" data-ws-kind="done" data-ws-done-acted="0" data-ws-done-left="5"/,
+    'it says how many this pass answered and how many it passed over');
+  // The counter and the progress line count the decisions only: the end card
+  // is where you are once they are behind you, not a sixth decision.
+  assert.match(html, /class="dev-ws-item-of">1 \/ 5</);
+  assert.ok(!/class="dev-ws-item-of">6 \//.test(html), 'the end card has no counter');
+  // Nothing answered yet and five passed over: the headline says "for now",
+  // the line under it says what is still waiting, and there is a way back
+  // to it as well as the way back to the lander.
+  assert.match(html, /dev-ws-needs-done-line">That’s it for now\.</);
+  assert.match(html, /dev-ws-needs-done-sub">5 are still waiting on you above\.</);
+  assert.match(html, /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
+  assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one waiting</, 'and back up the feed');
+  // The ring states where the viewer stands against everything they could
+  // vote on: three promoted, none answered.
+  assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);
+  // THE RAIL ON THE END CARD is the move pair alone, so the way back up stays
+  // where the thumb learned it is and the stage keeps its width on a wide
+  // window; the item rail is drawn only for an item.
+  assert.match(WORKSHOP, /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">\s*\{moveRow\}/);
+  assert.match(WORKSHOP, /const row = i < n \? items\[i\] : null;/, 'index n is the end card, with no row');
+  assert.match(WORKSHOP, /const idx = key === END_KEY \? items\.length : items\.findIndex/,
+    'a reader on the end card stays on it when rows arrive or leave above');
+  assert.match(WORKSHOP, /const c = Math\.min\(Math\.max\(idx, 0\), items\.length\);/, 'a swipe can land on it');
+  // The way the check reaches it: the route opens ON the end card, instantly.
+  assert.match(WORKSHOP, /\.get\('shot'\) === 'needs-end'/);
+  assert.match(WORKSHOP, /const \[endOnOpen\] = useState\(wantsEnd\);/, 'read once, at mount');
+  assert.match(WORKSHOP, /useRef<string \| null>\(endOnOpen \? END_KEY : null\)/);
+  const check = dapp.tests.find((t) => /shot=needs-end/.test(t.path));
+  assert.ok(check, 'a declared check rides that route');
+  assert.match(check.expectSelector, /\[data-ws-kind="vote"\] ~ \[data-ws-item="done"\]\[data-ws-kind="done"\]/,
+    'and walks past a vote item to the end card');
+  // The copy: no em dashes, and each class the card emits has a rule.
+  const card = /<section class="dev-ws-item dev-ws-needs-done"[\s\S]*?<\/section>/.exec(html)[0];
+  assert.ok(!card.includes('—'), 'no em dash in what the reader is shown');
+  for (const cls of ['dev-ws-needs-done', 'dev-ws-done-ring', 'dev-ws-needs-done-line', 'dev-ws-needs-done-sub', 'dev-ws-done-cta', 'dev-ws-done-back']) {
+    assert.ok(new RegExp(`\\.${cls}\\b[^{]*\\{`).test(CSS), `${cls} has a rule`);
+  }
+
+  // WITH NOTHING IN THE QUEUE it is the whole screen, as the empty state was:
+  // the caught-up line, no way back up (there is nothing above), no rail.
+  AppView._proposals = [];
+  AppView._ghIssues = [];
+  const empty = workshopHtml(AppView, 'needs');
+  const only = empty.match(/ data-ws-item="/g) || [];
+  assert.equal(only.length, 1, 'the end card alone');
+  assert.match(empty, /dev-ws-needs-done-line">You’re all caught up\.</);
+  assert.match(empty, /Every proposal you can vote on has your answer, and every open issue has somebody on it\./);
+  assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
+  assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
 
 test('the footnote says what is actually happening to the category grouping', () => {
@@ -3201,7 +3275,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // kind, `[data-ws-leaving]` marks it, and a timer drops it — instantly
   // where motion is unwelcome, because app.css runs no animation there.
   assert.match(WORKSHOP, /const \[leaving, setLeaving\] = useState<SheetKind \| null>\(null\);/);
-  assert.match(WORKSHOP, /const shown = sheet \|\| leaving;/);
+  // Never on the end card, which has no item for a sheet to be about (#2172).
+  assert.match(WORKSHOP, /const shown = row \? \(sheet \|\| leaving\) : null;/);
   assert.match(WORKSHOP, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
   assert.match(CSS, /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
   assert.match(CSS, /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
@@ -3353,7 +3428,8 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(WORKSHOP, /<div className="dev-ws-move" data-ws-move-row="">/);
   for (const [dir, guard, name] of [
     ['prev', /disabled=\{i <= 0\}/, /aria-label="Previous"/],
-    ['next', /disabled=\{i >= n - 1\}/, /aria-label="Next"/],
+    // `n`, not `n - 1`: the end card is the last slot (#2172).
+    ['next', /disabled=\{i >= n\}/, /aria-label="Next"/],
   ]) {
     const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,240}?</button>`).exec(WORKSHOP);
     assert.ok(btn, `the ${dir} control exists`);
@@ -3374,7 +3450,8 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(CSS, /\.dev-ws-keys \{ display: none; \}/, 'the legend is off on a phone');
   // NO WRAP, and no reordering: the ends are the ends, the counter says
   // which one you are at, and you walk back yourself.
-  assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), Math\.max\(0, n - 1\)\);/);
+  // `n`, the end card's slot, is the last a press reaches (#2172).
+  assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), n\);/);
   assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
   assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/,
     'the feed keeps the order it was published in');

@@ -12726,8 +12726,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-ask-send-icon { width: 17px; height: 17px; }
 .dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 
-/* ── The end of the feed ──────────────────────────────────────────── */
+/* ── The end of the feed ──────────────────────────────────────────────
+   One card past the last item, always (#2172): the same snap slot as an
+   item, in a tint of its own so the swipe that lands here reads as arriving
+   somewhere rather than as one more decision. */
 .dev-ws-needs-done { align-items: center; justify-content: center; text-align: center; padding: 24px 28px; gap: 10px; }
+.dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .12), rgba(255, 255, 255, 0) 55%, rgba(139, 92, 246, .08)); }
+.dark .dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .16), rgba(0, 0, 0, 0) 55%, rgba(139, 92, 246, .10)); }
 .dev-ws-done-ring { width: 112px; height: 112px; margin-bottom: 8px; }
 .dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
 .dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-muted); }
@@ -12736,6 +12741,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;
 }
+/* The way back to what was passed over: a quiet second action under the
+   primary one, drawn only when there is something above to go back to. */
+.dev-ws-done-back {
+  height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 600;
+  background: transparent; color: var(--accent);
+}
+.dev-ws-done-back:hover { background: var(--accent-wash); }
 
 /* ── The tab pill steps aside for a sheet ─────────────────────────── */
 @media (max-width: 699.98px) {

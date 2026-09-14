@@ -482,7 +482,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
   // Codex CLI block's config.toml entry and one for the generic MCP-client
   // walkthrough.
-  assert.equal(DAPP.tests.length, 621);
+  // 621 → 622: #2172 adds one check on the Needs-you feed's end card, the
+  // summary one swipe past the last item, on the ?shot=needs-end route that
+  // opens on it.
+  assert.equal(DAPP.tests.length, 622);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
