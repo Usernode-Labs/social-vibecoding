@@ -1072,6 +1072,38 @@ html.un-kb .platform-safe-sheet {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #1955 — the one "+" and the two named rows it opens. The wrapper is the
+   positioning context AND the outside-press boundary, so the menu has to
+   live inside it rather than beside the button. */
+.messages-composer-add { position: relative; flex: 0 0 auto; }
+.messages-composer-menu {
+  position: absolute;
+  z-index: 25;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 176px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+  box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
+}
+.messages-composer-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* 40px tall: this is a phone target, and the control it replaced was two
+     36px circles the width of a fingertip apart. */
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+  white-space: nowrap;
+}
+.messages-composer-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
+.messages-composer-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-composer-menu button:disabled { opacity: .35; }
 .messages-send {
   display: inline-flex;
   align-items: center;
@@ -2494,27 +2526,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 
 /* `.home-panel-rows--metered` and the `.home-panel-bar-track` geometry rule
-   lived here. The first reserved the meter lane on every row of a panel that
-   had any numeric challenge; the second derived the bar's inset, height and
-   clearance from that lane, including a `left: 1.75rem` that was the row's
-   own `px-2.5 + glyph + gap-2` restated as a literal — so moving the gutter
-   or the glyph silently desynchronised the bar from the text it measured.
+   are gone with the lane, and the track and fill names went with the count
+   capsule that inherited them: a Home challenge card draws the Challenges
+   tab's shared progress rail now (features/leaderboard/challenge-card.tsx),
+   and the declared checks select on its `[role=progressbar]`. */
 
-   Both are gone with the lane (see --home-panel-row-h above). The track is an
-   ordinary block on the row's second line, sized by Tailwind utilities on the
-   element itself, so it spans the text column by LAYOUT rather than by a
-   number copied out of a sibling's padding. `.home-panel-bar-track` and
-   `.home-panel-bar-fill` remain as the names dapp.json's declared checks and
-   tests/home-panels-render.test.js select on; they carry no rules of their
-   own. */
-
-/* THE SEASON RING's own hairline, inset like the row rules above it — the
-   ring is the card's first band and the rows follow it, so the seam between
-   them has to read as the same kind of seam as the ones between rows. It is a
-   ::after (the band's own bottom) rather than a ::before on the first row,
-   because the rows list draws no leading rule by design: with no ring above
-   it — the between-seasons block — a rule at the top of row one would be a
-   line against the card's own edge. */
+/* THE SEASON PROGRESS's own hairline, inset like the row rules above it —
+   the progress is the card's first band and the rows follow it, so the seam
+   between them has to read as the same kind of seam as the ones between rows.
+   It is a ::after (the band's own bottom) rather than a ::before on the first
+   row, because the rows list draws no leading rule by design: with no
+   progress above it — the between-seasons block — a rule at the top of row
+   one would be a line against the card's own edge. */
 .home-panel-season {
   position: relative;
 }
@@ -2788,8 +2811,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
    The lane is a rail of cards (see `.home-discover-rail` below) and the block
    is a section that grows to its content, so none of that arithmetic has
-   anything left to constrain. What survives is the lane wrapper, the
-   "Popular" divider between the two rails and the empty note.
+   anything left to constrain. What survives is the lane wrapper and the
+   empty note.
 
    The NAME keeps its class and loses its clamp: on a 152px card a real name
    has room to be read on one line, and the second line would only ever be
@@ -2797,21 +2820,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* The "Popular" caption sits on its own hairline row between the two rails. */
-.home-discover-divider {
-  position: relative;
-  min-height: 1.125rem; /* 18px */
-}
-.home-discover-divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0.625rem;
-  right: 0;
-  height: 1px;
-  background: var(--border-light);
-  pointer-events: none;
-}
+/* `.home-discover-divider` is RETIRED. It drew the hairline row that carried
+   the "Popular" caption between the block's two rails. Discover is one
+   category and one rail now — the curated apps and the most-used ones flow
+   as a single continuous set of cards — so there is no sub-group left to
+   label and no seam left to draw. */
 /* The empty state: no rail at all, one centred line in its place, so the
    block reads as a compact strip rather than a mostly-blank box. */
 /* #1913: a card now, in the rail's card language (the tint vars come from
@@ -2943,6 +2956,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   scrollbar-width: none;
   margin-inline: -0.75rem;
   padding-inline: 0.75rem;
+  /* The snap position must be the KEYLINE, not the rail's own edge. Without
+     it `scroll-snap-align: start` lines the first card up with the scrollport
+     edge — 0.75rem outside the section's gutter, since the negative margin
+     above cancelled it — and WebKit applies that snap on layout, so on iOS
+     the rail arrived pre-scrolled with the first card stuck to the screen. */
+  scroll-padding-inline: 0.75rem;
   /* Room for the cards' own shadow-less hairline to not be clipped, and for
      a focus ring on the last card. */
   padding-block: 0.125rem;
@@ -2994,7 +3013,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
 /* ── Challenges: the plate, and the cards on it ─────────────
    The block was one white card of divided rows. It is a PLATE holding the
-   season summary and one tinted card per challenge — the reference's shape —
+   season summary and one card per challenge — the reference's shape —
    and the plate is what keeps them reading as one area rather than four
    things that happen to be adjacent.
 
@@ -3016,86 +3035,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.10);
 }
-.home-challenge-card {
-  border-radius: 0.875rem;
-  background: var(--tint-bg);
-  border: 1px solid var(--tint-line);
-}
-/* The white pill under each title: the challenge's state on one line. It is
-   opaque white on the tint in both modes — a translucent pill over a tinted
-   card over a translucent plate is three layers of glass to read one number
-   through. */
-.home-challenge-pill {
-  background: #fff;
-  border-radius: 9999px;
-}
-.dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
-/* THE COUNTED CHALLENGE'S STATE: a capsule that fills, in the place a
-   yes-or-no challenge puts its circle. It replaces a 3px rail that ran along
-   the pill's bottom edge — one element in the pill instead of one in it and a
-   rule under it, and it carries the exact count as well, which the rail had
-   no room for.
-
-   THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and the
-   difference matters because this comment said the opposite for a while. The
-   claim was that a fill narrower than the capsule's corner radius is drawn
-   inside the cap and painted over, so the floor had to clear the radius. That
-   is true of the RAIL this replaced — 3px tall and flush with a 16px corner,
-   where the bottom row really is all corner — and false of the capsule: its
-   cap is a semicircle of half its height, so a 5px fill still covers 14.8px
-   of the 16px it is tall. Narrow, never invisible.
-
-   So the floor is simply the shortest fill that reads as "started, barely"
-   rather than as a smudge, and it is small on purpose: at the radius-derived
-   14px it was a quarter of the capsule, which read as real progress on a
-   challenge nobody had begun. tests/home-panels-render.test.js pins that it
-   stays well under the radius, and scripts/measure-meter-zero.mjs measures
-   what a browser actually paints. */
-.home-challenge-meter {
-  --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
-  --home-meter-floor: 0.375rem;  /* 6px — a nub, not a quarter of the track */
-  min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
-}
-/* The fill is a TINT, not the solid accent: the count sits on top of it, and
-   a solid fill would swallow the digits the moment progress passed them.
-
-   THE TINT IS OF THE ACCENT BLUE (violet-500 — read the hex, that scale is
-   the shell's blue), not of --brand-ink. Brand ink is a deep periwinkle
-   navy, and a navy at a third of its strength composites to a blue-GREY: it
-   read as "the track, slightly darker" rather than as progress. The accent
-   at this strength composites to an unmistakable light blue, and the count
-   in brand ink still clears 4.5:1 on it — which is the constraint that keeps
-   the fill a tint at all. */
-.home-challenge-meter-fill {
-  opacity: 0.45;
-}
-.dark .home-challenge-meter-fill {
-  opacity: 0.5;
-}
-
-/* The art well on a challenge card. Lighter than the card so the
-   illustration sits ON something, the same relationship the Discover card's
-   art block has to its footer. */
-.home-challenge-art {
-  background: rgba(255, 255, 255, 0.6);
-}
-/* THE FALLBACK WORD, when a challenge's kind carries no icon. A category is
-   free text on the template and is usually one word — "ONBOARDING" at 9px
-   with letter-spacing measures wider than the 62px well, and a single
-   unbreakable word does not wrap, so it ran straight out of the square.
-   Breaking anywhere is what a well can do that a line of prose should not,
-   and two lines is what the box has room for; a longer one ellipsises rather
-   than pushing the card taller. The tracking goes with it — at this size it
-   was buying width the well does not have. */
-.home-challenge-art-word {
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-.dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
+/* The cards on the plate carry no rules of their own. Each is the Challenges
+   tab's shared card (features/leaderboard/challenge-card.tsx), drawn entirely
+   in utilities; `.home-challenge-card` survives only as the root class the
+   declared checks and tests select on. The tinted card, the white pill, the
+   count capsule and the category well that lived here are retired with the
+   design they drew. */
 
 /* ── Create-app widget ──────────────────────────────────────
    A 1x1 tile: the whole thing is the button, since a single cell has no
@@ -3179,8 +3124,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      is the same element, one specificity step up, so the intended phone
      padding lands without an !important or a #app-list scope that would
      miss the landing grid's tiles. It also buys the label 8px of extra
-     line width, which at 11px is roughly two more characters per line. */
-  .app-card.app-card { padding: 0.5rem; }
+     line width, which at 11px is roughly two more characters per line.
+
+     NOT the Discover card. It carries `.app-card` only as the wiring contract
+     with `_wireDiscoveryCards`; it is a tile of its own whose art block is
+     meant to run edge to edge, and this padding inset the illustration inside
+     a frame of tint on every phone. */
+  .app-card.app-card:not(.home-discover-card) { padding: 0.5rem; }
 
   /* `.home-panel-slot > .home-panel--fit { align-self: flex-start }` lived
      here: the phone-only release from the slot's stretch-to-fill, so a short
@@ -6870,6 +6820,24 @@ span.gc-vote-btn-icon { cursor: default; }
   overscroll-behavior: contain;
 }
 .gc-mention-menu.hidden { display: none; }
+/* #2145: the Activity feed's reply box (features/dev-board/card/
+   feed-thread.tsx) opens this same menu from its own `@`. Its composer is a
+   React island with one field per row, so the list is a sibling of the
+   textarea inside the form (position: relative there) rather than the
+   body-level element group-chat.js measures — placed above the field, as
+   the chat composers' are, and stopping short of the 36px send disc and its
+   8px gap on the right. `-below` is the flip for a field with no room above
+   it (a short thread in the Needs-you comments sheet, whose body scrolls). */
+.gc-mention-menu.dev-feed-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 44px;
+  bottom: calc(100% + 4px);
+}
+.gc-mention-menu.dev-feed-mention-menu-below {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
 .gc-mention-option {
   display: flex;
   align-items: center;
@@ -7063,35 +7031,39 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-model-select {
   appearance: none;
   -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  display: block;
   background: none;
   border: 0;
-  padding: 0;
-  max-width: 100%;
+  padding: 0 1.1rem 0 0;
+  max-width: min(100%, 16rem);
   min-width: 0;
   cursor: pointer;
   color: inherit;
   font: inherit;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* The name is what truncates — the caret must not, or the control loses the
-   only thing that says it opens. */
+/* Shared with the proposal-workshop select, which uses this utility to keep
+   a long model name from widening its control. */
 .dc-model-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dc-model-select > svg { flex: none; }
-/* The caret sits inside the button now, but this rule still earns its place:
-   it is what gives the row its colour in dark mode, where the caret was
-   invisible until it stopped inheriting from the field. */
+.dc-model-caret {
+  position: absolute;
+  right: 0;
+  flex: none;
+  pointer-events: none;
+}
+/* The native select's arrow is replaced so it follows the tuned foreground
+   colour in both themes. */
 .dc-venue-detail-inline {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
   min-width: 0;
   color: var(--text-primary);
 }
@@ -10608,7 +10580,7 @@ body.is-offline [data-offline-disabled] {
   display: none;
 }
 
-/* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
+/* "Your OpenRouter key is not set, so this turn ran on Homeroom · Claude"
    — the one place a venue the user did not choose is confessed. A whole
    sentence, so it lives above the composer where it can wrap, rather than
    in the header control that names the venue. */
@@ -10618,9 +10590,8 @@ body.is-offline [data-offline-disabled] {
   line-height: 1.4;
 }
 
-/* Provider-specific model controls. Claude renders its chat-model select;
-   OpenRouter renders the one model pinned to both chat and coding. The
-   other four venues have nothing to choose here. */
+/* The grouped model/key selector. Both in-chat providers render it in the
+   card; the other four venues have nothing to choose here. */
 .dc-venue-detail {
   display: flex;
   flex-wrap: wrap;
@@ -10629,52 +10600,10 @@ body.is-offline [data-offline-disabled] {
   padding: 0 0.1rem 0.25rem;
 }
 
-/* …except Claude's, which shares the status strip with the runner and the
-   meter since #1353. It is a segment of that row rather than a row of its
-   own, so it brings no padding of its own to sit on. */
+/* It shares the card row with the runner and meter, so it brings no padding
+   of its own. */
 .dc-venue-detail-inline {
   padding: 0;
-}
-
-.dc-openrouter-model {
-  min-width: 0;
-  max-width: min(100%, 30rem);
-  overflow: hidden;
-  color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dc-openrouter-model-change {
-  flex: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent-light);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.dc-openrouter-model-change:hover {
-  color: var(--accent);
-}
-
-.dc-openrouter-model-change:focus-visible {
-  outline: none;
-  border-radius: 3px;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
-}
-
-.dc-openrouter-model-change:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  text-decoration: none;
 }
 
 /* The session-card chip on the dev feed (#1087 card actions row). Names
@@ -12015,6 +11944,43 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    note's 16px so the two share a left edge. */
 .dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
 .dev-ws-reveal-chev { width: 14px; height: 14px; }
+/* ── Since your last visit ───────────────────────────────────
+   A HEADING over rows, not a disclosure. It was one collapsed line with a
+   caret, on the reasoning that most visits do not need the fact — and what
+   that produced was a strip nobody opened: the count said something had
+   moved and the rows saying what were behind a press. The bargain is the
+   LIST'S LENGTH now (three, then `Show older`), not its existence, which is
+   what the week walk one pane up already does with its own history.
+
+   `.dev-ws-since-head` is what `.dev-ws-since-row` was, minus everything
+   that said "press me": no pill radius, no pointer, no hover ink, no caret.
+   It is the pane's eyebrow, with a count riding it.
+
+   These rules live beside the reveal control the strip shares, not under
+   the tab they were first written for. They were born inside the old
+   Needs-you block, and #2080, rewriting that tab into a feed, took them out
+   with the rest of it — while the strip had already moved to Current status
+   in #2065 and its markup went on emitting the classes. Two bare inline
+   spans were what was left: "Since your last visit2" (#2097). */
+.dev-ws-since-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 2px 2px 0;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+}
+.dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand-tint); color: var(--brand-ink);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+/* `Show older` is the week walk's own control — `.dev-ws-reveal`, centred,
+   caret down at what it is about to reveal — and it sits under a stack of
+   full-width rows exactly as that one does, so it takes the centred form
+   rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
+   the air between it and the last row. */
+.dev-ws-since-more { margin-top: 2px; }
 
 /* ── Where the summary came from ─────────────────────────────
    Two clauses of the category footnote, moved onto the tab that holds the
@@ -13729,6 +13695,8 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .dev-ws-detail .dev-topic-sheet {
   background: transparent; box-shadow: none; border-radius: 0; padding: 0;
 }
+/* The "Open session" link under a card about the viewer's own session (#1887). */
+.dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
 /* The row's vote button, at the right end of its last line (.dev-ws-row-band). */

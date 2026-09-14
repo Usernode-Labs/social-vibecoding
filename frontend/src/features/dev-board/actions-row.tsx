@@ -41,7 +41,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, GitHubIcon, KeyIcon, PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
@@ -195,10 +195,36 @@ export function DevActionsRow({
    * Nothing waits on the microtask: it runs as soon as React's work loop
    * unwinds, and the host below holds the field's row open with `min-h-8`
    * from the frame's first paint, so arriving a beat later shifts nothing.
+   *
+   * AND ASK FOR THE "+" TO BE WIRED (#2141) — the same bug, one line later
+   * in the module. `_wirePlusMenu` binds the button's handlers by looking
+   * `#dev-plus-btn` up, and `_repaintDevBody` re-runs it right after
+   * `_rerenderWorkshop()`, which is sound only while the pane is in the DOM
+   * by then. Twice it is not. A tap on the All items tab mounts this row
+   * from `setTab`, on React's own schedule, and `_setWorkshopTab` only
+   * persists the choice. And on the first Workshop paint of a page session
+   * a deep-linked or remembered `ws=all` reaches the pane through the
+   * late-arrival effect on `v.tab` (workshop/workshop.tsx): a state update
+   * raised inside a passive effect is scheduled at default priority, so that
+   * render lands a task AFTER the synchronous publish `_rewirePlusMenu()`
+   * follows. Both ways the button arrived after the one call that wires it
+   * and stayed dead until the next body repaint — a WebSocket-driven reload,
+   * a vote, a card action — or until a Dev re-entry remounted the Workshop
+   * with its tab already in the store. Whether the "+" worked depended on
+   * what else had happened since: "sometimes need to refresh before it
+   * works".
+   *
+   * `_rewirePlusMenu` aborts the previous controller before binding, so
+   * this call on top of the module's own leaves exactly one handler per
+   * node. In the effect BODY, not the microtask: it binds listeners and
+   * flushes nothing through React, and the nodes it looks up are committed
+   * by the time any effect runs — which is also before anyone can have
+   * tapped.
    */
   useEffect(() => {
     let live = true;
     queueMicrotask(() => { if (live) callAppView('_renderKanbanFilterBar'); });
+    callAppView('_rewirePlusMenu');
     return () => { live = false; };
   }, []);
   return (
@@ -230,7 +256,7 @@ export function DevActionsRow({
         title={
           readOnly
             ? 'Fork this app'
-            : 'Import a PR or manage this app'
+            : 'File an issue, import a PR or manage this app'
         }
       >
         +
@@ -241,28 +267,48 @@ export function DevActionsRow({
       >
         {readOnly ? null : (
           <>
-            {/* New change and Give feedback live in Improve (#1490). */}
+            {/*
+                New change lives in Improve (#1490). Filing an issue is back
+                HERE as well (#1900): #1490 folded it into Improve's Give
+                feedback beside New change, and people on the board could not
+                find "create an issue" any more. Same dialog, opened with the
+                open app preselected — the row needs nothing of the viewer
+                beyond a writeable board, so it is the one action in this group
+                that is not gated on canCollaborate, and the group heading is
+                unconditional because of it.
+            */}
+            <PlusMenuHeading label="Add to the board" groupKey="build" divider={false} />
+            <PlusRow
+              data-plus="issue"
+              icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="File an issue"
+              sub="Report a problem or idea without building it yourself"
+            />
             {canCollaborate ? (
-              <>
-                <PlusMenuHeading label="Import a change" groupKey="build" divider={false} />
-                <PlusRow
-                  data-plus="import-pr"
-                  icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                  title="Import Feature from a PR"
-                  sub={(
-                    <>
-                      Your computer &middot; your own tools. You have already built it, so
-                      there is no chat for this one
-                    </>
-                  )}
-                />
-              </>
+              <PlusRow
+                data-plus="import-pr"
+                icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Import Feature from a PR"
+                sub={(
+                  <>
+                    Your computer &middot; your own tools. You have already built it, so
+                    there is no chat for this one
+                  </>
+                )}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+              />
             ) : null}
             <PlusMenuHeading
               label="Settings &amp; rules"
               groupKey="settings"
-              divider={canCollaborate}
+              divider={true}
             />
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_delete ? <PlusRow
+              data-plus="app-settings"
+              icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="App settings"
+              sub="Manage app deletion in the Danger zone"
+            /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

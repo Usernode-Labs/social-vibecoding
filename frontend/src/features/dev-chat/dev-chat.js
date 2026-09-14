@@ -54,6 +54,9 @@
 // the user goes — nobody wants "I set Opus here, but the next app
 // reset me back to Sonnet".
 const MODEL_STORAGE_KEY = 'usernode:dc:model';
+const OPENROUTER_MODEL_PREFIX = 'openrouter:';
+const ANTHROPIC_MODEL_PREFIX = 'anthropic:';
+const OPENROUTER_MORE_VALUE = `${OPENROUTER_MODEL_PREFIX}__add_more__`;
 
 // A `?shot=` screenshot-state deep link names a SURFACE, not a moment, so
 // the open is held up for a window rather than attempted once — see
@@ -132,6 +135,9 @@ const DevChat = {
   _titleCompletion: null,
 
   budget: null,
+  // #2118: an OpenRouter session's counterpart — what the viewer's
+  // OpenRouter key reports left of its limit (GET /allowance), read live.
+  openrouterAllowance: null,
 
   // ----- Cross-app active sessions panel state -----
   // Every non-archived session the user owns across all apps, with a `busy`
@@ -223,6 +229,14 @@ const DevChat = {
   // default so the two stay aligned.
   _defaultModel: 'claude-opus-5',
 
+  // The lightweight data behind the composer's unified picker. It is loaded
+  // once per page rather than every time the composer republishes (which can
+  // be every keystroke). The full catalog remains in the existing dialog;
+  // this cache is used only to build its saved/favorite shortlist.
+  _modelPickerData: null,
+  _modelPickerDataPromise: null,
+  _modelPickerChanging: false,
+
   // Fetch the authoritative model allowlist from the server. Replaces
   // the inline MODELS map so adding/removing a model on the server
   // (src/services/models.js) automatically flows to the dropdown
@@ -269,111 +283,201 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  /** Load the saved OpenRouter choice and its key-visible model shortlist. */
+  async _ensureModelPickerData({ forceRefresh = false } = {}) {
+    if (!DevChat.currentSession) return null;
+    const venue = DevChat._currentVenueId();
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
+    if (DevChat._modelPickerData && !forceRefresh) return DevChat._modelPickerData;
+    if (DevChat._modelPickerDataPromise && !forceRefresh) {
+      return DevChat._modelPickerDataPromise;
+    }
+
+    const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
+    DevChat._modelPickerDataPromise = request;
+    try {
+      const data = await request;
+      DevChat._modelPickerData = data;
+      DevChat._publishComposer();
+      return data;
+    } finally {
+      if (DevChat._modelPickerDataPromise === request) {
+        DevChat._modelPickerDataPromise = null;
+      }
+    }
+  },
+
   /**
-   * The chat-model picker, as data. Null on every venue that has none.
+   * The one in-composer model picker, as grouped data. Null off-platform.
    *
-   * TWO SURFACES, and the split is what #1589 found. A native select's
-   * closed control shows the selected option's own text, so
-   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
-   * coding") set the control's width: 276px of a 344px strip on a phone,
-   * which pushed the label above it and the credit meter below it — three
-   * lines for a row that holds two things. Names brought it to 89px.
-   *
-   * That finding was about the CLOSED control, and `selectedLabel` still
-   * honours it. The picker is the kit's anchored menu now rather than a
-   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
-   * so the blurb comes back on `options`, where it costs nothing and answers
-   * the only question this control is ever asked: which one for what.
-   *
-   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
-   * name ("Opus 5: general coding work") and the row already opens with it,
-   * so the sheet joins the two itself. The Generate-proposal picker — the one
-   * a first-timer meets, in a dialog, with a caption under each option —
-   * still renders `modelOptionText`, which is untouched.
+   * OpenRouter comes first. Its shortlist is the user's saved model (or the
+   * server's recommended GLM when there is no saved choice), the model pinned
+   * to this session, and favorites added through the full catalog dialog.
+   * Anthropic's direct models come second. Every option repeats its key source
+   * because native optgroup headings disappear when a select is closed — this
+   * keeps an Anthropic-authored model reached through OpenRouter from looking
+   * like it will use the Anthropic key.
    */
   _modelPickerView() {
-    if (DevChat._currentVenueId() !== 'usernode-claude') return null;
-    const selected = DevChat.selectedModel;
-    const label = (id) => {
-      const meta = DevChat.MODELS[id];
-      return (meta && meta.label) || id;
-    };
-    return {
-      options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-        id,
-        label: (meta && meta.label) || id,
-        // Optional on the wire — loadModels() carries changeSize through
-        // only when the server sends it, and a server that omits it leaves
-        // the sheet rendering plain names.
-        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
-      })),
-      selected,
-      selectedLabel: label(selected),
-    };
-  },
+    const venue = DevChat._currentVenueId();
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
 
-  /**
-   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
-   *
-   * The venue control at the top of the session opens the kit's adaptive
-   * menu (a bottom action sheet on touch, an anchored popover on desktop).
-   * This was the only native <select> left beside it, and the two are the
-   * same question asked at different scopes: where this is built, and by
-   * whom. They should not answer in two different idioms.
-   *
-   * The kit sets row labels with textContent, so the blurb and the tick ride
-   * IN the label — the same constraint build-venues.js states at its own
-   * call. The tick trails the row, as it does there, so the two sheets mark
-   * "you are here" the same way.
-   *
-   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
-   * with the shell (public/usernode-native/v1), so this is the "someone
-   * stripped native.js" case, not a route we serve.
-   */
-  openModelSheet(anchorEl) {
-    const view = DevChat._modelPickerView();
-    if (!view || !view.options.length) return Promise.resolve(null);
-    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
-    if (!kit || !kit.hasKit()) return Promise.resolve(null);
-    DevChat._closeSessionOptions();
-    return kit.menu({
-      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
-      title: 'Which model should write this change?',
-      items: view.options.map((o) => ({
-        label: o.label
-          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
-          + (o.id === view.selected ? ' \u2713' : ''),
-        handler: () => {
-          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
-        },
-      })),
+    const data = DevChat._modelPickerData;
+    const catalog = Array.isArray(data?.models) ? data.models : [];
+    const byId = new Map(catalog.map((model) => [model.id, model]));
+    const savedId = String(data?.backends?.codex_openrouter?.model || '').trim();
+    const recommendedId = byId.has(data?.recommendedModelId)
+      ? data.recommendedModelId
+      : (catalog.find((model) => model?.isRecommended)?.id
+        || catalog.find((model) => model?.compatibility === 'verified')?.id
+        || catalog[0]?.id
+        || '');
+    // A stale saved id is not an option. The server recommendation is GLM by
+    // default, so this is also the first-use fallback the user asked for.
+    const preferredId = byId.has(savedId) ? savedId : recommendedId;
+    const openRouterSession = DevChat._isOpenRouterSession();
+    const currentOpenRouterId = openRouterSession
+      ? String(DevChat.currentSession?.agent_model || '').trim()
+      : '';
+
+    const shortlistIds = [];
+    const addShortlistId = (id) => {
+      if (id && !shortlistIds.includes(id)) shortlistIds.push(id);
+    };
+    // Keep the active session truthful first, then the saved/GLM default,
+    // then any extra models the user starred in the dialog.
+    addShortlistId(currentOpenRouterId);
+    addShortlistId(preferredId);
+    addShortlistId(recommendedId);
+    for (const model of DevChat._openRouterModelsForPicker(catalog, { favoritesOnly: true })) {
+      addShortlistId(model.id);
+    }
+
+    const openRouterOptions = shortlistIds.map((id) => {
+      const model = byId.get(id);
+      return {
+        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
+        label: `OpenRouter key · ${model?.name || id}`,
+      };
     });
-  },
+    let selectedOpenRouterId = currentOpenRouterId || preferredId;
+    if (openRouterSession && !selectedOpenRouterId) {
+      // Old/incomplete rows should say that they are still loading rather
+      // than make the select visually fall into Anthropic's first option.
+      selectedOpenRouterId = '__loading__';
+      openRouterOptions.unshift({
+        value: `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`,
+        label: 'OpenRouter key · Loading model',
+        disabled: true,
+      });
+    }
 
-  /** The picker's `change`, which used to be an addEventListener per render. */
-  _onModelPicked(value) {
-    DevChat.selectedModel = value;
-    // Persist across refreshes + new sessions (fixes #31). Wrapped in
-    // try/catch so private-mode browsers or quota errors don't break the
-    // selector.
-    try { localStorage.setItem(MODEL_STORAGE_KEY, value); } catch {}
-    DevChat._publishComposer();
-  },
+    const groups = [];
+    // Before the async read lands, keep the catalog door available. Once the
+    // capability response says OpenRouter is unavailable, omit a dead group
+    // unless this is an existing OpenRouter session that must remain visible.
+    if (!data || data.codexAvailable || data.loadError || openRouterSession) {
+      groups.push({
+        id: 'openrouter',
+        label: 'OpenRouter key',
+        options: [
+          ...openRouterOptions,
+          { value: OPENROUTER_MORE_VALUE, label: 'Add more OpenRouter models…' },
+        ],
+      });
+    }
+    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => ({
+      value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+      label: `Anthropic key · ${(meta && meta.label) || id}`,
+    }));
+    groups.push({ id: 'anthropic', label: 'Anthropic key', options: directOptions });
 
-  /** The OpenRouter row's "Browse models", likewise. */
-  _onOpenRouterModelChange() {
-    DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
-  },
-
-  /** The OpenRouter row, as data. Null on every venue that has none. */
-  _openRouterRowView() {
-    if (DevChat._currentVenueId() !== 'usernode-openrouter') return null;
-    const model = String(DevChat.currentSession?.agent_model || '').trim();
+    const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
+      ? DevChat.selectedModel
+      : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
+        ? DevChat._defaultModel
+        : (Object.keys(DevChat.MODELS)[0] || ''));
     return {
-      model: model || 'No model is pinned',
-      changeDisabled: !!DevChat._composerBusy,
-      note: DevChat._agentBillingNote(DevChat.currentSession),
+      groups,
+      selected: openRouterSession
+        ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
+        : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
+      changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
     };
+  },
+
+  /** Dispatch a grouped native-select value to its provider. */
+  async _onModelPicked(value) {
+    if (DevChat._modelPickerChanging) return;
+    if (value === OPENROUTER_MORE_VALUE) {
+      await DevChat._onOpenRouterModelChange();
+      return;
+    }
+    if (String(value).startsWith(ANTHROPIC_MODEL_PREFIX)) {
+      const model = String(value).slice(ANTHROPIC_MODEL_PREFIX.length);
+      if (!Object.prototype.hasOwnProperty.call(DevChat.MODELS, model)) return;
+      DevChat.selectedModel = model;
+      // Direct Anthropic selection is a global per-browser preference, as it
+      // was before this control learned about OpenRouter.
+      try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
+      if (DevChat._isOpenRouterSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else {
+        DevChat._publishComposer();
+      }
+      return;
+    }
+    if (!String(value).startsWith(OPENROUTER_MODEL_PREFIX)) return;
+    const model = String(value).slice(OPENROUTER_MODEL_PREFIX.length);
+    if (!model || model === '__loading__') return;
+    const data = DevChat._modelPickerData;
+    const meta = Array.isArray(data?.models)
+      ? data.models.find((item) => item?.id === model)
+      : null;
+    const saved = data?.backends?.codex_openrouter || {};
+    const currentEffort = DevChat._isOpenRouterSession()
+      && DevChat.currentSession?.agent_model === model
+      ? DevChat.currentSession?.agent_reasoning_effort
+      : null;
+    const reasoningEffort = meta && meta.supportsReasoning !== true
+      ? null
+      : (currentEffort || saved.reasoningEffort || null);
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent({
+        backend: 'codex_openrouter', model, reasoningEffort,
+      });
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
+  },
+
+  /** The unified select's final row opens the existing full catalog. */
+  async _onOpenRouterModelChange() {
+    if (DevChat._modelPickerChanging) return;
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+      // Favorite stars can change even when the dialog is cancelled. Re-read
+      // the decorated catalog so additions/removals reach the shortlist.
+      DevChat._modelPickerData = null;
+      await DevChat._ensureModelPickerData();
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -397,7 +501,7 @@ const DevChat = {
   // and the web hand-off, in menus that sat inches apart; the venue names
   // say where the work happens and collide with nothing.
   _agentName(backend) {
-    return backend === 'codex_openrouter' ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+    return backend === 'codex_openrouter' ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
   },
 
   // Runtime rows use camelCase metadata, session rows use snake_case, and
@@ -478,7 +582,7 @@ const DevChat = {
   //
   // A SAVED DEFAULT is deliberately NOT one of them (#1353). It used to put
   // the walkthrough on screen for any untouched session, while the venue
-  // derivation above — which never read it — went on saying Usernode ·
+  // derivation above — which never read it — went on saying Homeroom ·
   // Claude: the header and the sheet said "On-Platform" over a WebUI
   // launchpad, and the only way out was to pick another venue and come back,
   // once per tab, because a preference is not a choice about THIS session
@@ -703,22 +807,6 @@ const DevChat = {
     } catch { /* see above: a lost choice degrades to the derivation */ }
   },
 
-  // What an OpenRouter session bills, in one sentence — the model is the
-  // user's and so is the invoice, and none of that spend passes through the
-  // platform meter, so nothing else on the composer can state it.
-  //
-  // A Usernode · Claude session had a sentence here too and no longer does
-  // (#1353): "Chat and coding use Usernode · Claude and its normal credit
-  // rules" sat under a meter counting those very credits, beside a picker
-  // labelled Chat model, in a session whose header names the venue. Four
-  // ways of saying the same thing, on the surface with the least room for
-  // any of them. Empty string for every venue that is not OpenRouter.
-  _agentBillingNote(session) {
-    if (DevChat._agentBackend(session) !== 'codex_openrouter') return '';
-    const model = String(session?.agent_model || '').trim();
-    return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
-  },
-
   _busyComposerPlaceholder() {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
       ? 'OpenRouter'
@@ -874,9 +962,10 @@ const DevChat = {
       // Re-read only in that mismatched state so the modal and the server do
       // not choose different providers for the same request.
       if (prefs.defaultBackend !== 'codex_openrouter') prefs = await readPreferences();
-      return prefs;
+      return { ...prefs, openrouterCredentialSource: status.source || null };
     }
 
+    let openrouterCredentialSource = null;
     const provisionResponse = await fetch('/api/me/credentials/openrouter/managed', {
       method: 'POST',
       credentials: 'same-origin',
@@ -892,6 +981,7 @@ const DevChat = {
       // without a usable credential is a real problem and remains visible.
       if (['byok_configured', 'already_issued'].includes(provisioned.code)) {
         status = await readCredentialStatus();
+        openrouterCredentialSource = status.source || null;
       }
       if (status.configured !== true || status.status !== 'valid') {
         const err = new Error(
@@ -901,6 +991,10 @@ const DevChat = {
         err.code = provisioned.code || 'provision_failed';
         throw err;
       }
+    } else {
+      // This request created the company-funded key, even on older servers
+      // whose successful response predates the explicit `source` field.
+      openrouterCredentialSource = provisioned.source || 'usernode_managed';
     }
 
     if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
@@ -908,7 +1002,7 @@ const DevChat = {
     if (prefs.defaultBackend !== 'codex_openrouter') {
       throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
     }
-    return prefs;
+    return { ...prefs, openrouterCredentialSource };
   },
 
   async _loadCodingAgentChoiceData({ forceRefresh = false } = {}) {
@@ -1008,12 +1102,12 @@ const DevChat = {
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included credits or personal key, with any available model.</span>
             ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
             ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
@@ -1119,15 +1213,15 @@ const DevChat = {
       settingsButton.classList.toggle('hidden', !codex);
 
       applyButton.disabled = false;
-      const venueName = codex ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+      const venueName = codex ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
       applyButton.textContent = openRouterModelOnly
         ? 'Use this OpenRouter model'
         : (mode === 'switch' ? `Switch to ${venueName}` : `Build on ${venueName}`);
 
       if (!codex) {
         status.textContent = data.loadError
-          ? `${data.loadError} Usernode · Claude is still available.`
-          : 'Usernode · Claude builds in this chat on your daily Usernode credits.';
+          ? `${data.loadError} Homeroom · Claude is still available.`
+          : 'Homeroom · Claude builds in this chat on your daily Homeroom credits.';
         return;
       }
       if (data.loadError) {
@@ -1136,7 +1230,7 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'Usernode · OpenRouter is not enabled for this account or deployment.';
+        status.textContent = 'Homeroom · OpenRouter is not enabled for this account or deployment.';
         applyButton.disabled = true;
         return;
       }
@@ -1283,8 +1377,8 @@ const DevChat = {
   // `explicit` is a {backend, model, reasoningEffort} the caller already
   // has — the venue sheet picked it, so re-asking through the old modal
   // would be asking the same question twice. Omitted, this still opens the
-  // detail chooser, which is what the OpenRouter row needs (a backend is
-  // not a complete answer there: it wants a model and an effort too).
+  // detail chooser, which is what the unified select's "Add more" action
+  // needs (a backend is not a complete answer: it wants a model and effort).
   async _switchCurrentCodingAgent(explicit, { fixedBackend = null } = {}) {
     const session = DevChat.currentSession;
     if (!session || DevChat.isStreaming) return;
@@ -1379,7 +1473,7 @@ const DevChat = {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       // No toast on the way out (#1348 follow-up). A successful pick used to
-      // pop "This session now uses Usernode · Claude." here — and only here:
+      // pop "This session now uses Homeroom · Claude." here — and only here:
       // the sheet's other three rows change the session in silence, so the
       // same act announced itself in one state out of four. The screen is
       // already the announcement. The repaint above swaps a launchpad back
@@ -1528,7 +1622,7 @@ const DevChat = {
     const agent = DevChat._localAgent;
     if (!agent || agent.demo) return;
     const label = agent.label || 'your machine';
-    if (!confirm(`Hand coding turns back to Usernode?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    if (!confirm(`Hand coding turns back to Homeroom?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
     try {
       const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
         method: 'DELETE',
@@ -1560,15 +1654,14 @@ const DevChat = {
   // the general coding pick at any size, #809; Fable is for design and
   // taste judgment plus the most difficult coding work). Both helpers
   // take a
-  // `{ label, changeSize }` meta object and are shared with the
-  // Generate-proposal popup in app-view.js, so the two pickers can't
-  // drift. Nothing measured feeds either one.
+  // `{ label, changeSize }` meta object. Generate proposal now consumes the
+  // short guidance directly, but these helpers remain safe for an older
+  // cached shell during a rolling update. Nothing measured feeds either one.
 
   MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
-  // server sent no guidance (e.g. an older payload) — a picker that
-  // shows only names still works perfectly.
+  // server sent no guidance (e.g. an older payload).
   modelOptionText(meta) {
     if (!meta || typeof meta !== 'object') return String(meta || '');
     const label = meta.label || '';
@@ -1577,13 +1670,9 @@ const DevChat = {
     return `${label}: ${hint}`;
   },
 
-  // Full-sentence caption for a model. The COMPOSER no longer renders one
-  // (#1353): the sentence it painted under the dropdown restated, at
-  // greater length, the guidance already on the option the user had just
-  // chosen, and it did it on every render of every session. This is still
-  // the Generate-proposal popup's caption (app-view.js), where the picker
-  // is met once and the reader has not seen the option list. Returns ''
-  // when there's no guidance to show, and the caller hides the line.
+  // Full-sentence caption retained for an older cached shell during a rolling
+  // update. Neither the composer nor the simplified Generate-proposal dialog
+  // renders it now. Returns '' when there's no guidance to show.
   modelNoteText(meta) {
     if (!meta || typeof meta !== 'object') return '';
     const label = meta.label || '';
@@ -1701,7 +1790,24 @@ const DevChat = {
     // OpenRouter sessions never use the platform's Anthropic allowance.
     // Keep its meter, exhausted banner, and demo refusal card out of this
     // session instead of showing billing state that cannot affect a turn.
+    // What the meter shows here instead (#2118) is the OpenRouter key's
+    // own remaining limit, read live rather than from the snapshot taken
+    // when the key was saved: a managed key's figure moves every turn.
+    // `?shot=openrouter-spend` answers the read from a fixture, as
+    // `?shot=credits-low` does for the Claude meter below.
     if (DevChat._isOpenRouterSession()) {
+      const shot = DevChat._shotOpenRouterSpend();
+      if (shot) {
+        DevChat.openrouterAllowance = shot.allowance;
+      } else {
+        try {
+          const res = await fetch('/api/me/credentials/openrouter/allowance', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (res.ok) DevChat.openrouterAllowance = await res.json();
+        } catch {}
+      }
       DevChat.renderBudget();
       return;
     }
@@ -1836,9 +1942,12 @@ const DevChat = {
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
     const view = DevChat._settledBudgetPillView();
-    const spend = DevChat._liveSpend;
-    if (!spend || DevChat._isOpenRouterSession()
-        || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    const spend = DevChat._liveSpend || DevChat._shotTurnSpend();
+    if (!spend || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    // #2118: an OpenRouter turn's figure is the ledger's list-price estimate
+    // (agent_turns.estimated_cost_usd), so its tooltip says what it is
+    // rather than borrowing Claude Code's wording.
+    const openRouter = DevChat._isOpenRouterSession();
     return {
       title: view.title,
       parts: [...view.parts,
@@ -1846,20 +1955,31 @@ const DevChat = {
         {
           text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
           className: 'text-zinc-500 dark:text-zinc-400',
-          title: spend.estimated
-            ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
-            : 'Token spend reported by Claude Code for this turn.',
+          title: openRouter
+            ? 'Estimated from the model\u2019s OpenRouter list price and the tokens this turn used. OpenRouter\u2019s own usage records determine billing.'
+            : spend.estimated
+              ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
+              : 'Token spend reported by Claude Code for this turn.',
         },
       ],
     };
+  },
+
+  // #2118: the figure `?shot=openrouter-spend` paints as the turn that just
+  // ran, keyed to the session on screen like a real observation.
+  _shotTurnSpend() {
+    const shot = DevChat._shotOpenRouterSpend();
+    if (!shot || !DevChat.currentSession) return null;
+    return { sessionId: DevChat.currentSession.id, ...shot.turn };
   },
 
   _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
     // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it.
-    if (DevChat._isOpenRouterSession()) return NONE;
+    // platform meter has nothing to say about it; what it shows instead is
+    // what is left on that key (#2118).
+    if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
     // is what someone deciding whether to start another turn is looking
@@ -1974,6 +2094,87 @@ const DevChat = {
     };
   },
 
+  // #2118: the OpenRouter session's half of the meter. A session on an
+  // OpenRouter key never touches the platform's Anthropic allowance, so
+  // the daily meter has nothing to say about it; what the viewer wants to
+  // know instead is how much of the KEY's limit is left. OpenRouter
+  // reports that itself (GET /key: limit, limit_remaining, limit_reset),
+  // so the figure is shown as reported rather than derived, in the window
+  // the key's reset cadence names. A key with no limit draws nothing
+  // rather than a guess, and the Claude meter's red/yellow thresholds
+  // colour what is left.
+  _openRouterAllowanceView() {
+    const NONE = { title: null, parts: [] };
+    const a = DevChat.openrouterAllowance;
+    if (!a || a.configured === false) return NONE;
+    // Null is "OpenRouter reports no limit", not zero: only a number draws.
+    const left = typeof a.limitRemaining === 'number' ? a.limitRemaining : NaN;
+    if (!Number.isFinite(left)) return NONE;
+    const limit = typeof a.limit === 'number' ? a.limit : NaN;
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const remaining = Math.max(0, left);
+    const cadence = a.limitReset === 'daily' ? 'daily'
+      : a.limitReset === 'weekly' ? 'weekly'
+        : a.limitReset === 'monthly' ? 'monthly' : null;
+    const when = cadence === 'daily' ? ' today'
+      : cadence === 'weekly' ? ' this week'
+        : cadence === 'monthly' ? ' this month' : '';
+    const pct = hasLimit ? Math.min(100, ((limit - remaining) / limit) * 100) : 0;
+    const color = hasLimit && remaining <= 0 ? 'text-red-700 font-semibold dark:text-red-400'
+      : pct > 80 ? 'text-red-700 dark:text-red-400'
+        : pct > 50 ? 'text-yellow-700 dark:text-yellow-400'
+          : 'text-emerald-700 dark:text-emerald-400';
+    const owner = a.source === 'usernode_managed'
+      ? 'Your included OpenRouter key'
+      : `Your OpenRouter key${a.last4 ? ` (\u2026${a.last4})` : ''}`;
+    const allowance = hasLimit
+      ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
+      : `$${remaining.toFixed(2)} left`;
+    const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    return {
+      title: null,
+      parts: [{
+        text: `$${remaining.toFixed(2)} left${when}`,
+        className: color,
+        title: `${owner} has ${allowance}.${reset}`,
+      }],
+    };
+  },
+
+  // Screenshot-state deep link `?shot=openrouter-spend` (#2118).
+  //
+  // What an OpenRouter session's meter says is a property of the viewer's
+  // key and of a turn that ran: how much of the key's allowance OpenRouter
+  // reports left, and what the ledger estimated the last turn cost. Neither
+  // is a session column a fixture row can carry: the allowance is read
+  // live from OpenRouter, which a staging clone has no key to ask, and a
+  // turn would have to be paid for. So, as ?shot=credits-low does for the
+  // Claude meter, the URL names the state and the client answers both
+  // reads from a fixed snapshot: a managed key with $0.86 of $1.00 left
+  // today, and a turn that cost about twelve cents.
+  //
+  // Ungated by environment for the same reason: it paints figures on the
+  // session already on screen, reads nothing and writes nothing, and it
+  // only answers in an OpenRouter session, so on a Claude session the real
+  // budget read runs untouched.
+  _shotOpenRouterSpend() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'openrouter-spend' || !DevChat._isOpenRouterSession()) return null;
+    return {
+      allowance: {
+        configured: true,
+        source: 'usernode_managed',
+        last4: '7f2c',
+        limit: 1,
+        limitRemaining: 0.86,
+        limitReset: 'daily',
+        shot: true,
+      },
+      turn: { costCents: 12, estimated: true },
+    };
+  },
+
   // #463: true when the signed-in user is out of free credits AND has no
   // BYOK key to spill over to — the only state where AI work is actually
   // blocked. Key-holders never match (billing continues on their key),
@@ -2029,7 +2230,7 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: 'person',
-        lead: 'Connect GitHub or X to unlock $10/day of Usernode credits.',
+        lead: 'Connect GitHub or X to unlock $10/day of Homeroom credits.',
         tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
         actionsHtml: actions({ verificationRequired: true }),
       };
@@ -2290,7 +2491,7 @@ const DevChat = {
   // dropdown in the session header (#1348), the two key rows are Settings
   // links the credits banner already offers at the moment they matter, the
   // local-CLI card is what picking the CLI venue opens, and handing turns
-  // back to Usernode is the runner select's own "Run on: Usernode". A menu
+  // back to Homeroom is the runner select's own "Run on: Homeroom". A menu
   // whose every row is a second way to somewhere else is a menu of
   // duplicates — on the strip with the least room in the app.
 
@@ -2418,7 +2619,7 @@ const DevChat = {
     const CO = window.CreditOptions;
     const state = CO ? DevChat._creditState() : null;
     if (state && state.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
@@ -2730,7 +2931,7 @@ const DevChat = {
   // ── Development-flow picker + walkthrough (#1049) ──────────────────
   //
   // A fresh session used to open with nothing but a text box, and the ONLY
-  // way to discover that Usernode can hand the work to your own Claude Code
+  // way to discover that Homeroom can hand the work to your own Claude Code
   // or Codex was to install the MCP connector. So the choice is offered
   // here instead: a card at the top of an empty session naming all three
   // routes, and — if you pick an external one — a five-step walkthrough
@@ -2756,7 +2957,7 @@ const DevChat = {
     busy: false,
     error: null,
     notice: null,
-    // "Build on Usernode instead" / "Build here" — hide the card for the
+    // "Build on Homeroom instead" / "Build here" — hide the card for the
     // rest of this session without writing a preference.
     dismissed: false,
     brief: null,
@@ -2921,11 +3122,11 @@ const DevChat = {
     flow.error = null;
     flow.notice = null;
     if (action === 'cancel') {
-      // "Build here instead" / "Build on Usernode instead" — the same act as
+      // "Build here instead" / "Build on Homeroom instead" — the same act as
       // picking On-Platform in the venue sheet, so it does the same two
       // things (#1353). Dismissing the in-memory wizard alone left a session
       // whose venue column had already been stored answering "handed to
-      // Claude Code" on the very next paint: the button said Usernode, the
+      // Claude Code" on the very next paint: the button said Homeroom, the
       // header said the web, and the launchpad never left.
       if (DevChat.currentSession && DevChat.currentSession.build_venue) {
         DevChat.currentSession.build_venue = null;
@@ -2967,7 +3168,7 @@ const DevChat = {
       return;
     }
     if (action === 'copy') {
-      // The instructions, not a work order. Usernode no longer writes the work
+      // The instructions, not a work order. Homeroom no longer writes the work
       // order — the agent asks what to build and mints its own through the
       // connector, which is also what stopped a stale one being able to sit in
       // this tab at all.
@@ -3109,7 +3310,7 @@ const DevChat = {
     }
   },
 
-  // Step 5. Usernode opens the cross-fork pull request with its own
+  // Step 5. Homeroom opens the cross-fork pull request with its own
   // credentials and imports it as an ordinary proposal, then we jump to it.
   async _devFlowSubmit() {
     const flow = DevChat._devFlow;
@@ -3597,6 +3798,9 @@ const DevChat = {
       // `drafts` is null when the session payload's best-effort field
       // failed, which makes _reconcileDrafts fetch the list itself.
       DevChat._reconcileDrafts(session.id, drafts);
+      // #1960: `?shot=draft-delete` stages the reported failure on top of
+      // that list. No-op on every other URL and every other session.
+      DevChat._applyDraftDeleteShot(session.id);
       DevChat._startHeartbeat();
       // Drop any streaming title marker carried over from the previous
       // session. If THIS session is mid-run, the busy check below
@@ -3811,7 +4015,7 @@ const DevChat = {
           const { busy, progress, phase, sync, stopping, stopRequestedAt, stoppable } = statusPayload;
           // #907: restore the Run-on selector / chip from the server, so a
           // reload of a session with a machine attached does not silently
-          // claim the next turn runs on Usernode.
+          // claim the next turn runs on Homeroom.
           DevChat._applyRunnerState(statusPayload);
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
@@ -4393,6 +4597,8 @@ const DevChat = {
               case 'usage':
                 assistantMsg.model = data.model;
                 assistantMsg.costCents = data.costCents;
+                if (data.estimated) assistantMsg.costEstimated = true;
+                DevChat._noteTurnUsage(data);
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
@@ -4827,7 +5033,12 @@ const DevChat = {
       }
       case 'usage': {
         const am = lastAssistantMsg();
-        if (am) { am.model = data.model; am.costCents = data.costCents; }
+        if (am) {
+          am.model = data.model;
+          am.costCents = data.costCents;
+          if (data.estimated) am.costEstimated = true;
+        }
+        DevChat._noteTurnUsage(data);
         DevChat.refreshBudget();
         break;
       }
@@ -4982,7 +5193,11 @@ const DevChat = {
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
     if (streaming) DevChat._startSpendPolling();
-    else DevChat._stopSpendPolling();
+    // #2118: an OpenRouter session keeps the turn's figure up after the
+    // turn. There is no daily meter for it to be absorbed into, and the
+    // cost only became known as the run ended, so clearing it at `done`
+    // would show it for a few hundred milliseconds at best.
+    else DevChat._stopSpendPolling({ keepSpend: DevChat._isOpenRouterSession() });
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -5032,9 +5247,9 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    // The OpenRouter row's "Browse models" is guarded by the same rule and
-    // rides in on the publish above — it used to be a `disabled` written by
-    // hand here, which is a write React would clobber on its next paint.
+    // The grouped model selector is guarded by the same rule and rides in on
+    // the publish above — its old OpenRouter-only control received a
+    // `disabled` write here that React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -5454,6 +5669,12 @@ const DevChat = {
 
   _applyLiveSpend(payload, sessionId) {
     if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    // #2118: an OpenRouter turn's cost is known only once Codex reports its
+    // usage, at the end of the coding run, after which the session reads
+    // idle while the reply is still being written. A "not busy" snapshot
+    // therefore has nothing newer to say and keeps the figure; the next
+    // turn's start (_startSpendPolling) or leaving the session drops it.
+    if (!payload?.busy && DevChat._isOpenRouterSession()) return;
     const spend = payload?.busy ? payload.spend : null;
     DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
       ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
@@ -5462,7 +5683,7 @@ const DevChat = {
 
   _startSpendPolling() {
     const sessionId = DevChat.currentSession?.id;
-    if (!sessionId || DevChat._isOpenRouterSession()) return;
+    if (!sessionId) return;
     if (DevChat._spendPollTimer && DevChat._spendPollSession === sessionId) return;
     DevChat._stopSpendPolling();
     DevChat._spendPollSession = sessionId;
@@ -5484,14 +5705,34 @@ const DevChat = {
     DevChat._spendPollTimer = setInterval(poll, 3000);
   },
 
-  _stopSpendPolling() {
+  // `keepSpend` leaves the last figure on screen once polling stops — an
+  // OpenRouter session's settled "this turn" (#2118). Every other caller
+  // drops it: a new turn starts clean, and a session switch or reset must
+  // not carry one session's figure into another.
+  _stopSpendPolling({ keepSpend = false } = {}) {
     if (DevChat._spendPollTimer) clearInterval(DevChat._spendPollTimer);
     DevChat._spendPollTimer = null;
     DevChat._spendPollSession = null;
     DevChat._spendPollGeneration += 1;
+    if (keepSpend) return;
     const hadSpend = !!DevChat._liveSpend;
     DevChat._liveSpend = null;
     if (hadSpend) DevChat.renderBudget();
+  },
+
+  // #2118: an OpenRouter turn's cost arrives on its usage event — the
+  // ledger's list-price estimate, sent once the reply is on screen —
+  // rather than through the Claude live tracker, so the event feeds the
+  // same "this turn" figure the /status poll does. A Claude session's
+  // usage events are the platform/BYOK settlement split and stay out.
+  _noteTurnUsage(data) {
+    if (!DevChat._isOpenRouterSession()) return;
+    const costCents = Number(data?.costCents);
+    if (!Number.isFinite(costCents) || costCents <= 0) return;
+    DevChat._applyLiveSpend(
+      { busy: true, spend: { costCents, estimated: data.estimated !== false } },
+      DevChat.currentSession?.id,
+    );
   },
 
   _progressPollTimer: null,
@@ -6062,7 +6303,12 @@ const DevChat = {
     if (raw === null || raw === undefined || raw === '') return '';
     const cents = Number(raw);
     if (!Number.isFinite(cents) || cents <= 0) return '';
-    return ` · reply $${(cents / 100).toFixed(3)}`;
+    // #2118: an OpenRouter reply's figure is the ledger's list-price
+    // estimate, never a provider-reported amount, and the label says so.
+    // A live row carries the flag from its usage event, a reloaded row
+    // from the persisted metadata.
+    const approx = (msg.costEstimated || msg.metadata?.costEstimated) ? '~' : '';
+    return ` · reply ${approx}$${(cents / 100).toFixed(3)}`;
   },
 
   // ── The transcript, as a MODEL ────────────────────────────────────
@@ -6727,6 +6973,11 @@ const DevChat = {
       // would show it twice.
       devFlowHtml: DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml(),
       activity: DevChat._activitySpec(),
+      // #1889: whether a turn is in flight. The transcript keeps the latest
+      // Changes card in its turn's slot while the run's tail is painting and
+      // draws it after the last row once the chat is idle — see
+      // `DevChatTranscript` in ./transcript.tsx.
+      busy: !!DevChat.isStreaming,
     };
   },
 
@@ -7955,7 +8206,7 @@ const DevChat = {
       id: v.id,
       label: v.label,
       title: 'Building in ' + v.label + '. ' + v.blurb
-        + ' Pick a different venue: on Usernode, on your computer, or handed to'
+        + ' Pick a different venue: on Homeroom, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
@@ -8441,7 +8692,6 @@ const DevChat = {
       venueNoteHtml: DevChat._venueNoteForRender || '',
       hidden: !!DevChat._launchpadVenue(),
       models: DevChat._modelPickerView(),
-      openRouter: DevChat._openRouterRowView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
       placeholder: DevChat._composerBusy
@@ -8680,6 +8930,10 @@ const DevChat = {
     // is what starts the elapsed heartbeat and wires the quick-reply bar.
     DevChat._renderSessionHeader();
     DevChat._renderComposer();
+    // The first paint can already name the current model. This background
+    // read adds the saved/GLM OpenRouter default and favorite shortlist,
+    // then republishes only the composer when it lands.
+    DevChat._ensureModelPickerData();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
@@ -8750,11 +9004,9 @@ const DevChat = {
     // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
-    // The chat-model picker's `change` and the OpenRouter row's "Change
-    // model" were two addEventListener calls here, re-bound on every render
-    // because the elements were new each time. They are the component's
-    // onChange / onClick now, dispatching into `_onModelPicked` and
-    // `_onOpenRouterModelChange` by name.
+    // The grouped model select owns its `change` now and dispatches into
+    // `_onModelPicked` by name. Its "Add more OpenRouter models" option
+    // reaches the existing catalog through `_onOpenRouterModelChange`.
 
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
     // `revealPrCard()` and `leaveSession()` above are what they call.
@@ -9165,6 +9417,53 @@ const DevChat = {
     } catch { return false; }
   },
 
+  // Screenshot-state deep link `?shot=draft-delete` (#1960).
+  //
+  // "Deleting drafts is broken" turned out to be a RACE, and a race has no
+  // resting state a URL can be pointed at: the draft only came back when
+  // the trash landed while a reconcile's list was already in the air. So
+  // this link does not paint a state, it PERFORMS the report — it starts a
+  // reconcile, trashes a draft while that list is still in flight, then
+  // lets a settled resync run on top of it. What the check reads
+  // afterwards is the only thing that ever mattered to the user: is the
+  // draft still gone.
+  //
+  // Unlike every other `?shot=` link this one WRITES: a real DELETE,
+  // through the real route, against the real table. That is the point — a
+  // delete that only pretends to happen cannot catch a delete that comes
+  // back. It is fenced instead of env-gated, to one seeded staging session
+  // and one seeded draft id (seedStagingDraftDelete in src/db/migrate.js);
+  // neither exists in production, so the link is simply inert there. And
+  // because it names the id it removes rather than "the first row", a
+  // re-run finds it already gone and lands on exactly the same screen.
+  SHOT_DRAFT_DELETE_SESSION: 990414,
+  SHOT_DRAFT_DELETE_ID: 'dropthisdraft',
+
+  async _applyDraftDeleteShot(sessionId) {
+    try {
+      if (new URLSearchParams(location.search).get('shot') !== 'draft-delete') return;
+    } catch { return; }
+    if (Number(sessionId) !== DevChat.SHOT_DRAFT_DELETE_SESSION) return;
+    const victim = DevChat.SHOT_DRAFT_DELETE_ID;
+    const onThisSession = () => DevChat.currentSession
+      && Number(DevChat.currentSession.id) === Number(sessionId);
+
+    // The session payload's drafts field is best-effort, so the list may
+    // not be here yet. Settle it before staging anything.
+    if (!DevChat._getSavedDrafts(sessionId).some((d) => d.id === victim)) {
+      await DevChat._reconcileDrafts(sessionId, null);
+    }
+    if (!onThisSession()) return;
+
+    // A list fetched BEFORE the trash: the snapshot that used to undo it.
+    const inFlight = DevChat._reconcileDrafts(sessionId, null);
+    DevChat._deleteSavedDraft(victim);
+    await inFlight;
+    if (!onThisSession()) return;
+    // …and a resync after it, which is what retires the tombstone.
+    await DevChat.applyDraftsUpdate(sessionId);
+  },
+
   // Any `?shot=` deep link, whichever one. Read by openSession to keep a
   // capture read-only — see the auto-resume above.
   _isShotDeepLink() {
@@ -9294,8 +9593,13 @@ const DevChat = {
 
   // Replace the visible list, preserving the tombstones the mirror carries
   // (they belong to the sync layer, not to the list the user sees).
+  //
+  // Called only by the four local mutators (save / send / edit / trash), so
+  // it is the right place to advance the #1960 mutation clock: any list a
+  // reconcile fetched before this moment is now out of date.
   _setSavedDrafts(sessionId, list) {
     if (!sessionId) return;
+    DevChat._bumpDraftSeq(sessionId);
     const { tombstones } = DevChat._readDraftMirror(sessionId);
     DevChat._writeDraftMirror(sessionId, {
       drafts: (list || []).map(DevChat._normalizeDraft).filter(Boolean),
@@ -9319,6 +9623,7 @@ const DevChat = {
   _addDraftTombstone(sessionId, id) {
     const mirror = DevChat._readDraftMirror(sessionId);
     if (mirror.tombstones.some((t) => t.id === id)) return;
+    DevChat._bumpDraftSeq(sessionId);
     mirror.tombstones.push({ id, at: new Date().toISOString() });
     DevChat._writeDraftMirror(sessionId, mirror);
   },
@@ -9328,6 +9633,41 @@ const DevChat = {
     const tombstones = mirror.tombstones.filter((t) => t.id !== id);
     if (tombstones.length === mirror.tombstones.length) return;
     DevChat._writeDraftMirror(sessionId, { drafts: mirror.drafts, tombstones });
+  },
+
+  _isDraftTombstoned(sessionId, id) {
+    return DevChat._readDraftMirror(sessionId).tombstones.some((t) => t.id === id);
+  },
+
+  // ── #1960: how old is the list I'm holding? ─────────────────────────
+  //
+  // A reconcile fetches the server's drafts and then decides what to keep.
+  // Between those two moments the user can trash a draft, and the list in
+  // hand — fetched BEFORE the delete — still contains it. Nothing in the
+  // snapshot says so, because a REST list carries no clock.
+  //
+  // This counter is that clock. Every local mutation bumps it; a reconcile
+  // reads it before fetching and again after, and a snapshot taken across
+  // a bump is STALE: it may be missing a save and, far worse, may still be
+  // showing a delete. Stale snapshots are still merged (the tombstone set
+  // subtracts what the user removed), they just aren't allowed to retire a
+  // tombstone — that is the one decision that needs a list which postdates
+  // the delete it is being asked to forget.
+  //
+  // In-memory on purpose: it orders events inside one page's lifetime,
+  // which is the only place the two sides of the race can both exist.
+  _draftMutationSeq: Object.create(null),
+
+  _bumpDraftSeq(sessionId) {
+    if (!sessionId) return 0;
+    const key = String(sessionId);
+    DevChat._draftMutationSeq[key] = (DevChat._draftMutationSeq[key] || 0) + 1;
+    return DevChat._draftMutationSeq[key];
+  },
+
+  _draftSeq(sessionId) {
+    if (!sessionId) return 0;
+    return DevChat._draftMutationSeq[String(sessionId)] || 0;
   },
 
   _newDraftId() {
@@ -9345,6 +9685,10 @@ const DevChat = {
   // reconcile flush can re-send freely.
   async _pushDraftAdd(sessionId, draft) {
     if (!sessionId || !draft) return false;
+    // #1960: the user may have trashed this draft before its upload ever
+    // ran (a reconcile flush queues uploads, and the flush is async).
+    // Uploading it now would put back exactly what the delete removed.
+    if (DevChat._isDraftTombstoned(sessionId, draft.id)) return false;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/drafts`, {
         method: 'POST',
@@ -9360,13 +9704,30 @@ const DevChat = {
         }
         return false;
       }
+      // …and it may have been trashed WHILE the POST was in flight, in
+      // which case the delete raced ahead of a row that didn't exist yet
+      // and the server is now holding a draft nobody asked for. Undo it.
+      if (DevChat._isDraftTombstoned(sessionId, draft.id)) {
+        DevChat._pushDraftDelete(sessionId, draft.id);
+        return false;
+      }
       DevChat._markDraftSynced(sessionId, draft.id, true);
       return true;
     } catch { return false; }
   },
 
   // Delete one draft. A tombstone is recorded first by the caller so an
-  // offline delete still replays; success drops it again.
+  // offline delete still replays.
+  //
+  // #1960: a 200 here does NOT retire the tombstone. This function knows
+  // the server has honoured the delete; it does not know whether some
+  // reconcile is still holding a list fetched before it, and retiring the
+  // tombstone hands that reconcile a draft with nothing left to suppress
+  // it — which is how a trashed draft came back, in the list AND in
+  // storage, and got re-uploaded on the reconcile after that. Retiring is
+  // now the reconcile's job, from a snapshot it can prove postdates the
+  // delete (see _reconcileDrafts). The cost is one tombstone living until
+  // the next reconcile; they are capped, and the id is never reused.
   async _pushDraftDelete(sessionId, id) {
     if (!sessionId || !id) return false;
     try {
@@ -9374,9 +9735,7 @@ const DevChat = {
         `/api/sessions/${sessionId}/drafts/${encodeURIComponent(id)}`,
         { method: 'DELETE' }
       );
-      if (!res.ok) return false;
-      DevChat._dropDraftTombstone(sessionId, id);
-      return true;
+      return !!res.ok;
     } catch { return false; }
   },
 
@@ -9398,8 +9757,18 @@ const DevChat = {
   // after that means the network is down: keep the mirror exactly as-is.
   async _reconcileDrafts(sessionId, serverList) {
     if (!sessionId) return;
+    // #1960: how old is this list? Only a snapshot we fetched ourselves,
+    // with no local change across the wait, is recent enough to retire a
+    // tombstone. A caller-supplied array came from some earlier payload
+    // (openSession's session fetch) whose age we cannot see, so it is
+    // treated as unprovable — it is still merged, it just never gets to
+    // decide that a delete has been honoured. The next self-fetching
+    // reconcile (the WS echo, or returning to the tab) does that.
+    const seqAtFetch = DevChat._draftSeq(sessionId);
     let server = serverList;
+    let ownFetch = false;
     if (!Array.isArray(server)) {
+      ownFetch = true;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/drafts`);
         if (!res.ok) return;
@@ -9407,6 +9776,11 @@ const DevChat = {
         server = Array.isArray(data.drafts) ? data.drafts : [];
       } catch { return; }
     }
+    // Did the user change anything while we were waiting? If so this list
+    // predates that change: it cannot be trusted to retire tombstones, nor
+    // to say that a synced row it lacks was deleted elsewhere.
+    const noLocalChange = DevChat._draftSeq(sessionId) === seqAtFetch;
+    const snapshotIsCurrent = ownFetch && noLocalChange;
 
     const mirror = DevChat._readDraftMirror(sessionId);
     const tombstoned = new Set(mirror.tombstones.map((t) => t.id));
@@ -9420,8 +9794,15 @@ const DevChat = {
     // tombstones it has already honoured.
     const deletes = [];
     for (const t of mirror.tombstones) {
+      // Still listed: re-issue the DELETE. It is idempotent, so doing this
+      // to a draft the server already dropped costs one request.
       if (serverById.has(t.id)) deletes.push(DevChat._pushDraftDelete(sessionId, t.id));
-      else DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a snapshot that postdates every local change: the
+      // server has honoured it and no in-flight list can resurrect it.
+      else if (snapshotIsCurrent) DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a STALE snapshot proves nothing — this list may simply
+      // have been taken before the draft existed. Keep the tombstone; the
+      // reconcile that follows the delete's own round trip retires it.
     }
 
     // (1) union, minus tombstones. A server row wins on text (it is the
@@ -9430,10 +9811,13 @@ const DevChat = {
     // no longer lists was deleted elsewhere (#1960/#1961): every DELETE
     // pushes a drafts-changed event to the account's other devices, so
     // re-uploading it here would resurrect the draft on all of them.
+    // Only a list with no local change across its wait may say so, though:
+    // a draft saved mid-reconcile can upload and mark itself synced before
+    // the older list arrives, and that list lacks it merely for being older.
     const union = new Map();
     for (const d of mirror.drafts) {
       if (tombstoned.has(d.id)) continue;
-      if (d.synced && !serverById.has(d.id)) continue;
+      if (d.synced && !serverById.has(d.id) && noLocalChange) continue;
       union.set(d.id, d);
     }
     for (const [id, d] of serverById) {
@@ -9493,10 +9877,12 @@ const DevChat = {
   // WS `session_drafts_changed` from another device of the SAME user.
   // No-op unless that session is the one on screen; the next open or
   // visibility-return reconciles anyway, so a dropped socket costs nothing.
+  // Returns the reconcile's promise so a caller (and the tests) can wait
+  // for it; nothing in the app does, the WS dispatch is fire-and-forget.
   applyDraftsUpdate(sessionId) {
-    if (!DevChat.currentSession) return;
-    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return;
-    DevChat._reconcileDrafts(DevChat.currentSession.id, null);
+    if (!DevChat.currentSession) return Promise.resolve();
+    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return Promise.resolve();
+    return DevChat._reconcileDrafts(DevChat.currentSession.id, null);
   },
 
   _toast(msg) {

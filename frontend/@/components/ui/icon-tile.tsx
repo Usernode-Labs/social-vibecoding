@@ -4,7 +4,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 /**
- * The rounded-square glyph tile, in its four sizes.
+ * The rounded-square glyph tile, in its five sizes.
  *
  * `sm` is the leading tile in a grouped-list row; `lg` is the launcher/app
  * tile — the same shape at 4rem, used for app identity on Home, in the
@@ -12,7 +12,10 @@ import { cn } from '@/lib/utils';
  * messages. `xs` is the same face at 2rem, for a row whose whole height is
  * the 44px tap target and where an 11-unit tile would leave no air: the
  * Improve panel's App / Board / Activity rows. `2xs` is 1.5rem, for a tile
- * inside a single-line header rather than a row.
+ * inside a single-line header rather than a row. `xl` is the 5rem artwork
+ * tile on the Challenges tab's card (features/leaderboard/challenge-card.tsx),
+ * the first caller outside Home and chrome: it holds a 4rem illustration, and
+ * stays an empty neutral face while a challenge has none.
  *
  * ── There is ONE face, and it is neutral ──────────────────────────────
  *
@@ -40,6 +43,7 @@ const tile = cva('flex shrink-0 items-center justify-center', {
       xs: 'h-8 w-8 rounded-lg [&>svg]:h-5 [&>svg]:w-5',
       sm: 'h-11 w-11 rounded-xl [&>svg]:h-6 [&>svg]:w-6',
       lg: 'h-16 w-16 rounded-2xl [&>svg]:h-9 [&>svg]:w-9',
+      xl: 'h-20 w-20 rounded-2xl [&>svg]:h-16 [&>svg]:w-16 [&>img]:h-16 [&>img]:w-16',
     },
     tint: {
       neutral: 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',

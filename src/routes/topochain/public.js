@@ -631,13 +631,33 @@ function topochainPublicRoutes(config) {
                 c.goal, c.task, c.reward, c.description, c.requirements,
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,
-                ${TEMPLATE_JOIN_COLUMNS_SQL}
+                c.metric_type, c.metric_target, c.metric_label,
+                ${TEMPLATE_JOIN_COLUMNS_SQL},
+                ck.icon AS kind_icon
            FROM challenges c
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+           -- #1914: the card's picture, from the KIND the challenge resolves
+           -- to (its own override, else its template's) — the same join and
+           -- the same COALESCE Home's panel query uses, so a challenge wears
+           -- one face on both surfaces. Null for a kind that is unset or has
+           -- no icon, which the tile falls back from rather than drawing a
+           -- blank square.
+           LEFT JOIN challenge_kinds ck ON ck.id = COALESCE(c.kind, ct.kind)
           WHERE c.season_event_id = $1 AND c.enabled = TRUE
           ORDER BY c.display_order ASC, c.id ASC`,
         [id]
       );
+      // The EFFECTIVE metric — the challenge row's override over the
+      // template's, the same merge Home's panel and /challenges-api apply.
+      // `activity_type` is the template alone by contract, so the challenge
+      // card would otherwise count toward a target the organiser overrode.
+      const eff = (r, key) => (r[key] != null ? r[key] : r[`t_${key}`]);
+      const metricOf = (r) => {
+        const kind = eff(r, 'metric_type');
+        if (!kind) return null;
+        const target = eff(r, 'metric_target');
+        return { kind, target: target == null ? null : Number(target), label: eff(r, 'metric_label') ?? null };
+      };
 
       // SPEC 1197: the source 500s on a deleted activity type; guard by
       // skipping any row whose template join came back empty instead
@@ -647,6 +667,7 @@ function topochainPublicRoutes(config) {
       const data = visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
         .map((r) => {
           const item = buildChallengeListItem(r);
+          item.metric = metricOf(r);
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();

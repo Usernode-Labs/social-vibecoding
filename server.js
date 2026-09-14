@@ -604,6 +604,30 @@ app.use(workshopThemesRoutes(config));
     ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
   }
 }
+// A promoted head whose checks were deferred because it conflicted with main
+// (services/check-admission.js) gets them the moment it measures clean —
+// against the preview that is already up for it, so a run rather than a
+// rebuild. Measurement happens on whichever instance took the vote, the
+// sweep or the capture, so the hook is registered on every instance, like
+// the board hook above. recheckSessionChecks is _inFlight-guarded at the
+// capture; a second kick for the same head costs nothing.
+{
+  const integration = require('./src/services/integration');
+  integration.onBecameClean(async (row) => {
+    const pool = getPool(config);
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1 AND cs.status = 'promoted'
+          AND cs.check_state = 'pending' AND cs.check_phase = 'deferred'`,
+      [row.id]
+    );
+    if (!rows[0]) return;
+    await require('./src/services/staging-recovery').recheckSessionChecks({
+      config, pool, session: rows[0], reason: 'conflict-resolved',
+    });
+  });
+}
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
@@ -1097,7 +1121,22 @@ async function becomeLeader() {
   // restart — actually merges now instead of waiting for a fresh vote.
   // Both stay off the critical path so the server still comes up
   // immediately, like the other recovery steps below.
-  recoverStuckMerges(config)
+  //
+  // The harvest goes first. A checks run whose launcher this rollout just
+  // replaced still has its capture / unit-suite Jobs running (or finished)
+  // on the cluster; services/check-harvest.js seats every such run and
+  // reads its verdict rather than starting it over. Its claim phase is two
+  // writes per run and completes before the chain moves on, so by the time
+  // reconcileStuckChecks looks, every harvestable session reads as in flight
+  // (checkRecoveryInFlight) and only genuinely ownerless rows get re-driven.
+  // The Job reads themselves run detached (`done`); boot never waits on a
+  // Job. No-op outside the Kubernetes capture runtime.
+  const checkHarvest = require('./src/services/check-harvest');
+  checkHarvest.sweep(config, { reason: 'boot' })
+    .catch((err) => {
+      log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
+    })
+    .then(() => recoverStuckMerges(config))
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, re-run any stuck/never-recorded
     // proposal checks so PRs left permanently "still running its tests" by a
@@ -1110,6 +1149,11 @@ async function becomeLeader() {
         err: err.message,
       });
     });
+  // ...and on a timer afterwards: a run orphaned while this process is the
+  // leader (a worker Pod evicted, a follower that launched it and then lost
+  // the election) is picked up within the orphan window instead of waiting
+  // out CHECKS_STALE_MS for the stale sweep to start it over.
+  checkHarvest.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1310,7 +1354,7 @@ module.exports = {
   },
 };
 
-// Scan existing imported apps for privacy violations. Usernode workers
+// Scan existing imported apps for privacy violations. Homeroom workers
 // run with zero GitHub credentials and rely on unauthenticated public
 // HTTPS clones; a private repo can't be cloned by the worker, so dev
 // sessions against it will fail at bootstrap. Surface those rows at
@@ -1625,7 +1669,12 @@ function checkRecoveryInFlight(sessionId) {
   return activeWorkersSvc.isSessionBusy(sessionId)
     || hasInFlightHandoffPipeline(sessionId)
     || stagingSvc.hasInFlightBuild(Number(sessionId))
-    || visualsSvc.hasInFlightCapture(sessionId);
+    || visualsSvc.hasInFlightCapture(sessionId)
+    // A harvest holds the capture seat for its whole read, so the line
+    // above already covers it; this also covers the moment it hands the
+    // seat back to re-drive a run it could not read (check-harvest.js
+    // redrive), which must not be re-driven a second time from here.
+    || require('./src/services/check-harvest').isHarvesting(sessionId);
 }
 
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
@@ -4845,7 +4894,7 @@ function startStalePrSweeper(config) {
       for (const session of rows) {
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         try {
-          // Native PR branches can be updated outside Usernode. Refresh their
+          // Native PR branches can be updated outside Homeroom. Refresh their
           // immutable reviewed revision before any timed governance decision,
           // including automatic rejection. Imported proposals retain their
           // existing imported-head synchronization behavior.

@@ -30,6 +30,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
+const { loadTsx } = require('./lib/render-tsx');
 const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
@@ -90,6 +91,10 @@ function makeAppView(over) {
     },
     location: o.location || { search: '', hash: '', href: 'http://localhost/' },
     URLSearchParams,
+    // Globals a code path reads as bare identifiers at call time — the "+"
+    // wiring wants the real AbortController and a PlatformUI to ask about
+    // touch. Absent by default, as they always were.
+    ...(o.globals || {}),
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -821,7 +826,7 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
 
 test('since-your-last-visit sits with the other things addressed to you', () => {
   const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
@@ -873,6 +878,41 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // for, and the sentence is the lane's note.
   assert.ok(!CSS.includes('.dev-ws-since-btn {'), 'the bespoke row is retired');
   assert.ok(!html.includes('1 change landed, 1 new issue, 1 new proposal</button>'));
+});
+
+// ── #2097: the heading's rules have to follow its markup ─────────────
+
+test('the since heading is styled: each class it emits has a rule, and the count is a pill beside the label', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const html = workshopHtml(AppView);
+  // The label and the count are two elements with nothing between them: the
+  // air is the heading's flex gap, not a text space and not a margin of the
+  // pill's own. So the moment the rules go, the markup reads as exactly what
+  // it is — two inline spans — and the strip says "Since your last visit2".
+  // That is what #2080 shipped: it rewrote the Needs-you tab and took these
+  // rules out with that tab's CSS, while the strip had moved to Current
+  // status in #2065 and its markup went on emitting the classes. Every
+  // assertion above matched the markup and none of them looked for the
+  // rules; this one does.
+  const head = html.match(/<div class="dev-ws-since-head" data-ws-since-head="">([\s\S]*?)<\/div>/);
+  assert.ok(head, 'the heading is drawn');
+  const classes = [...head[1].matchAll(/<span class="([^"]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(classes, ['dev-ws-since-label', 'dev-ws-since-n'], 'the label, then the count, as two elements');
+  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span>$/, 'nothing between them but the gap');
+  // Comments stripped: a selector named in prose is not a selector.
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  for (const cls of ['dev-ws-since-head', ...classes, 'dev-ws-since-more']) {
+    assert.match(stripped, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
+  }
+  assert.match(stripped, /\.dev-ws-since-head \{[^}]*display: flex;[^}]*gap: 8px;/,
+    'the heading lays the two out with a gap');
+  assert.match(stripped, /\.dev-ws-since-n \{[^}]*border-radius: 999px;/, 'the count is a pill');
+  assert.match(stripped, /\.dev-ws-since-n \{[^}]*background: var\(--brand-tint\); color: var\(--brand-ink\);/,
+    'in the brand tint, as it was');
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {
@@ -1478,9 +1518,10 @@ test('the open card collapses on a click at the card, not at what it opened', ()
   // list open under the card there is a lot of prose to land on, and
   // collapsing the item because somebody selected a word in it loses their
   // place — so the three regions below the card are excluded alongside the
-  // controls.
+  // controls. `details` is the merge-requirements checklist (#2128): a
+  // disclosure the reader taps open, not a place to fold from.
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
-  for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form',
+  for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form', 'details',
     '\\[data-attr-chip\\]', '\\[data-issue-chip\\]',
     '\\.dev-ws-detail', '\\.dev-feed-thread', '\\.dev-feed-comments']) {
     assert.match(view, new RegExp(sel), `the guard excludes ${sel}`);
@@ -1567,6 +1608,106 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // would hide the one thing on this screen you cannot find another way.
   AppView._kanbanFilters = { ...AppView._kanbanFilters, q: 'nothing matches this' };
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
+});
+
+test('#1887: a card about your own session opens the CARD, with the session a link inside it', () => {
+  // Opening a card about your own session used to navigate to the session
+  // — the row's page link and the delegated #dev-body handler both went to
+  // /dev/sessions/<id>. It is a card like every other now: the row unfolds
+  // it in place, the change's page is the open card's pill (#1886), and the
+  // session is a link INSIDE the open card — the one line under the sheet.
+  const mine = { id: 51, session_title: 'Bottom tabs', status: 'active', pr_number: null, linked_issues: [],
+    created_at: at(1), last_activity_at: at(0) };
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [{ ...mine }];
+  const v = AppView._workshopView();
+  const row = v.mine.rows.find((r) => r.t === 'card' && r.card.attrs['data-session-chip'] === '51');
+  assert.ok(row, 'the session is on the lander, carrying the hook the checks name it by');
+  assert.equal(row.key, 'mine:my-session:51');
+
+  // Folded, it is a disclosure like every other row: no destination of its
+  // own, and nothing on the lander links to the session.
+  const folded = workshopHtml(AppView);
+  assert.match(folded, /class="dev-ws-row[^"]*"[^>]*aria-expanded="false"[^>]*data-ws-row="mine:my-session:51"[^>]*data-session-chip="51"/);
+  assert.ok(!folded.includes('/dev/sessions/51'), 'folded, the session is linked from nowhere');
+  assert.ok(!folded.includes('dev-ws-sheet-actions'), 'and there is no line under a row to carry a link');
+
+  // Unfolded — through the deep link the declared check uses — it is the
+  // card: its pill in the action band, and under the sheet one line, the
+  // session's.
+  AppView._workshopShot = 'mine-session';
+  assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 'mine', key: 'mine:my-session:51' });
+  const open = workshopHtml(AppView);
+  assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
+    'the open card, hook intact');
+  // The change's page is the pill's, not a line under the sheet (#1886):
+  // "Open card" opens the card's sections here, and once they are open the
+  // same pill is "Open page ›", the link to the change's page.
+  assert.match(open, /<button type="button" class="gc-vote-btn dev-ws-open-btn" aria-expanded="false" data-ws-open-card="mine:my-session:51">Open card<\/button>/,
+    'the open card carries the pill');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'and open, the pill is the page link');
+  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
+  // Under the sheet, the session — alone. #2030's point was that two
+  // controls both reading "Open" confused; the session is a different
+  // destination from the page the pill opens, so it keeps its own link,
+  // and it is the one thing the line holds: no separator, nothing beside it.
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div><\/div>/,
+    'the session link is the line under the sheet, and the last thing in it');
+  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
+  assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
+  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
+    'the separator went with the second link');
+  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
+    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
+
+  // The helpers, from the bundle: the card's page is the change's, and only
+  // a hook for one of YOUR sessions names a session — an imported PR of
+  // yours has no dev chat, and nobody else's session is yours to open.
+  const { openHref, sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(openHref('demo-app', row.card), '#app/demo-app/dev/proposals/51');
+  assert.equal(sessionHref('demo-app', row.card), '#app/demo-app/dev/sessions/51');
+  for (const hook of ['data-shared-session-row', 'data-proposal-row', 'data-issue-row', 'data-gov-row']) {
+    assert.equal(sessionHref('demo-app', { attrs: { [hook]: '51' } }), null, `${hook} is not a session of yours`);
+  }
+  assert.equal(sessionHref('', row.card), null, 'and no app, no route');
+
+  // A tap outside a fold — the delegated #dev-body handler — opens the
+  // change's page too, never the session (#2020). The session's own route
+  // stays for the links that hold it: the one above, and a bookmark.
+  const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("const sessionChip = e.target.closest('[data-session-chip]');"));
+  assert.match(click.slice(0, 400), /AppView\.openTopic\('proposal', parseInt\(sessionChip\.dataset\.sessionChip, 10\)\);/);
+  assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
+    'no card hook navigates to the session any more');
+
+  // On the Board the open card's "Open card" is the change's page as well,
+  // and there is no line under the card: that page carries the workspace.
+  const board = makeAppView({ location: { search: '?cards=open', hash: '', href: 'http://localhost/?cards=open' } });
+  seed(board);
+  board._mySessions = [{ ...mine }];
+  const bh = kanbanHtml(board);
+  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
+  assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
+
+  // Declared: the deep link, on the Workshop, reaching the link. RETARGETED
+  // from the text-only board check that owned the busy mock row rather than
+  // added: the manifest sits at its ceiling (services/app-manifest.js keeps
+  // 20 slots clear of MAX_DECLARED_TESTS), so one check owns that row before
+  // and after — as the card it opens into, with the session inside it. The
+  // selector walks the markup above: the lane, the open wrapper, the sheet,
+  // the card by its hook, and the line under it — a later sibling of the
+  // card, past the thread — holding the session link alone (the page link
+  // it once had to pass on the way is the pill's now, #1886).
+  const check = dapp.tests.find((t) => /#1887/.test(t.name));
+  assert.ok(check, 'a declared check pins it');
+  assert.equal(check.path, '/?demo=1&shot=mine-session#app/usernode-2d5619/workshop');
+  assert.equal(check.expectSelector,
+    '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
+  assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');
+  assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
+  assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,
+    'the shot is read where the other Workshop shots are');
 });
 
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
@@ -2419,6 +2560,74 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   assert.ok(html.indexOf('data-discussion-row') < pane, 'and so is the discussion');
 });
 
+test('a search that matches nothing keeps the pane on screen, with the search box in it (#2090)', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+  assert.equal(v.themes.length, 0, 'no theme has a row left to draw');
+  assert.equal(v.meta.filtered, true);
+  const html = workshopHtml(AppView, 'all');
+  // THE PANE STAYS. It was gated on having a theme to draw, so a search that
+  // matched nothing unmounted the whole pane — the grouping tabs, the "+",
+  // and the toolbar whose host the search field lives in. The one control
+  // that could undo the search left the screen with the rows, and the viewer
+  // was stuck on a board they could not widen back out.
+  assert.ok(html.includes('data-ws-pane'), 'the pane renders');
+  assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
+  // The rows' place says why they are gone, UNDER the controls it is about.
+  assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
+  assert.ok(html.indexOf('id="dev-actions"') < html.indexOf('data-ws-empty'), 'beneath the toolbar');
+  assert.ok(html.indexOf('dev-ws-pane-body') < html.indexOf('data-ws-empty'), 'in the pane body');
+  // And nothing pretends there is a list: no sort row over an empty list, no
+  // "0 categories", no footnote about how they were drafted.
+  assert.ok(!html.includes('dev-ws-sort'), 'no sort row');
+  assert.ok(!html.includes('dev-ws-themes'), 'no empty theme list');
+  assert.ok(!html.includes('dev-ws-foot-note'), 'no grouping footnote');
+  // Widen the search back out and the list is back, the note gone.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  const back = workshopHtml(AppView, 'all');
+  assert.ok(back.includes('dev-ws-themes'), 'the themes return');
+  assert.ok(!back.includes('data-ws-empty'), 'and the note goes');
+  // The declared check runs this state in a browser: the pane opened already
+  // narrowed to a search nothing matches, through `?q=` (app-view.js, where
+  // the seed is consumed on the first load so it can never hold a cleared
+  // search). The note is what proves the search applied — without it the box
+  // alone would pass on a pane the URL never narrowed.
+  const check = dapp.tests.find((t) => /[?&]q=/.test(t.path || ''));
+  assert.ok(check, 'a declared check opens the pane narrowed by ?q=');
+  assert.match(check.path, /[?&]ws=all\b/, 'on All items');
+  assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search$/,
+    'and expects the search box, in the pane head');
+  assert.equal(check.expectText, 'Nothing here matches the current search and filters.');
+});
+
+test('an empty board still gets the All items pane, and the note names the "+" that is in it', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._ghIssues = [];
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._mergedTotal = 0;
+  const v = AppView._workshopView();
+  assert.equal(v.themes.length, 0);
+  assert.deepEqual(plain(v.emptyNote), { loadFailed: false, filtered: false });
+  const html = workshopHtml(AppView, 'all');
+  assert.ok(html.includes('data-ws-pane'), 'the pane renders');
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'with the toolbar');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+" the note points at');
+  assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.doesNotMatch(html, /Nothing here matches/, 'no filter is on, so it does not blame one');
+  // The status tab keeps its own copy of the note, over the strips.
+  const status = workshopHtml(AppView, 'status');
+  assert.match(status, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.ok(!status.includes('data-ws-pane'), 'and no pane: that is the All items tab');
+});
+
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {
   // #dev-actions, #dev-plus-btn and #dev-plus-menu are ids. Two copies on
   // screen would break _wirePlusMenu, which looks both up by getElementById.
@@ -2780,6 +2989,106 @@ test('the filter host asks to be filled, because the repaint that fills it runs 
   assert.match(ACTIONS_ROW, /id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8"/);
 });
 
+test('the "+" asks to be wired when its row mounts, because the module wires it before the row exists (#2141)', () => {
+  // THE ORDER IS THE BUG, AGAIN, one line further down the same branch. The
+  // module wires the button from `_repaintDevBody`, on the line after
+  // `_rerenderWorkshop()` — by id, so it is a no-op while the button is not
+  // in the DOM.
+  assert.match(APP_VIEW_SRC, /AppView\._rerenderWorkshop\(\);\s*AppView\._rewirePlusMenu\(\);/,
+    'the module wires on the repaint, after the Workshop publish');
+  assert.match(APP_VIEW_SRC, /_wirePlusMenu\(content\) \{\s*const btn = document\.getElementById\('dev-plus-btn'\);\s*const menu = document\.getElementById\('dev-plus-menu'\);\s*if \(!btn \|\| !menu\) return;/,
+    'and it returns at its own guard when the "+" is absent');
+  // Two ways the row arrives AFTER that line. A tap on All items mounts the
+  // pane from React state, and the module side of the tap only persists the
+  // choice — nothing re-runs the wiring.
+  assert.match(WORKSHOP, /onClick=\{\(\) => \{ setTab\(t\.key\); callAppView\('_setWorkshopTab', t\.key\); \}\}/);
+  const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
+  const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
+  assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  assert.ok(!/_rewirePlusMenu|_repaintDevBody|_rerenderWorkshop/.test(setTabBody),
+    'the tab is persisted, not repainted');
+  // And a deep-linked or remembered `ws=all` reaches a cold Workshop through
+  // the late-arrival effect on `v.tab`: a state update raised inside a
+  // passive effect is scheduled at default priority, so the pane lands a task
+  // AFTER the synchronous publish the module's call follows.
+  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => v\.tab \|\| 'status'\)/);
+  assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
+  // So the row asks for itself, from the mount effect that already asks for
+  // the filter strip.
+  const effect = ACTIONS_ROW.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[\]\);/);
+  assert.ok(effect, 'the mount effect');
+  assert.match(effect[0], /callAppView\('_rewirePlusMenu'\);/);
+  // In the effect BODY, not the microtask: the wiring binds listeners and
+  // flushes nothing through React, so there is nothing for a microtask to
+  // keep out of the commit, and the nodes it looks up are committed by the
+  // time any effect runs. The strip keeps its microtask; see the test above.
+  assert.match(effect[0], /queueMicrotask\(\(\) => \{ if \(live\) callAppView\('_renderKanbanFilterBar'\); \}\);\s*callAppView\('_rewirePlusMenu'\);/);
+  const wire = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _wirePlusMenu(content) {'));
+  const wireBody = wire.slice(0, wire.indexOf('\n  },'));
+  assert.ok(!/_reactDevBoard|publish|flushSync|innerHTML/.test(wireBody), 'listeners only');
+  assert.match(wireBody, /AppView\._plusMenuAbort\?\.abort\(\);/,
+    'and re-entrant: the previous handlers go before the next ones bind');
+});
+
+test('re-running the wiring from the row is safe: nothing bound while the "+" is absent, one live handler once it is', () => {
+  // The module half of the fix above, executed: the sequence the row's mount
+  // now produces is "the module called with no button, then the row called
+  // with one, then the module again on the next repaint", and every step has
+  // to leave at most one handler on the node. Real EventTargets, so the
+  // `{ signal }` each listener carries is honoured by the dispatch.
+  const target = () => {
+    const node = new EventTarget();
+    node.click = () => node.dispatchEvent(new Event('click'));
+    node.attrs = {};
+    node.setAttribute = (k, v) => { node.attrs[k] = v; };
+    node.querySelector = () => null;
+    node.querySelectorAll = () => [];
+    return node;
+  };
+  const content = target();
+  const btn = target();
+  const menu = target();
+  const cls = new Set(['hidden']);
+  menu.classList = {
+    add: (c) => { cls.add(c); },
+    remove: (c) => { cls.delete(c); },
+    contains: (c) => cls.has(c),
+    toggle: (c) => (cls.has(c) ? (cls.delete(c), false) : (cls.add(c), true)),
+  };
+  const present = { 'app-content': content };
+  const AppView = makeAppView({
+    document: {
+      getElementById: (id) => present[id] || null,
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
+      body: { appendChild: () => {} },
+    },
+    globals: { AbortController, PlatformUI: { isTouch: () => false } },
+  });
+  AppView.refreshDevChatSecretsState = () => {};
+  // 1. The button is not in the DOM (the lander is on Current status, or a
+  //    cold Workshop is on its first frame): the module's call binds nothing.
+  AppView._rewirePlusMenu();
+  assert.equal(AppView._plusMenuAbort, undefined, 'nothing bound, so nothing to abort');
+  // 2. The row mounts and asks: the button opens the menu.
+  present['dev-plus-btn'] = btn;
+  present['dev-plus-menu'] = menu;
+  AppView._rewirePlusMenu();
+  btn.click();
+  assert.equal(cls.has('hidden'), false, 'the menu opens');
+  assert.equal(btn.attrs['aria-expanded'], 'true');
+  // 3. The module's own repaint call lands on top: still one handler, so a
+  //    click toggles once (shut) rather than twice (shut, then open again).
+  AppView._rewirePlusMenu();
+  btn.click();
+  assert.equal(cls.has('hidden'), true, 'closes: one toggle, not two');
+  assert.equal(btn.attrs['aria-expanded'], 'false');
+  btn.click();
+  assert.equal(cls.has('hidden'), false, 'and opens again');
+});
+
 test('Needs you is a fitted screen on a phone, in the page-scrolling layout too', () => {
   // MEASURED, in the harness that loads the real generated shell and the real
   // app.css at 402x874, with a nine-paragraph summary on the card, at a 34px
@@ -2835,7 +3144,7 @@ test('the ask card is padded evenly, so its resting line sits on its own middle'
 
 test('since-your-last-visit shows three and reveals the rest, like the week walk', () => {
   const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   // Four merges instead of one, so the strip holds more than it draws.

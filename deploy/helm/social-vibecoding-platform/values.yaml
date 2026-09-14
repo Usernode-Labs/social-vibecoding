@@ -109,7 +109,7 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
-  captureMemory: 4g
+  captureMemory: 6g
   captureCpus: "8"
   # Match application defaults here; each cluster declares its own capacity.
   dbPoolMax: 10

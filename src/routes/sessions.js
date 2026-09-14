@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const proposalUpdate = require('../services/proposal-update');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
@@ -164,7 +165,7 @@ const localAgentDemo = require('../services/local-agent-demo');
 // panel alongside their sessions. Owns external_agent_tasks, so the query
 // lives there rather than being restated here.
 const { listOpenWorkOrders } = require('../services/external-agent-tasks');
-// #945: Usernode-side issue / proposal discussion threads as agent
+// #945: Homeroom-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
 const threadContext = require('../services/thread-context');
@@ -934,7 +935,7 @@ Before dispatching ANY tool, check whether the user's request SUBSTANTIALLY dupl
 // started from the issue panel) wins; otherwise the first entry of the
 // Mayor-declared `linked_issues`. Both ride along on `SELECT cs.*`.
 //
-// Deliberately Usernode-thread ONLY — no GitHub comment fetch here.
+// Deliberately Homeroom-thread ONLY — no GitHub comment fetch here.
 // github.fetchIssueComments is uncached and pages the anonymous API (60
 // req/hr), so refetching it on every Mayor turn would add latency and
 // burn the shared rate limit. The GitHub half of the discussion reaches
@@ -1047,7 +1048,7 @@ async function persistScoutPublication({
     ? `Scout revised the spec (now ${lineCount} lines).`
     : `Scout drafted a ${lineCount}-line spec from the codebase.`;
   const scoutText = localAgentLabel
-    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Usernode credits were used.`
+    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
@@ -1439,6 +1440,141 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
+  // PATCH /api/sessions/:id/linked-issues (#2028)
+  //
+  // A proposal's issue links used to be writable only as a side effect of
+  // creating it or dispatching another coding turn. This is the direct seam
+  // used by the React proposal detail and the hosted connector after the
+  // proposal/PR already exists.
+  //
+  // Owner-scoped for automated callers, with the platform's full write admin
+  // as the browser/API repair hatch. A connector token can belong to an
+  // admin too, so `connectorClientId` keeps that stronger privilege out of
+  // this narrowly delegated tool.
+  // The app-level collab gate above runs first; the 404 below deliberately
+  // hides whether a foreign proposal id exists. Deltas preserve links added
+  // by another tab/agent after the caller last read the proposal, and removal
+  // wins when a number is present in both arrays.
+  router.patch('/api/sessions/:id/linked-issues', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'invalid_request', message: 'Body must be an object.' });
+    }
+    const unsupported = Object.keys(body).filter((key) => !['addIssues', 'removeIssues'].includes(key));
+    if (unsupported.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: `Unsupported field: ${unsupported[0]}.`,
+      });
+    }
+    const parseNumbers = (value, label) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 50) {
+        throw new Error(`${label} must be an array of at most 50 issue numbers.`);
+      }
+      const unique = [];
+      for (const raw of value) {
+        if (!Number.isSafeInteger(raw) || raw <= 0 || raw > 2147483647) {
+          throw new Error(`${label} must contain positive integers up to 2147483647.`);
+        }
+        if (!unique.includes(raw)) unique.push(raw);
+      }
+      return unique;
+    };
+
+    let addIssues;
+    let removeIssues;
+    try {
+      addIssues = parseNumbers(body.addIssues, 'addIssues');
+      removeIssues = parseNumbers(body.removeIssues, 'removeIssues');
+    } catch (err) {
+      return res.status(400).json({ error: 'invalid_request', message: err.message });
+    }
+    if (!addIssues.length && !removeIssues.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: 'Add or remove at least one issue number.',
+      });
+    }
+
+    try {
+      // Serialize against submit_work's proposal update too: both can project
+      // metadata into the same live PR body, and the later GitHub write must
+      // never restore the earlier one's stale closing block.
+      const outcome = await proposalUpdate.withProposalLock(pool, sessionId, async () => {
+        const { rows } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug, a.repo_url
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        const session = rows[0] || null;
+        const owner = session && Number(session.user_id) === Number(req.user.id);
+        const browserAdmin = session && !req.connectorClientId && req.user.canAdminWrite;
+        if (!session || (!owner && !browserAdmin)) {
+          return { response: { status: 404, body: { error: 'Session not found' } } };
+        }
+
+        const nextLinks = prMetadata.applyIssueDeclarations(
+          session.linked_issues, addIssues, removeIssues
+        );
+        if (nextLinks.length > 50) {
+          return { response: { status: 400, body: {
+            error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
+          } } };
+        }
+        const repo = github.parseGithubUrl(session.repo_url);
+        const result = await proposalUpdate.updateLinkedIssues({
+          pool,
+          gh: github,
+          session,
+          owner: repo && repo.owner,
+          repo: repo && repo.repo,
+          addIssues,
+          removeIssues,
+        });
+        return { session, result };
+      });
+
+      if (outcome.response) {
+        return res.status(outcome.response.status).json(outcome.response.body);
+      }
+      const { session, result } = outcome;
+
+      if (result.changed) {
+        try {
+          const { pushIssueUpdate } = require('../services/ws');
+          pushIssueUpdate({
+            action: 'updated', source: 'linked_issues', sessionId,
+            appId: session.app_id, appSlug: session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'linked-issues broadcast failed', {
+            sessionId, err: err.message,
+          });
+        }
+      }
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        appSlug: session.app_slug,
+        linkedIssues: result.linkedIssues,
+        addedIssues: result.addedIssues,
+        removedIssues: result.removedIssues,
+        changed: result.changed,
+        prBodyUpdated: result.prBodyUpdated,
+        prBodyStatus: result.prBodyStatus,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to update linked issues', { sessionId, message: err.message });
+      return res.status(500).json({ error: 'Could not update linked issues' });
+    }
+  });
+
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
   //   each annotated with whether a CC turn is in flight right now.
@@ -1508,9 +1644,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
-                cs.test_results,
+                cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
+                lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
                 CASE WHEN a.icon_image_id IS NOT NULL
@@ -1522,6 +1659,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            FROM chat_session_messages
            WHERE session_id = cs.id
          ) m ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT role,
+                  jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0 AS asks
+           FROM chat_session_messages
+           WHERE session_id = cs.id AND role IN ('user', 'assistant')
+           ORDER BY id DESC
+           LIMIT 1
+         ) lt ON TRUE
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
@@ -1536,10 +1681,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         : null;
       let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
+        // #1959: the three columns selected for sessionAwaitsInput stop here.
+        // The verdict is one boolean; the spec body is the thing the per-app
+        // list refuses to put in a list payload (#894), and the last-turn
+        // pair is meaningless without the rule that reads it.
+        const {
+          spec_md: specMd, last_turn_role: lastTurnRole, last_turn_asks: lastTurnAsks, ...row
+        } = s;
         return {
-          ...s,
+          ...row,
           ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
           busy: isSessionBusy(s.id),
+          awaiting_input: sessionAwaitsInput({
+            lastTurnRole, lastTurnAsks, prNumber: s.pr_number, specMd,
+          }),
           // Keep the pinned snake_case fields untouched. Camel-case fields
           // describe the runtime actually producing progress right now, so a
           // Codex-pinned session delegated to local Claude has an honest busy
@@ -1578,7 +1733,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900002], shared_at: null,
             created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
+            // #1959: this one is WAITING ON ITS OWNER — a spec that ended
+            // with open questions — so the Improve panel's "Ready for your
+            // input" pill is reviewable in a preview, right under the busy
+            // row's "Working"; every other idle mock row reads plain
+            // "Ready". Hand-set, like `busy` on 990102: the mocks are
+            // appended after the map that computes the real verdict.
+            awaiting_input: true,
           },
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
@@ -1592,7 +1754,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900011], shared_at: null,
             created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // Busy own session — exercises the "working…" state (spinner tag
           // beside the title, which the single-row shell keeps uncrushed).
@@ -1603,7 +1765,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: true,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: true,
           },
           // Visible (shared) own session — renders below the archived
           // toggle under the "Visible to everyone." caption, with the
@@ -1619,7 +1781,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: null,
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // The other half: visible AND transcript-published, so the card
           // renders the "Chat shared" toggle plus the "· chat readable"
@@ -1634,7 +1796,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #747: promoted own session whose id matches the first mock
           // proposal (stagingMockProposals in votes.js), which the
@@ -1649,7 +1811,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // A proposal-in-vote row so the dev drawer's violet "Proposed"
           // card state is reviewable in a demo preview. Unlike 9000001
@@ -1666,7 +1828,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #1808: the row PAST the relative form's seven-day floor. Every
           // other mock here is minutes or hours old, so the session rows'
@@ -1682,7 +1844,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           }
         );
       }
@@ -1713,7 +1875,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           agent: 'claude-code',
           created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
-          app_name: 'Usernode',
+          app_name: 'Homeroom',
           // The demo row carries an icon too, or the ONE work-order row a
           // preview can show is the one row whose tile falls back to a letter
           // — which is exactly the state a reviewer would read as the bug.
@@ -1913,7 +2075,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // The pair matters as a pair: `source='imported'` and
       // `external_agent` are what let the card tell "this is building on
-      // Usernode" apart from "this arrived from somewhere else", which is
+      // Homeroom" apart from "this arrived from somewhere else", which is
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
@@ -2153,7 +2315,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The GLOBAL ceiling has no admin tier — it's the host's coding-worker
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
-      // Usernode worker, so they do not spend this budget.
+      // Homeroom worker, so they do not spend this budget.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
@@ -2219,7 +2381,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessionId: rows[0].id,
       });
       // agentFallbackReason: the saved default could not be honoured and a
-      // Usernode · Claude session was created instead. The row itself only
+      // Homeroom · Claude session was created instead. The row itself only
       // records WHAT was chosen, so the reason rides alongside it and the
       // chat renders one sentence naming it. Absent when nothing fell back
       // — the client must not have to distinguish "no fallback" from
@@ -4482,7 +4644,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           });
           return res.status(503).json({
             error: err.userMessage
-              || 'Usernode could not prepare this session\'s branch. Send your message again in a moment.',
+              || 'Homeroom could not prepare this session\'s branch. Send your message again in a moment.',
           });
         }
       }
@@ -4713,7 +4875,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // opening ask. The call is scheduled at turn end (below), after the
       // main turn has settled, so its fresh billing check sees the real
       // remaining allowance instead of racing the main model call.
-      // OpenRouter sessions deliberately make no Anthropic side calls.
+      // OpenRouter sessions deliberately make no Anthropic side calls —
+      // they are named without a model call at the top of their branch
+      // below (#1949).
       const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
       // Pre-PR turn-end refresh re-titles from the full request history +
       // latest spec draft. Once a PR exists applyPrMetadata owns the name.
@@ -4772,8 +4936,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // OpenRouter is a complete, single-provider session path. The
         // selected OpenRouter model receives the user's message directly
         // and can either answer it or edit the repository; no Anthropic
-        // Mayor, wrap-up, title, or quick-reply generation runs around it.
+        // Mayor, wrap-up, or quick-reply generation runs around it, and
+        // the session is named without a model call (#1949, below).
         if (isOpenRouterSession) {
+          // #1949: the Haiku titler never runs for these sessions, so they
+          // kept their branch name ("dev/evan-1789…") for life. Name the
+          // session from its opening ask instead — the same trim
+          // applyPrMetadata gives its PR title, so the name holds when the
+          // PR lands. No payer to resolve, so it fires before the busy
+          // gate: the message is already in the transcript whatever
+          // happens next. Fire-and-forget; the helper never rejects.
+          sessionTitles.titleFromFirstMessage({ pool, session, message: messageText, send });
           const agentIdentity = codingAgentRuntimeIdentity(session, null, config);
           const directSpec = await loadSessionSpec(pool, session.id);
           turnHasSpec = !!String(directSpec || '').trim();
@@ -4863,19 +5036,28 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             hasPr: session.pr_number != null,
             hasSpec: turnHasSpec,
           });
+          // #2118: what the turn cost, as the ledger estimated it from the
+          // model's list price (agent_turns.estimated_cost_usd, summed over
+          // the turn's attempts). It rides on the reply row so the row's
+          // "reply ~$x" label survives a reload, flagged as an estimate.
+          const directCostCents = Number.isFinite(toolResult.estimatedCostCents)
+            && toolResult.estimatedCostCents > 0
+            ? toolResult.estimatedCostCents
+            : null;
           const directMeta = JSON.stringify({
             ...(directPills ? { quickReplies: directPills } : {}),
             quickRepliesSource: 'static',
             ...(directKind ? { quickRepliesKind: directKind } : {}),
             openRouterDirect: true,
+            ...(directCostCents != null ? { costEstimated: true } : {}),
           });
           const directModel = agentIdentity.model
             ? `openrouter/${agentIdentity.model}`
             : null;
           const insertDirectReply = (client) => client.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4)`,
-            [session.id, directText, directModel, directMeta],
+            `INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+            [session.id, directText, directModel, directCostCents, directMeta],
           );
           let replyApplied = true;
           if (toolResult.turnId) {
@@ -4895,6 +5077,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
           if (replyApplied) {
             send('mayor_reasoning', { text: directText });
+            // The usage receipt follows the reply on purpose: the client
+            // attaches it to the assistant bubble on screen, and before
+            // mayor_reasoning that bubble is one the next status line
+            // discards. It is also what feeds the composer's "this turn"
+            // figure for an OpenRouter session (#2118).
+            if (directCostCents != null) {
+              send('usage', { costCents: directCostCents, model: directModel, byok: true, estimated: true });
+            }
             if (directPills) send('quick_replies', { replies: directPills });
           }
 
@@ -7698,7 +7888,7 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
   if (!list.length && !thread.length) return seed;
 
   // GitHub comments keep their own most-recent-N cap and per-comment clip;
-  // the Usernode half arrives already clipped by thread-context.
+  // the Homeroom half arrives already clipped by thread-context.
   const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
   const clippedGithub = kept.map((c) => ({
     author: (c.author || 'unknown').toString(),
@@ -7783,6 +7973,38 @@ function questionsBodyHasContent(body) {
   if (!cleaned) return false;
   if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
   return true;
+}
+
+// #1959: is a session WAITING ON ITS OWNER? The one verdict behind the
+// Improve panel's "Ready for your input" pill (GET /api/me/active-sessions
+// ships it as `awaiting_input`), so the panel never claims a session needs
+// input when nothing in it is asking.
+//
+// The transcript already knows. Two things in it are a question the user
+// has not answered, and the row ends up here only if the LAST conversational
+// row (user or assistant — the same rows DevChat._qaCurrentGroups walks) is
+// the assistant's: once the owner has replied it is their turn that is
+// pending, not the assistant's question.
+//
+//   1. ANSWER CHIPS. The assistant asked with suggest_answers (#32) and the
+//      chips are still on screen — `metadata.suggestions` on that last row,
+//      the same key the clone path forwards. This is what an auto session
+//      that ended in a question looks like once it is cloned.
+//   2. A SPEC WITH OPEN QUESTIONS. The scout drafted a spec whose Questions
+//      section still has content (specHasBlockingQuestions — the parser the
+//      headless path uses to refuse a build). Only while nothing has been
+//      built from it: a session with a pull request is past its spec, which
+//      is the precedence fallbackKindForTurn already gives a PR over a spec,
+//      and without it a spec built despite its questions would read as
+//      waiting for the rest of the session's life.
+//
+// A turn in flight is never waiting on anyone; the client gates on its live
+// busy state, so this only has to be right for an idle row.
+function sessionAwaitsInput({ lastTurnRole, lastTurnAsks, prNumber, specMd }) {
+  if (lastTurnRole !== 'assistant') return false;
+  if (lastTurnAsks === true) return true;
+  if (prNumber) return false;
+  return specHasBlockingQuestions(specMd);
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\nPosted by this issue\'s proposal session. '
@@ -8121,7 +8343,7 @@ async function runHeadlessSession({
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
     // the open-a-PR instruction (headless mode never opens one), plus the
-    // issue's comments (#150) and its Usernode-side Discussion thread
+    // issue's comments (#150) and its Homeroom-side Discussion thread
     // (#945) so answers to earlier clarifying questions are visible to this
     // run wherever the reporter left them. The thread load never throws —
     // it degrades to the comments-only seed.
@@ -10288,9 +10510,9 @@ const DRAFT_ISSUE_REPORT_TOOL = {
         type: 'string',
         enum: ['platform', 'app'],
         description:
-          'Where the issue is filed. "platform" = the Usernode platform\'s own tracker — use it for the '
+          'Where the issue is filed. "platform" = the Homeroom platform\'s own tracker — use it for the '
           + 'shared bridge, the mobile app, wallet/signing, the staging/preview pipeline, the checks gate, '
-          + 'or a missing platform capability, and whenever the user says "platform issue" or "Usernode '
+          + 'or a missing platform capability, and whenever the user says "platform issue" or "Homeroom '
           + 'issue". "app" = this app\'s own tracker — use it for a bug or request about the app this '
           + 'session is building. When the wording does not say, choose "app" unless the subject clearly '
           + 'lives outside this app\'s repo. On the platform\'s own app both resolve to the same repo.',
@@ -10963,7 +11185,7 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
 // the issue's own `note`. `commentsTruncated` is true when older comments
 // were omitted (long thread or kept-count cap).
 // `threadCtx` ({ pool, appId }, #945): when present, the issue's
-// Usernode-side Discussion thread rides along as `usernodeThread`. Call
+// Homeroom-side Discussion thread rides along as `usernodeThread`. Call
 // sites that can't supply it (or a lookup that finds nothing) simply omit
 // the field — the GitHub halves are unaffected either way.
 async function resolveGithubIssueToolResult(repoOwner, repoName, number, threadCtx = null) {
@@ -11071,7 +11293,7 @@ async function resolveDraftIssueToolResult(tu, ctx) {
 // or draft_issue_report (headless) omit it, and a get_prod_status call
 // without it resolves to not_eligible.
 // `threadCtx` ({ pool, appId }, #945) enriches get_github_issue with the
-// issue's Usernode Discussion thread. Omitted → the field is absent.
+// issue's Homeroom Discussion thread. Omitted → the field is absent.
 function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null, threadCtx = null) {
   if (tu.name === DRAFT_TOOL_NAME) {
     return resolveDraftIssueToolResult(tu, prodCtx);
@@ -12160,6 +12382,13 @@ function describeMarkerlessExit(cause) {
 // a human is present to re-dispatch — and a user-stopped turn is a
 // deliberate end, not a failure to retry.
 
+// #2118: USD to fractional cents at six decimal dollars, the precision the
+// ledger's own estimate is read at, so the composer's meter and the reply
+// row never disagree with agent_turns.
+function codexCostCents(usd) {
+  return Math.round(usd * 1e6) / 1e4;
+}
+
 // ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
 // Encapsulates the logical-turn + per-attempt accounting for BOTH the
 // scout and build call sites so a retry cannot be merged into the prior
@@ -12180,8 +12409,18 @@ async function runCodexAttemptLoop({
   if (runtimeContext?.error) return { error: runtimeContext.error, logicalTurnId };
   if (!runtimeContext) return null; // Claude turn — caller handles it.
 
+  // #2118: what the turn cost, as the ledger recorded it. completeCodexAttempt
+  // already estimates each attempt from its immutable pricing snapshot
+  // (agent_turns.estimated_cost_usd); this sums those over the logical turn
+  // and is where the figure becomes visible: published on the session's
+  // in-memory progress entry so the /status poll's `spend` carries it while
+  // the session is busy (the channel Claude Code's live tracker feeds), and
+  // returned so the caller can send the usage receipt and persist it on the
+  // reply. Null until an attempt reports a finite estimate: an unpriced
+  // model stays unknown, never a false zero.
+  let estimatedCostUsd = null;
   const completeAttempt = async (attempt, result, status, err) => {
-    await agentTurn.completeCodexAttempt({
+    const completion = await agentTurn.completeCodexAttempt({
       pool,
       turnUuid: attempt.turnUuid,
       status,
@@ -12197,6 +12436,14 @@ async function runCodexAttemptLoop({
         : result?.agentRetryFresh ? 'resume_thread_missing' : null,
       errorDetail: err ? agentTurn.sanitizeError(err) : null,
     });
+    const attemptUsd = completion?.estimatedCost?.estimatedCostUsd;
+    if (typeof attemptUsd === 'number' && Number.isFinite(attemptUsd)) {
+      estimatedCostUsd = (estimatedCostUsd || 0) + attemptUsd;
+      workerProgress.setSpend(session.id, {
+        costCents: codexCostCents(estimatedCostUsd),
+        estimated: true,
+      });
+    }
   };
 
   let lastResult = null;
@@ -12313,7 +12560,7 @@ async function runCodexAttemptLoop({
     if (retryFresh) attemptResumeThreadId = null;
     allowRetryPendingForAttempt = retryFresh;
   }
-  return { result: lastResult, error: lastError, logicalTurnId };
+  return { result: lastResult, error: lastError, logicalTurnId, estimatedCostUsd };
 }
 
 
@@ -12929,6 +13176,10 @@ async function runClaudeCodeTool({
   let executionAgentName = agentIdentity.agentName;
   let executionAgentMeta = agentIdentity.metadata;
   let durableTurnId = null;
+  // #2118: the turn's ledger estimate (USD), summed by runCodexAttemptLoop
+  // over its attempts; null for a Claude turn or an unpriced model. Function
+  // scope on purpose: the return below reads it outside the dispatch block.
+  let codexEstimatedCostUsd = null;
 
   // #937: the single way this tool ends on a stop — used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -13898,6 +14149,7 @@ ${buildGuidance.testingGuidance}`;
         }
       } else {
         result = routed.result;
+        codexEstimatedCostUsd = routed.estimatedCostUsd ?? null;
       }
       }
     } catch (e) {
@@ -14570,9 +14822,20 @@ ${buildGuidance.testingGuidance}`;
     // debit BYOK runs against the platform limit by mistake).
     if (isCodexSession) {
       // Codex/OpenRouter spend is billed to the user's OpenRouter account
-      // directly (review #3) — never the Anthropic llm_usage ledger.
-      if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+      // directly (review #3) — never the Anthropic llm_usage ledger. It is
+      // recorded on agent_turns by completeCodexAttempt, and what the chat
+      // gets is that ledger estimate (#2118). A direct session turn's
+      // receipt is the caller's to send, after its reply row is on screen:
+      // sent from here it would precede the completion status line below,
+      // and the client attaches a usage event to the bubble a status line
+      // then discards.
+      if (!directSessionTurn && codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0) {
+        send('usage', {
+          costCents: codexCostCents(codexEstimatedCostUsd),
+          model: `codex-openrouter/${turnModel}`,
+          byok: true,
+          estimated: true,
+        });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -14608,7 +14871,7 @@ ${buildGuidance.testingGuidance}`;
       // …"; the two together are how a reader of the transcript tells a local
       // spec turn from a local build turn months later.
       if (runLocally) {
-        statusText += ` Coding done on ${lease.label}, so no Usernode credits were used.`;
+        statusText += ` Coding done on ${lease.label}, so no Homeroom credits were used.`;
       }
       const completionMeta = {
         ...executionAgentMeta,
@@ -14717,6 +14980,12 @@ ${buildGuidance.testingGuidance}`;
     isError,
     commitSha: commitHash || null,
     turnId: durableTurnId,
+    // #2118: an OpenRouter turn's ledger estimate in fractional cents, for
+    // the direct-turn caller's reply row and usage receipt. Null for a
+    // Claude turn (settled above) and for an unpriced model.
+    estimatedCostCents: codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0
+      ? codexCostCents(codexEstimatedCostUsd)
+      : null,
   };
 }
 
@@ -14751,7 +15020,7 @@ FILING ISSUES — a request to file one is a request for a DRAFT CARD:
 When the user explicitly asks you to create, file, open, log, or raise an issue / bug / ticket — "create a platform issue for step 2", "open an issue for this", "file a bug about the flaky preview", "put that on the tracker" — call draft_issue_report IMMEDIATELY. Write the title and body yourself from the conversation and the CURRENT SPEC DOC block below.
 - NEVER answer such a request by saying you can only read the issue tracker, NEVER offer Send Feedback as the alternative, and NEVER ask the user to choose between two paths. You can file issues; this tool is how.
 - Do NOT dispatch the coding agent to draft a report card. That is minutes of container time for something you do in-process.
-- Choosing target: "platform" for anything about Usernode itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Usernode issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
+- Choosing target: "platform" for anything about Homeroom itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Homeroom issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
 - Write a REAL issue body, not a one-liner: what is wrong or wanted, where, expected vs actual — or, when the request points at the spec ("an issue for step 2"), the relevant part of the spec in full. The card is what the user reads before tapping, and the body is what whoever works the issue gets.
 - CLARITY GATE carve-out: the card IS the clarification surface — the user reviews the drafted title and body and taps Report or Dismiss. So do not ask clarifying questions first when the subject is identifiable from the conversation or the spec. Ask only when the request has no referent at all.
 - After it returns, reply in 1-2 sentences naming the title and where it will be filed, ending with the confirm cue ("tap Report to platform on the card to file it"), and call suggest_replies as usual. NEVER say the issue has been filed or created — nothing reaches GitHub until the user taps. On a deduped result, name the existing issue instead of claiming you drafted a card. On not_configured / no_repo, say in one sentence that issue filing isn't available here and point at Send Feedback.
@@ -14812,7 +15081,7 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 ==== END PULL REQUEST ====`
     : '';
 
-  return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
+  return `You are the Mayor — a friendly project manager for the app "${appName}" on Homeroom.
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.

@@ -1,4 +1,5 @@
 {
+  "name": "Homeroom",
   "description": "Build small web apps together — every change is proposed, previewed and merged by a group vote.",
   "icon": {
     "emoji": "🏗️"
@@ -66,7 +67,7 @@
     {
       "key": "USERNODE_APP_PUBKEY",
       "required": false,
-      "description": "Platform's on-chain wallet public key for the Usernode social-vibecoding linking flow (chain-poller + auth wallet-link in routes/auth.js). When unset, wallet-linking is gracefully disabled — the platform still works without it."
+      "description": "Platform's on-chain wallet public key for the Homeroom wallet-linking flow (chain-poller + auth wallet-link in routes/auth.js). When unset, wallet-linking is gracefully disabled — the platform still works without it."
     },
     {
       "key": "USERNODE_APP_SECRET_KEY",
@@ -295,8 +296,8 @@
     {
       "key": "PLATFORM_MAIL_FROM",
       "group": "Platform mail",
-      "default": "Usernode <no-reply@onhomeroom.com>",
-      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@onhomeroom.com>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+      "default": "Homeroom <no-reply@onhomeroom.com>",
+      "description": "The From address on every platform mail. Defaults to Homeroom <no-reply@onhomeroom.com>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
     },
     {
       "key": "GMAIL_OAUTH_CLIENT_ID",
@@ -369,27 +370,27 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "1",
-      "description": "Positive USD limit assigned to every company-funded child key. OpenRouter resets it daily. Set the matching GitHub Actions variable before deploying if the desired allowance is not $1/day."
+      "description": "No longer used. The included company OpenRouter key carries the user's platform weekly allowance (the per-user weekly cap in Admin > Users, else the platform default in Admin > Limits) instead of a fixed per-key amount, and existing keys are moved to that allowance as it changes. This variable remains only because the deploy workflow still writes it."
     },
     {
       "key": "OPENROUTER_MANAGED_WORKSPACE_ID",
       "group": "AI & coding agents",
       "required": false,
-      "description": "Optional OpenRouter workspace id that owns newly-created company child keys. A dedicated funded Usernode workspace is recommended so aggregate spend is isolated and visible. Set the matching GitHub Actions variable."
+      "description": "Optional OpenRouter workspace id that owns newly-created company child keys. A dedicated funded Homeroom workspace is recommended so aggregate spend is isolated and visible. Set the matching GitHub Actions variable."
     },
     {
       "key": "OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY",
       "group": "AI & coding agents",
       "required": false,
       "default": "false",
-      "description": "Eligibility gate for company-funded child keys. Leave false to let any authenticated Usernode account claim its one included key; set true to require a verified GitHub or X identity before claiming. Existing keys are never revoked automatically when this changes."
+      "description": "Eligibility gate for company-funded child keys. Leave false to let any authenticated Homeroom account claim its one included key; set true to require a verified GitHub or X identity before claiming. Existing keys are never revoked automatically when this changes."
     },
     {
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
       "default": "z-ai/glm-5.3-flash",
-      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Usernode safely recommends another compatible model."
+      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
     },
     {
       "key": "OPENROUTER_RECOMMENDED_MODELS",
@@ -657,14 +658,14 @@
       "expectText": "Please add a description"
     },
     {
-      "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
+      "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season ring leads the plate, and a yes-or-no card draws no meter",
+      "name": "Challenges: the season progress leads the plate, above the shared challenge cards",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card:not(:has(.home-panel-bar-track)) .home-challenge-pill .home-panel-glyph"
+      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -879,6 +880,12 @@
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"assignee\"]"
     },
     {
+      "name": "Issue cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
+      "expectText": "Share to Messages"
+    },
+    {
       "name": "Dev board: attribute chips keep the small label inside the 20px box",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
@@ -904,6 +911,12 @@
       "name": "A proposal opened by DIRECT URL has a working ⋯ menu (#1324)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": ".dev-card-menu [data-menu-idx]"
+    },
+    {
+      "name": "Proposal cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
+      "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
+      "expectText": "Share to Messages"
     },
     {
       "name": "A directly-opened proposal opens its assignee picker (#1324, #1330)",
@@ -971,6 +984,11 @@
       "expectText": "Opening…"
     },
     {
+      "name": "A newly started app replaces its spinner when terminal status beats its detail response (#2154)",
+      "path": "/?shot=app-launching&settle=1",
+      "expectSelector": "#app-iframe[src*=\"/health\"]"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",
@@ -1000,9 +1018,9 @@
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes at every width: curated cards, then Popular",
+      "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
       "path": "/?demo=1",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular.home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"]:not([data-featured=\"0\"]):not([data-popular=\"0\"]) .home-panel:not(:has(.home-discover-divider)):not(:has(.home-discover-lane ~ .home-discover-lane)) .home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
@@ -1023,10 +1041,10 @@
       "expectText": "Show less"
     },
     {
-      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "name": "With nothing to discover, the block shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
-      "expectText": "Nothing featured right now"
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"][data-popular=\"0\"]:has(.home-panel-browse) .home-panel:not(:has(.home-discover-rail)) .home-discover-empty",
+      "expectText": "Nothing to discover right now"
     },
     {
       "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
@@ -1143,10 +1161,10 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
+      "name": "The Dev '+' menu separates adding to the board from managing the app (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Import a change"
+      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
+      "expectText": "Add to the board"
     },
     {
       "name": "Improve keeps the New change action after deduplicating the '+' menu (#1490)",
@@ -1161,9 +1179,10 @@
       "expectText": "Give feedback"
     },
     {
-      "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
+      "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
+      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
+      "expectText": "File an issue"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -1847,7 +1866,7 @@
       "expectSelector": "#header-title #app-switcher-btn"
     },
     {
-      "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
+      "name": "Home shows the platform Improve button (improve Homeroom itself)",
       "path": "/",
       "expectSelector": "#improve-btn:not(.hidden)"
     },
@@ -1952,9 +1971,10 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
-      "name": "The Workshop carries the board's search and filter bar, not just the +",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
+      "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",
+      "path": "/?demo=1&ws=all&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search",
+      "expectText": "Nothing here matches the current search and filters."
     },
     {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
@@ -2084,15 +2104,16 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The model picker opens a sheet, like the venue control above it",
+      "name": "The in-composer selector names the Anthropic key for a direct model (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "button#dc-model-select[aria-haspopup=\"menu\"] .dc-model-name",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"] optgroup[label=\"Anthropic key\"] option[value=\"anthropic:claude-opus-5\"]:checked",
+      "expectText": "Anthropic key · Opus 5"
     },
     {
-      "name": "…so no native dropdown is left in the composer (#1589 still holds)",
+      "name": "The first group can open the full OpenRouter catalog (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-composer-controls:not(:has(select))"
+      "expectSelector": "select#dc-model-select > optgroup:first-child[label=\"OpenRouter key\"] option[value=\"openrouter:__add_more__\"]",
+      "expectText": "Add more OpenRouter models…"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
@@ -2105,6 +2126,18 @@
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-drafts-head",
       "expectText": "on all your devices"
+    },
+    {
+      "name": "Trashing a saved draft removes it, and a resync does not bring it back (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-trash",
+      "expectText": "Saved drafts (1)"
+    },
+    {
+      "name": "…and the draft left standing is the one that was not trashed (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-text",
+      "expectText": "the one that is still here afterwards"
     },
     {
       "name": "Saved drafts render from the database, with no ?shot param (#940)",
@@ -2129,8 +2162,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "Busy own session card renders (working state, two-row layout)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
+      "path": "/?demo=1&shot=mine-session#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
     {
@@ -2220,7 +2254,7 @@
       "expectText": "staging-demo-notes.md"
     },
     {
-      "name": "Chromeless share-link view renders the Open-in-Usernode pill",
+      "name": "Chromeless share-link view renders the Open-in-Homeroom pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"
     },
@@ -2698,6 +2732,7 @@
     {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",
       "path": "/?demo=1#settings/app-ai",
+      "expectSelector": "[data-settings-section=\"app-ai\"]:not(.hidden) #llm-grants-list [data-role=\"re-enable\"]",
       "expectText": "Staging demo app A"
     },
     {
@@ -2868,9 +2903,9 @@
       "expectSelector": "#leaderboard-event-bar:not(.hidden) #tc-ev-select"
     },
     {
-      "name": "Challenge detail overlay is reachable by deep link (?shot=challenge-detail)",
+      "name": "Challenge detail page is reachable by deep link and draws its rail (?shot=challenge-detail)",
       "path": "/?shot=challenge-detail#leaderboard/challenges",
-      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel"
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel [role=progressbar]"
     },
     {
       "name": "Imported proposal mid-build shows the Preview building pill (#866)",
@@ -3371,19 +3406,31 @@
       "name": "Every session states the venue it is building in, unasked (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-venue-select[data-venue-current=\"usernode-claude\"] .dc-venue-name",
-      "expectText": "Usernode · Claude"
+      "expectText": "Homeroom · Claude"
     },
     {
       "name": "The venue dropdown sits in the session header, before the mode switch (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]",
-      "expectText": "Usernode · Claude"
+      "expectText": "Homeroom · Claude"
     },
     {
-      "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
+      "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
-      "expectText": "openai/gpt-5.3-codex"
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
+      "expectText": "OpenRouter key"
+    },
+    {
+      "name": "An OpenRouter session's composer says what is left on its key (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "$0.86 left today"
+    },
+    {
+      "name": "An OpenRouter session's composer says what the turn cost (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "this turn ~$0.12"
     },
     {
       "name": "A venue you did not get is explained rather than silently swapped (#1086)",
@@ -3843,7 +3890,7 @@
       "name": "Without a connector the hand-off asks for one, because the agent needs it",
       "path": "/?demo=1&order=connect&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"link-connector\"]",
-      "expectText": "Connect Usernode"
+      "expectText": "Connect Homeroom"
     },
     {
       "name": "A continuation says the work lands as an update, not a second copy",

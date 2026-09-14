@@ -88,6 +88,22 @@ const { execFile } = require('child_process');
 // entirely and made any WebGL context (hardware or software) impossible.
 // Rendering is CPU-bound and deterministic across runs; non-WebGL pages
 // are unaffected.
+//
+// Software COMPOSITING, separately from software WebGL. Left to itself, the
+// SwiftShader GPU process above also composites every frame of every page:
+// one OpenGL draw per layer, one fragment shader per pixel, on the CPU, at
+// display rate wherever anything on the page animates. Sampled in a live
+// capture pod that was ~5.6 of the pod's 8 cores in the GPU process alone,
+// with the renderers — the app actually under test — throttled on what was
+// left, and pods that shared a node halving each other's speed. The pool's
+// cold-load loop reproduced against this repo's own shell (32 groups, 8
+// lanes) measured 6.3 CPU-seconds per group, 88% of it in the GPU process;
+// with this flag, 0.9 CPU-seconds and 14%. Compositing moves to Skia's
+// software path, which repaints damaged rectangles only. WebGL is
+// unaffected: contexts still come from the SwiftShader GPU process (same
+// renderer string, same readback, verified), its surface is just copied
+// into the software compositor instead of drawn by it. Not --disable-gpu,
+// which would take that GPU process — and every WebGL context — with it.
 const CHROMIUM_LAUNCH_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
@@ -95,6 +111,7 @@ const CHROMIUM_LAUNCH_ARGS = [
   '--use-gl=angle',
   '--use-angle=swiftshader',
   '--enable-unsafe-swiftshader',
+  '--disable-gpu-compositing',
   '--hide-scrollbars',
   '--mute-audio',
   '--force-color-profile=srgb',
@@ -261,6 +278,26 @@ function assertMaxMs(env) {
 // a truly missing element makes no requests, so it still fails in 5s.
 const ASSERT_REPORT_RESERVE_MS = 2000;
 
+// …but a page that never STOPS fetching must not roll it to the ceiling.
+//
+// The group ceiling was sized for the group — a six-cohort group's budget
+// is ~110s — and a screen that keeps fetching (a live feed, a status
+// ticker, a chat that re-polls every few seconds) makes a request inside
+// every window, so a cohort whose element had not rendered rolled all the
+// way there. In a logged run of this repo's own suite one such group held
+// its lane for the full 111s while the other lanes finished and sat idle,
+// then reported its last checks as "did not finish": the roll had eaten the
+// budget the cold-load fallback below needed, and it was that fallback which
+// passed them, alone, on the retry pass.
+//
+// So the rolling window is ALSO capped at a multiple of the fixed one. Data
+// on the wire lands within a few seconds even on a contended preview; a
+// window three times the fixed one still catches it, a poller is cut off at
+// 15s rather than ~110, and the fallback gets its turn inside the budget.
+// The group ceiling stays as the outer bound (it is still the smaller of
+// the two for a short budget), and the floor still holds beneath both.
+const ASSERT_ROLL_MAX_FACTOR = 3;
+
 // An activity clock a page's listeners bump. Created per group and shared by
 // every cohort's settle, so a late error from cohort 1 still holds cohort 2's
 // window open — the page is one document either way.
@@ -300,16 +337,22 @@ async function waitForQuiet(activity, opts) {
 // real manifest halved suite wall clock, 96s → 47s), and the groups run
 // through a bounded pool of concurrent pages.
 //
-// 8: production timings put a navigation at ~3.9s sequential, so ~110
-// groups at pool 8 is ~54s of ideal work; the staging preview (2 CPUs) is
-// the real serialising resource, so budget 55-70% efficiency → ~80-100s,
-// well inside the deadlines below. Raising this past ~16 buys nothing
-// while the preview is the bottleneck, and each live page costs 80-150 MB
-// against the container's 4g.
+// 8 was sized when a navigation cost ~3.9s and the pool's own container
+// was the bottleneck: eight groups saturated its 8-core quota, because the
+// SwiftShader GPU process was compositing every page on the CPU (see
+// CHROMIUM_LAUNCH_ARGS). With compositing in software a group costs under
+// a CPU-second, so the pool is bound by the wire — a cold load is ~5-7s of
+// DNS, TLS, assets, boot and the settle regardless of how many run at once
+// — and doubling the lanes roughly halves the wall clock: this repo's 169
+// groups replayed at 16 lanes come in at ~80-100s against ~186s at 8. The
+// staging preview idled at 8 concurrent loads (its cost is static assets
+// and a handful of API calls), and each live page is ~80-150 MB against the
+// container's 6g. The ceiling is the memory bound; a wider pool needs a
+// bigger container first.
 function poolSize(env) {
   const raw = parseInt((env || {}).TEST_CONCURRENCY, 10);
-  if (!Number.isFinite(raw) || raw < 1) return 8;
-  return Math.min(16, raw);
+  if (!Number.isFinite(raw) || raw < 1) return 16;
+  return Math.min(24, raw);
 }
 
 // Per-check wall clock. NAV_TIMEOUT_MS bounds cold document readiness; the
@@ -334,13 +377,13 @@ function testsDeadlineMs(env) {
   // reached 512 and left 18 of the 20 required slots; then 560000 → 570000
   // with 560 → 580, a proposal in flight at the same time; then 570000 →
   // 590000 with 580 → 600 (#1824); then 590000 → 620000 with 600 → 630
-  // (#1876). The two defaults are asserted equal by
+  // (#1876); then 620000 → 650000 with 630 → 660 (#1960). The two defaults are asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the
   // suite as merely unfinished.
   const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 620000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 650000;
 }
 
 // Whether this run also produces the before/after media artifacts. The
@@ -1213,6 +1256,10 @@ async function runTestGroup(browser, group, opts) {
   const groupCeilingAt = Number.isFinite(o.groupDeadlineAt)
     ? o.groupDeadlineAt - ASSERT_REPORT_RESERVE_MS
     : Infinity;
+  // How many fixed windows request traffic may roll into at most (see
+  // ASSERT_ROLL_MAX_FACTOR). Never below one: the floor is the fixed window.
+  const rollMaxFactor = Number.isFinite(o.assertRollMaxFactor)
+    ? Math.max(1, o.assertRollMaxFactor) : ASSERT_ROLL_MAX_FACTOR;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -1258,6 +1305,10 @@ async function runTestGroup(browser, group, opts) {
     const pollPresence = async (cohortTests) => {
       const presence = new Map();
       const floorAt = Date.now() + assertMax;
+      // How far request traffic may roll the window at most (see
+      // ASSERT_ROLL_MAX_FACTOR): a page that never stops fetching is judged
+      // here, not at the group ceiling.
+      const rollCeilingAt = floorAt + assertMax * (rollMaxFactor - 1);
       let assertDeadlineAt = floorAt;
       let seenNetAt = netActivity.lastAt;
       let pending = cohortTests;
@@ -1274,7 +1325,7 @@ async function runTestGroup(browser, group, opts) {
           seenNetAt = netActivity.lastAt;
           assertDeadlineAt = Math.max(
             floorAt,
-            Math.min(Date.now() + assertMax, groupCeilingAt)
+            Math.min(Date.now() + assertMax, groupCeilingAt, rollCeilingAt)
           );
         }
         const leftMs = assertDeadlineAt - Date.now();
@@ -1549,7 +1600,7 @@ async function runTests(browser, tests, opts) {
   // reaches this — so the cost is paid only by pages that are genuinely stuck,
   // and a stuck navigation is itself bounded by NAV_TIMEOUT_MS.
   const navBudgetMs = Number(o.navBudgetMs) > 0 ? Number(o.navBudgetMs) : perTestMs;
-  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 620000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 650000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
   if (!list.length) {
@@ -1704,6 +1755,14 @@ async function main() {
   const media = mediaEnabled(process.env);
   const haveTests = tests.length > 0;
   try {
+    // The media pass and the test suite run CONCURRENTLY on the one browser.
+    // They used to run back to back, and the media pass is 6-14s of the
+    // run's wall clock (two cold loads, a recording, a GIF transcode) that
+    // no check waits on: the suite takes its pages from its own contexts
+    // (below) and the frames are parsed by kind, so nothing on the platform
+    // side depends on the shots arriving first. Both are awaited to
+    // completion before the browser closes, whichever finishes last.
+    //
     // Sequential per target (a shared browser, one newPage per shot), and
     // before-then-after within each target so the per-target before/after
     // pair lands together. Per-target failures stay independent. In
@@ -1714,16 +1773,18 @@ async function main() {
     // check (per-test frames). So: suppress the after-target's legacy
     // console collection (collectConsole:false), and when media is off skip
     // the after-target navigation entirely — the tests cover that load.
-    for (const t of targets) {
-      if (media && t.beforeUrl) {
-        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
-          { media, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+    const shots = (async () => {
+      for (const t of targets) {
+        if (media && t.beforeUrl) {
+          await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
+            { media, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+        }
+        if (t.afterUrl && (media || !haveTests)) {
+          await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
+            { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+        }
       }
-      if (t.afterUrl && (media || !haveTests)) {
-        await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-          { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
-      }
-    }
+    })();
     // #47: run the declared test suite (assertions + per-test console
     // check). Checks are grouped by URL (one navigation per route) and the
     // groups run through a bounded pool; per-test failures stay independent
@@ -1732,18 +1793,25 @@ async function main() {
     // runTests creates a fresh browser context per URL group (see its
     // comment): each starts with an empty cookie jar, so the screenshot
     // pass's NON-admin session cookie (exchanged into the default context
-    // above) can never downgrade a test navigation carrying the view-only-
-    // admin ?token= — the failure mode that once rendered the "Admins only"
-    // gate on the /debug badge check — and each group's page is its own
-    // window, so its document stays visible under concurrency.
-    if (tests.length) {
-      await runTests(browser, tests, {
+    // by the media pass) can never downgrade a test navigation carrying the
+    // view-only-admin ?token= — the failure mode that once rendered the
+    // "Admins only" gate on the /debug badge check — and each group's page
+    // is its own window, so its document stays visible under concurrency.
+    // The same isolation is what makes running the two side by side safe.
+    const suite = tests.length
+      ? runTests(browser, tests, {
         concurrency: poolSize(process.env),
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
         env: process.env,
-      });
-    }
+      })
+      : Promise.resolve();
+    // Settle both before closing the browser: a media-pass failure must not
+    // tear down the suite mid-flight (its missing frames would read as a
+    // crashed container), so it is re-raised only once both are done.
+    const outcomes = await Promise.allSettled([shots, suite]);
+    const failed = outcomes.find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
   } finally {
     await browser.close().catch(() => {});
   }

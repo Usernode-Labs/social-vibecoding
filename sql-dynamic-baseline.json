@@ -362,16 +362,16 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "6342aec040e022e3a331",
+      "fingerprint": "5a4a9ac00ecc438c43af",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
+      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "bc985dc7d04a921eaa79",
+      "fingerprint": "6342aec040e022e3a331",
       "count": 1,
-      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
     },
     {
       "source": "src/routes/kudos.js",
@@ -698,7 +698,7 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
-      "fingerprint": "0d38fa573e43a3897362",
+      "fingerprint": "aff8d6e5f16e400828ea",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.goal, c.task, c.reward, c.description, c.requirements, c.schedule_start, c.s"
     },
@@ -936,9 +936,9 @@
     {
       "source": "src/services/merge-queue.js",
       "kind": "structural-template",
-      "fingerprint": "ac50f62110baae9e88c1",
+      "fingerprint": "33bca25f32a9a95ab363",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.integration_behind_by, cs.integration_merges_clean, cs.check_state, cs.checks_co"
+      "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch, cs.integra"
     },
     {
       "source": "src/services/notifications.js",

@@ -10,7 +10,7 @@
  *
  *   - `_setStreamingUI` wrote the send button's `disabled`, three state
  *     classes, its `aria-label`, its `title` and its `innerHTML`; the
- *     textarea's `placeholder`; and the OpenRouter row's `disabled`.
+ *     textarea's `placeholder`; and the model selector's `disabled`.
  *   - `_syncSaveDraftBtn` wrote `hidden`, `disabled` and `title` on the save
  *     icon — and called `_syncShortcutHint`, which wrote the hint's
  *     `innerHTML`, because the two flip on exactly the same events. Both
@@ -49,12 +49,18 @@
 
 import { createStore } from '../../lib/plain-store.js';
 
-/** One entry of the chat-model picker, already labelled. */
+/** One entry of the chat-model picker, already labelled with its key source. */
 export interface ModelOptionView {
-  id: string;
+  value: string;
   label: string;
-  /** `changeSize.short` — "general coding work". '' when the server omits it. */
-  blurb: string;
+  disabled?: boolean;
+}
+
+/** A native optgroup. OpenRouter is deliberately the first group. */
+export interface ModelGroupView {
+  id: 'openrouter' | 'anthropic';
+  label: string;
+  options: ModelOptionView[];
 }
 
 /**
@@ -103,25 +109,11 @@ export interface ComposerState {
   venueNoteHtml: string;
   /** #1281: a launchpad stands in the composer's place, so it is hidden. */
   hidden: boolean;
-  /**
-   * Usernode · Claude's chat-model picker. Null on every other venue.
-   *
-   * `selectedLabel` is the CLOSED control — a bare model name, and #1589's
-   * finding stands on it: the guidance set the control's width and wrapped
-   * the credit meter onto a second line. `options` is the OPEN sheet, where
-   * each row has a whole line to itself, so the blurb rides along there.
-   */
+  /** The unified in-chat model/key selector. Null on off-platform venues. */
   models: {
-    options: ModelOptionView[];
+    groups: ModelGroupView[];
     selected: string;
-    selectedLabel: string;
-  } | null;
-  /** OpenRouter's session-pinned model row. Null on every other venue. */
-  openRouter: {
-    /** Already defaulted to "No model is pinned". */
-    model: string;
     changeDisabled: boolean;
-    note: string;
   } | null;
   /** #798's saved drafts. `busy` disables each row's Send. */
   drafts: { rows: SavedDraftView[]; busy: boolean };
@@ -136,7 +128,6 @@ export const composerStore = createStore<ComposerState>({
   venueNoteHtml: '',
   hidden: false,
   models: null,
-  openRouter: null,
   drafts: { rows: [], busy: false },
   attachError: null,
   placeholder: '',

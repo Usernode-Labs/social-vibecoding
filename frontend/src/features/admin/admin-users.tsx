@@ -7,7 +7,7 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { ProgrammeUsers } from './topochain/programme-users.tsx';
 
 // Users (#admin/users) — one row per account, with every per-user dial the
-// platform has: role, app quota, daily spend cap, linked Usernode wallet, and
+// platform has: role, app quota, daily spend cap, linked Homeroom wallet, and
 // the company OpenRouter key when the user claimed one.
 //
 // #1179: the programme's own users screen (event enrolment, podium and log
@@ -69,6 +69,7 @@ interface User {
   openrouter_key_status?: string | null;
   openrouter_key_hash?: string | null;
   openrouter_daily_limit_usd?: number | null;
+  openrouter_limit_reset?: string | null;
 }
 
 const console_ = () => (window as any).AdminConsole;
@@ -85,6 +86,9 @@ const MANAGED_STATUS_LABEL: Record<string, string> = {
   provisioning: 'Provisioning', active: 'Active', disabled: 'Blocked',
   deleted: 'Deleted', needs_review: 'Needs review',
 };
+// #2119: the allowance's period is read from the key, never assumed; keys
+// issued before the weekly policy stay "/day" until they are migrated.
+const RESET_PERIOD: Record<string, string> = { daily: 'day', weekly: 'week', monthly: 'month' };
 
 /**
  * A commit-on-blur-or-Enter field. The value the server last confirmed is
@@ -204,8 +208,10 @@ function OpenRouterCard({ user, onReload }: { user: User; onReload: () => void }
   const canWrite = !!console_()?.canWrite();
   const status = user.openrouter_key_status || null;
   const hash = user.openrouter_key_hash || '';
+  const reset = user.openrouter_limit_reset || '';
+  const period = RESET_PERIOD[reset] || reset;
   const limit = user.openrouter_daily_limit_usd == null
-    ? '' : `$${Number(user.openrouter_daily_limit_usd).toFixed(2)}/day`;
+    ? '' : `$${Number(user.openrouter_daily_limit_usd).toFixed(2)}${period ? `/${period}` : ''}`;
 
   const toggle = async (disabled: boolean) => {
     const action = disabled ? 'block' : 'enable';
@@ -519,7 +525,7 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
             full width, so the controls sit on the same line, pushed right,
             instead of leaving half the row empty. */}
         <div className="flex flex-wrap items-center gap-3 xl:justify-end xl:shrink-0">
-          <div className={CONTROL} title='Linked Usernode wallet (ut1…). Blank = no wallet linked.'>
+          <div className={CONTROL} title='Linked Homeroom wallet (ut1…). Blank = no wallet linked.'>
             <span className={TINY_LABEL}>Wallet</span>
             <CommitField className={`admin-wallet-input w-44 max-w-full ${SMALL_INPUT}`}
               type="text" spellCheck={false} placeholder="none" disabled={!canWrite}

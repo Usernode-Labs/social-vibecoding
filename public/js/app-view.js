@@ -446,19 +446,53 @@ const AppView = {
   _defaultKanbanFilters() {
     return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
   },
+  // `?q=<text>` — a deep link to a surface already narrowed to a search, the
+  // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
+  // `_devCardMatches` as a substring and never used as a selector. It is
+  // what the declared check for #2090 navigates to: "a search that matches
+  // nothing" was a state only typing could reach.
+  //
+  // CONSUMED ON THE FIRST LOAD, NOT HELD. `?view=` and `?col=` stay live until
+  // the viewer chooses, because re-reading them is harmless. A held search is
+  // not: `_loadKanbanFilters` runs on every entry to a surface, and a seed it
+  // kept re-applying would put a search the viewer had just cleared straight
+  // back — #2090 in a new coat. So the first load folds it in and persists
+  // it, and from then on it is a typed search: edited, cleared and restored
+  // through the same paths as one, with the URL never consulted again.
+  _kanbanSearchUrlSeed: undefined,
+  _takeKanbanSearchSeed() {
+    if (AppView._kanbanSearchUrlSeed === undefined) {
+      try {
+        const raw = new URLSearchParams(window.location.search).get('q');
+        // Capped: it lands in the box and a chip label, not a document.
+        AppView._kanbanSearchUrlSeed = raw && raw.trim() ? raw.trim().slice(0, 200) : null;
+      } catch { AppView._kanbanSearchUrlSeed = null; }
+    }
+    const seed = AppView._kanbanSearchUrlSeed;
+    AppView._kanbanSearchUrlSeed = null;
+    return seed;
+  },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
   // defaults for a falsy slug, nothing stored, or any storage/parse failure.
+  // The `?q=` seed, the once it applies, goes over whichever of those came
+  // back and is written straight to storage, so a surface switch restores it
+  // exactly as it would a typed search.
   _loadKanbanFilters(slug) {
     const def = AppView._defaultKanbanFilters();
     if (!slug) return def;
+    const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
+    let stored = def;
     try {
-      const raw = window.sessionStorage.getItem(`${AppView.KANBAN_FILTERS_KEY}:${slug}`);
-      if (!raw) return def;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return def;
-      return { ...def, ...parsed };
-    } catch { return def; }
+      const raw = window.sessionStorage.getItem(key);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object') stored = { ...def, ...parsed };
+    } catch { stored = def; }
+    const seed = AppView._takeKanbanSearchSeed();
+    if (!seed) return stored;
+    const seeded = { ...stored, q: seed };
+    try { window.sessionStorage.setItem(key, JSON.stringify(seeded)); } catch {}
+    return seeded;
   },
   // Persist the current filters under the app slug. Clears the key when the
   // filters are at their defaults so a cleared board leaves no residue.
@@ -603,6 +637,48 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
   TOKEN_REQUEST_TIMEOUT_MS: 15000,
 
+  // A newly-created app can finish while its first /api/apps/:slug detail
+  // request is still in flight. `app_status` is newer than that request's
+  // snapshot, but App.handleAppStatusUpdate cannot apply it until appData
+  // exists; dropping it leaves the stale `creating` snapshot on screen until
+  // a full-page refresh. Keep just the latest terminal event per slug across
+  // that narrow gap. A later `creating` phase means a retry started, so it
+  // invalidates any terminal event from the previous attempt.
+  _pendingAppStatus: Object.create(null),
+
+  _rememberPendingAppStatus(data) {
+    if (!data || !data.slug) return;
+    if (data.status === 'creating') {
+      delete AppView._pendingAppStatus[data.slug];
+      return;
+    }
+    if (!['running', 'error', 'awaiting_secrets'].includes(data.status)) return;
+    AppView._pendingAppStatus[data.slug] = {
+      status: data.status,
+      url: data.url || null,
+      errorReason: data.errorReason || null,
+      missingSecrets: Array.isArray(data.missingSecrets) ? [...data.missingSecrets] : null,
+    };
+  },
+
+  _applyPendingAppStatus(appData) {
+    const slug = appData && appData.slug;
+    if (!slug) return appData;
+    const pending = AppView._pendingAppStatus[slug];
+    delete AppView._pendingAppStatus[slug];
+    if (!pending) return appData;
+
+    const reconciled = { ...appData, status: pending.status };
+    if (pending.status === 'running' && pending.url) reconciled.url = pending.url;
+    if (pending.status === 'error' && pending.errorReason) {
+      reconciled.errorReason = pending.errorReason;
+    }
+    if (pending.status === 'awaiting_secrets' && pending.missingSecrets) {
+      reconciled.missingSecrets = pending.missingSecrets;
+    }
+    return reconciled;
+  },
+
   /**
    * Load an app's record and stand its view up.
    *
@@ -633,7 +709,11 @@ const AppView = {
       AppView._teardownLaunch();
       return;
     }
-    const { app: appData } = await res.json();
+    const { app: fetchedAppData } = await res.json();
+    // A terminal WS event may have landed after this request began but before
+    // its older snapshot came back. It is the later fact, so reconcile it
+    // before any consumer can paint the stale spinning-up state.
+    const appData = AppView._applyPendingAppStatus(fetchedAppData);
     // #1010: local "being applied" state is per-app and per-page-visit —
     // proposal ids are global, but a stale entry carried into another app
     // would spin a card whose apply this client never started. Cleared on
@@ -946,6 +1026,15 @@ const AppView = {
       // row inside it, so it cannot stand in for this one.
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
+      }
+      // `?shot=mine-session` unfolds the viewer's own session in "What you
+      // are working on" — the state the #1887 check reads: a card about your
+      // own session opens as the CARD, with the session a link inside it,
+      // rather than as the session. Only that strip has the row and only an
+      // unfolded row has the link, so this is the URL that reaches it (see
+      // _workshopView's autoExpand).
+      if (shot === 'mine-session') {
+        AppView._workshopShot = 'mine-session';
       }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
@@ -1939,6 +2028,36 @@ const AppView = {
     // and the app glyph takes the slot the rest of the time. A raw unhide
     // here used to leave a home icon on these fixtures; React reconciles it
     // away on its next render anyway, so it was a write with no reader.
+  },
+
+  // #2154: the resolved half of `?shot=app-launching&settle=1`. Reproduce
+  // the first-open ordering without a real deployment: the terminal status
+  // lands while appData is absent, then an older `creating` detail snapshot
+  // returns. The same reconciliation used by open() must turn that pair into
+  // a running app before renderAppTab paints anything.
+  showSettledLaunchShot() {
+    const slug = 'staging-demo-status-race';
+    AppView.appData = null;
+    AppView._rememberPendingAppStatus({
+      slug,
+      status: 'running',
+      url: location.origin,
+    });
+    AppView.appData = AppView._applyPendingAppStatus({
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '🚀',
+      status: 'creating',
+      url: null,
+      self_hosted: false,
+    });
+    // Keep the fixture on a tiny same-origin document, not the platform SPA
+    // nested inside itself. The assertion is about replacing the placeholder
+    // with a frame, not about depending on a live user app.
+    AppView.pendingInnerPath = '/health';
+    AppView.renderAppTab();
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
   },
 
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
@@ -3239,6 +3358,12 @@ const AppView = {
     const rows = body.details.ledger;
     body.changeId = item.id;
     AppView._changeItems.set(Number(item.id), item);
+    body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
+    body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
+      n: Number(issue.number),
+      title: issue.title || `Issue #${issue.number}`,
+      href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${issue.number}`,
+    })).filter((issue) => Number.isSafeInteger(issue.n) && issue.n > 0);
     if (mine && underway && item.source !== 'imported') {
       const own = AppView._mySessionCardModel(item);
       card.rail.menuKey = own.rail.menuKey;
@@ -3702,6 +3827,7 @@ const AppView = {
     archive: '📦',    // 📦
     campaign: '📊',   // 📊
     open: '▢',             // ▢ the card on its own page
+    share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.
@@ -3720,6 +3846,18 @@ const AppView = {
   // Two spaces, not one: the sheet has no leading column to align against.
   _menuSheetLabel(it) {
     return `${AppView._menuIconGlyph(it)}  ${it.label}`;
+  },
+
+  // Hand one card to Messages by identity only. Messages owns destination
+  // selection and attachment confirmation; the server resolves the live
+  // title/state and re-checks access for every recipient when it is sent.
+  _shareCardToMessages(reference) {
+    const app = AppView.appData || {};
+    return window.UsernodeReact?.messages?.share?.({
+      ...reference,
+      appId: app.id,
+      appSlug: app.slug || App.currentApp,
+    });
   },
 
   // Register `items` under `key` and return the ⋯ trigger, or '' when there
@@ -4388,9 +4526,22 @@ const AppView = {
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
     }, { signal });
-    // New change and Give feedback live in Improve (#1490). This menu keeps
-    // PR import and app management; each row is conditional on viewer/app
+    // New change lives in Improve (#1490). This menu keeps PR import and app
+    // management, and (#1900) filing an issue, which #1490 had folded into
+    // Improve's Give feedback; each row is conditional on viewer/app
     // permissions, so wire only the rows the frame rendered.
+    const issueBtn = menu.querySelector('[data-plus="issue"]');
+    if (issueBtn) {
+      issueBtn.addEventListener('click', () => {
+        close();
+        // The shared feedback dialog in its dev-context mode: the open app is
+        // preselected as the target (Platform for the self-hosted app, or
+        // while the repo does not exist yet) — #226. The same call
+        // Improve.giveFeedback() makes when the panel's app is the open one,
+        // so the two entry points cannot drift.
+        App.openFeedbackModal({ fromDev: true });
+      }, { signal });
+    }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
@@ -4398,6 +4549,11 @@ const AppView = {
         AppView.openImportPrModal();
       }, { signal });
     }
+    const appSettingsBtn = menu.querySelector('[data-plus="app-settings"]');
+    appSettingsBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
@@ -4736,10 +4892,14 @@ const AppView = {
     // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
     // inserts a newline (default). On touch the on-screen return key
     // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. Bubble phase, so the autocomplete's
-    // capture-phase keydown still owns Enter while its dropdown is open.
+    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
+    // included: the chord every other composer on the platform answers to,
+    // and the one way to send from a hardware keyboard on a touch screen.
+    // Bubble phase, so the autocomplete's capture-phase keydown still owns
+    // Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+      if (e.key !== 'Enter') return;
+      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
         e.preventDefault();
         submitGeneral();
       }
@@ -6561,6 +6721,15 @@ const AppView = {
       // folded — which is the state the lanes check is about.
       const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
       if (first) autoExpand = { theme: first.id, key: '' };
+    } else if (AppView._workshopShot === 'mine-session') {
+      // The viewer's own session in "What you are working on", unfolded
+      // (#1887). `theme` is the row's SCOPE, and the strip's is `mine` — the
+      // key the Workshop's toggleRow files it under. Among the rows the strip
+      // draws before "N more of yours", so the link cannot name a row that
+      // is not on screen.
+      const r = mine.rows.slice(0, mine.shown)
+        .find((row) => row.t === 'card' && row.card.attrs && row.card.attrs['data-session-chip']);
+      if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
     const emptyNote = entries.length
@@ -7778,7 +7947,7 @@ const AppView = {
   //
   // The venue was decided once, at creation, from a preference the user set
   // somewhere else — and then never mentioned again, so a board full of
-  // cards looked identical whether the work was billed to Usernode credits,
+  // cards looked identical whether the work was billed to Homeroom credits,
   // an OpenRouter key or a laptop. Naming it on the card is the cheapest
   // place to make that visible; the sheet behind it is the same one every
   // other surface opens (public/js/build-venues.js).
@@ -7927,8 +8096,12 @@ const AppView = {
   },
 
   // One of the viewer's own session cards, as a MODEL (card/model.ts).
-  // The whole card is the tap target — it opens the owner's dev chat —
-  // so the inner controls stay real buttons inside a role="button" div.
+  // The whole card is the tap target — it opens the CARD: unfolded in place
+  // inside a fold (card/fold.tsx), or the change's page from the delegated
+  // #dev-body handler — so the inner controls stay real buttons inside a
+  // role="button" div. The owner's dev chat is a link INSIDE the open card
+  // ("Open session", fold.tsx `sessionHref`) and the change page's Build
+  // tab, never where the tap itself lands (#1887).
   _mySessionCardModel(s) {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
@@ -7948,10 +8121,11 @@ const AppView = {
         ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
         : 'Only you can see this');
 
-    // "Open chat" is GONE as a pill. Tapping this card opens the owner's dev
-    // chat — its working surface, and its canonical destination; the public
-    // discussion of a shared session is one ⋯ row rather than a competing
-    // affordance on the card face.
+    // "Open chat" is GONE as a pill. Tapping this card opens the card itself
+    // (see above); the dev chat — its working surface — is the "Open session"
+    // link inside the open card, and the public discussion of a shared
+    // session is one ⋯ row rather than a competing affordance on the card
+    // face.
     //
     // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
     // one thing you do to your own session card, the subtitle right above it
@@ -8066,7 +8240,7 @@ const AppView = {
       actions,
       actionPreview: null,
       // `preview` goes to the rail, not the action band. The chevron rides
-      // with it: tapping the card opens the owner's dev chat.
+      // with it: a tap on the card opens it (the fold draws its own mark).
       rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, menu), chevron: true, preview },
       extra: [],
       dense: true,
@@ -9015,8 +9189,56 @@ const AppView = {
       gates: gates.map((g) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
         note: (g.detail && g.detail.note) || null,
+        action: AppView._requirementAction(g, viewer),
       })),
     };
+  },
+
+  // The one control a gate carries, for the viewer who can clear it. A red
+  // main pauses every merge on the app until a fix lands or an admin says
+  // "I know, go on"; that admin is reading this ledger, and the button is
+  // the sentence's verb. Nobody else gets a control they cannot use.
+  _requirementAction(gate, viewer) {
+    if (!gate || gate.key !== 'main_healthy' || gate.state !== 'blocked') return null;
+    if (!viewer || !viewer.isAdmin || AppView.readOnly) return null;
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' && App.currentApp) || null;
+    if (!slug) return null;
+    return {
+      label: 'Resume merges',
+      title: 'Main’s unit suite is failing at this commit. Resume merges on the app anyway; the pause returns if a later merge fails the suite again.',
+      act: { fn: 'resumeMainMerges', args: [slug] },
+    };
+  },
+
+  // POST /api/apps/:slug/main-check/resume (admin). The server stamps the
+  // red sha as resumed and the next queue pass merges what is ready; the
+  // ledger re-renders from the refreshed promoted list.
+  _resumeMainInFlight: false,
+  async resumeMainMerges(slug, btn) {
+    if (AppView._resumeMainInFlight) return;
+    AppView._resumeMainInFlight = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Resuming…'; }
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/main-check/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(data.error || `Resume failed (HTTP ${resp.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = 'Resume merges'; }
+        return;
+      }
+      PlatformUI.toast('Merges resumed. Anything ready merges on the next pass.');
+      AppView.refreshDevData('main-check-resume');
+      return true;
+    } catch (err) {
+      PlatformUI.toast(`Resume failed: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = 'Resume merges'; }
+    } finally {
+      AppView._resumeMainInFlight = false;
+    }
   },
 
   // The collapsed line. Mirrors services/merge-requirements.js summarize() —
@@ -9245,6 +9467,12 @@ const AppView = {
     if (!st.noNav) {
       items.push(...AppView._attrMenuItems('proposal', pr.id, pr));
     }
+    items.push({
+      label: 'Share to Messages',
+      icon: 'share',
+      title: 'Share this proposal card in a private conversation',
+      act: () => AppView._shareCardToMessages({ type: 'proposal', sessionId: pr.id }),
+    });
     if (pr.pr_url) {
       items.push({
         label: 'View PR on GitHub',
@@ -9930,21 +10158,36 @@ const AppView = {
   _conflictRemedy(pr, mode) {
     const creator = pr.username || 'the proposal’s creator';
     const home = AppView._headHome(pr);
+    // The conflict lane's own verdict on this head, when it has one. Who
+    // resolves a PREDICTED conflict is the lane's decision, not the card's:
+    // the platform resolves it (once unasked, and again once the vote
+    // passes) unless the lane has recorded that it tried and could not.
+    const served = (pr.integration && Array.isArray(pr.integration.blockReasons))
+      ? pr.integration.blockReasons : [];
+    const sync = ': open the session’s dev-chat and run "Sync with main".';
     let parts;
     if (pr.source !== 'imported') {
-      parts = mode === 'failed'
-        ? [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.']
-        : mode === 'conflict'
-          ? ['Automatic resolution may not run for this proposal. ', { b: creator },
-            ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".']
-          : [{ b: creator }, ' needs to bring it up to date: open the session’s dev-chat and run "Sync with main".'];
+      if (mode === 'failed') {
+        parts = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
+      } else if (mode === 'conflict') {
+        parts = ['Automatic resolution may not run for this proposal. ', { b: creator },
+          ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
+      } else if (served.includes('integrating')) {
+        parts = ['The platform is resolving it now. Nobody needs to do anything.'];
+      } else if (served.includes('unresolvable')) {
+        parts = ['The platform tried to resolve it and could not. ', { b: creator }, ` needs to bring it up to date${sync}`];
+      } else if (served.includes('awaiting_approval')) {
+        parts = ['The platform resolves it once the vote passes. ', { b: creator }, ` can bring it up to date sooner${sync}`];
+      } else {
+        parts = ['The platform resolves it automatically. ', { b: creator }, ` can also bring it up to date sooner${sync}`];
+      }
     } else if (home === 'app_repo') {
       parts = mode === 'failed'
-        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Usernode keeps this branch itself, so the merge is retried once the update lands.']
-        : ['Usernode keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
+        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.']
+        : ['Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
           { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
     } else {
-      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Usernode cannot write to, so it cannot sync it itself. ',
+      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
         { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
     }
     // The pill's plain-text detail. A native row keeps the sentence the pill
@@ -9953,11 +10196,12 @@ const AppView = {
     const nativeDetail = {
       failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
       conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
-      predicted: 'Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main").',
     };
+    // A predicted conflict's plain text is the note's sentence: it is the
+    // lane's answer, and there is no older sentence worth keeping over it.
     return {
       parts,
-      text: pr.source !== 'imported'
+      text: pr.source !== 'imported' && nativeDetail[mode]
         ? nativeDetail[mode]
         : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
     };
@@ -10426,6 +10670,24 @@ const AppView = {
       return [{ ...fallback, key: 'checks', action: recheck }];
     }
 
+    if (state === 'pending' && pr.check_phase === 'deferred') {
+      // Nothing is running. The preview was built so reviewers have something
+      // to look at, and the tests were skipped on purpose: the head conflicts
+      // with main, and a verdict on a tree that cannot merge costs the same
+      // minutes as a real one and answers nothing. The re-run button is the
+      // way to insist — a manual run tests the head exactly as it stands.
+      const rows = [{
+        t: 'line',
+        parts: ['This proposal conflicts with main, so its preview was built but the automated tests were not run: they would judge a tree that cannot merge. They run automatically once it merges cleanly, and the merge waits for them.'],
+      }];
+      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Preview built ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      rows.push({ t: 'line', parts: ['To test this head as it stands anyway, re-run the checks.'], weight: 'foot' });
+      return [{
+        key: 'checks', tone: 'neutral', spinner: false,
+        heading: 'Checks deferred until this merges cleanly.', rows, action: recheck,
+      }];
+    }
+
     if (state === 'pending') {
       // #447: stuck-'pending' checks now self-heal (the platform re-runs them
       // automatically once they've been running too long) and can be kicked
@@ -10450,19 +10712,22 @@ const AppView = {
       // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
-      // What happens to THIS run if main moves first. Three rows used to
-      // describe the same proposal without any of them saying which acts
-      // first: the checks row said a run was going, the "Behind main" pill
-      // said a sync was coming, and neither said that the sync ends the run.
-      // It does: a sync moves the commit this run is judged against, so the
-      // run in flight is restarted on the synced commit. Say it here, on the
-      // row the reader is watching, rather than leaving it to be inferred
-      // from two other rows.
-      const behindNow = AppView._freshnessOf(pr).behindBy || 0;
+      // What main moving means for THIS run. Three rows used to describe the
+      // same proposal without any of them saying which acts first: the
+      // checks row said a run was going, the "Behind main" pill said a sync
+      // was coming, and neither said that the sync ends the run. Now only a
+      // CONFLICT is ever synced — a head that merges cleanly merges as it
+      // stands — so the two cases get two sentences: a conflict's run is
+      // restarted on the resolved commit, a clean head's run is left alone.
+      const freshNow = AppView._freshnessOf(pr);
+      const behindNow = freshNow.behindBy || 0;
       if (behindNow > 0) {
+        const moved = `Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead`;
         rows.push({
           t: 'line',
-          parts: [`Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit.`],
+          parts: [freshNow.mergeability === 'conflict'
+            ? `${moved} and this proposal conflicts with it. This run is judged against the commit before that, so when the platform resolves the conflict the run starts again on the resolved commit.`
+            : `${moved}. That does not restart this run: a proposal that still merges cleanly merges as it stands.`],
           weight: 'foot',
         });
       }
@@ -10643,15 +10908,34 @@ const AppView = {
   },
 
   // #1442 — one sentence for a verdict earned against a superseded base.
-  // Shared by the verdict view and the status notes so the two can never
-  // word it differently.
-  _checksBaseNote(pr) {
+  // Shared by the verdict view, the status notes and the board tag so the
+  // three can never word it differently. `opts.lead` replaces the opening
+  // "These" where the sentence has to name its subject.
+  //
+  // What the superseded base MEANS changed with the direct merge lane. It
+  // used to be a warning that a sync was coming and would re-run the tests.
+  // A head that merges cleanly is never synced now: it merges as it stands,
+  // and the platform runs the app's tests on main straight after, so a
+  // regression the old base hid is caught there and pauses further merges.
+  // Only a conflicting head is ever re-run before the merge, on the resolved
+  // commit — so that case keeps its own sentence.
+  //
+  // Both sentences keep "code this proposal would no longer merge into":
+  // that is the fact the note exists to state, and the declared check
+  // "Freshness (#1442): checks that passed on a superseded base are
+  // annotated, not contradicted" pins it on the demo proposal.
+  _checksBaseNote(pr, opts) {
     const fresh = AppView._freshnessOf(pr);
     if (fresh.baseVerdict !== 'superseded') return null;
     const n = fresh.baseBehindBy || 0;
-    return n
-      ? `These ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
-      : 'These ran against a version of main that has since moved on, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.';
+    const lead = (opts && opts.lead) || 'These';
+    const when = n
+      ? `main as it was ${n} commit${n === 1 ? '' : 's'} ago`
+      : 'a version of main that has since moved on';
+    const describe = `${lead} ran against ${when}, so they describe code this proposal would no longer merge into.`;
+    return fresh.mergeability === 'conflict'
+      ? `${describe} It now conflicts with main; resolving the conflict re-runs them on the resolved commit.`
+      : `${describe} That does not hold the merge: a proposal that still merges cleanly merges as it stands, and the platform runs the app’s tests on main again straight after.`;
   },
 
   PASS_FOLD_AT: 8,
@@ -10692,6 +10976,13 @@ const AppView = {
     testing: {
       title: 'Running the automated tests…',
       detail: 'The preview is up and the automated tests are running against it.',
+    },
+    // Not a stage of a run: the run stopped on purpose after the build. The
+    // head conflicts with main, so the preview exists for reviewers and the
+    // tests wait for a head that can merge. No spinner belongs on this.
+    deferred: {
+      title: 'Checks deferred',
+      detail: 'The preview is up, but the tests were not run: this proposal conflicts with main, and they would judge a tree that cannot merge. They run once it merges cleanly.',
     },
   },
 
@@ -12800,6 +13091,12 @@ const AppView = {
         items.push(...AppView._attrMenuItems('issue', n, issue));
       }
     }
+    items.push({
+      label: 'Share to Messages',
+      icon: 'share',
+      title: 'Share this issue card in a private conversation',
+      act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n }),
+    });
     if (issue.htmlUrl) {
       items.push({
         label: 'Open on GitHub',
@@ -13315,9 +13612,10 @@ const AppView = {
 
   // ---- Headless auto sessions (#155) --------------------------------------
 
-  // "Generate proposal" — confirmation popup (token warning + model selector)
-  // before spinning up a headless AI session on this issue. The session is
-  // billed to the clicking user but isn't attached to their dev chat.
+  // "Generate proposal" — a short confirmation, with model selection behind
+  // a second step, before spinning up a headless AI session on this issue.
+  // The session is billed to the clicking user but isn't attached to their
+  // dev chat.
   async confirmAutoSession(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
@@ -13330,8 +13628,6 @@ const AppView = {
     let defaultModel = '';
     let provider = 'claude';
     let reasoningEffort = null;
-    let catalogRefreshedAt = null;
-    let catalogTotalModels = 0;
     let prefs = {};
     try {
       if (typeof DevChat === 'undefined' || !DevChat._prepareDefaultCodingAgentForBuild) {
@@ -13353,8 +13649,6 @@ const AppView = {
           throw new Error(catalog.error || 'Could not load OpenRouter models.');
         }
         models = Array.isArray(catalog.models) ? catalog.models : [];
-        catalogRefreshedAt = catalog.refreshedAt || null;
-        catalogTotalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : models.length;
         const saved = prefs.backends && prefs.backends.codex_openrouter;
         reasoningEffort = (saved && saved.reasoningEffort) || null;
         defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
@@ -13381,13 +13675,9 @@ const AppView = {
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    // Use the same prepared preference that selected the model catalog, so
-    // the venue label cannot lag behind a just-created managed key.
-    const venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
-      .currentVenue({ agentBackend: prefs.defaultBackend });
-
     const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, {
-      provider, venueId, catalogRefreshedAt, catalogTotalModels,
+      provider,
+      openrouterCredentialSource: prefs.openrouterCredentialSource || null,
     });
     if (!choice) return;
 
@@ -13514,10 +13804,9 @@ const AppView = {
     if (note) PlatformUI.toast(note);
   },
 
-  // Singleton confirm popup for Generate proposal. Same scrim/card styling as
-  // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
-  // chosen model id, or null on cancel/backdrop/Esc. `modalOptions.venueId`
-  // names where the run will build (see confirmAutoSession).
+  // Singleton confirm popup for Generate proposal. Its first step is a short
+  // summary; the full model catalog stays behind “Change model”. Resolves to
+  // the chosen model id, or null on cancel/backdrop/Esc.
   _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
@@ -13526,91 +13815,40 @@ const AppView = {
     root = document.createElement('div');
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    // #800: same option text as the dev-chat composer (solve-rate range +
-    // recommended change size), built by the shared DevChat helpers so
-    // the two pickers can't drift. Falls back to the bare label when
-    // dev-chat.js isn't loaded on this page (e.g. the gallery shell).
     const openRouter = modalOptions.provider === 'openrouter';
-    const optionText = (m) => {
-      if (openRouter && typeof DevChat !== 'undefined' && DevChat._openRouterModelOptionLabel) {
-        return DevChat._openRouterModelOptionLabel(m);
-      }
-      return (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
-        ? DevChat.modelOptionText(m)
-        : (m.label || m.name || m.id);
+    const costLabels = {
+      free: 'Free',
+      low: 'Low cost',
+      medium: 'Medium cost',
+      high: 'High cost',
     };
-    // #800's caption, RESOLVED PER OPTION rather than recomputed by a change
-    // handler. The picker used to bind `change` and rewrite one <p>; the
-    // caption is component state now, so each option carries its own.
-    const noteText = (m) => (openRouter
-      ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
-        ? `${DevChat._openRouterModelCostSummary(m)}. ${DevChat._openRouterModelCompatibilitySummary(m)}`
-        : '')
-      : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-        ? DevChat.modelNoteText(m)
-        : ''));
-    const noteTitle = (text) => (!openRouter && text
-      && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
-      ? DevChat.MODEL_GUIDANCE_TOOLTIP
-      : '');
-    const makeOptions = (catalogModels) => catalogModels.map((m) => {
-      const note = noteText(m) || '';
+    const options = models.map((m) => {
+      const name = m.name || m.label || m.id;
+      const summaryParts = openRouter
+        ? [m.isRecommended ? 'Recommended' : '', costLabels[m.costTier] || '']
+        : [(m.changeSize && m.changeSize.short) || 'Available model'];
       return {
         id: m.id,
-        // The React picker owns the live star prefix so toggling a favorite
-        // can repaint without rebuilding this whole view model.
-        label: optionText(openRouter ? { ...m, isFavorite: false } : m) || m.id,
-        note,
-        noteTitle: noteTitle(note),
-        searchText: [m.name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
-        isFavorite: m.isFavorite === true,
+        name,
+        summary: summaryParts.filter(Boolean).join(' · ') || 'Available through OpenRouter',
+        searchText: [name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
         isRecommended: m.isRecommended === true,
       };
     });
-    const options = makeOptions(models);
-    const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
-    const intro = openRouter
-      ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
-      : 'This spins up a headless AI session that immediately starts working on the issue on its own: investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch, never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
+    const billingNote = openRouter
+      ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
+        ? 'Uses your included OpenRouter credits.'
+        : 'Uses your OpenRouter account.')
+      : 'Uses your available Usernode credits.';
 
     document.body.appendChild(root);
     react.mountAutoSessionModal(root, {
       issueNumber,
-      intro,
-      venue: venue ? { label: venue.label, blurb: venue.blurb } : null,
-      pickerLabel: openRouter ? 'OpenRouter model' : 'Chat model',
+      intro: 'Usernode will inspect the issue and repository, then create a proposal for review.',
+      billingNote,
       options,
       preselect: preselect || (options[0] && options[0].id) || '',
       openRouter,
-      catalogRefreshedAt: modalOptions.catalogRefreshedAt || null,
-      catalogTotalModels: modalOptions.catalogTotalModels || options.length,
-      onFavorite: openRouter ? async (modelId, favorite) => {
-        if (typeof DevChat !== 'undefined' && DevChat._setOpenRouterModelFavorite) {
-          await DevChat._setOpenRouterModelFavorite(modelId, favorite);
-          return;
-        }
-        const response = await fetch('/api/me/coding-agent/models/favorite', {
-          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId, favorite }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
-      } : undefined,
-      onRefresh: openRouter ? async () => {
-        const response = await fetch(
-          '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1',
-          { credentials: 'same-origin', cache: 'no-store' },
-        );
-        const catalog = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(catalog.error || 'Could not refresh OpenRouter models.');
-        const catalogModels = Array.isArray(catalog.models) ? catalog.models : [];
-        return {
-          options: makeOptions(catalogModels),
-          refreshedAt: catalog.refreshedAt || null,
-          totalModels: Number.isInteger(catalog.totalModels) ? catalog.totalModels : catalogModels.length,
-        };
-      } : undefined,
     });
 
     return new Promise((resolve) => {
@@ -13923,20 +14161,26 @@ const AppView = {
           : 'Automated tests are not passing on the staging build.',
       });
     }
-    // Behind main resolves itself, so it is the mildest blocking reason —
-    // last in the list and rendered `attention` rather than `blocked`.
+    // Behind main is information, not a block: a head that merges cleanly
+    // merges as it stands, however far main has moved, and nothing ever
+    // syncs it. So it is `soft` — worth knowing, does not stop it landing —
+    // and last in the list. (A head that does NOT merge cleanly drew the
+    // conflict tag above; that is the one somebody has to act on.)
     //
     // #1442: the count comes from the freshness measurement now, not from
     // the `behind_main` column frozen when the proposal was submitted. A
     // proposal that read "0" for eight commits is what this fixes.
     const behind = fresh.behindBy || 0;
     if (behind > 0 || p.merge_conflict_state === 'behind') {
+      const count = behind
+        ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main`
+        : 'This proposal is behind main';
       out.push({
         key: 'behind',
         label: behind ? `Behind main · ${behind}` : 'Behind main',
-        detail: behind
-          ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main. Syncing automatically, then it retries the merge.`
-          : 'This proposal is behind main. Syncing automatically, then it retries the merge.',
+        detail: fresh.mergeability === 'conflict'
+          ? `${count}. The conflict is what stands between it and merging; the distance itself does not.`
+          : `${count} but still merges cleanly. It merges as it stands; nothing needs syncing.`,
         soft: true,
       });
     }
@@ -13950,9 +14194,7 @@ const AppView = {
       out.push({
         key: 'checks_base_superseded',
         label: n ? `Checks ran on older main · ${n}` : 'Checks ran on older main',
-        detail: n
-          ? `The checks passed, but they ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago. They describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
-          : 'The checks passed, but they ran against a version of main that has since moved on. Syncing with main re-runs them against the current one.',
+        detail: AppView._checksBaseNote(p, { lead: 'The checks passed, but' }),
         soft: true,
       });
     }
@@ -13971,9 +14213,12 @@ const AppView = {
       out.push({
         key: 'integrating',
         label: 'Bringing up to date…',
-        detail: 'The platform is merging the latest main into this proposal and '
-          + 're-running its checks against the result. It merges on its own once '
-          + 'that passes. Nobody needs to do anything.',
+        // Only a conflict is ever brought up to date: this is the conflict
+        // lane merging main into the head. The result is previewed and
+        // checked like any other push, and merges once the vote passes.
+        detail: 'The platform is merging main into this proposal to resolve a conflict. '
+          + 'The result is previewed and checked, and it merges on its own once the '
+          + 'vote passes. Nobody needs to do anything.',
         running: true,
       });
     }
@@ -14383,7 +14628,7 @@ const AppView = {
     if (!name) return '';
     const label = (value === 'claude-code' || value === 'codex')
       ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Homeroom opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
