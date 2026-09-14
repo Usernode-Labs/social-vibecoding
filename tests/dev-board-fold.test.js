@@ -475,7 +475,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 617 → 618: #2089 adds one board check opened through `?q=` on a word
   // that appears only in a mock issue's BODY, pinning that the search now
   // reads past the title.
-  assert.equal(DAPP.tests.length, 618);
+  // 617 → 618: the #2113 check on the demo group thread, for the attached
+  // screenshot whose macOS-style name used to make its download 500. Same
+  // base as #2089's bump, on the other side of a merge: two branches each
+  // took 617 to 618 independently, so together they land on 619.
+  assert.equal(DAPP.tests.length, 619);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

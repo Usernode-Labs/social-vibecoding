@@ -9774,9 +9774,15 @@ const AppView = {
       const total = v.failures.length + v.passes.length;
       const row = {
         key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
-        sub: v.failing
-          ? `${v.failures.length} of ${total} failing`
-          : `${total} passed`,
+        // The count, then — while the row still carries it (#2170) — how
+        // long the preview and the checks took, on the sub line the run
+        // narrated itself through while it was live ("build: cloning the
+        // database", "12 of 523 run · 11 passed"), so the cost stays where
+        // a reviewer watched it accrue.
+        sub: [
+          v.failing ? `${v.failures.length} of ${total} failing` : `${total} passed`,
+          v.timings,
+        ].filter(Boolean).join(' · '),
         text: [strip(v.heading)],
         foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
         // Kept apart as well as flattened: when this row is demoted to a
@@ -10574,8 +10580,9 @@ const AppView = {
 
   // The build half, step by step: fetch the branch, build the image, clone
   // the database, start the preview. Live while "Preview building…" (the
-  // current step is named, the finished ones carry their time) and kept
-  // through the testing half as one line saying what the build cost.
+  // current step is named, the finished ones carry their time), kept
+  // through the testing half as one line saying what the build cost, and
+  // — as its total alone — past the verdict (_checksTimingsLine, #2170).
   BUILD_STEP_COPY: {
     source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
     image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
@@ -10664,6 +10671,25 @@ const AppView = {
       sub = `build: ${doing}`;
     }
     return { steps, sentence, sub, done, current, image };
+  },
+
+  // #2170: what the run cost, kept on the row past the verdict. storeChecks
+  // reduces the live snapshot to `{ build, checksMs }` — the finished build
+  // block and the testing half's wall clock — instead of dropping it, so a
+  // reviewer can still see how long the preview and the checks took once
+  // the verdict is in. One compact line in the sub line's own idiom,
+  // "built in 20s · checked in 9m 40s"; either half alone when that is all
+  // the row has (a re-check against a live preview builds nothing), and
+  // null when it has neither — a verdict older than this change, or a row
+  // whose next run has since cleared it — so those rows read as they did.
+  _checksTimingsLine(pr) {
+    const p = pr && pr.checks_progress;
+    if (!p || typeof p !== 'object') return null;
+    const bits = [];
+    const build = AppView._buildProgressView(p.build);
+    if (build && build.done) bits.push(build.sub);
+    if (Number.isFinite(p.checksMs)) bits.push(`checked in ${AppView._fmtMs(p.checksMs)}`);
+    return bits.length ? bits.join(' · ') : null;
   },
 
   // Inside the "build image" step. On the cluster the image is a buildpack
@@ -11005,6 +11031,8 @@ const AppView = {
         ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
+      // #2170 — what the run cost, when the row still carries it.
+      timings: AppView._checksTimingsLine(pr),
       // #1442 — WHICH main the verdict is a statement about. `stale` above
       // answers the other axis (has the proposal's own head moved since);
       // this one answers "green against what?", and green against a main
