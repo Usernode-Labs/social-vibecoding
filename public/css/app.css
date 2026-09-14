@@ -7031,35 +7031,39 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-model-select {
   appearance: none;
   -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  display: block;
   background: none;
   border: 0;
-  padding: 0;
-  max-width: 100%;
+  padding: 0 1.1rem 0 0;
+  max-width: min(100%, 16rem);
   min-width: 0;
   cursor: pointer;
   color: inherit;
   font: inherit;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* The name is what truncates — the caret must not, or the control loses the
-   only thing that says it opens. */
+/* Shared with the proposal-workshop select, which uses this utility to keep
+   a long model name from widening its control. */
 .dc-model-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dc-model-select > svg { flex: none; }
-/* The caret sits inside the button now, but this rule still earns its place:
-   it is what gives the row its colour in dark mode, where the caret was
-   invisible until it stopped inheriting from the field. */
+.dc-model-caret {
+  position: absolute;
+  right: 0;
+  flex: none;
+  pointer-events: none;
+}
+/* The native select's arrow is replaced so it follows the tuned foreground
+   colour in both themes. */
 .dc-venue-detail-inline {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
   min-width: 0;
   color: var(--text-primary);
 }
@@ -10586,9 +10590,8 @@ body.is-offline [data-offline-disabled] {
   line-height: 1.4;
 }
 
-/* Provider-specific model controls. Claude renders its chat-model select;
-   OpenRouter renders the one model pinned to both chat and coding. The
-   other four venues have nothing to choose here. */
+/* The grouped model/key selector. Both in-chat providers render it in the
+   card; the other four venues have nothing to choose here. */
 .dc-venue-detail {
   display: flex;
   flex-wrap: wrap;
@@ -10597,52 +10600,10 @@ body.is-offline [data-offline-disabled] {
   padding: 0 0.1rem 0.25rem;
 }
 
-/* …except Claude's, which shares the status strip with the runner and the
-   meter since #1353. It is a segment of that row rather than a row of its
-   own, so it brings no padding of its own to sit on. */
+/* It shares the card row with the runner and meter, so it brings no padding
+   of its own. */
 .dc-venue-detail-inline {
   padding: 0;
-}
-
-.dc-openrouter-model {
-  min-width: 0;
-  max-width: min(100%, 30rem);
-  overflow: hidden;
-  color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dc-openrouter-model-change {
-  flex: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent-light);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.dc-openrouter-model-change:hover {
-  color: var(--accent);
-}
-
-.dc-openrouter-model-change:focus-visible {
-  outline: none;
-  border-radius: 3px;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
-}
-
-.dc-openrouter-model-change:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  text-decoration: none;
 }
 
 /* The session-card chip on the dev feed (#1087 card actions row). Names
