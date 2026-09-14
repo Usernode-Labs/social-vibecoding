@@ -665,8 +665,10 @@ test('a challenge address reached from another section opens a page that survive
   assert.equal(pane._detailHash, null, 'but claims no entry the section switch is about to rewrite');
   sandbox.window.Leaderboard.section = 'challenges';
   sandbox.location.hash = '#leaderboard/challenges';
-  pane._onHashChange();
-  assert.ok(store.get().detail, 'so the rewrite does not close it');
+  pane._onHashChange({ newURL: 'https://example.test/#leaderboard/challenges/900500/900500' });
+  assert.ok(store.get().detail, 'so the rewrite inside the same dispatch does not close it');
+  pane._onHashChange({ newURL: 'https://example.test/#leaderboard' });
+  assert.equal(store.get().detail, null, 'but a later move to another tab does');
 
   // Already on the Challenges tab, Forward to the same address: no switch
   // follows, and the page owns the entry as a tap would.
@@ -782,6 +784,40 @@ test('a page closed by navigating away never retitles the screen being entered',
   sandbox.location.hash = '#profile';
   pane._onHashChange();
   assert.deepEqual(calls, [], 'the Leaderboard is not on show: its chrome is not restored over another screen');
+});
+
+test('back from a page reached from elsewhere in the app returns there; a cold page goes up to the grid', () => {
+  // Home's challenge card: the page owns no entry (the section switch rewrote
+  // the address), and Home is the route below it.
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  let backs = 0;
+  sandbox.window.history = { back() { backs += 1; } };
+  sandbox.window.App = { previousRoute: () => '' };
+  sandbox.location.hash = '#leaderboard/challenges';
+  pane.openChallengeDetail(CH[0]);
+  assert.equal(pane.handleBack(), true);
+  assert.equal(backs, 1, 'back to Home, where the viewer came from');
+  assert.ok(store.get().detail, 'the page closes as the address moves off it, not before');
+
+  // A cold arrival (bookmark, ?shot): nothing of ours below.
+  const cold = loadPane({ challenges: CH, eventId: 900500 });
+  let coldBacks = 0;
+  cold.sandbox.window.history = { back() { coldBacks += 1; } };
+  cold.sandbox.window.App = { previousRoute: () => null };
+  cold.pane.openChallengeDetail(CH[0]);
+  assert.equal(cold.pane.handleBack(), true);
+  assert.equal(coldBacks, 0, 'no step back out of the app');
+  assert.equal(cold.store.get().detail, null, 'up to the grid instead');
+
+  // A card tap owns its entry: up to the grid, spending it, even with a route below.
+  const tap = loadPane({ challenges: CH, eventId: 900500 });
+  let tapBacks = 0;
+  tap.sandbox.window.history = { back() { tapBacks += 1; } };
+  tap.sandbox.window.App = { previousRoute: () => '#leaderboard/challenges' };
+  tap.pane._openIdx(0);
+  assert.equal(tap.pane.handleBack(), true);
+  assert.equal(tap.store.get().detail, null, 'closed at once');
+  assert.equal(tapBacks, 1, 'and the pushed entry is spent');
 });
 
 // ─── 2. Static: the router carries both ids ─────────────────────────────

@@ -65,6 +65,7 @@ const controller = () => (window as {
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
+    handleBack(): boolean;
     closeUserProfile(): void;
     openUserProfile(userId: number): void;
   };
@@ -489,7 +490,7 @@ export function ChallengesPane(): ReactNode {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (profileOpen) controller()?.closeUserProfile();
-      else controller()?._backFromDetail();
+      else controller()?.handleBack();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

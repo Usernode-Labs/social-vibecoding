@@ -239,7 +239,7 @@ const TopochainChallenges = {
       });
     }
     if (!TopochainChallenges._hashListener && window.addEventListener) {
-      TopochainChallenges._hashListener = () => TopochainChallenges._onHashChange();
+      TopochainChallenges._hashListener = (e) => TopochainChallenges._onHashChange(e);
       window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
     TopochainChallenges.loadChallenges();
@@ -837,17 +837,32 @@ const TopochainChallenges = {
       app.setHeaderTitle('Challenge');
       return;
     }
-    if (lb && lb.section !== 'challenges') return;
+    // Any section: "Leaderboard" is the whole screen's title, and a page left
+    // for another tab must not keep the page's chevron and word.
     app.setBackIcon('home');
     app.setHeaderTitle('Leaderboard');
   },
 
-  // The platform header's back chevron, claimed the way Settings and Browse
-  // claim it (app.js's #back-btn chain): on a page it goes up to the grid,
-  // spending the history entry a card tap pushed; on the grid it declines, so
-  // the chevron's usual destination takes over.
+  // The platform header's back chevron (and Escape), claimed the way Settings
+  // and Browse claim it (app.js's #back-btn chain). On the grid it declines, so
+  // the chevron's usual destination takes over. On a page:
+  //   * a page a card tap opened owns its entry: up to the grid, spending it;
+  //   * a page reached from ANOTHER place in the app — a Home challenge card,
+  //     another Leaderboard tab — goes back THERE, the rule Settings keeps for
+  //     a link from elsewhere (#1565): replacing it with the grid would strand
+  //     the viewer a level below where they started. The page closes as the
+  //     address moves off it (_onHashChange, or the screen's own exit);
+  //   * a cold arrival (a bookmark, ?shot) has nothing of ours below: up to
+  //     the grid.
   handleBack() {
     if (!TopochainChallenges._detailChallenge) return false;
+    const owned = !!TopochainChallenges._detailHash && location.hash === TopochainChallenges._detailHash;
+    let cameFrom = null;
+    try { cameFrom = window.App?.previousRoute?.() ?? null; } catch (err) { cameFrom = null; }
+    if (!owned && cameFrom != null && window.history?.back) {
+      window.history.back();
+      return true;
+    }
     TopochainChallenges._backFromDetail();
     return true;
   },
@@ -870,11 +885,25 @@ const TopochainChallenges = {
     } catch (err) { /* no history to push: the page works without it */ }
   },
 
-  // The address moved off the page's own — the back gesture, the back disc,
-  // or any other navigation. Close the page and the profile stacked on it.
-  _onHashChange() {
-    const hash = TopochainChallenges._detailHash;
-    if (!hash || location.hash === hash) return;
+  // The address moved off the page — the back gesture, the header chevron, a
+  // tab, or any other navigation. Close the page and the profile stacked on it.
+  //
+  // Judged by the address the event ARRIVED at (`newURL`), not only by
+  // location.hash: when a challenge link lands while another Leaderboard tab
+  // is showing, the router opens the page and then its section switch
+  // replaceStates the address to #leaderboard/challenges inside the same
+  // dispatch, and that rewrite is not a navigation away.
+  _onHashChange(e) {
+    const challenge = TopochainChallenges._detailChallenge;
+    if (!challenge) return;
+    let arrived = location.hash;
+    if (e && typeof e.newURL === 'string') {
+      const at = e.newURL.indexOf('#');
+      arrived = at === -1 ? '' : e.newURL.slice(at);
+    }
+    const own = `#leaderboard/challenges/${TopochainChallenges._eventId()}/${Number(challenge.id)}`;
+    if (arrived === own) return;
+    if (TopochainChallenges._detailHash && location.hash === TopochainChallenges._detailHash) return;
     TopochainChallenges.closeUserProfile();
     TopochainChallenges.closeChallengeDetail('pop');
   },
