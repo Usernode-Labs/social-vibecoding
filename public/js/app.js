@@ -1295,8 +1295,24 @@ const App = {
   // behind it, not env-gated (same reasoning as ?shot=improve above).
   _applyLaunchShot() {
     let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    let settled = false;
+    try {
+      const params = new URLSearchParams(location.search);
+      shot = params.get('shot');
+      settled = params.get('settle') === '1';
+    } catch (err) { /* ignore */ }
     if (shot !== 'app-launching') return;
+    // #2154: the paired settled state deliberately uses the SAME route as
+    // the old loading fixture. On the base commit `settle=1` is ignored and
+    // the spinner stays up; on this commit it synthesises the race (terminal
+    // event first, stale detail response second) and shows the resulting live
+    // frame. That makes the before/after capture observe the actual fix.
+    if (settled) {
+      setTimeout(() => {
+        try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
     // Wait (briefly, and bounded) for the home feed's app list to land, so
     // the cover shows a REAL app's icon and name rather than the stub —
     // Home.load's fetch is in flight while boot finishes. Paints regardless
@@ -2329,7 +2345,12 @@ const App = {
 
     // Update app view if we're looking at this app
     if (App.currentApp === data.slug && App.currentTab === 'app') {
-      if (data.status === 'running' && AppView.appData) {
+      // On the first open, the terminal event can beat the detail request.
+      // There is no record to mutate yet, so preserve the event for open() to
+      // reconcile with the fetched snapshot instead of discarding it.
+      if (!AppView.appData || AppView.appData.slug !== data.slug) {
+        AppView._rememberPendingAppStatus?.(data);
+      } else if (data.status === 'running') {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
         // Share lives in the Improve panel now, and the panel reads
@@ -2346,12 +2367,21 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
-      } else if (data.status === 'error' && AppView.appData) {
+      } else if (data.status === 'error') {
         // #416: a watched spin-up just failed — flip the App tab to the
         // error state immediately, carrying the broadcast one-line
         // reason so the user isn't left with a bare "Error".
         AppView.appData.status = 'error';
         if (data.errorReason) AppView.appData.errorReason = data.errorReason;
+        AppView.renderAppTab();
+      } else if (data.status === 'awaiting_secrets') {
+        // This is terminal for the initial deploy too. Leaving appData at
+        // `creating` would strand the same spinner as a missed running event;
+        // render the actionable blocked state immediately.
+        AppView.appData.status = 'awaiting_secrets';
+        if (Array.isArray(data.missingSecrets)) {
+          AppView.appData.missingSecrets = data.missingSecrets;
+        }
         AppView.renderAppTab();
       }
     }

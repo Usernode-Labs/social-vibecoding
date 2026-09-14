@@ -469,7 +469,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and one for proposal cards, both exercising the Share to Messages row.
   // 613 → 615: the two #2118 checks on the OpenRouter spend shot, one for
   // what is left on the key and one for what the turn cost.
-  assert.equal(DAPP.tests.length, 615);
+  // 615 → 616: #2154 adds the settled half of the app-launch fixture, proving
+  // a terminal status that beats the detail response removes the spinner.
+  assert.equal(DAPP.tests.length, 616);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
