@@ -186,6 +186,24 @@ async function writeOpenRouterCodingAgentOnClient({
   return saved;
 }
 
+// Merge a few fields into one credential's stored key-info without touching
+// its ciphertext, status or revision. Used when a managed key's remote
+// allowance is changed after issuance (#2119); a personal key's key-info is
+// rewritten whole on every save and has no need of this.
+async function mergeKeyInfoOnClient({ client, userId, provider, purpose, keyInfo }) {
+  assertProviderPurpose(provider, purpose);
+  const { rows } = await client.query(
+    `UPDATE credentials.user_ai_credentials
+        SET metadata = jsonb_set(metadata, '{keyInfo}',
+              COALESCE(metadata->'keyInfo', '{}'::jsonb) || $4::jsonb),
+            updated_at = NOW()
+      WHERE user_id = $1 AND provider = $2 AND purpose = $3
+      RETURNING id`,
+    [userId, provider, purpose, keyInfo],
+  );
+  return rows.length > 0;
+}
+
 // Disable/re-enable a retained credential without exposing or replacing its
 // ciphertext. Only valid credentials are decryptable by readSecret().
 async function setStatusOnClient({ client, userId, provider, purpose, status }) {
@@ -409,6 +427,7 @@ module.exports = {
   withTransaction,
   upsert,
   writeOpenRouterCodingAgentOnClient,
+  mergeKeyInfoOnClient,
   setStatusOnClient,
   revokeOnClient,
   revoke,

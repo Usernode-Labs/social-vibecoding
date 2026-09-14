@@ -370,7 +370,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "1",
-      "description": "Positive USD limit assigned to every company-funded child key. OpenRouter resets it daily. Set the matching GitHub Actions variable before deploying if the desired allowance is not $1/day."
+      "description": "No longer used. The included company OpenRouter key carries the user's platform weekly allowance (the per-user weekly cap in Admin > Users, else the platform default in Admin > Limits) instead of a fixed per-key amount, and existing keys are moved to that allowance as it changes. This variable remains only because the deploy workflow still writes it."
     },
     {
       "key": "OPENROUTER_MANAGED_WORKSPACE_ID",

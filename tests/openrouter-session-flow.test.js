@@ -110,7 +110,7 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '// "Start session from proposal"',
   );
   assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
-  assert.match(modal, /Uses your included daily credits/);
+  assert.match(modal, /Uses your included OpenRouter credits/);
   assert.match(modal, /Uses your OpenRouter account/);
   assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });

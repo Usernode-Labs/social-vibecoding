@@ -2,8 +2,11 @@
 
 Homeroom can create one company-funded OpenRouter child key for each account.
 By default, any authenticated user may claim one; deployments can optionally
-require a verified GitHub or X identity. Each child key receives a daily USD
-limit, is stored encrypted as that user's default session credential, and is
+require a verified GitHub or X identity. Each child key carries the user's
+platform weekly allowance as its OpenRouter limit (the same weekly cap the
+Claude side enforces: an admin's per-user weekly cap, else the platform
+default from Admin > Limits, else 17500 cents, $175/week), is stored
+encrypted as that user's default session credential, and is
 shown in plaintext to the user only in the successful claim response.
 
 The OpenRouter organization management credential is a deploy secret. It is
@@ -36,7 +39,7 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Type | Name | Required | Purpose |
 | --- | --- | --- | --- |
 | Secret | `USERNODE_OPENROUTER_MANAGEMENT_API_KEY` | Yes for included keys | OpenRouter organization management key. |
-| Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | Recommended | Positive USD amount per child key per day; deploy default is `1`. |
+| Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | No longer used | The child key's limit is the user's platform weekly allowance, not a per-key amount. The deploy still writes this variable; it is inert. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
 | Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | Optional | Set `true` to require a verified GitHub or X identity before claiming. The deploy default is `false`, which allows any authenticated account. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |
@@ -62,8 +65,8 @@ key remains available.
 1. Sign in as a regular authenticated user. If
    `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=true`, first connect and
    verify GitHub or X.
-2. Open **Settings → OpenRouter**. The included-key card should show the
-   configured daily limit.
+2. Open **Settings → OpenRouter**. The included-key card should quote the
+   platform's weekly allowance for that user (by default $175.00).
 3. Click **Create my included key** once. Confirm it becomes active. The raw
    company-funded credential is stored internally and is never sent to the
    user's browser.
@@ -77,6 +80,25 @@ key remains available.
 
 - The database enforces one managed-key record per Homeroom user, including
   after deletion, so a user cannot claim another company key.
+- The key's limit mirrors the user's platform weekly allowance (#2119): the
+  per-user weekly cap in Admin → Users, else `user_weekly_limit_cents` in
+  Admin → Limits, else 17500 cents ($175/week). The two backends do not share
+  one pool: OpenRouter enforces the child key's limit, Claude spend is
+  metered by the platform. They share the number.
+- An account whose weekly allowance resolves to zero (an admin set the
+  weekly cap to 0, or under the tiered identity policy an unverified account
+  is granted nothing) cannot claim a company key; the claim card says so and
+  the user may add a personal key instead.
+- When the allowance changes under an issued key (a key issued before the
+  weekly policy, an admin changing that user's weekly cap, or the platform
+  default moving), the platform re-limits the key at OpenRouter, best-effort:
+  immediately when an admin sets the user's weekly cap, and otherwise the
+  next time the owner's OpenRouter credential status is read (opening
+  Settings → OpenRouter or starting a build). A failed attempt is logged and
+  retried after the next platform restart; until it succeeds the settings
+  screen keeps showing the limit the key really has. A zero allowance is
+  never written to an issued key: it keeps its last limit, and an admin
+  blocks or deletes it from Admin → Users.
 - Creation is never automatically retried after an ambiguous provider
   response. The record changes to **Needs review** and admins are notified;
   this avoids accidentally creating duplicate billable keys.

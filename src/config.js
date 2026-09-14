@@ -229,20 +229,16 @@ function load() {
     console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
     process.exit(1);
   }
-  const openrouterManagedDailyLimitUsd = Number(
-    process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
-  );
+  // #2119: a company-funded OpenRouter child key carries the user's platform
+  // weekly allowance (services/limits.js), not a per-key amount from env, so
+  // OPENROUTER_MANAGED_DAILY_LIMIT_USD is no longer read here. The deploy
+  // still writes it; the value is inert.
 
   const nativeSessionV2Network = canonicalNativeSessionV2Network(
     process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID
   );
   if (!staging && !nativeSessionV2Network) {
     console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
-    process.exit(1);
-  }
-  if (!Number.isFinite(openrouterManagedDailyLimitUsd)
-      || openrouterManagedDailyLimitUsd <= 0) {
-    console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
     process.exit(1);
   }
   const openrouterManagedRequireVerifiedIdentityValue =
@@ -340,7 +336,6 @@ function load() {
     // and administer limited child keys; unlike child keys, a management key
     // cannot be used for model inference.
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
-    openrouterManagedDailyLimitUsd,
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
@@ -757,7 +752,7 @@ function load() {
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
-  console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);

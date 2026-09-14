@@ -13722,7 +13722,7 @@ const AppView = {
     });
     const billingNote = openRouter
       ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
-        ? 'Uses your included daily credits.'
+        ? 'Uses your included OpenRouter credits.'
         : 'Uses your OpenRouter account.')
       : 'Uses your available Usernode credits.';
 
