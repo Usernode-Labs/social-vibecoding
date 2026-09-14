@@ -4270,8 +4270,8 @@ body:has(#platform-header.hidden) #app-frame-host {
    cards in the message stream, and they render metres apart. */
 /* ── The launchpad (#1281) ───────────────────────────────────────────────
    What a session shows instead of a composer when the work is happening
-   somewhere else. Markup comes from public/js/launchpad.js (own-tools-pr)
-   and public/js/dev-flow-select.js (the two web hand-offs); dev-chat.js
+   somewhere else. Markup comes from features/dev-chat/own-tools-guide.tsx
+   (own-tools-pr) and public/js/dev-flow-select.js (web hand-offs); dev-chat.js
    renders whichever into #dc-launchpad-slot and hides
    #dc-composer-controls beside it.
 
