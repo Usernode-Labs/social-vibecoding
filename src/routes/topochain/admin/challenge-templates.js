@@ -18,6 +18,15 @@ const { formatTemplate } = require('../challenge-view');
 
 const CTA_TYPE_VALUES = new Set(['url', 'app']);
 
+// The shape of an illustration slug: the file name under
+// /illustrations/challenges/ without its extension. Only the SHAPE is checked
+// here, not membership in the artwork set: that registry ships with the client
+// (frontend/src/lib/challenge-illustrations.ts), which draws a slug only when
+// it knows it, so a server that refused unknown slugs would have to be released
+// in lockstep with every new drawing. The shape is what keeps the value from
+// ever becoming a path or a URL.
+const ILLUSTRATION_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 // ─── Create/update validation (SPEC 2548-2562, 2575-2577) ──────────────
 //
 // Shared by create (`required = true`: category/goal/task/reward are
@@ -159,6 +168,16 @@ function parseTemplateFields(body, { required }) {
     }
   }
 
+  if (body.illustration !== undefined) {
+    if (body.illustration === null) {
+      fields.illustration = null;
+    } else if (typeof body.illustration !== 'string' || !ILLUSTRATION_SLUG.test(body.illustration)) {
+      details.illustration = ['The illustration field must be a slug of lowercase letters, digits and hyphens, at most 64 characters.'];
+    } else {
+      fields.illustration = body.illustration;
+    }
+  }
+
   return { details, fields };
 }
 
@@ -239,8 +258,9 @@ function challengeTemplatesAdminRoutes(config) {
         `INSERT INTO challenge_templates
            (category, goal, task, reward, description, requirements, schedule_start, schedule_end,
             reward_logic, cta_button, cta_label, cta_link, created_at, updated_at, kind, cta_type,
-            mobile_cta_type, mobile_cta_label, mobile_cta_link, metric_type, metric_target, metric_label)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW(),$13,$14,$15,$16,$17,$18,$19,$20)
+            mobile_cta_type, mobile_cta_label, mobile_cta_link, metric_type, metric_target, metric_label,
+            illustration)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW(),$13,$14,$15,$16,$17,$18,$19,$20,$21)
          RETURNING *`,
         [
           fields.category, fields.goal, fields.task, fields.reward,
@@ -250,6 +270,7 @@ function challengeTemplatesAdminRoutes(config) {
           fields.cta_link ?? null, fields.kind ?? null, fields.cta_type ?? null,
           fields.mobile_cta_type ?? null, fields.mobile_cta_label ?? null, fields.mobile_cta_link ?? null,
           fields.metric_type ?? null, fields.metric_target ?? null, fields.metric_label ?? null,
+          fields.illustration ?? null,
         ]
       );
 

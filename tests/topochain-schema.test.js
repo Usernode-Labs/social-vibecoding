@@ -148,6 +148,21 @@ test('challenge_templates and challenges both FK `kind` to challenge_kinds', () 
   assert.match(templates, /metric_target\s+NUMERIC\(20,4\)/);
 });
 
+// The artwork slug is TEMPLATE-level only. CREATE TABLE IF NOT EXISTS is a
+// no-op on a database that already has the table, so the column needs both
+// halves: the declaration for a fresh database, and the idempotent ALTER for
+// every database migrated before it (migrate.js replays this file each boot).
+// tableText() stops at the table's own `);`, so the ALTER is pinned against the
+// whole block.
+test('challenge_templates.illustration reaches fresh AND existing databases', () => {
+  assert.match(tableText('challenge_templates'), /\billustration\s+VARCHAR\(64\)\n\);/,
+    'declared as the last column, nullable, sized for a slug');
+  assert.match(block,
+    /^ALTER TABLE challenge_templates ADD COLUMN IF NOT EXISTS illustration VARCHAR\(64\);$/m);
+  assert.doesNotMatch(tableText('challenges'), /\billustration\b/,
+    'a challenge has no artwork of its own; it shows its template\'s');
+});
+
 test('challenges.challenge_template_id has no ON DELETE action (RESTRICT/NO ACTION), per SPEC §D4', () => {
   // SPEC §D4 calls the source's cascading template delete "destructive
   // with no guard" (silently wipes every challenge using the template,

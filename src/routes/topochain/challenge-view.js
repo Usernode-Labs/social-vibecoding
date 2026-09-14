@@ -50,6 +50,9 @@ function formatTemplate(row) {
     metric_type: row.metric_type,
     metric_target: num(row.metric_target),
     metric_label: row.metric_label,
+    // A registry slug or null. `?? null` because a row read before the
+    // column existed (or a caller that selects an explicit list) has no key.
+    illustration: row.illustration ?? null,
   };
 }
 
@@ -68,7 +71,7 @@ const TEMPLATE_JOIN_COLUMNS_SQL = `
                 ct.cta_type AS t_cta_type, ct.mobile_cta_type AS t_mobile_cta_type,
                 ct.mobile_cta_label AS t_mobile_cta_label, ct.mobile_cta_link AS t_mobile_cta_link,
                 ct.metric_type AS t_metric_type, ct.metric_target AS t_metric_target,
-                ct.metric_label AS t_metric_label`.trim();
+                ct.metric_label AS t_metric_label, ct.illustration AS t_illustration`.trim();
 
 // `r` is one joined row (`t_*` aliases present) -> the same shape
 // `formatTemplate` returns, without a second DB round trip.
@@ -97,6 +100,7 @@ function templateProjectionFromJoinedRow(r) {
     metric_type: r.t_metric_type,
     metric_target: r.t_metric_target,
     metric_label: r.t_metric_label,
+    illustration: r.t_illustration,
   });
 }
 
@@ -167,6 +171,10 @@ function buildChallengeListItem(r) {
       goal: effective.goal,
       task: effective.task,
       reward: effective.reward,
+      // The TEMPLATE's artwork slug, never overridden: a challenge row has no
+      // illustration of its own, so it is not in OVERRIDE_KEYS. Null when the
+      // template has none, and when the challenge has no template at all.
+      illustration: r.t_illustration ?? null,
     },
     detail_modal: {
       description: effective.description,

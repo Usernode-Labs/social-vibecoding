@@ -188,6 +188,18 @@ const TopochainChallenges = {
     return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
   },
 
+  // The challenge template's illustration, as the card and the page are
+  // handed it: a slug of the registry's SHAPE, else null. This file cannot
+  // import frontend/src/lib/challenge-illustrations.ts — it stays an
+  // import-free classic script (see tests/challenge-deep-link.test.js) — so it
+  // checks only the shape the server already checks, and the components
+  // resolve the slug by MEMBERSHIP. Nothing here builds a path from it.
+  ILLUSTRATION_SLUG: /^[a-z0-9][a-z0-9-]{0,63}$/,
+  _illustrationOf(cp) {
+    const slug = cp && cp.illustration;
+    return typeof slug === 'string' && TopochainChallenges.ILLUSTRATION_SLUG.test(slug) ? slug : null;
+  },
+
   async fetchJson(url) {
     try {
       const res = await fetch(url);
@@ -501,6 +513,7 @@ const TopochainChallenges = {
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
       reward: TopochainChallenges.formatReward(cp.reward),
+      illustration: TopochainChallenges._illustrationOf(cp),
       ...TopochainChallenges._stateOf(c),
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
         ? null : TopochainChallenges._deadlineOf(c),
@@ -1058,6 +1071,8 @@ const TopochainChallenges = {
       // is where the task is read; before ITERATION 03 the card showed it and
       // the overlay never needed it.
       task: cp.task ? str(cp.task) : null,
+      // The same artwork as the card's tile, for the page's well under the task.
+      illustration: TopochainChallenges._illustrationOf(cp),
       state: rail.state,
       stateLabel: rail.stateLabel,
       fill: rail.fill,

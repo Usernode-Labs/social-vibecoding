@@ -54,7 +54,9 @@ const {
 // ── Two staging-shaped templates, straight out of the seed ─────────────
 //
 // 900501 defines a metric; 900500 defines none. Switching between them is
-// exactly the "the new template is silent about this field" case.
+// exactly the "the new template is silent about this field" case. 900501 also
+// carries an illustration, which the Add-challenge form must NOT pick up — see
+// the last section of the form tests below.
 const TEMPLATE_WITH_METRIC = {
   id: 900501,
   category: 'onchain',
@@ -77,6 +79,7 @@ const TEMPLATE_WITH_METRIC = {
   metric_type: 'transactions_sent',
   metric_label: 'transactions',
   metric_target: 1,
+  illustration: 'network-participation',
 };
 
 const TEMPLATE_BARE = {
@@ -101,6 +104,7 @@ const TEMPLATE_BARE = {
   metric_type: null,
   metric_label: null,
   metric_target: null,
+  illustration: null,
 };
 
 const TEMPLATES = [TEMPLATE_WITH_METRIC, TEMPLATE_BARE];
@@ -280,6 +284,107 @@ test('edit still writes only the override keys the API reports back', () => {
   }
   assert.ok(!editBranch.includes('admin-topo-ch-f-template'),
     'no template picker on an existing challenge');
+});
+
+// ── The template's illustration ────────────────────────────────────────
+//
+// One dropdown on the Challenge TEMPLATE form picks the art every challenge
+// stamped out of that template is drawn with. It is template-level only by
+// owner decision, so it has two sides worth pinning: the challenge form above
+// never copies it, and the template form round-trips it — including a stored
+// slug this build's registry does not know, which must survive an edit rather
+// than being quietly saved over with null.
+
+const TEMPLATES_ENTRY = 'frontend/src/features/admin/topochain/challenge-templates.tsx';
+const TPL = loadTsx(TEMPLATES_ENTRY);
+const { ILLUSTRATIONS } = loadTsx('frontend/src/lib/challenge-illustrations.ts');
+const { renderToHtml, createElement } = require('./lib/render-tsx');
+
+const renderPicker = (value) => renderToHtml(createElement(TPL.IllustrationPicker, {
+  id: 'admin-topo-tpl-f-illustration', value, onChange() {},
+}));
+const optionsOf = (html) => [...html.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)]
+  .map((m) => ({ value: m[1], label: m[2], selected: /selected=""/.test(m[0]) }));
+
+// A stored template as GET /api/v4/admin/challenge-templates/:id returns it.
+const storedTemplate = (illustration) => ({ ...TEMPLATE_WITH_METRIC, illustration });
+
+test('the challenge form never copies the template illustration', () => {
+  assert.ok(!CH_TEMPLATE_FIELDS.some((f) => f.id === 'illustration'),
+    'there is no per-challenge override, so it is not a template-backed challenge field');
+  const v = pick(openForm(), '900501');
+  assert.ok(!('illustration' in v), 'picking a template with art does not put it on the challenge form');
+  const body = buildChallengeBody({
+    isCreate: true, values: v, template: templateById(TEMPLATES, '900501'),
+  });
+  assert.ok(!('illustration' in body), 'and a new challenge does not send one');
+});
+
+test('the template form offers every registry illustration, and (none)', () => {
+  assert.ok(TPL.ALL_FIELDS.some((f) => f.key === 'illustration' && f.kind === 'illustration'),
+    'the field is in ALL_FIELDS, so the fill and the save both carry it');
+  const html = renderPicker('');
+  assert.match(html, /<select[^>]*id="admin-topo-tpl-f-illustration"/, 'the select carries the field id');
+  const options = optionsOf(html);
+  assert.equal(options.length, 10, 'nine illustrations plus the blank');
+  assert.deepEqual(options[0], { value: '', label: '(none)', selected: true },
+    'an empty value selects (none)');
+  assert.deepEqual(options.slice(1).map((o) => o.value), Object.keys(ILLUSTRATIONS),
+    'the options are the registry, in table order');
+  for (const o of options.slice(1)) {
+    assert.equal(o.label, ILLUSTRATIONS[o.value].label, `${o.value} is listed under its label`);
+  }
+  assert.ok(!/<img/.test(html), 'nothing is previewed without a pick');
+});
+
+test('a picked illustration is previewed from the registry, on its tone', () => {
+  const html = renderPicker('useful-feedback');
+  assert.equal(optionsOf(html).find((o) => o.selected).value, 'useful-feedback');
+  const img = html.match(/<img[^>]*>/);
+  assert.ok(img, 'the pick is previewed');
+  assert.match(img[0], /src="\/illustrations\/challenges\/useful-feedback\.svg"/,
+    'from the same-origin static path');
+  assert.match(img[0], /alt="Send useful feedback"/, 'labelled with what the picker calls it');
+  assert.match(img[0], /class="home-tone-orange [^"]*bg-\[var\(--tint-art\)\]/,
+    "on the illustration's own tone, read through --tint-art");
+});
+
+test('the preview never draws a URL the API handed back', () => {
+  for (const hostile of ['https://evil.example/art.svg', '/illustrations/challenges/x.svg',
+    'javascript:alert(1)', '../../etc/passwd']) {
+    const html = renderPicker(hostile);
+    assert.ok(!/<img/.test(html), `no preview for ${hostile}`);
+    assert.ok(!/src=/.test(html), 'and no src anywhere in the field');
+  }
+});
+
+test('a stored slug this build does not know is kept, not dropped', () => {
+  const values = TPL.templateFormValues(storedTemplate('retired-art'));
+  assert.equal(values.illustration, 'retired-art', 'the edit form pre-fills the stored slug as-is');
+  const options = optionsOf(renderPicker(values.illustration));
+  const kept = options.find((o) => o.value === 'retired-art');
+  assert.ok(kept, 'it is listed as its own option rather than collapsing to (none)');
+  assert.ok(kept.selected, 'and is the selected one');
+  assert.match(kept.label, /^retired-art\b/, 'under its raw value');
+  assert.equal(options.length, 11, 'beside the nine registry entries and the blank');
+  assert.equal(TPL.buildTemplateBody(values).illustration, 'retired-art',
+    'so saving an unrelated edit writes it back unchanged');
+});
+
+test('editing a template pre-fills its illustration, and save sends the pick', () => {
+  assert.equal(TPL.templateFormValues(storedTemplate('try-three-apps')).illustration, 'try-three-apps');
+  assert.equal(TPL.templateFormValues(storedTemplate(null)).illustration, '',
+    'no illustration fills as empty, not "null"');
+
+  const values = { ...TPL.templateFormValues(storedTemplate(null)), illustration: 'block-production' };
+  assert.equal(TPL.buildTemplateBody(values).illustration, 'block-production', 'the picked slug is sent');
+});
+
+test('(none) clears a stored illustration with null', () => {
+  const values = { ...TPL.templateFormValues(storedTemplate('try-three-apps')), illustration: '' };
+  const body = TPL.buildTemplateBody(values);
+  assert.ok('illustration' in body, 'the key is sent on PUT, so the server applies the clear');
+  assert.equal(body.illustration, null, 'as null, which the API reads as "clear" rather than "skip"');
 });
 
 // ── The address ────────────────────────────────────────────────────────

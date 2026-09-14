@@ -602,6 +602,37 @@ test('an open card says how long it has left: its own end, else the event’s', 
   assert.equal(pane._timeLeft(null), null);
 });
 
+// The template's illustration rides both descriptors as a slug of the
+// registry's SHAPE, else null. Membership is the components' to decide
+// (frontend/src/lib/challenge-illustrations.ts), and the controller never
+// builds a path from it.
+test('card and page descriptors carry the illustration only when it is slug-shaped', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const withArt = (illustration) => ({ id: 900500, completed: false, card_preview: { goal: 'Report a bug', illustration } });
+  const pageOf = (c) => { pane._detailChallenge = c; return pane.detailView(); };
+  const CASES = [
+    ['useful-feedback', 'useful-feedback', 'a registry slug passes through'],
+    ['not-in-the-registry', 'not-in-the-registry', 'a well-shaped unknown slug too: the registry is the component’s'],
+    ['a'.repeat(64), 'a'.repeat(64), 'the longest slug the column holds'],
+    ['a'.repeat(65), null, 'one longer is malformed'],
+    ['../icons/x.svg', null, 'a path is not a slug'],
+    ['Useful-Feedback', null, 'nor is an uppercase one'],
+    ['-useful', null, 'nor a leading hyphen'],
+    ['', null, 'empty'],
+    [42, null, 'not a string'],
+    [null, null, 'cleared'],
+    [undefined, null, 'missing'],
+  ];
+  for (const [input, want, why] of CASES) {
+    assert.equal(pane.cardView(withArt(input), 0).illustration, want, `card: ${why}`);
+    assert.equal(pageOf(withArt(input)).illustration, want, `page: ${why}`);
+  }
+  assert.equal(pane.cardView({ id: 7, completed: false }, 0).illustration, null, 'no card_preview at all');
+  assert.equal(pageOf({ id: 7, completed: false }).illustration, null);
+  pane._detailChallenge = null;
+  assert.doesNotMatch(CHALLENGES_SRC, /\/illustrations\//, 'the controller never spells the static path');
+});
+
 // The progress over the grid (ITERATION 03): "N/M done in <event>", scoped to
 // the selected event once the bar's list has it.
 test('the grid opens on its progress: the tally, scoped to the selected event', () => {

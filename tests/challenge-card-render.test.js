@@ -10,16 +10,22 @@
 //   * the meta line under the title ("5d left · 500 pts") is one line: the
 //     deadline never shrinks and the reward truncates after it;
 //   * the rail is a progressbar, with aria-valuenow ONLY when the fill is a
-//     number (indeterminate otherwise), and draws a bar only when counted.
+//     number (indeterminate otherwise), and draws a bar only when counted;
+//   * the tile draws a template's illustration only when the registry has
+//     it, and is otherwise exactly the tile it was.
 //
 // Run with: node --test tests/challenge-card-render.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
-const Card = loadTsx('frontend/src/features/leaderboard/challenge-card.tsx');
+const CARD_PATH = 'frontend/src/features/leaderboard/challenge-card.tsx';
+const Card = loadTsx(CARD_PATH);
+const CARD_SRC = fs.readFileSync(path.join(__dirname, '..', CARD_PATH), 'utf8');
 
 const rail = (props) => renderToHtml(createElement(Card.ProgressRail, props));
 const card = (view) => renderToHtml(createElement(Card.ChallengeCard, { view }));
@@ -77,11 +83,59 @@ test('each state has its own rail tone, and only the accent/emerald/zinc scales'
   for (const t of tones) assert.doesNotMatch(t, /\b(gray|indigo)-/, 'no banned scales');
 });
 
-test('the tile is an empty neutral face: the group headings carry the category', () => {
-  const html = renderToHtml(createElement(Card.ChallengeTile, {}));
+// ── The tile ──────────────────────────────────────────────────────────
+//
+// A template's illustration draws on its pale tone when the registry
+// (frontend/src/lib/challenge-illustrations.ts) has the slug. Anything else —
+// no slug, or one the registry does not know — is exactly the tile it was: a
+// neutral face holding Home's kind icon, or nothing on the tab.
+const tile = (props) => renderToHtml(createElement(Card.ChallengeTile, props));
+const NEUTRAL = 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100';
+const KIND_ICON = '<span class="text-[2.5rem] leading-none">🧪</span>';
+
+test('with no illustration the tile is the neutral face: the group headings carry the category', () => {
+  const html = tile({});
   assert.match(html, /h-20 w-20 rounded-2xl/, 'the xl IconTile');
-  assert.match(html, /aria-hidden="true"/, 'decorative until it holds artwork');
-  assert.doesNotMatch(html, /<span/, 'no category text inside it');
+  assert.ok(html.includes(NEUTRAL), 'the neutral face');
+  assert.match(html, /aria-hidden="true"/, 'decorative');
+  assert.doesNotMatch(html, /<span|<img/, 'no category text and no artwork inside it');
+  assert.equal(tile({ illustration: null }), html, 'a null slug is the same tile');
+  const home = tile({ icon: '🧪' });
+  assert.ok(home.includes(NEUTRAL) && home.includes(KIND_ICON), 'Home keeps its kind icon on the neutral face');
+});
+
+test('a registry illustration draws in the tile, on its pale tone in both themes', () => {
+  const html = tile({ icon: '🧪', illustration: 'try-three-apps' });
+  assert.match(html, /<img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" draggable="false"\/>/,
+    'a same-origin static file, decorative, not draggable');
+  const face = classOf(html, 'aria-hidden="true"').split(' ');
+  for (const c of ['h-20', 'w-20', 'home-tone-mint', 'bg-[var(--tint-art)]', 'dark:bg-[var(--tint-art)]']) {
+    assert.ok(face.includes(c), `the tile has ${c}`);
+  }
+  for (const c of ['bg-zinc-100', 'dark:bg-zinc-800']) {
+    assert.ok(!face.includes(c), `the neutral ${c} is displaced, not layered under the tone`);
+  }
+  assert.ok(!html.includes('🧪'), 'the artwork takes the kind icon’s place');
+  const view = { goal: 'Send feedback', reward: null, icon: null, illustration: 'useful-feedback', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  const onCard = card(view);
+  assert.match(onCard, /class="[^"]*home-tone-orange[^"]*"[^>]*><img src="\/illustrations\/challenges\/useful-feedback\.svg"/,
+    'the card threads its view’s slug to the tile, with that artwork’s tone');
+});
+
+test('a slug the registry does not have is the tile it was, never a guessed path', () => {
+  for (const illustration of ['not-in-the-registry', '../icons/x', 'Try-Three-Apps', '', 42]) {
+    assert.equal(tile({ illustration }), tile({}), `${String(illustration)}: the tab’s empty face`);
+    assert.equal(tile({ icon: '🧪', illustration }), tile({ icon: '🧪' }), `${String(illustration)}: Home’s kind icon`);
+  }
+});
+
+test('artwork that fails to load puts back the tile it replaced, through state', () => {
+  // onError cannot fire in a static render, so this half is the source.
+  const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function ChallengeTile('), CARD_SRC.indexOf('export type ChallengeCardView'));
+  assert.ok(fn.length > 0, 'ChallengeTile located');
+  assert.match(fn, /onError=\{\(\) => setFailed\(art\.src\)\}/);
+  assert.match(fn, /if \(art && failed !== art\.src\) \{/, 'a failed file falls through to the neutral tile');
+  assert.doesNotMatch(fn, /currentTarget|\.style\.|\.remove\(\)/, 'no write to the node: the card is a React island');
 });
 
 const META_OPEN = '<div class="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5">';

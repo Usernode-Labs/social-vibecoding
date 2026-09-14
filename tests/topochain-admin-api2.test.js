@@ -114,7 +114,7 @@ function challengeJoinedRow(c) {
     out.t_created_at = t.created_at; out.t_updated_at = t.updated_at; out.t_kind = t.kind;
     out.t_cta_type = t.cta_type; out.t_mobile_cta_type = t.mobile_cta_type; out.t_mobile_cta_label = t.mobile_cta_label;
     out.t_mobile_cta_link = t.mobile_cta_link; out.t_metric_type = t.metric_type; out.t_metric_target = t.metric_target;
-    out.t_metric_label = t.metric_label;
+    out.t_metric_label = t.metric_label; out.t_illustration = t.illustration;
   } else {
     out.t_id = null;
   }
@@ -221,14 +221,14 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('INSERT INTO challenge_templates')) {
     const [category, goal, task, reward, description, requirements, scheduleStart, scheduleEnd, rewardLogic,
       ctaButton, ctaLabel, ctaLink, kind, ctaType, mobileCtaType, mobileCtaLabel, mobileCtaLink,
-      metricType, metricTarget, metricLabel] = params;
+      metricType, metricTarget, metricLabel, illustration] = params;
     const row = {
       id: db.nextId.challengeTemplates++, category, goal, task, reward, description, requirements,
       schedule_start: scheduleStart, schedule_end: scheduleEnd, reward_logic: rewardLogic,
       cta_button: ctaButton, cta_label: ctaLabel, cta_link: ctaLink,
       created_at: new Date(), updated_at: new Date(), kind, cta_type: ctaType,
       mobile_cta_type: mobileCtaType, mobile_cta_label: mobileCtaLabel, mobile_cta_link: mobileCtaLink,
-      metric_type: metricType, metric_target: metricTarget, metric_label: metricLabel,
+      metric_type: metricType, metric_target: metricTarget, metric_label: metricLabel, illustration,
     };
     db.challengeTemplates.push(row);
     return { rows: [{ ...row }] };
@@ -633,6 +633,52 @@ test('D4: create accepts v4-only cta_type/mobile_cta_*/metric_* fields, and reje
     assert.equal(body.data.cta_type, 'app');
     assert.equal(body.data.mobile_cta_type, 'url');
     assert.equal(body.data.metric_target, 5);
+  } finally { server.close(); }
+});
+
+// The server checks the slug's SHAPE only. Membership in the artwork set is
+// the client registry's call (it draws a known slug and falls back otherwise),
+// so a well-shaped slug no build draws yet is stored, not refused.
+test('D4: illustration — create/update echo the slug, a malformed one 422s, omitted keeps it, null clears it', async () => {
+  const { server, base } = await listen(buildSubApp(challengeTemplatesAdminRoutes));
+  const send = (method, url, body) => fetch(`${base}${url}`, {
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const fields = { category: 'dev', goal: 'g', task: 't', reward: 'r' };
+  try {
+    const plain = await send('POST', '/api/v4/admin/challenge-templates', fields);
+    assert.equal(plain.status, 201);
+    assert.equal((await plain.json()).data.illustration, null, 'no artwork unless one is picked');
+
+    const badCreate = await send('POST', '/api/v4/admin/challenge-templates', { ...fields, illustration: 'Bad Slug' });
+    assert.equal(badCreate.status, 422);
+    assert.ok((await badCreate.json()).details.illustration);
+
+    const created = await send('POST', '/api/v4/admin/challenge-templates', { ...fields, illustration: 'block-production' });
+    assert.equal(created.status, 201);
+    const { data } = await created.json();
+    assert.equal(data.illustration, 'block-production');
+    const url = `/api/v4/admin/challenge-templates/${data.id}`;
+
+    // Anything that could become a path or a URL is refused, whatever it names.
+    for (const illustration of ['Bad Slug', '../icons/icon-192', '-leading-hyphen', 'a'.repeat(65), 'x.svg', 42]) {
+      const bad = await send('PATCH', url, { illustration });
+      assert.equal(bad.status, 422, `${JSON.stringify(illustration)} is refused`);
+      assert.match((await bad.json()).details.illustration[0], /slug/);
+    }
+    assert.equal((await (await fetch(`${base}${url}`)).json()).data.illustration, 'block-production',
+      'a refused write leaves the stored slug alone');
+
+    const untouched = await send('PATCH', url, { goal: 'g2' });
+    assert.equal((await untouched.json()).data.illustration, 'block-production', 'omitted means unchanged');
+
+    const renamed = await send('PATCH', url, { illustration: 'drawn-in-a-later-build' });
+    assert.equal(renamed.status, 200);
+    assert.equal((await renamed.json()).data.illustration, 'drawn-in-a-later-build');
+
+    const cleared = await send('PATCH', url, { illustration: null });
+    assert.equal(cleared.status, 200);
+    assert.equal((await cleared.json()).data.illustration, null);
   } finally { server.close(); }
 });
 
