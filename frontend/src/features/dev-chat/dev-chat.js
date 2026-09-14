@@ -849,6 +849,89 @@ const DevChat = {
       || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
   },
 
+  // Prepare the saved provider for a REAL build action (currently Generate
+  // proposal). This is deliberately not called by a page-load/status read:
+  // creating a company-funded credential is a write and should happen only
+  // after the user asks Usernode to do work. An explicit Claude default is
+  // preserved. Everyone else who is eligible for OpenRouter gets the
+  // included managed key on first use, and provisioning errors are returned
+  // to the caller verbatim rather than being hidden behind a Claude fallback.
+  async _prepareDefaultCodingAgentForBuild() {
+    const readPreferences = async () => {
+      const response = await fetch('/api/me/coding-agent', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || 'Could not load your coding-agent settings.');
+      }
+      return body;
+    };
+
+    let prefs = await readPreferences();
+    const explicitClaude = prefs.backends?.claude_code?.isDefault === true;
+    if (explicitClaude) return prefs;
+    if (!prefs.codexAvailable) {
+      // This mirrors the server's deliberate flag/beta policy fallback.
+      return { ...prefs, defaultBackend: 'claude_code' };
+    }
+
+    const readCredentialStatus = async () => {
+      const response = await fetch('/api/me/credentials/openrouter', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || 'Could not check your OpenRouter credential.');
+      }
+      return body;
+    };
+    let status = await readCredentialStatus();
+    if (status.configured === true && status.status === 'valid') {
+      if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+      // The key may have appeared in another tab after the preference read.
+      // Re-read only in that mismatched state so the modal and the server do
+      // not choose different providers for the same request.
+      if (prefs.defaultBackend !== 'codex_openrouter') prefs = await readPreferences();
+      return prefs;
+    }
+
+    const provisionResponse = await fetch('/api/me/credentials/openrouter/managed', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const provisioned = await provisionResponse.json().catch(() => ({}));
+    if (!provisionResponse.ok) {
+      // Two build clicks can race. The loser sees the reservation's
+      // byok_configured/already_issued conflict after the winner has saved a
+      // valid key; re-read once and accept that completed state. A conflict
+      // without a usable credential is a real problem and remains visible.
+      if (['byok_configured', 'already_issued'].includes(provisioned.code)) {
+        status = await readCredentialStatus();
+      }
+      if (status.configured !== true || status.status !== 'valid') {
+        const err = new Error(
+          provisioned.error
+            || `OpenRouter could not be set up automatically (HTTP ${provisionResponse.status}).`,
+        );
+        err.code = provisioned.code || 'provision_failed';
+        throw err;
+      }
+    }
+
+    if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+    prefs = await readPreferences();
+    if (prefs.defaultBackend !== 'codex_openrouter') {
+      throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
+    }
+    return prefs;
+  },
+
   async _loadCodingAgentChoiceData({ forceRefresh = false } = {}) {
     const data = {
       defaultBackend: 'claude_code',
@@ -3288,6 +3371,13 @@ const DevChat = {
       if (!res.ok) {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
+      }
+      // /api/auth/me was loaded before a first-use managed key existed.
+      // Keep venue gating in sync with the authoritative session response
+      // without waiting for a full page reload.
+      if (data.session?.agent_backend === 'codex_openrouter'
+          && typeof App !== 'undefined' && App.user) {
+        App.user.openrouterAvailable = true;
       }
       // The one thing the venue dropdown cannot work out on its own: WHY
       // this session isn't in the venue the user's default named.

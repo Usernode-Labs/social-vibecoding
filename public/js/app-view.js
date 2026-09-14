@@ -13178,17 +13178,26 @@ const AppView = {
     let reasoningEffort = null;
     let catalogRefreshedAt = null;
     let catalogTotalModels = 0;
+    let prefs = {};
     try {
-      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
-      const prefs = prefsRes.ok ? await prefsRes.json() : {};
+      if (typeof DevChat === 'undefined' || !DevChat._prepareDefaultCodingAgentForBuild) {
+        throw new Error('Coding-agent setup is still loading. Try again.');
+      }
+      // This click is the first real work request, so it is also the safe
+      // point to create an eligible user's included OpenRouter key. The
+      // helper preserves an explicit Claude default and throws the exact
+      // provisioning/configuration error instead of silently choosing it.
+      prefs = await DevChat._prepareDefaultCodingAgentForBuild();
       if (prefs.defaultBackend === 'codex_openrouter') {
         provider = 'openrouter';
         const catalogRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!catalogRes.ok) throw new Error('Could not load OpenRouter models.');
-        const catalog = await catalogRes.json();
+        const catalog = await catalogRes.json().catch(() => ({}));
+        if (!catalogRes.ok) {
+          throw new Error(catalog.error || 'Could not load OpenRouter models.');
+        }
         models = Array.isArray(catalog.models) ? catalog.models : [];
         catalogRefreshedAt = catalog.refreshedAt || null;
         catalogTotalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : models.length;
@@ -13200,12 +13209,13 @@ const AppView = {
           || '';
       } else {
         const res = await fetch('/api/models');
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not load the model list.');
         models = Array.isArray(data.models) ? data.models : [];
         defaultModel = data.default || (models[0] && models[0].id) || '';
       }
-    } catch {
-      PlatformUI.toast("Couldn't load the model list. Try again.");
+    } catch (err) {
+      PlatformUI.toast(err.message || "Couldn't load the model list. Try again.");
       return;
     }
     if (!models.length || !defaultModel) {
@@ -13217,20 +13227,10 @@ const AppView = {
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    // The venue this run will build in. It was always decided by the saved
-    // coding-agent default and never mentioned, so a user with an OpenRouter
-    // default confirmed a popup that talked only about "your tokens/credits"
-    // — the wrong pot, silently. Best-effort: an unreachable preferences
-    // endpoint just means the modal renders exactly as it did before.
-    let venueId = 'usernode-claude';
-    try {
-      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
-      if (prefsRes.ok) {
-        const prefs = await prefsRes.json();
-        venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
-          .currentVenue({ agentBackend: prefs.defaultBackend });
-      }
-    } catch { /* keep the default; the server decides either way */ }
+    // Use the same prepared preference that selected the model catalog, so
+    // the venue label cannot lag behind a just-created managed key.
+    const venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
+      .currentVenue({ agentBackend: prefs.defaultBackend });
 
     const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, {
       provider, venueId, catalogRefreshedAt, catalogTotalModels,
@@ -13265,11 +13265,9 @@ const AppView = {
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
-      // The server is deliberately lenient about an unusable default — a run
-      // that starts beats a 4xx — but until now the fallback was a log line
-      // and nothing else, so someone whose default was Usernode · OpenRouter
-      // got a Usernode · Claude run with no explanation and a bill on the
-      // pot they weren't expecting.
+      // Deliberate flag/beta policy fallbacks are still reported. Credential,
+      // provisioning, and catalog failures have already stopped above, so a
+      // deployment problem can no longer arrive here disguised as Claude.
       AppView._reportVenueFallback(data.agentFallbackReason);
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
@@ -13506,6 +13504,10 @@ const AppView = {
       if (!resp.ok) {
         PlatformUI.toast(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
         return;
+      }
+      if (data.session && data.session.agent_backend === 'codex_openrouter'
+          && typeof App !== 'undefined' && App.user) {
+        App.user.openrouterAvailable = true;
       }
       // #172: remember the clone locally so a back-navigation to the
       // issues panel shows "Go to session" before the next refetch. The
