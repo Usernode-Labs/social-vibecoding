@@ -62,14 +62,17 @@ function candidate(id, yes, extra = {}) {
 function setup({
   candidates, syncResult = 'clean', budgetError = null, merged = true,
   measurement = { behindBy: 1, mergesClean: true, conflictPaths: [] },
+  // What checkAndMerge answers for each session, when `merged` is not the
+  // whole story: id -> result object.
+  mergeResults = {},
 }) {
-  const events = { syncs: [], merges: [], measures: [], budget: 0 };
+  const events = { syncs: [], merges: [], measures: [], budget: 0, broadcasts: [] };
 
   const pool = makePool([
     // Honour the query's own exclusions, or the queue would be handed the
     // same candidate forever — which is exactly the spin the production loop
     // now guards against independently.
-    [/FROM chat_sessions cs\s+WHERE cs\.app_id/, (p) => {
+    [/FROM chat_sessions cs\s+JOIN apps a ON a\.id = cs\.app_id\s+WHERE cs\.app_id/, (p) => {
       const excludeId = p[1];
       const attempted = new Set(p[2] || []);
       return candidates.filter((c) => c.id !== excludeId && !attempted.has(c.id));
@@ -90,7 +93,7 @@ function setup({
     async checkSystemBudget() { events.budget++; return { error: budgetError }; },
   });
   stub('src/services/ws.js', {
-    pushVoteUpdate() {}, pushSessionUpdate() {}, async sendSystemMessage() {},
+    pushVoteUpdate(u) { events.broadcasts.push(u); }, pushSessionUpdate() {}, async sendSystemMessage() {},
   });
   stub('src/services/sync-main.js', {
     async runSyncMain(config, pool_, id) {
@@ -101,12 +104,12 @@ function setup({
   });
   stub('src/services/integration.js', {
     async measureDeduped({ session }, opts = {}) {
-      events.measures.push({ id: session.id, blockReason: opts.blockReason });
+      events.measures.push({ id: session.id, blockReason: opts.blockReason, opts });
       return measurement;
     },
     readIntegration: () => ({}),
     async setBlockReasons(pool_, id, reasons) {
-      events.measures.push({ id, blockReason: (reasons || [])[0] });
+      events.measures.push({ id, blockReason: (reasons || [])[0], write: reasons || [] });
     },
   });
   stub('src/services/governance.js', {
@@ -120,6 +123,7 @@ function setup({
   stub('src/routes/votes.js', {
     async checkAndMerge(config, pool_, session) {
       events.merges.push(session.id);
+      if (mergeResults[session.id]) return mergeResults[session.id];
       return { merged, blockReason: merged ? undefined : 'checks' };
     },
   });
@@ -215,6 +219,108 @@ test('a proposal already on main skips straight to the merge', async () => {
     await queue.enqueue({}, 7);
     assert.deepEqual(events.syncs, [], 'nothing to integrate, so nothing to spend');
     assert.deepEqual(events.merges, [1]);
+  } finally { teardown(); }
+});
+
+// ── #2100 / #2095 ─────────────────────────────────────────────────────
+
+test('a pass stops after a merge: the siblings are re-measured against the NEW main', async () => {
+  // Carrying on was the thundering herd: one merge, then every sibling
+  // synced and rebuilt in a row, each to be synced and rebuilt again once
+  // the next one landed. finalizeMerge re-kicks the queue; that fresh pass
+  // sees the moved main.
+  const { queue, events } = setup({ candidates: [candidate(1, 2), candidate(2, 5), candidate(3, 3)] });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.syncs, [2], 'exactly one worker turn per landed merge');
+    assert.deepEqual(events.merges, [2]);
+  } finally { teardown(); }
+});
+
+test('a pass stops while a check run is in flight for the current candidate', async () => {
+  // Nothing merges before that run reports, and the checks finalizer
+  // enqueues the app the moment it does. Syncing the next candidate now
+  // would only put it behind whatever this one merges.
+  const { queue, events } = setup({
+    candidates: [candidate(1, 2), candidate(2, 5)],
+    mergeResults: { 2: { merged: false, blockReason: 'checks', checkState: 'pending' } },
+  });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.syncs, [2]);
+    assert.deepEqual(events.merges, [2]);
+  } finally { teardown(); }
+});
+
+test('a candidate refused for a reason a person must fix does not stop the pass', async () => {
+  const { queue, events } = setup({
+    candidates: [candidate(1, 2), candidate(2, 5)],
+    mergeResults: {
+      2: { merged: false, blockReason: 'checks', checkState: 'failing' },
+      1: { merged: false, blockReason: 'approvals' },
+    },
+  });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.syncs, [2, 1], 'the sibling still gets its turn');
+    assert.deepEqual(events.merges, [2, 1]);
+  } finally { teardown(); }
+});
+
+test('a locked app with no admin yes is not worth a worker turn', async () => {
+  // The lock gate is the admin's say-so; integrating ahead of it spends
+  // tokens on a change that may never merge, and the admin's own vote
+  // enqueues the app when it lands.
+  const { queue, events } = setup({
+    candidates: [
+      candidate(1, 2, { app_locked: true, admin_yes: false }),
+      candidate(2, 5, { app_locked: true, admin_yes: true }),
+    ],
+  });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.syncs, [2], 'only the admin-approved one is integrated');
+  } finally { teardown(); }
+});
+
+test('checks that failed against the pinned commit are not worth a worker turn either', async () => {
+  const head = 'h'.repeat(40);
+  const { queue, events } = setup({
+    candidates: [
+      // Failing on THIS commit: a merge of main into it changes nothing.
+      candidate(1, 5, { check_state: 'failing', checks_commit_sha: head, reviewed_head: head }),
+      // Failing on an OLDER commit: the pinned head still needs its rebuild,
+      // which the checks gate kicks — so the sync goes ahead.
+      candidate(2, 4, { check_state: 'failing', checks_commit_sha: 'o'.repeat(40), reviewed_head: head }),
+      candidate(3, 3, { check_state: 'error', checks_commit_sha: head, reviewed_head: head }),
+    ],
+    mergeResults: { 2: { merged: false, blockReason: 'checks', checkState: 'pending' } },
+  });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.syncs, [2]);
+  } finally { teardown(); }
+});
+
+test("'integrating' is cleared the moment the sync is over, whatever the merge attempt decides", async () => {
+  // checkAndMerge only clears it on a successful claim, so a row whose merge
+  // then stopped at approvals kept a card that said "syncing with main"
+  // long after the sync had finished — the UI half of #2100.
+  const { queue, events } = setup({
+    candidates: [candidate(1, 2)],
+    mergeResults: { 1: { merged: false, blockReason: 'approvals' } },
+  });
+  try {
+    await queue.enqueue({}, 7);
+    const writes = events.measures.filter((m) => m.id === 1 && m.write).map((m) => m.write);
+    assert.deepEqual(writes, [['integrating'], []],
+      'announced, then cleared again — before the row is handed to the merge attempt');
+    const remeasure = events.measures.filter((m) => m.id === 1 && m.opts).pop();
+    assert.deepEqual(remeasure.opts.blockReasons, [],
+      'and the post-sync measurement does not carry the stale reason forward');
+    assert.deepEqual(events.merges, [1]);
+    const last = events.broadcasts.filter((b) => b.sessionId === 1 && 'integrating' in b).pop();
+    assert.equal(last.integrating, false, 'the card is told the sync is over');
   } finally { teardown(); }
 });
 
