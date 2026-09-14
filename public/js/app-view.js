@@ -5110,10 +5110,12 @@ const AppView = {
   // General chat card), per the card-list polish revision.
   // The banner and its `hidden` are features/dev-board/board-frame.tsx's now;
   // this publishes the one fact it draws from. `_proposalsCtx.locked` is
-  // server truth, loaded with the feed.
+  // server truth, loaded with the feed. The second fact (#1896) is the app's
+  // "Who can build it" setting, so the banner can say who that is.
   _renderLockedNotice() {
     AppView._reactDevBoard()?.publishLockedNotice(
-      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked));
+      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked),
+      !!(AppView.appData && AppView.appData.collab_visibility === 'private'));
   },
 
   // ── The app's general discussion, as a board citizen ────────────────
