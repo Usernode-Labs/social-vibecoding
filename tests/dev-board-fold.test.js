@@ -442,7 +442,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // — the locked-app gate that had no UI at all, the "nobody has to act"
   // wording, and the steps listed AFTER the one a proposal is stuck on,
   // landing on the other side of a second merge.
-  assert.equal(DAPP.tests.length, 610);
+  // 610 → 609: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 605 → 604 by retiring the
+  // kanban-only general-discussion check (the entry above with that arrow);
+  // main independently took the SAME 605 to 610 with the five entries listed
+  // between. One −1 and one +5 against a shared 605 is 609 — not the 610 main
+  // reached without this branch's removal, which is the figure the sync's
+  // conflict resolution kept and the repo unit suite then caught. A literal is
+  // the right shape for this assertion precisely because that mismatch is
+  // otherwise silent; it is the arithmetic that needed saying, not the check.
+  assert.equal(DAPP.tests.length, 609);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
