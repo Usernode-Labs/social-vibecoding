@@ -91,21 +91,25 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
-  /**
-   * The card's picture, from the challenge's kind — null when that kind has
-   * none, or the template names no kind. `label` is what the well draws in
-   * its place.
-   */
+  /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
   icon: string | null;
-  /** The organiser's category, upper-cased — the well's fallback. */
-  label: string;
   goal: string;
-  /** The task, folded into the row's tooltip — the one place it still shows. */
-  tip: string;
   done: boolean;
-  reward: string;
-  /** NEVER null: every row draws a track, so no row reserves space for one. */
-  meter: ChallengeMeterView;
+  reward: string | null;
+  /** The shared rail (features/leaderboard/challenge-card.tsx). */
+  state: 'new' | 'progress' | 'done';
+  stateLabel: string;
+  fill: number | null;
+  /** A target above one: the rail draws its count and bar from zero. */
+  counted: boolean;
+  /**
+   * "5d left" on the meta line under the title, beside the reward — the
+   * challenge's own end, else its event's, else the season's; null on a
+   * finished or not-open challenge, or with no end in the future.
+   */
+  deadline: string | null;
+  /** "Earned N pts" on a finished challenge the viewer scored on. */
+  earned: string | null;
 }
 
 /** The ring at the top of the card — how far through the season you are. */
@@ -116,14 +120,19 @@ export interface SeasonView {
   fraction: string;
   /** "3,900 pts left" — what is still on the table, or the count if none. */
   lead: string;
-  /** "1 of 6 challenges done", or null when `lead` already says it. */
+  /**
+   * "1 of 6 challenges done", or null when `lead` already says it. When no
+   * card on screen shows a deadline, challengesView adds the season's to it
+   * ("1 of 6 challenges done · 3d left", or "3d left" alone).
+   */
   sub: string | null;
   /** The whole fact in one string, for the ring's accessible name. */
   label: string;
   /**
-   * "7 days left" — how long the SEASON has to run, or null between seasons
-   * and when the payload carries no end date. One fact about the block, not
-   * a field on each row: every open challenge ends when the season does.
+   * "7d left" — how long the SEASON has to run, or null between seasons
+   * and when the payload carries no end date. Each open card says its own
+   * deadline (ChallengeRowView.deadline), so the ring adds this to `sub` only
+   * when no card on screen shows one.
    */
   deadline: string | null;
 }

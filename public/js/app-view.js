@@ -13483,9 +13483,10 @@ const AppView = {
 
   // ---- Headless auto sessions (#155) --------------------------------------
 
-  // "Generate proposal" — confirmation popup (token warning + model selector)
-  // before spinning up a headless AI session on this issue. The session is
-  // billed to the clicking user but isn't attached to their dev chat.
+  // "Generate proposal" — a short confirmation, with model selection behind
+  // a second step, before spinning up a headless AI session on this issue.
+  // The session is billed to the clicking user but isn't attached to their
+  // dev chat.
   async confirmAutoSession(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
@@ -13498,8 +13499,6 @@ const AppView = {
     let defaultModel = '';
     let provider = 'claude';
     let reasoningEffort = null;
-    let catalogRefreshedAt = null;
-    let catalogTotalModels = 0;
     let prefs = {};
     try {
       if (typeof DevChat === 'undefined' || !DevChat._prepareDefaultCodingAgentForBuild) {
@@ -13521,8 +13520,6 @@ const AppView = {
           throw new Error(catalog.error || 'Could not load OpenRouter models.');
         }
         models = Array.isArray(catalog.models) ? catalog.models : [];
-        catalogRefreshedAt = catalog.refreshedAt || null;
-        catalogTotalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : models.length;
         const saved = prefs.backends && prefs.backends.codex_openrouter;
         reasoningEffort = (saved && saved.reasoningEffort) || null;
         defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
@@ -13549,13 +13546,9 @@ const AppView = {
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    // Use the same prepared preference that selected the model catalog, so
-    // the venue label cannot lag behind a just-created managed key.
-    const venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
-      .currentVenue({ agentBackend: prefs.defaultBackend });
-
     const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, {
-      provider, venueId, catalogRefreshedAt, catalogTotalModels,
+      provider,
+      openrouterCredentialSource: prefs.openrouterCredentialSource || null,
     });
     if (!choice) return;
 
@@ -13682,10 +13675,9 @@ const AppView = {
     if (note) PlatformUI.toast(note);
   },
 
-  // Singleton confirm popup for Generate proposal. Same scrim/card styling as
-  // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
-  // chosen model id, or null on cancel/backdrop/Esc. `modalOptions.venueId`
-  // names where the run will build (see confirmAutoSession).
+  // Singleton confirm popup for Generate proposal. Its first step is a short
+  // summary; the full model catalog stays behind “Change model”. Resolves to
+  // the chosen model id, or null on cancel/backdrop/Esc.
   _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
@@ -13694,91 +13686,40 @@ const AppView = {
     root = document.createElement('div');
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    // #800: same option text as the dev-chat composer (solve-rate range +
-    // recommended change size), built by the shared DevChat helpers so
-    // the two pickers can't drift. Falls back to the bare label when
-    // dev-chat.js isn't loaded on this page (e.g. the gallery shell).
     const openRouter = modalOptions.provider === 'openrouter';
-    const optionText = (m) => {
-      if (openRouter && typeof DevChat !== 'undefined' && DevChat._openRouterModelOptionLabel) {
-        return DevChat._openRouterModelOptionLabel(m);
-      }
-      return (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
-        ? DevChat.modelOptionText(m)
-        : (m.label || m.name || m.id);
+    const costLabels = {
+      free: 'Free',
+      low: 'Low cost',
+      medium: 'Medium cost',
+      high: 'High cost',
     };
-    // #800's caption, RESOLVED PER OPTION rather than recomputed by a change
-    // handler. The picker used to bind `change` and rewrite one <p>; the
-    // caption is component state now, so each option carries its own.
-    const noteText = (m) => (openRouter
-      ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
-        ? `${DevChat._openRouterModelCostSummary(m)}. ${DevChat._openRouterModelCompatibilitySummary(m)}`
-        : '')
-      : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-        ? DevChat.modelNoteText(m)
-        : ''));
-    const noteTitle = (text) => (!openRouter && text
-      && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
-      ? DevChat.MODEL_GUIDANCE_TOOLTIP
-      : '');
-    const makeOptions = (catalogModels) => catalogModels.map((m) => {
-      const note = noteText(m) || '';
+    const options = models.map((m) => {
+      const name = m.name || m.label || m.id;
+      const summaryParts = openRouter
+        ? [m.isRecommended ? 'Recommended' : '', costLabels[m.costTier] || '']
+        : [(m.changeSize && m.changeSize.short) || 'Available model'];
       return {
         id: m.id,
-        // The React picker owns the live star prefix so toggling a favorite
-        // can repaint without rebuilding this whole view model.
-        label: optionText(openRouter ? { ...m, isFavorite: false } : m) || m.id,
-        note,
-        noteTitle: noteTitle(note),
-        searchText: [m.name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
-        isFavorite: m.isFavorite === true,
+        name,
+        summary: summaryParts.filter(Boolean).join(' · ') || 'Available through OpenRouter',
+        searchText: [name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
         isRecommended: m.isRecommended === true,
       };
     });
-    const options = makeOptions(models);
-    const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
-    const intro = openRouter
-      ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
-      : 'This spins up a headless AI session that immediately starts working on the issue on its own: investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch, never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
+    const billingNote = openRouter
+      ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
+        ? 'Uses your included daily credits.'
+        : 'Uses your OpenRouter account.')
+      : 'Uses your available Usernode credits.';
 
     document.body.appendChild(root);
     react.mountAutoSessionModal(root, {
       issueNumber,
-      intro,
-      venue: venue ? { label: venue.label, blurb: venue.blurb } : null,
-      pickerLabel: openRouter ? 'OpenRouter model' : 'Chat model',
+      intro: 'Usernode will inspect the issue and repository, then create a proposal for review.',
+      billingNote,
       options,
       preselect: preselect || (options[0] && options[0].id) || '',
       openRouter,
-      catalogRefreshedAt: modalOptions.catalogRefreshedAt || null,
-      catalogTotalModels: modalOptions.catalogTotalModels || options.length,
-      onFavorite: openRouter ? async (modelId, favorite) => {
-        if (typeof DevChat !== 'undefined' && DevChat._setOpenRouterModelFavorite) {
-          await DevChat._setOpenRouterModelFavorite(modelId, favorite);
-          return;
-        }
-        const response = await fetch('/api/me/coding-agent/models/favorite', {
-          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId, favorite }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
-      } : undefined,
-      onRefresh: openRouter ? async () => {
-        const response = await fetch(
-          '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1',
-          { credentials: 'same-origin', cache: 'no-store' },
-        );
-        const catalog = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(catalog.error || 'Could not refresh OpenRouter models.');
-        const catalogModels = Array.isArray(catalog.models) ? catalog.models : [];
-        return {
-          options: makeOptions(catalogModels),
-          refreshedAt: catalog.refreshedAt || null,
-          totalModels: Number.isInteger(catalog.totalModels) ? catalog.totalModels : catalogModels.length,
-        };
-      } : undefined,
     });
 
     return new Promise((resolve) => {
