@@ -48,7 +48,7 @@
 // HOME for that flag: the profile screen used to list the season's finished
 // challenges and no longer does (see the header of
 // frontend/src/features/profile/profile.js), so the grid groups them, counts
-// them in a summary line and dims them.
+// them in a summary line and marks them on the card's progress rail.
 //
 // That is why `completed` is read from the PUBLIC row rather than from the
 // personalization map it used to come from: the chip, the grouping and the
@@ -437,25 +437,108 @@ const TopochainChallenges = {
     const str = TopochainChallenges.str;
     const cp = c.card_preview || {};
     const m = TopochainChallenges._mine.get(Number(c.id)) || null;
-    const mineTotal = m && Number(m.activities_total) > 0
-      ? Number(m.activities_total) : 0;
     return {
       key: `${c.id}|${i}`,
       idx: i,
       featured: !!(m && m.featured === true),
-      // A finished challenge is DIMMED, not hidden: its detail overlay and
+      // A finished challenge is MARKED, not hidden: its detail overlay and
       // participant breakdown are the interesting part of it, so the card
-      // stays fully clickable — the opacity only takes it out of the way of
-      // whatever is still open.
+      // stays fully clickable and at full strength. The done state lives on
+      // the rail, which _stateOf decides.
       done: TopochainChallenges._isDone(c),
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
+      // One truncating line under the goal, in the slot the board drew its
+      // "Next:" line in. Not a tooltip: this screen is mobile first, a phone
+      // has no hover, and the full text is in the detail overlay a tap away.
       task: str(cp.task || ''),
       reward: cp.reward ? str(cp.reward) : null,
-      // Composed here rather than in the renderer so the number and its unit
-      // stay one text node — see the header of ./challenges-pane.tsx.
-      mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts` : null,
+      ...TopochainChallenges._stateOf(c),
     };
+  },
+
+  // The card's rail: which of the three states a challenge is in, the one
+  // line of copy it shows, and how much of the rail is filled.
+  //
+  //   done      _isDone — the viewer's own `progress.done` when the public row
+  //             carries onboarding progress, otherwise the organiser's
+  //             `completed` flag. The same meaning the summary tally and the
+  //             grouping use, so the rail can never disagree with them.
+  //   progress  the viewer has POINTS on it (activities_total > 0). Points,
+  //             not a row: a zero-point ledger row is not progress, which is
+  //             the Flutter app's hasEarnedPoints rule.
+  //   new       everything else, including every card an anonymous visitor
+  //             sees that is not done.
+  //
+  // The fill is a fraction only when the count can honestly be one: a metric
+  // with a numeric target above one that counts ledger rows. Block
+  // production counts blocks, which this read does not carry, and a target of
+  // one is a yes/no — both read "Started" with no fill rather than a bar that
+  // means nothing. The viewer's points stay in the detail overlay.
+  //
+  // BLOCK PRODUCTION IS THE EXCEPTION TO "no points means not started".
+  // Block scores live in leaderboard snapshots and are never written to the
+  // points ledger (src/services/topochain/snapshot-builder.js), and the row
+  // this pane reads carries only the ledger. So a viewer producing blocks can
+  // have zero ledger points while Home's meter, which reads the snapshot,
+  // shows real progress. Rather than claim "Not started", such a card shows
+  // the bare ring with no label and no value: the rail says nothing it cannot
+  // see. Carrying the snapshot count on the row is a server change for a later
+  // slice.
+  //
+  // Every label is SHORT on purpose, and the words are the board's ("Not
+  // started", "Done"). The rail shares a ~210px row with the reward chip on a
+  // 360px phone and truncates rather than wraps; the icon carries the state,
+  // so the words never repeat it ("In progress · 3/8" wrapped).
+  // PER-VIEWER PROGRESS FIRST. The public row carries `progress`
+  // ({ done, current, target }) for the season's onboarding steps, computed
+  // server-side by services/topochain/challenge-onboarding.js — including
+  // block production, which it reads from snapshots. When it is there, the
+  // platform has actually counted, so "Not started" is a fact rather than a
+  // guess, and the count and fill come from it. Everything below the
+  // `if (p)` block is the fallback for rows without it.
+  _stateOf(c) {
+    const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
+    const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
+    const p = (c && c.progress) || null;
+    if (TopochainChallenges._isDone(c)) {
+      const earned = points ? `Earned ${points.toLocaleString('en-US')} pts` : null;
+      return { state: 'done', stateLabel: 'Done', fill: 1, earned };
+    }
+    if (p) {
+      const target = Number(p.target);
+      const current = p.current == null ? 0 : Number(p.current) || 0;
+      if (p.current != null && Number.isFinite(target) && target > 1 && current > 0) {
+        const count = Math.min(current, target);
+        // The count honours challenge-row overrides (the server COALESCEs
+        // metric_type/metric_target), so the unit must too: the personalization
+        // row's label is override-aware, the public row's `activity_type` is
+        // the template's alone.
+        const label = (m && m.metric && m.metric.label)
+          || (c.activity_type && c.activity_type.metric_label);
+        const unit = label ? ` ${TopochainChallenges.str(label)}` : '';
+        return { state: 'progress', stateLabel: `${count}/${target}${unit}`, fill: count / target, earned: null };
+      }
+      if (current > 0 || points > 0) return { state: 'progress', stateLabel: 'Started', fill: null, earned: null };
+      return { state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+    }
+    const metric = (m && m.metric) || null;
+    // The metric kind from either row: the personalization row lands after
+    // first paint (and never, signed out or on failure), so the public row's
+    // template kind is what keeps a block challenge from claiming "Not
+    // started" in the meantime.
+    const kind = (metric && metric.kind) || (c && c.activity_type && c.activity_type.metric_type) || null;
+    if (!points && kind === 'blocks_produced') {
+      return { state: 'new', stateLabel: '', fill: null, earned: null };
+    }
+    if (!points) return { state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+    const target = metric ? Number(metric.target) : NaN;
+    const counted = !!metric && metric.kind !== 'blocks_produced'
+      && Number.isFinite(target) && target > 1;
+    if (!counted) return { state: 'progress', stateLabel: 'Started', fill: null, earned: null };
+    const count = Math.min(Array.isArray(m.activities) ? m.activities.length : 0, target);
+    const unit = metric.label ? ` ${TopochainChallenges.str(metric.label)}` : '';
+    return { state: 'progress', stateLabel: `${count}/${target}${unit}`, fill: count / target, earned: null };
   },
 
   // A card click, by its index in the flat ordered array. Recomputed rather
@@ -649,6 +732,10 @@ const TopochainChallenges = {
     return {
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
+      // The card truncates the task to one line, so the overlay carries it in
+      // full; before ITERATION 03 the card showed two lines and the overlay
+      // never needed it.
+      task: cp.task ? str(cp.task) : null,
       description: dm.description ? str(dm.description) : null,
       mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts to this.` : null,
       requirements: dm.requirements ? str(dm.requirements) : null,

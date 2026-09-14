@@ -369,6 +369,151 @@ test('_loadedEventId tracks the event the grid belongs to', () => {
     'it is recorded before the no-event early return, or a null event never clears it');
 });
 
+// ─── 1b. Behavioural: the card rail's three states ──────────────────────
+//
+// _stateOf decides what each card's rail says. The shapes below are the
+// /challenges-api/challenges row (src/routes/topochain/mobile.js
+// buildMobileChallengeItem): `activities` is the viewer's own ledger rows,
+// `activities_total` their points, `metric` null unless configured.
+
+// Fields copied out of the vm realm, for the same reason `pending` above does.
+const stateOf = (pane, c) => {
+  const r = pane._stateOf(c);
+  return { state: r.state, stateLabel: r.stateLabel, fill: r.fill, earned: r.earned };
+};
+const rows = (n, points) => Array.from({ length: n }, () => ({ points }));
+
+test('with no personalization, a card is New or Done from the public flag alone', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  assert.deepEqual(stateOf(pane, CH[0]),
+    { state: 'new', stateLabel: 'Not started', fill: 0, earned: null });
+  assert.deepEqual(stateOf(pane, CH[1]),
+    { state: 'done', stateLabel: 'Done', fill: 1, earned: null },
+    'an anonymous visitor sees the organiser flag, same as the tally');
+});
+
+test('a counted metric fills the rail by the viewer’s ledger rows', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([[900500, {
+    id: 900500, activities_total: 600, activities: rows(3, 200),
+    metric: { kind: 'apps_tested', label: 'tried', target: 8 },
+  }]]);
+  assert.deepEqual(stateOf(pane, CH[0]),
+    { state: 'progress', stateLabel: '3/8 tried', fill: 0.375, earned: null });
+});
+
+test('block production with no ledger points claims nothing: a bare ring, no value', () => {
+  // The real shape: block scores live in snapshots, never in user_activities,
+  // so an active block producer's row has no activities at all.
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([[900500, {
+    id: 900500, activities_total: 0, activities: [],
+    metric: { kind: 'blocks_produced', label: 'blocks', target: 1 },
+  }]]);
+  assert.deepEqual(stateOf(pane, CH[0]),
+    { state: 'new', stateLabel: '', fill: null, earned: null },
+    'not "Not started" — Home may be showing this viewer real block progress');
+});
+
+test('before personalization lands, a block challenge still claims nothing', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const block = { id: 900504, completed: false, activity_type: { metric_type: 'blocks_produced', metric_label: 'blocks' }, card_preview: {} };
+  assert.deepEqual(stateOf(pane, block), { state: 'new', stateLabel: '', fill: null, earned: null },
+    'first paint and a failed personalization read the public row’s metric kind');
+});
+
+test('ledger-credited block production and yes/no challenges are indeterminate, labelled Started', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([
+    [900500, {
+      // An organiser's extra-points row: the only way blocks reach the ledger.
+      id: 900500, activities_total: 1200, activities: rows(1, 1200),
+      metric: { kind: 'blocks_produced', label: 'blocks', target: 500 },
+    }],
+    [900514, { id: 900514, activities_total: 300, activities: rows(1, 300), metric: null }],
+  ]);
+  assert.deepEqual(stateOf(pane, CH[0]),
+    { state: 'progress', stateLabel: 'Started', fill: null, earned: null },
+    'the row count is not a block count, so no fill');
+  const ch = { id: 900514, completed: false, card_preview: { goal: 'Vote five times' } };
+  assert.deepEqual(stateOf(pane, ch),
+    { state: 'progress', stateLabel: 'Started', fill: null, earned: null });
+});
+
+test('a zero-point ledger row is not progress', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([[900500, {
+    id: 900500, activities_total: 0, activities: rows(2, 0),
+    metric: { kind: 'apps_tested', label: 'tried', target: 8 },
+  }]]);
+  assert.equal(stateOf(pane, CH[0]).state, 'new', 'points, not rows — the Flutter rule');
+});
+
+test('a finished challenge the viewer scored on says what they earned', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([[900511, { id: 900511, activities_total: 1000, activities: rows(1, 1000) }]]);
+  assert.deepEqual(stateOf(pane, CH[1]),
+    { state: 'done', stateLabel: 'Done', fill: 1, earned: 'Earned 1,000 pts' });
+});
+
+test('the task is on the card and in full in the detail overlay, never a tooltip', () => {
+  const ch = [{ id: 1, completed: false, card_preview: { goal: 'Try apps', task: 'Open three apps from the directory and use each one' } }];
+  const { pane, store } = loadPane({ challenges: ch, eventId: 900500 });
+  pane._renderGrid();
+  assert.equal(store.get().grid.groups[0].cards[0].task, 'Open three apps from the directory and use each one');
+  pane._openIdx(0);
+  assert.equal(store.get().detail.task, 'Open three apps from the directory and use each one',
+    'the card truncates it, so a tap must reveal all of it');
+  assert.doesNotMatch(require('node:fs').readFileSync(
+    require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8'), /title=\{/,
+    'a phone has no hover: nothing on this screen may live only in a title attribute');
+});
+
+test('per-viewer progress on the public row drives the rail, blocks included', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const blocks = {
+    id: 1, completed: false, activity_type: { metric_label: 'blocks' },
+    progress: { done: false, current: 180, target: 500 }, card_preview: { goal: 'Join block production' },
+  };
+  assert.deepEqual(stateOf(pane, blocks),
+    { state: 'progress', stateLabel: '180/500 blocks', fill: 0.36, earned: null },
+    'the platform counted snapshot blocks, so the board’s own label appears');
+  pane._mine = new Map([[7, { id: 7, activities_total: 400, activities: rows(2, 200), metric: { kind: 'apps_tried', label: 'apps tried', target: 5 } }]]);
+  const overridden = {
+    id: 7, completed: false, activity_type: { metric_label: 'blocks' },
+    progress: { done: false, current: 2, target: 5 }, card_preview: {},
+  };
+  assert.equal(stateOf(pane, overridden).stateLabel, '2/5 apps tried',
+    'the unit follows the challenge-row override, like the count does');
+  pane._mine = new Map();
+  const untouched = { id: 2, completed: false, progress: { done: false, current: 0, target: 1 }, card_preview: {} };
+  assert.deepEqual(stateOf(pane, untouched),
+    { state: 'new', stateLabel: 'Not started', fill: 0, earned: null },
+    'with progress present, Not started is a counted fact, not a guess');
+  const binary = { id: 3, completed: false, progress: { done: false, current: null, target: null }, card_preview: {} };
+  assert.equal(stateOf(pane, binary).stateLabel, 'Not started');
+  const mineDone = { id: 4, completed: false, progress: { done: true, current: 1, target: 1 }, card_preview: {} };
+  assert.equal(stateOf(pane, mineDone).state, 'done', 'Done is the viewer’s own when progress says so');
+  const archived = { id: 5, completed: true, progress: { done: false, current: 0, target: 3 }, card_preview: {} };
+  assert.equal(stateOf(pane, archived).state, 'new',
+    'an organiser archive flag does not mark the viewer’s onboarding step done');
+});
+
+test('the grid’s card descriptors carry the rail and never re-sort by it', () => {
+  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._mine = new Map([[900500, { id: 900500, activities_total: 50, activities: rows(1, 50) }]]);
+  pane._renderGrid();
+  const cards = store.get().grid.groups.flatMap((g) => g.cards);
+  // Array.from, not .map: the grid's arrays were allocated in the vm realm.
+  assert.deepEqual(Array.from(cards, (c) => [c.idx, c.state]),
+    [[0, 'progress'], [1, 'done'], [2, 'done']],
+    'state rides on the card; the flat order is still _ordered()’s');
+  assert.equal(cards[0].stateLabel, 'Started');
+  for (const c of cards) {
+    assert.ok(!/In progress/.test(c.stateLabel), 'the icon carries the state, the words never repeat it');
+  }
+});
+
 // ─── 2. Static: the router carries both ids ─────────────────────────────
 
 test('the hash router parses #leaderboard/challenges/<event>/<challenge>', () => {
