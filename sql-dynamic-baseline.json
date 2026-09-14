@@ -752,6 +752,13 @@
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
     },
     {
+      "source": "src/services/admin-approval.js",
+      "kind": "structural-template",
+      "fingerprint": "eccf2f5dfb3499411ebb",
+      "count": 1,
+      "preview": "`SELECT 1 FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id JOIN users u ON u.id = pv.user_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${c"
+    },
+    {
       "source": "src/services/agent-turn.js",
       "kind": "structural-template",
       "fingerprint": "f3a6d402b0a112ee09c3",
@@ -929,9 +936,9 @@
     {
       "source": "src/services/merge-queue.js",
       "kind": "structural-template",
-      "fingerprint": "878c016b2ef18b345e82",
+      "fingerprint": "ac50f62110baae9e88c1",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.integration_behind_by, cs.integration_merges_clean, cs.check_state, (SELECT COUN"
+      "preview": "`SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.integration_behind_by, cs.integration_merges_clean, cs.check_state, cs.checks_co"
     },
     {
       "source": "src/services/notifications.js",
