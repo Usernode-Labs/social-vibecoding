@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const proposalUpdate = require('../services/proposal-update');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
@@ -1438,6 +1439,141 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // collab-level access. 404 on deny so private apps' sessions aren't
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
+  // PATCH /api/sessions/:id/linked-issues (#2028)
+  //
+  // A proposal's issue links used to be writable only as a side effect of
+  // creating it or dispatching another coding turn. This is the direct seam
+  // used by the React proposal detail and the hosted connector after the
+  // proposal/PR already exists.
+  //
+  // Owner-scoped for automated callers, with the platform's full write admin
+  // as the browser/API repair hatch. A connector token can belong to an
+  // admin too, so `connectorClientId` keeps that stronger privilege out of
+  // this narrowly delegated tool.
+  // The app-level collab gate above runs first; the 404 below deliberately
+  // hides whether a foreign proposal id exists. Deltas preserve links added
+  // by another tab/agent after the caller last read the proposal, and removal
+  // wins when a number is present in both arrays.
+  router.patch('/api/sessions/:id/linked-issues', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'invalid_request', message: 'Body must be an object.' });
+    }
+    const unsupported = Object.keys(body).filter((key) => !['addIssues', 'removeIssues'].includes(key));
+    if (unsupported.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: `Unsupported field: ${unsupported[0]}.`,
+      });
+    }
+    const parseNumbers = (value, label) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 50) {
+        throw new Error(`${label} must be an array of at most 50 issue numbers.`);
+      }
+      const unique = [];
+      for (const raw of value) {
+        if (!Number.isSafeInteger(raw) || raw <= 0 || raw > 2147483647) {
+          throw new Error(`${label} must contain positive integers up to 2147483647.`);
+        }
+        if (!unique.includes(raw)) unique.push(raw);
+      }
+      return unique;
+    };
+
+    let addIssues;
+    let removeIssues;
+    try {
+      addIssues = parseNumbers(body.addIssues, 'addIssues');
+      removeIssues = parseNumbers(body.removeIssues, 'removeIssues');
+    } catch (err) {
+      return res.status(400).json({ error: 'invalid_request', message: err.message });
+    }
+    if (!addIssues.length && !removeIssues.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: 'Add or remove at least one issue number.',
+      });
+    }
+
+    try {
+      // Serialize against submit_work's proposal update too: both can project
+      // metadata into the same live PR body, and the later GitHub write must
+      // never restore the earlier one's stale closing block.
+      const outcome = await proposalUpdate.withProposalLock(pool, sessionId, async () => {
+        const { rows } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug, a.repo_url
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        const session = rows[0] || null;
+        const owner = session && Number(session.user_id) === Number(req.user.id);
+        const browserAdmin = session && !req.connectorClientId && req.user.canAdminWrite;
+        if (!session || (!owner && !browserAdmin)) {
+          return { response: { status: 404, body: { error: 'Session not found' } } };
+        }
+
+        const nextLinks = prMetadata.applyIssueDeclarations(
+          session.linked_issues, addIssues, removeIssues
+        );
+        if (nextLinks.length > 50) {
+          return { response: { status: 400, body: {
+            error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
+          } } };
+        }
+        const repo = github.parseGithubUrl(session.repo_url);
+        const result = await proposalUpdate.updateLinkedIssues({
+          pool,
+          gh: github,
+          session,
+          owner: repo && repo.owner,
+          repo: repo && repo.repo,
+          addIssues,
+          removeIssues,
+        });
+        return { session, result };
+      });
+
+      if (outcome.response) {
+        return res.status(outcome.response.status).json(outcome.response.body);
+      }
+      const { session, result } = outcome;
+
+      if (result.changed) {
+        try {
+          const { pushIssueUpdate } = require('../services/ws');
+          pushIssueUpdate({
+            action: 'updated', source: 'linked_issues', sessionId,
+            appId: session.app_id, appSlug: session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'linked-issues broadcast failed', {
+            sessionId, err: err.message,
+          });
+        }
+      }
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        appSlug: session.app_slug,
+        linkedIssues: result.linkedIssues,
+        addedIssues: result.addedIssues,
+        removedIssues: result.removedIssues,
+        changed: result.changed,
+        prBodyUpdated: result.prBodyUpdated,
+        prBodyStatus: result.prBodyStatus,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to update linked issues', { sessionId, message: err.message });
+      return res.status(500).json({ error: 'Could not update linked issues' });
+    }
+  });
 
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
