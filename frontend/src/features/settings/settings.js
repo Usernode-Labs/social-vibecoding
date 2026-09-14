@@ -75,6 +75,16 @@
     el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
   }
 
+  // #2119: an OpenRouter key's allowance is named from the reset cadence the
+  // server reports for it ('weekly' for company keys issued under the
+  // current policy, 'daily' for older ones until they are migrated, whatever
+  // OpenRouter says for a personal key, which may be nothing), never from a
+  // hard-coded word, so the copy stays truthful for every key it describes.
+  function limitNoun(reset) {
+    const cadence = typeof reset === 'string' ? reset.trim().toLowerCase() : '';
+    return cadence ? `${cadence} limit` : 'limit';
+  }
+
   // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
   //
   // The set stores the EXPANDED names, which is the opposite of the admin
@@ -2979,7 +2989,7 @@
         if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
         if (managedMessage) {
           if (managed?.status === 'active') {
-            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.limitUsd || 0).toFixed(2)} ${limitNoun(managed.limitReset)}. Admins can block or remove it; you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
             managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
@@ -2993,7 +3003,7 @@
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset)}.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -3009,7 +3019,11 @@
             const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
             const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
             const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
-            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
+            // The stored managed-key cadence is authoritative; a personal
+            // key's comes from OpenRouter's own key-info.
+            const noun = limitNoun((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
+            const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
+            info.textContent = lim ? `${owner} · ${label}: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {

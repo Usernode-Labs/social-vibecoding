@@ -365,11 +365,17 @@
       "description": "Deploy-owned OpenRouter Management API key used only by the platform server to create, block, enable, and delete limited child keys for eligible users. It cannot be written from the admin UI and is never passed to a browser, worker, child app, or database. Configure the GitHub Actions secret USERNODE_OPENROUTER_MANAGEMENT_API_KEY."
     },
     {
+      "key": "OPENROUTER_MANAGED_WEEKLY_LIMIT_USD",
+      "group": "AI & coding agents",
+      "required": false,
+      "description": "Positive USD allowance assigned to every company-funded child key; OpenRouter resets it weekly. Leave unset to derive it from OPENROUTER_MANAGED_DAILY_LIMIT_USD times seven. Keys issued under the older daily policy are moved to this amount the next time their owner's OpenRouter credential status is read."
+    },
+    {
       "key": "OPENROUTER_MANAGED_DAILY_LIMIT_USD",
       "group": "AI & coding agents",
       "required": false,
       "default": "1",
-      "description": "Positive USD limit assigned to every company-funded child key. OpenRouter resets it daily. Set the matching GitHub Actions variable before deploying if the desired allowance is not $1/day."
+      "description": "The per-day allowance child keys were issued with before the weekly policy. Read only as the fallback for OPENROUTER_MANAGED_WEEKLY_LIMIT_USD: when that is unset, new keys receive seven times this amount per week."
     },
     {
       "key": "OPENROUTER_MANAGED_WORKSPACE_ID",

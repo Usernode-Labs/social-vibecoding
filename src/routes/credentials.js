@@ -99,10 +99,14 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     try {
-      const [meta, managedRow] = await Promise.all([
-        credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER }),
-        managedOpenRouter.stateForUser(pool, req.user.id),
-      ]);
+      // The managed state is read first so a pre-#2119 daily key can be
+      // moved to the weekly allowance before the credential's key-info is
+      // read; that merged key-info is what the settings limit line renders.
+      const managedRow = await managedOpenRouter.migrateLegacyAllowance({
+        pool, userId: req.user.id, config,
+        state: await managedOpenRouter.stateForUser(pool, req.user.id),
+      });
+      const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
       const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
@@ -123,7 +127,8 @@ function credentialRoutes(config) {
           verificationRequired,
           alreadyIssued: !!managed,
           canClaim: available && identityEligible && !managed && !configured,
-          dailyLimitUsd: config.openrouterManagedDailyLimitUsd,
+          limitUsd: config.openrouterManagedWeeklyLimitUsd,
+          limitReset: managedOpenRouter.LIMIT_RESET,
           reason: !betaAllowed(req.user.id) ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
               : (!identityEligible ? 'verification_required'

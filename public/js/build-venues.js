@@ -108,7 +108,7 @@
       requires: 'openrouterAvailable',
       defaultable: true,
       chat: true,
-      blurb: 'The preferred in-chat option: use included daily credits or your own OpenRouter key, and pick any available model.',
+      blurb: 'The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.',
       cta: 'Use OpenRouter',
     },
     {

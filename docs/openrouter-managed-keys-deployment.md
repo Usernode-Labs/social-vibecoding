@@ -2,7 +2,7 @@
 
 Usernode can create one company-funded OpenRouter child key for each account.
 By default, any authenticated user may claim one; deployments can optionally
-require a verified GitHub or X identity. Each child key receives a daily USD
+require a verified GitHub or X identity. Each child key receives a weekly USD
 limit, is stored encrypted as that user's default session credential, and is
 shown in plaintext to the user only in the successful claim response.
 
@@ -36,7 +36,8 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Type | Name | Required | Purpose |
 | --- | --- | --- | --- |
 | Secret | `USERNODE_OPENROUTER_MANAGEMENT_API_KEY` | Yes for included keys | OpenRouter organization management key. |
-| Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | Recommended | Positive USD amount per child key per day; deploy default is `1`. |
+| Variable | `OPENROUTER_MANAGED_WEEKLY_LIMIT_USD` | Recommended | Positive USD amount per child key per week. Unset, it is derived from `OPENROUTER_MANAGED_DAILY_LIMIT_USD` times seven. |
+| Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | Legacy | The pre-weekly per-day amount, read only as the fallback above. Deploy default is `1`, so the derived weekly allowance is `7`. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
 | Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | Optional | Set `true` to require a verified GitHub or X identity before claiming. The deploy default is `false`, which allows any authenticated account. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |
@@ -63,7 +64,7 @@ key remains available.
    `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=true`, first connect and
    verify GitHub or X.
 2. Open **Settings → OpenRouter**. The included-key card should show the
-   configured daily limit.
+   configured weekly limit.
 3. Click **Create my included key** once. Confirm it becomes active. The raw
    company-funded credential is stored internally and is never sent to the
    user's browser.
@@ -77,6 +78,12 @@ key remains available.
 
 - The database enforces one managed-key record per Usernode user, including
   after deletion, so a user cannot claim another company key.
+- Keys issued before the weekly policy (#2119) still reset daily at
+  OpenRouter and are labelled that way until they are migrated. The platform
+  moves each one to the weekly allowance, best-effort, the next time its
+  owner's OpenRouter credential status is read (opening Settings → OpenRouter
+  or starting a build). A failed attempt is logged and retried after the next
+  platform restart; the key keeps working meanwhile.
 - Creation is never automatically retried after an ambiguous provider
   response. The record changes to **Needs review** and admins are notified;
   this avoids accidentally creating duplicate billable keys.

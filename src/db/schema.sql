@@ -6106,9 +6106,14 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   status               VARCHAR(24) NOT NULL DEFAULT 'provisioning'
                          CHECK (status IN ('provisioning', 'active', 'disabled',
                                            'deleted', 'needs_review')),
+  -- The allowance per reset period. Named for the daily cadence keys were
+  -- issued with before #2119; the column keeps that name because renaming it
+  -- would need a data migration for nothing, and limit_reset is what labels
+  -- it ('weekly' for keys issued under the current policy, 'daily' for
+  -- older ones until they are migrated).
   daily_limit_usd      NUMERIC(18,8) NOT NULL CHECK (daily_limit_usd > 0),
   limit_reset          VARCHAR(16) NOT NULL DEFAULT 'daily'
-                         CHECK (limit_reset = 'daily'),
+                         CHECK (limit_reset IN ('daily', 'weekly')),
   last_error_code      VARCHAR(64),
   issued_at            TIMESTAMPTZ,
   disabled_at          TIMESTAMPTZ,
@@ -6116,6 +6121,15 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- #2119: databases created before the weekly policy carry the original
+-- CHECK (limit_reset = 'daily') under PostgreSQL's generated name. Replace
+-- it by that name on every boot; a fresh database gets the same name from
+-- the inline CHECK above, so there this is a no-op.
+ALTER TABLE credentials.managed_openrouter_keys
+  DROP CONSTRAINT IF EXISTS managed_openrouter_keys_limit_reset_check;
+ALTER TABLE credentials.managed_openrouter_keys
+  ADD CONSTRAINT managed_openrouter_keys_limit_reset_check
+  CHECK (limit_reset IN ('daily', 'weekly'));
 CREATE INDEX IF NOT EXISTS managed_openrouter_keys_status_idx
   ON credentials.managed_openrouter_keys (status, updated_at DESC);
 COMMENT ON TABLE credentials.managed_openrouter_keys IS 'staging:private';
