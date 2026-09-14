@@ -304,17 +304,28 @@ test('featuredApps: empty / missing input is safe', () => {
   assert.equal(Home.featuredApps([app()]).length, 0, 'nothing featured');
 });
 
-// The screenshot-state deep link for the compact "nothing featured" state
+// The screenshot-state deep link for the compact "nothing to discover" state
 // (#949). Without it that rendering — what a viewer sees once they have
-// added the featured apps — is unreachable by URL, so the before/after
+// added everything on offer — is unreachable by URL, so the before/after
 // screenshots and every declared check would show the populated widget.
-test('featuredApps: ?shot=discover-empty forces the empty state', () => {
-  const apps = [app({ slug: 'f', featured: true, featured_order: 0 })];
+//
+// It empties BOTH halves of the lane. The block draws one continuous rail
+// now, so its note is the whole category's empty state; emptying only the
+// curated half would put "nothing to discover" above four popular cards.
+test('?shot=discover-empty forces the empty state — BOTH halves of the lane', () => {
+  const apps = [
+    app({ slug: 'f', featured: true, featured_order: 0 }),
+    app({ slug: 'p', active_users: 9 }),
+  ];
   assert.equal(makeHome().featuredApps(apps).length, 1, 'normally populated');
+  assert.equal(makeHome().popularApps(apps).length, 1, 'both halves are');
   const shot = makeHome({ search: '?shot=discover-empty' });
-  assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
-  // Paint-only: a DIFFERENT shot value must not touch this list.
-  assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+  assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties the curated half');
+  assert.equal(shot.popularApps(apps).length, 0, 'and the popular one');
+  // Paint-only: a DIFFERENT shot value must not touch either list.
+  const other = makeHome({ search: '?shot=create-disabled' });
+  assert.equal(other.featuredApps(apps).length, 1);
+  assert.equal(other.popularApps(apps).length, 1);
 });
 
 test('the create-widget shot paths pin both quota treatments', () => {
@@ -392,9 +403,12 @@ test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () =
 test('the Discover widget swaps its tile row for a note, never an empty box', () => {
   const src = PANEL_SRC.discover;
   assert.ok(src.length > 200, 'located the Discover renderer');
-  // Tiles OR a one-line note — never a bare bar over an empty lane.
-  assert.match(src, /view\.featured\.length/);
-  assert.match(src, /Nothing featured right now/);
+  // Cards OR a one-line note — never a bare bar over an empty lane. The
+  // branch is on the MERGED list, so the note only appears when the whole
+  // category is empty rather than when the curated half is.
+  assert.match(src, /tiles\.length \?/);
+  assert.doesNotMatch(src, /view\.featured\.length \?/);
+  assert.match(src, /Nothing to discover right now/);
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
@@ -510,11 +524,11 @@ test('the apps grid is four columns at every width, two rows by default', () => 
     'the expander has a host outside #app-list');
 });
 
-test('Discover is one bordered block: two lanes, and no chrome of its own', () => {
+test('Discover is one bordered block: one lane, and no chrome of its own', () => {
   // Same shell as every other widget, so the three read as one family — but
   // Discover passes NO footer (#949), and since the title moved out to become
-  // the section's label there is no bar either: the card is two lanes and the
-  // hairline between them.
+  // the section's label there is no bar either: the card is one lane of
+  // cards, and nothing else.
   const src = PANEL_SRC.discover;
   assert.match(src, /<PanelShell\b/, 'the same shell as every other block');
   assert.doesNotMatch(src, /footer=/, 'and Discover passes it no footer');
@@ -524,17 +538,15 @@ test('Discover is one bordered block: two lanes, and no chrome of its own', () =
   // the same #home-browse-btn the old footer carried.
   assert.match(PANEL_SRC.sections, /action=\{<BrowseLink \/>\}/, "the heading action is the browse link alone — the ⋮ is gone");
   assert.match(PANEL_SRC.ui, /home-panel-browse/);
-  // The second lane is separated by a hairline, so it reads as part of the
-  // same block rather than a second card. The hairline used to be a
-  // `border-t` utility ON the divider; the reskin moved it into app.css as an
-  // INSET ::before, because a rule running the full width of a rounded card
-  // reaches its corner radius. So the markup half of the contract is now just
-  // that the divider element is still there, and the rule itself is asserted
-  // where it lives.
-  assert.match(src, /home-discover-divider/);
-  assert.match(read('public/css/app.css'),
-    /\.home-discover-divider::before \{[^}]*background: var\(--border-light\)/,
-    'app.css draws the divider hairline');
+  // AND NO SEAM INSIDE IT. There used to be a hairline row carrying a
+  // "Popular" caption between the curated cards and the most-used ones.
+  // Discover is one category, so the sub-group label and the rule that drew
+  // its hairline are both retired — asserted on the markup and on the
+  // stylesheet, since a class with no rule still renders an empty row.
+  assert.doesNotMatch(src, /home-discover-divider/);
+  assert.doesNotMatch(src, />Popular</);
+  assert.doesNotMatch(read('public/css/app.css'), /^\.home-discover-divider[\s,{:]/m,
+    'and no rule is left to draw one');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a

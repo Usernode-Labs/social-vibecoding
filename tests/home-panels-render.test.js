@@ -1724,11 +1724,11 @@ test('the Discover widget renders the curated cards when Home is reachable', () 
   assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
   assert.doesNotMatch(html, /home-discover-tile\b/, 'the grid tile is retired, not renamed in place');
   assert.match(html, /Browse all apps/, 'and the browse control is always there');
-  assert.doesNotMatch(html, /Nothing featured right now/);
+  assert.doesNotMatch(html, /Nothing to discover/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
   const bare = renderBlock('discover').html;
-  assert.match(bare, /Nothing featured right now/);
+  assert.match(bare, /Nothing to discover right now/);
   assert.match(bare, /Browse all apps/);
 });
 
@@ -1792,16 +1792,21 @@ const discoverHome = (over = {}) => ({
 
 const renderDiscover = (over) => renderBlock('discover', { home: discoverHome(over) }).html;
 
-test('Discover draws the Popular lane at every width', () => {
+test('Discover draws ONE lane, curated cards first, with no sub-group label', () => {
   const html = renderDiscover();
-  assert.match(html, /home-discover-popular/, 'the second lane always renders');
-  assert.match(html, /data-slug="pop"/);
-  assert.match(html, /home-discover-divider/, 'with a hairline and its caption');
-  assert.match(html, />Popular</);
-  assert.match(html, /data-slug="alpha"/, 'and the curated lane leads');
-  // The lane order is the point of the area: what an admin chose to feature
-  // first, then what everyone else is actually using.
+  assert.match(html, /data-slug="pop"/, 'the popular apps still render');
+  assert.match(html, /data-slug="alpha"/, 'and the curated ones lead');
+  // The ORDER is the part that survives the merge: what an admin chose to
+  // feature first, then what everyone else is actually using.
   assert.ok(html.indexOf('data-slug="alpha"') < html.indexOf('data-slug="pop"'));
+
+  // ...as ONE continuous set of cards. Discover is a single category, so
+  // nothing names a sub-group and nothing draws a seam between them.
+  assert.doesNotMatch(html, /home-discover-divider/, 'no caption row');
+  assert.doesNotMatch(html, /home-discover-popular/, 'and no second lane to name');
+  assert.doesNotMatch(html, />Popular</);
+  assert.equal((html.match(/home-discover-lane/g) || []).length, 1,
+    'exactly one lane in the block');
 
   // Nothing in either half consults the column count any more — the whole
   // reason the module's own currentCols() helper is gone.
@@ -1812,7 +1817,7 @@ test('Discover draws the Popular lane at every width', () => {
 test('Discover draws no chrome of its own; its control is in the section heading', () => {
   const html = renderDiscover();
   assert.doesNotMatch(html, /home-panel-footer/);
-  assert.doesNotMatch(html, /home-panel-bar[^-]/, 'and no bar — the card is two lanes');
+  assert.doesNotMatch(html, /home-panel-bar[^-]/, 'and no bar — the card is one lane');
   // The button sits in the heading, after the label (the ⋮ that used to
   // follow it is gone). Discover has ONE destination, so it belongs beside the
   // area's name rather than in 27px of chrome above two lanes.
@@ -1823,26 +1828,40 @@ test('Discover draws no chrome of its own; its control is in the section heading
   assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
 });
 
-test('Discover’s degenerate states: which lane, which note', () => {
-  // Featured only: no divider, no second lane.
+test('Discover’s degenerate states: cards, or the note — never both', () => {
+  // Featured only: just the lane.
   const featuredOnly = renderDiscover({ popularApps: () => [] });
   assert.match(featuredOnly, /data-slug="alpha"/);
-  assert.doesNotMatch(featuredOnly, /home-discover-divider/,
-    'no popular apps means no caption row, not an empty one');
-  assert.doesNotMatch(featuredOnly, /Nothing featured right now/);
+  assert.doesNotMatch(featuredOnly, /home-discover-divider/);
+  assert.doesNotMatch(featuredOnly, /Nothing to discover/);
 
-  // Popular only — the reporter's case: everything featured is already
-  // theirs, so the top lane is the note and the second lane fills the box.
+  // Popular only — the reporter's case: everything curated is already theirs.
+  // With two rails this drew the note ON TOP of six perfectly good cards.
+  // One lane makes that a contradiction, so the cards are the whole answer.
   const popularOnly = renderDiscover({ featuredApps: () => [] });
-  assert.match(popularOnly, /Nothing featured right now/);
-  assert.match(popularOnly, /home-discover-popular/);
+  assert.doesNotMatch(popularOnly, /Nothing to discover/);
   assert.match(popularOnly, /data-slug="pop"/);
+  assert.match(popularOnly, /home-discover-rail/);
 
-  // Neither: one centred line and nothing else.
+  // Neither: the note, and nothing else.
   const neither = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
-  assert.match(neither, /Nothing featured right now/);
+  assert.match(neither, /Nothing to discover right now/);
+  assert.doesNotMatch(neither, /home-discover-rail/);
   assert.doesNotMatch(neither, /home-discover-tiles/);
   assert.doesNotMatch(neither, /home-discover-divider/);
+});
+
+// The two halves are derived independently — popularApps excludes `featured`
+// today, but one lane is where a double-listing would show as the SAME CARD
+// TWICE rather than as one card per rail, so the renderer dedupes.
+test('a slug in both halves is drawn once', () => {
+  const dupe = renderDiscover({
+    popularApps: () => [{ slug: 'alpha', name: 'Alpha', active_users: 9 }],
+  });
+  assert.equal(
+    (dupe.match(/class="app-card home-discover-card[^"]*" data-slug="alpha"/g) || []).length,
+    1,
+  );
 });
 
 test('Discover stamps both lane counts, and render() mirrors them onto the host', () => {
@@ -1884,8 +1903,9 @@ test('every discovery lane is handed to Home._wireDiscoveryCards', () => {
   const lane = discoverSrc.slice(discoverSrc.indexOf('function Lane('));
   assert.match(lane, /useEffect\([\s\S]{0,200}?_wireDiscoveryCards\?\.\(el\)/,
     'the lane binds its own element');
-  // Both call sites go through it — the featured lane and Popular.
-  assert.equal((discoverSrc.match(/<Lane\b/g) || []).length, 2);
+  // And there is exactly ONE call site now: the merge retired the second
+  // rail, which retires the whole class of bug this used to guard.
+  assert.equal((discoverSrc.match(/<Lane\b/g) || []).length, 1);
   assert.doesNotMatch(discoverSrc, /querySelector/,
     'nothing reaches across the lane boundary to find tiles');
 });
@@ -1961,19 +1981,19 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   assert.match(renderBlock('create', { home: { canCreate: () => true } }).html,
     /class="home-create-btn/);
 
-  // ONE Discover check covers the populated widget (#949). It selects the
-  // SECOND lane, which only exists once the whole block has painted, so it
-  // is strictly stronger than the featured-lane selector it replaced — and
-  // the checks run at the desktop viewport, which is the breakpoint that
-  // draws two lanes at all.
-  const discover = find('[data-panel-slot="discover"] .home-panel');
+  // ONE Discover check covers the populated widget (#949). It requires BOTH
+  // halves to be non-empty via the mirrored stamps, then asserts the block
+  // drew them as one lane — so it is stronger than the old second-rail
+  // selector it replaced: that one proved the popular apps painted, this one
+  // proves they painted with nothing separating them from the curated ones.
+  const discover = find('[data-panel-slot="discover"]:not([data-featured="0"])');
   assert.ok(discover, 'the discover check is declared');
-  for (const cls of ['home-panel', 'home-discover-popular', 'app-card']) {
+  for (const cls of ['home-panel', 'home-discover-rail', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
   assert.equal(discover.expectText, 'Browse all apps');
   const desktop = renderDiscover();
-  assert.ok(desktop.includes('home-discover-popular') && desktop.includes('app-card'),
+  assert.ok(desktop.includes('home-discover-rail') && desktop.includes('app-card'),
     'and this module emits both classes that selector chains');
   // The tile-face invariant rides along on this selector rather than having
   // a check of its own — it dates from when the manifest parsed only the
@@ -1981,12 +2001,18 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   // declared check, so a separate entry would be free now; folding it in is
   // still the tighter assertion (one navigation proves both), so it stays.
   assert.match(discover.expectSelector, /:not\(:has\(\.users-badge\)\)/);
+  // The check is the merge's own guard: the block draws the cards, and
+  // neither a caption row nor a second lane comes back beside them.
+  assert.match(discover.expectSelector, /:not\(:has\(\.home-discover-divider\)\)/);
+  assert.match(discover.expectSelector, /:not\(:has\(\.home-discover-lane ~ \.home-discover-lane\)\)/);
+  const desktopLanes = (desktop.match(/home-discover-lane/g) || []).length;
+  assert.equal(desktopLanes, 1, 'and the block really does draw one');
   assert.doesNotMatch(desktop, /users-badge/,
     'a discovery tile states popularity by its rank, not by a badge');
 
   // The empty state's check selects on the mirrored host attribute plus the
   // browse control, and asserts the note's own copy.
-  const bare = find('[data-panel-slot="discover"][data-featured="0"]');
+  const bare = find('[data-panel-slot="discover"][data-featured="0"][data-popular="0"]');
   assert.ok(bare, 'the empty-state check is declared');
   assert.match(bare.path, /shot=discover-empty/, 'reached by the deep link, not by luck');
   assert.match(bare.expectSelector, /\.home-panel-browse/);
