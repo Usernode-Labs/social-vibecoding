@@ -415,11 +415,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // deliberately not asserting it is enabled: the box is disabled on a row
   // with no resolvable reference, which is a legitimate state the demo
   // fixtures may well be in.
+  // 605 → 606: #1912 puts Show more on every sort, so one check pins the case
+  // that had none — a metric sort, where the demo and broken samples are the
+  // top two by users and used to lead the directory. It asserts the absence of
+  // the tier headings too, because "one list in its own order" is the half of
+  // the change that a Show-more selector alone would not catch.
   // 605 → 606: the Needs-you feed replaces the deck. The ask-box check now walks
   // to the rail's Ask control (the box lives on a sheet), the vote check to
   // the rail's Vote control, and one new check pins the item's own order:
   // title, then the sentence a voter reads, then the caption.
-  assert.equal(DAPP.tests.length, 606);
+  // 606 → 607: both of the above landed, on either side of a merge.
+  assert.equal(DAPP.tests.length, 607);
+  assert.equal(DAPP.tests.length, 607);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
