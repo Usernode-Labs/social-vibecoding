@@ -1012,6 +1012,11 @@
       "expectText": "Reviewed working apps"
     },
     {
+      "name": "Show more is on every sort, not just Recommended (#1912)",
+      "path": "/?demo=1&curation=1&sort=users#apps",
+      "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])):not(:has(.browse-row[data-slug=\"directory-sample-broken\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
+    },
+    {
       "name": "Show more keeps demo and broken directory apps reachable (#1523)",
       "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
       "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",

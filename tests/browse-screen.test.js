@@ -233,8 +233,17 @@ test('#1523: quality outranks featuring/popularity, while explicit sorts and sea
   assert.equal(state.curated, true);
   assert.equal(state.moreExpanded, false);
   Browse.setSort('users');
-  assert.equal(state.curated, false, 'explicit metric sorts are global, not grouped');
+  // #1912: a metric sort still tucks the `more` tier behind Show more — it
+  // is just not GROUPED under tier headings, so its own order holds.
+  assert.equal(state.curated, true, 'every sort gets Show more');
+  assert.equal(state.grouped, false, 'explicit metric sorts are one list, not grouped');
   assert.deepEqual(slugs(state), ['demo', 'unreviewed', 'working']);
+  Browse.setSort('recommended');
+  assert.equal(state.grouped, true, 'Recommended keeps its tier headings');
+  Browse.setQuery('Demo app', { immediate: true });
+  assert.equal(state.curated, false);
+  assert.equal(state.grouped, false);
+  Browse.setQuery('', { immediate: true });
 });
 
 test('#1523: disclosure survives a detail round trip and resets on a new directory visit', () => {

@@ -414,7 +414,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with no resolvable reference, which is a legitimate state the demo
   // fixtures may well be in.
   // 605 → 606: #1823's Challenges row in the app menu, under Discover.
-  assert.equal(DAPP.tests.length, 606);
+  // 606 → 607: #1912 puts Show more on every sort, so one check pins the case
+  // that had none — a metric sort, where the demo and broken samples are the
+  // top two by users and used to lead the directory. It asserts the absence of
+  // the tier headings too, because "one list in its own order" is the half of
+  // the change that a Show-more selector alone would not catch.
+  assert.equal(DAPP.tests.length, 607);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
