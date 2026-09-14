@@ -132,6 +132,9 @@ const DevChat = {
   _titleCompletion: null,
 
   budget: null,
+  // #2118: an OpenRouter session's counterpart — what the viewer's
+  // OpenRouter key reports left of its limit (GET /allowance), read live.
+  openrouterAllowance: null,
 
   // ----- Cross-app active sessions panel state -----
   // Every non-archived session the user owns across all apps, with a `busy`
@@ -1015,7 +1018,7 @@ const DevChat = {
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included credits or personal key, with any available model.</span>
             ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
@@ -1702,7 +1705,24 @@ const DevChat = {
     // OpenRouter sessions never use the platform's Anthropic allowance.
     // Keep its meter, exhausted banner, and demo refusal card out of this
     // session instead of showing billing state that cannot affect a turn.
+    // What the meter shows here instead (#2118) is the OpenRouter key's
+    // own remaining limit, read live rather than from the snapshot taken
+    // when the key was saved: a managed key's figure moves every turn.
+    // `?shot=openrouter-spend` answers the read from a fixture, as
+    // `?shot=credits-low` does for the Claude meter below.
     if (DevChat._isOpenRouterSession()) {
+      const shot = DevChat._shotOpenRouterSpend();
+      if (shot) {
+        DevChat.openrouterAllowance = shot.allowance;
+      } else {
+        try {
+          const res = await fetch('/api/me/credentials/openrouter/allowance', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (res.ok) DevChat.openrouterAllowance = await res.json();
+        } catch {}
+      }
       DevChat.renderBudget();
       return;
     }
@@ -1837,9 +1857,12 @@ const DevChat = {
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
     const view = DevChat._settledBudgetPillView();
-    const spend = DevChat._liveSpend;
-    if (!spend || DevChat._isOpenRouterSession()
-        || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    const spend = DevChat._liveSpend || DevChat._shotTurnSpend();
+    if (!spend || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    // #2118: an OpenRouter turn's figure is the ledger's list-price estimate
+    // (agent_turns.estimated_cost_usd), so its tooltip says what it is
+    // rather than borrowing Claude Code's wording.
+    const openRouter = DevChat._isOpenRouterSession();
     return {
       title: view.title,
       parts: [...view.parts,
@@ -1847,20 +1870,31 @@ const DevChat = {
         {
           text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
           className: 'text-zinc-500 dark:text-zinc-400',
-          title: spend.estimated
-            ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
-            : 'Token spend reported by Claude Code for this turn.',
+          title: openRouter
+            ? 'Estimated from the model\u2019s OpenRouter list price and the tokens this turn used. OpenRouter\u2019s own usage records determine billing.'
+            : spend.estimated
+              ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
+              : 'Token spend reported by Claude Code for this turn.',
         },
       ],
     };
+  },
+
+  // #2118: the figure `?shot=openrouter-spend` paints as the turn that just
+  // ran, keyed to the session on screen like a real observation.
+  _shotTurnSpend() {
+    const shot = DevChat._shotOpenRouterSpend();
+    if (!shot || !DevChat.currentSession) return null;
+    return { sessionId: DevChat.currentSession.id, ...shot.turn };
   },
 
   _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
     // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it.
-    if (DevChat._isOpenRouterSession()) return NONE;
+    // platform meter has nothing to say about it; what it shows instead is
+    // what is left on that key (#2118).
+    if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
     // is what someone deciding whether to start another turn is looking
@@ -1972,6 +2006,87 @@ const DevChat = {
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
       ],
+    };
+  },
+
+  // #2118: the OpenRouter session's half of the meter. A session on an
+  // OpenRouter key never touches the platform's Anthropic allowance, so
+  // the daily meter has nothing to say about it; what the viewer wants to
+  // know instead is how much of the KEY's limit is left. OpenRouter
+  // reports that itself (GET /key: limit, limit_remaining, limit_reset),
+  // so the figure is shown as reported rather than derived, in the window
+  // the key's reset cadence names. A key with no limit draws nothing
+  // rather than a guess, and the Claude meter's red/yellow thresholds
+  // colour what is left.
+  _openRouterAllowanceView() {
+    const NONE = { title: null, parts: [] };
+    const a = DevChat.openrouterAllowance;
+    if (!a || a.configured === false) return NONE;
+    // Null is "OpenRouter reports no limit", not zero: only a number draws.
+    const left = typeof a.limitRemaining === 'number' ? a.limitRemaining : NaN;
+    if (!Number.isFinite(left)) return NONE;
+    const limit = typeof a.limit === 'number' ? a.limit : NaN;
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const remaining = Math.max(0, left);
+    const cadence = a.limitReset === 'daily' ? 'daily'
+      : a.limitReset === 'weekly' ? 'weekly'
+        : a.limitReset === 'monthly' ? 'monthly' : null;
+    const when = cadence === 'daily' ? ' today'
+      : cadence === 'weekly' ? ' this week'
+        : cadence === 'monthly' ? ' this month' : '';
+    const pct = hasLimit ? Math.min(100, ((limit - remaining) / limit) * 100) : 0;
+    const color = hasLimit && remaining <= 0 ? 'text-red-700 font-semibold dark:text-red-400'
+      : pct > 80 ? 'text-red-700 dark:text-red-400'
+        : pct > 50 ? 'text-yellow-700 dark:text-yellow-400'
+          : 'text-emerald-700 dark:text-emerald-400';
+    const owner = a.source === 'usernode_managed'
+      ? 'Your included OpenRouter key'
+      : `Your OpenRouter key${a.last4 ? ` (\u2026${a.last4})` : ''}`;
+    const allowance = hasLimit
+      ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
+      : `$${remaining.toFixed(2)} left`;
+    const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    return {
+      title: null,
+      parts: [{
+        text: `$${remaining.toFixed(2)} left${when}`,
+        className: color,
+        title: `${owner} has ${allowance}.${reset}`,
+      }],
+    };
+  },
+
+  // Screenshot-state deep link `?shot=openrouter-spend` (#2118).
+  //
+  // What an OpenRouter session's meter says is a property of the viewer's
+  // key and of a turn that ran: how much of the key's allowance OpenRouter
+  // reports left, and what the ledger estimated the last turn cost. Neither
+  // is a session column a fixture row can carry: the allowance is read
+  // live from OpenRouter, which a staging clone has no key to ask, and a
+  // turn would have to be paid for. So, as ?shot=credits-low does for the
+  // Claude meter, the URL names the state and the client answers both
+  // reads from a fixed snapshot: a managed key with $0.86 of $1.00 left
+  // today, and a turn that cost about twelve cents.
+  //
+  // Ungated by environment for the same reason: it paints figures on the
+  // session already on screen, reads nothing and writes nothing, and it
+  // only answers in an OpenRouter session, so on a Claude session the real
+  // budget read runs untouched.
+  _shotOpenRouterSpend() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'openrouter-spend' || !DevChat._isOpenRouterSession()) return null;
+    return {
+      allowance: {
+        configured: true,
+        source: 'usernode_managed',
+        last4: '7f2c',
+        limit: 1,
+        limitRemaining: 0.86,
+        limitReset: 'daily',
+        shot: true,
+      },
+      turn: { costCents: 12, estimated: true },
     };
   },
 
@@ -4397,6 +4512,8 @@ const DevChat = {
               case 'usage':
                 assistantMsg.model = data.model;
                 assistantMsg.costCents = data.costCents;
+                if (data.estimated) assistantMsg.costEstimated = true;
+                DevChat._noteTurnUsage(data);
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
@@ -4831,7 +4948,12 @@ const DevChat = {
       }
       case 'usage': {
         const am = lastAssistantMsg();
-        if (am) { am.model = data.model; am.costCents = data.costCents; }
+        if (am) {
+          am.model = data.model;
+          am.costCents = data.costCents;
+          if (data.estimated) am.costEstimated = true;
+        }
+        DevChat._noteTurnUsage(data);
         DevChat.refreshBudget();
         break;
       }
@@ -4986,7 +5108,11 @@ const DevChat = {
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
     if (streaming) DevChat._startSpendPolling();
-    else DevChat._stopSpendPolling();
+    // #2118: an OpenRouter session keeps the turn's figure up after the
+    // turn. There is no daily meter for it to be absorbed into, and the
+    // cost only became known as the run ended, so clearing it at `done`
+    // would show it for a few hundred milliseconds at best.
+    else DevChat._stopSpendPolling({ keepSpend: DevChat._isOpenRouterSession() });
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -5458,6 +5584,12 @@ const DevChat = {
 
   _applyLiveSpend(payload, sessionId) {
     if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    // #2118: an OpenRouter turn's cost is known only once Codex reports its
+    // usage, at the end of the coding run, after which the session reads
+    // idle while the reply is still being written. A "not busy" snapshot
+    // therefore has nothing newer to say and keeps the figure; the next
+    // turn's start (_startSpendPolling) or leaving the session drops it.
+    if (!payload?.busy && DevChat._isOpenRouterSession()) return;
     const spend = payload?.busy ? payload.spend : null;
     DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
       ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
@@ -5466,7 +5598,7 @@ const DevChat = {
 
   _startSpendPolling() {
     const sessionId = DevChat.currentSession?.id;
-    if (!sessionId || DevChat._isOpenRouterSession()) return;
+    if (!sessionId) return;
     if (DevChat._spendPollTimer && DevChat._spendPollSession === sessionId) return;
     DevChat._stopSpendPolling();
     DevChat._spendPollSession = sessionId;
@@ -5488,14 +5620,34 @@ const DevChat = {
     DevChat._spendPollTimer = setInterval(poll, 3000);
   },
 
-  _stopSpendPolling() {
+  // `keepSpend` leaves the last figure on screen once polling stops — an
+  // OpenRouter session's settled "this turn" (#2118). Every other caller
+  // drops it: a new turn starts clean, and a session switch or reset must
+  // not carry one session's figure into another.
+  _stopSpendPolling({ keepSpend = false } = {}) {
     if (DevChat._spendPollTimer) clearInterval(DevChat._spendPollTimer);
     DevChat._spendPollTimer = null;
     DevChat._spendPollSession = null;
     DevChat._spendPollGeneration += 1;
+    if (keepSpend) return;
     const hadSpend = !!DevChat._liveSpend;
     DevChat._liveSpend = null;
     if (hadSpend) DevChat.renderBudget();
+  },
+
+  // #2118: an OpenRouter turn's cost arrives on its usage event — the
+  // ledger's list-price estimate, sent once the reply is on screen —
+  // rather than through the Claude live tracker, so the event feeds the
+  // same "this turn" figure the /status poll does. A Claude session's
+  // usage events are the platform/BYOK settlement split and stay out.
+  _noteTurnUsage(data) {
+    if (!DevChat._isOpenRouterSession()) return;
+    const costCents = Number(data?.costCents);
+    if (!Number.isFinite(costCents) || costCents <= 0) return;
+    DevChat._applyLiveSpend(
+      { busy: true, spend: { costCents, estimated: data.estimated !== false } },
+      DevChat.currentSession?.id,
+    );
   },
 
   _progressPollTimer: null,
@@ -6066,7 +6218,12 @@ const DevChat = {
     if (raw === null || raw === undefined || raw === '') return '';
     const cents = Number(raw);
     if (!Number.isFinite(cents) || cents <= 0) return '';
-    return ` · reply $${(cents / 100).toFixed(3)}`;
+    // #2118: an OpenRouter reply's figure is the ledger's list-price
+    // estimate, never a provider-reported amount, and the label says so.
+    // A live row carries the flag from its usage event, a reloaded row
+    // from the persisted metadata.
+    const approx = (msg.costEstimated || msg.metadata?.costEstimated) ? '~' : '';
+    return ` · reply ${approx}$${(cents / 100).toFixed(3)}`;
   },
 
   // ── The transcript, as a MODEL ────────────────────────────────────

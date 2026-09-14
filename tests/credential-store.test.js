@@ -246,3 +246,27 @@ test('F2: schema reconciliation is authoritative (no valid-row skip)', () => {
   // UPDATE fails and breaks roll-forward after a rollback deletion.
   assert.match(schema, /verified_at = NULL,/, 'reconciliation tombstone clears verified_at');
 });
+
+test('mergeKeyInfoOnClient patches only the stored key-info and reports whether a row matched', async () => {
+  const pool = makeDb((sql) => (/RETURNING id/.test(sql) ? { rows: [{ id: 5 }] } : { rows: [] }));
+  const client = await pool.connect();
+  const merged = await store.mergeKeyInfoOnClient({
+    client, userId: 7, provider: 'openrouter', purpose: 'coding_agent',
+    keyInfo: { limit: 7, limitReset: 'weekly' },
+  });
+  assert.equal(merged, true);
+  const op = pool.ops().find((o) => /jsonb_set\(metadata, '\{keyInfo\}'/.test(o.sql));
+  assert.ok(op, 'the merge targets the keyInfo object inside the metadata column');
+  assert.match(op.sql, /WHERE user_id = \$1 AND provider = \$2 AND purpose = \$3/);
+  assert.deepEqual(op.params, [7, 'openrouter', 'coding_agent', { limit: 7, limitReset: 'weekly' }]);
+  assert.doesNotMatch(op.sql, /secret_enc|revision|status/, 'ciphertext, revision and status are untouched');
+
+  const missing = makeDb(() => ({ rows: [] }));
+  assert.equal(await store.mergeKeyInfoOnClient({
+    client: await missing.connect(), userId: 8, provider: 'openrouter', purpose: 'coding_agent', keyInfo: {},
+  }), false);
+  await assert.rejects(
+    () => store.mergeKeyInfoOnClient({ client, userId: 7, provider: 'openrouter', purpose: 'nope', keyInfo: {} }),
+    /unknown purpose/,
+  );
+});

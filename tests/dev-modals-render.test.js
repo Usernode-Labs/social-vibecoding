@@ -178,9 +178,9 @@ test('the OpenRouter summary is concise and accurately names a managed or person
   assert.equal(view.options[0].isRecommended, true);
   assert.equal(Object.hasOwn(view.options[0], 'isFavorite'), false,
     'favorites are not part of this dialog');
-  assert.equal(view.billingNote, 'Uses your included daily credits.');
+  assert.equal(view.billingNote, 'Uses your included OpenRouter credits.');
   const html = autoHtml(view);
-  assert.match(html, /Uses your included daily credits/);
+  assert.match(html, /Uses your included OpenRouter credits/);
   assert.doesNotMatch(html, /OpenRouter model|\$1\/Mtok|unverified|Experimental/);
 
   const personal = makeAppView();

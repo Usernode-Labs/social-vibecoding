@@ -1121,7 +1121,22 @@ async function becomeLeader() {
   // restart — actually merges now instead of waiting for a fresh vote.
   // Both stay off the critical path so the server still comes up
   // immediately, like the other recovery steps below.
-  recoverStuckMerges(config)
+  //
+  // The harvest goes first. A checks run whose launcher this rollout just
+  // replaced still has its capture / unit-suite Jobs running (or finished)
+  // on the cluster; services/check-harvest.js seats every such run and
+  // reads its verdict rather than starting it over. Its claim phase is two
+  // writes per run and completes before the chain moves on, so by the time
+  // reconcileStuckChecks looks, every harvestable session reads as in flight
+  // (checkRecoveryInFlight) and only genuinely ownerless rows get re-driven.
+  // The Job reads themselves run detached (`done`); boot never waits on a
+  // Job. No-op outside the Kubernetes capture runtime.
+  const checkHarvest = require('./src/services/check-harvest');
+  checkHarvest.sweep(config, { reason: 'boot' })
+    .catch((err) => {
+      log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
+    })
+    .then(() => recoverStuckMerges(config))
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, re-run any stuck/never-recorded
     // proposal checks so PRs left permanently "still running its tests" by a
@@ -1134,6 +1149,11 @@ async function becomeLeader() {
         err: err.message,
       });
     });
+  // ...and on a timer afterwards: a run orphaned while this process is the
+  // leader (a worker Pod evicted, a follower that launched it and then lost
+  // the election) is picked up within the orphan window instead of waiting
+  // out CHECKS_STALE_MS for the stale sweep to start it over.
+  checkHarvest.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1649,7 +1669,12 @@ function checkRecoveryInFlight(sessionId) {
   return activeWorkersSvc.isSessionBusy(sessionId)
     || hasInFlightHandoffPipeline(sessionId)
     || stagingSvc.hasInFlightBuild(Number(sessionId))
-    || visualsSvc.hasInFlightCapture(sessionId);
+    || visualsSvc.hasInFlightCapture(sessionId)
+    // A harvest holds the capture seat for its whole read, so the line
+    // above already covers it; this also covers the moment it hands the
+    // seat back to re-drive a run it could not read (check-harvest.js
+    // redrive), which must not be re-driven a second time from here.
+    || require('./src/services/check-harvest').isHarvesting(sessionId);
 }
 
 // #447: reconcile stuck proposal checks. check_state is only ever advanced

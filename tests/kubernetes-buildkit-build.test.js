@@ -53,17 +53,24 @@ function runtimeWith(clients, { diagnostics } = {}) {
 // A batch/core pair that records what the platform does and plays back a
 // Job that runs one poll then succeeds, its Pod carrying the digest in the
 // termination message.
-function fakeCluster({ jobReads = null, podMessage = digest('d'), logLines = [], existingJobs = [] } = {}) {
+function fakeCluster({
+  jobReads = null, podMessage = digest('d'), podExitCode = 0, logLines = [], existingJobs = [], createJobError = null,
+} = {}) {
   const state = { secrets: [], jobs: [], patches: [], deleted: [], replacedSecrets: [], lists: [], logFollows: 0 };
   let reads = 0;
   const jobStatuses = jobReads || [{ active: 1 }, { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] }];
   const pod = () => ({
     metadata: { name: 'bk-pod', creationTimestamp: '2026-09-14T10:00:00Z' },
-    status: { containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: 0, message: podMessage } } }] },
+    spec: { nodeName: 'worker-3' },
+    status: { containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: podExitCode, message: podMessage } } }] },
   });
   const batch = {
     async listNamespacedJob(request) { state.lists.push(request); return { items: existingJobs }; },
-    async createNamespacedJob({ body }) { state.jobs.push(body); return { metadata: { ...body.metadata, uid: 'uid-1' } }; },
+    async createNamespacedJob({ body }) {
+      if (createJobError) throw createJobError;
+      state.jobs.push(body);
+      return { metadata: { ...body.metadata, uid: 'uid-1' } };
+    },
     async readNamespacedJob({ name }) {
       const status = jobStatuses[Math.min(reads, jobStatuses.length - 1)];
       reads += 1;
@@ -92,7 +99,10 @@ function fakeCluster({ jobReads = null, podMessage = digest('d'), logLines = [],
   return { clients: { batch, core, logs }, state };
 }
 
-test.afterEach(() => kubernetes._setClientsForTest(null));
+test.afterEach(() => {
+  kubernetes._setClientsForTest(null);
+  buildkit._forTest.resetUnavailable();
+});
 
 test('engine selection: kpack stays the default, auto prefers Dockerfile.kubernetes, buildkit insists on a Dockerfile', () => {
   const both = sourceTree(['Dockerfile', 'Dockerfile.kubernetes']);
@@ -196,6 +206,12 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
   assert.match(script, /--metadata-file \/workspace\/metadata\.json/);
   assert.match(script, /printf '%s' "\$digest" > \/dev\/termination-log/);
   assert.match(script, /test -n "\$digest"/, 'no digest is a failed build, not an empty result');
+  // The daemon preflight runs before any source is fetched and exits with
+  // the code the platform reads as "the lane cannot run here".
+  const preflight = script.indexOf('buildctl-daemonless.sh debug workers');
+  assert.ok(preflight >= 0 && preflight < script.indexOf('git -c protocol.version=2 fetch'), 'preflight precedes the fetch');
+  assert.match(script, /debug workers[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*exit 75/, 'a daemon that cannot start exits 75');
+  assert.equal(buildkit._forTest.PREFLIGHT_EXIT, 75);
 });
 
 test('progress lines: BuildKit steps parse as the Docker builder\'s steps; the Job\'s own lines are the source phase', () => {
@@ -288,6 +304,105 @@ test('createBuild: a failed Job reports through the buildFailed/buildLog contrac
     return true;
   });
   assert.equal(state.deleted.filter((d) => d.propagationPolicy === 'Background').length, 1, 'the failed Job is deleted after diagnostics');
+});
+
+test('createBuild: a Job whose daemon preflight failed is the lane being unavailable, not the build failing', async () => {
+  const { clients, state } = fakeCluster({
+    jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],
+    podExitCode: 75,
+  });
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), (err) => {
+    assert.equal(err.engineUnavailable, true);
+    assert.match(err.message, /BuildKit lane unavailable: buildkitd cannot start on worker-3/);
+    assert.equal(err.buildFailed, true, 'still a failed build for a caller that does not fall back');
+    return true;
+  });
+  assert.equal(state.deleted.filter((d) => d.propagationPolicy === 'Background').length, 1, 'the doomed Job is removed');
+  // Any other exit code is the Dockerfile's problem.
+  const genuine = fakeCluster({
+    jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],
+    podExitCode: 1,
+  });
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(genuine.clients)), (err) => err.engineUnavailable === undefined && err.buildFailed === true);
+});
+
+test('createBuild: a namespace or RBAC the cluster does not have yet is the lane being unavailable', async () => {
+  const forbidden = Object.assign(new Error('jobs.batch is forbidden: User "system:serviceaccount:social-platform:social-platform-runtime" cannot create resource "jobs" in the namespace "bk"'), { code: 403 });
+  const { clients, state } = fakeCluster({ createJobError: forbidden });
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), (err) => {
+    assert.equal(err.engineUnavailable, true);
+    assert.match(err.message, /BuildKit lane unavailable: cannot create Jobs in bk/);
+    return true;
+  });
+  assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
+});
+
+test('kubernetes.createBuild under auto builds with kpack while the lane is unavailable, and remembers that for a while', async () => {
+  const unavailable = fakeCluster({
+    jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],
+    podExitCode: 75,
+  });
+  const kpackCreated = [];
+  const custom = {
+    async listNamespacedCustomObject() { return { items: [] }; },
+    async createNamespacedCustomObject(request) { kpackCreated.push(request.body); },
+    async getNamespacedCustomObject() {
+      return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: `registry.test/apps/demo@${digest('c')}` } };
+    },
+  };
+  kubernetes._setClientsForTest({ ...unavailable.clients, custom });
+  const params = () => ({ app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']) });
+  const first = await kubernetes.createBuild(config(), params());
+  assert.equal(first.engine, undefined, 'a kpack image');
+  assert.equal(first.imageRef, `registry.test/apps/demo@${digest('c')}`);
+  assert.equal(unavailable.state.jobs.length, 1, 'the lane was tried once');
+  assert.equal(kpackCreated.length, 1);
+  assert.match(buildkit.unavailableReason(), /buildkitd cannot start on worker-3/);
+  const second = await kubernetes.createBuild(config(), params());
+  assert.equal(second.imageRef, `registry.test/apps/demo@${digest('c')}`);
+  assert.equal(unavailable.state.jobs.length, 1, 'no second doomed Job while the verdict is fresh');
+  assert.equal(kpackCreated.length, 2);
+  // The verdict expires, and the lane is tried again.
+  assert.equal(buildkit.unavailableReason(Date.now() + buildkit._forTest.UNAVAILABLE_MEMO_MS + 1), null);
+  assert.equal(buildkit.unavailableReason(), null, 'an expired verdict is forgotten');
+  await kubernetes.createBuild(config(), params());
+  assert.equal(unavailable.state.jobs.length, 2);
+});
+
+test('kubernetes.createBuild under BUILD_ENGINE=buildkit surfaces an unavailable lane instead of hiding it in kpack', async () => {
+  const unavailable = fakeCluster({
+    jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],
+    podExitCode: 75,
+  });
+  const kpackCreated = [];
+  kubernetes._setClientsForTest({ ...unavailable.clients, custom: {
+    async listNamespacedCustomObject() { return { items: [] }; },
+    async createNamespacedCustomObject(request) { kpackCreated.push(request.body); },
+  } });
+  await assert.rejects(kubernetes.createBuild(config({ buildEngine: 'buildkit' }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }), (err) => err.engineUnavailable === true);
+  assert.equal(kpackCreated.length, 0);
+  // And a genuine build failure under auto is never a reason to rebuild with kpack.
+  const broken = fakeCluster({
+    jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],
+    podExitCode: 1,
+  });
+  kubernetes._setClientsForTest({ ...broken.clients, custom: {
+    async listNamespacedCustomObject() { return { items: [] }; },
+    async createNamespacedCustomObject(request) { kpackCreated.push(request.body); },
+  } });
+  await assert.rejects(kubernetes.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }), (err) => err.buildFailed === true && err.engineUnavailable === undefined);
+  assert.equal(kpackCreated.length, 0);
+  assert.equal(buildkit.unavailableReason(), null);
 });
 
 test('createBuild: a deadline-exceeded Job is a timeout, with the budget it hit', async () => {

@@ -370,7 +370,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "1",
-      "description": "Positive USD limit assigned to every company-funded child key. OpenRouter resets it daily. Set the matching GitHub Actions variable before deploying if the desired allowance is not $1/day."
+      "description": "No longer used. The included company OpenRouter key carries the user's platform weekly allowance (the per-user weekly cap in Admin > Users, else the platform default in Admin > Limits) instead of a fixed per-key amount, and existing keys are moved to that allowance as it changes. This variable remains only because the deploy workflow still writes it."
     },
     {
       "key": "OPENROUTER_MANAGED_WORKSPACE_ID",
@@ -1156,10 +1156,10 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
+      "name": "The Dev '+' menu separates adding to the board from managing the app (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Import a change"
+      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
+      "expectText": "Add to the board"
     },
     {
       "name": "Improve keeps the New change action after deduplicating the '+' menu (#1490)",
@@ -1174,9 +1174,10 @@
       "expectText": "Give feedback"
     },
     {
-      "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
+      "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
+      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
+      "expectText": "File an issue"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -3405,6 +3406,18 @@
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
       "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
       "expectText": "openai/gpt-5.3-codex"
+    },
+    {
+      "name": "An OpenRouter session's composer says what is left on its key (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "$0.86 left today"
+    },
+    {
+      "name": "An OpenRouter session's composer says what the turn cost (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "this turn ~$0.12"
     },
     {
       "name": "A venue you did not get is explained rather than silently swapped (#1086)",

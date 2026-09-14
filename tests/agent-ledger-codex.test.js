@@ -677,6 +677,58 @@ test('attempt loop: terminal after a single successful dispatch (no retry)', asy
   assert.equal(attempts[0].status, 'completed');
 });
 
+// #2118: the figure the dev-chat composer shows for an OpenRouter turn is the
+// ledger's own estimate, summed over the turn's attempts — published on the
+// session's progress entry for the /status poll and returned to the caller.
+test('attempt loop: the turn\'s recorded cost is published for the live meter and returned', async () => {
+  const workerProgress = require('../src/services/worker-progress');
+  const { pool, attempts } = makeLoopPool();
+  workerProgress.clear(1);
+  let dispatchCalls = 0;
+  const result = await runCodexAttemptLoop({
+    pool,
+    session: { id: 1, agent_config_version: 1 },
+    userId: 1, config: {},
+    resolveRuntime: async () => ({
+      agentBackend: 'codex_openrouter', agentModel: 'openai/gpt-5.3-codex',
+      pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 },
+    }),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
+        // A markerless first attempt that still consumed tokens was paid
+        // for, so it counts towards the turn.
+        return { exitCode: -1, resultSeen: false, lastResultText: '', inputTokens: 1000, outputTokens: 500 };
+      }
+      return { exitCode: 0, resultSeen: true, agentThreadId: 'thr-1', inputTokens: 2000, outputTokens: 1000 };
+    },
+    retryPredicate: (r) => r && r.exitCode === -1 && !r.resultSeen,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(attempts.length, 2);
+  // 1,500 tokens at $1/M, then 3,000 at $1/M: $0.0015 + $0.003.
+  assert.ok(Math.abs(result.estimatedCostUsd - 0.0045) < 1e-12, String(result.estimatedCostUsd));
+  assert.deepEqual(workerProgress.get(1).spend, { costCents: 0.45, estimated: true });
+  workerProgress.clear(1);
+});
+
+test('attempt loop: a turn whose usage was never observed reports no cost, not zero', async () => {
+  const workerProgress = require('../src/services/worker-progress');
+  const { pool } = makeLoopPool();
+  workerProgress.clear(1);
+  const result = await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({
+      agentBackend: 'codex_openrouter', agentModel: 'm',
+      pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 },
+    }),
+    dispatchOnce: async () => ({ exitCode: 0, resultSeen: true }),
+    retryPredicate: () => false,
+  });
+  assert.equal(result.estimatedCostUsd, null);
+  assert.equal(workerProgress.get(1), null, 'nothing is published for the meter to show');
+});
+
 test('attempt loop: a requested stop terminalizes the observed attempt as cancelled', async () => {
   const { pool, attempts } = makeLoopPool();
   await runCodexAttemptLoop({

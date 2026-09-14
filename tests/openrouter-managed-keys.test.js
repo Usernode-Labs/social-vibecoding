@@ -4,17 +4,41 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const managementClient = require('../src/services/openrouter-management-client');
 const managed = require('../src/services/openrouter-managed-keys');
 const credentialStore = require('../src/services/credential-store');
 const agentModels = require('../src/services/agent-models');
 const notifications = require('../src/services/notifications');
+const limits = require('../src/services/limits');
 const runtimeConfig = require('../src/config');
 
 const root = path.join(__dirname, '..');
 
-test('management client creates one daily-limited child key in the configured workspace', async (t) => {
+// The included key's limit is the platform weekly allowance. Stub the two
+// limits reads resolveAllowance makes, shaped the way the Claude gate sees
+// them, and restore the real functions (captured once, so stacked stubs in
+// one test cannot leak a stub past it).
+const REAL_LIMITS = {
+  weekly: limits.getEffectiveUserWeeklyLimitCents,
+  entitlement: limits.getUserCreditEntitlement,
+};
+function stubAllowance(t, { weeklyCents = 17500, dailyCents = 2500, dailySource = 'default' } = {}) {
+  t.after(() => {
+    limits.getEffectiveUserWeeklyLimitCents = REAL_LIMITS.weekly;
+    limits.getUserCreditEntitlement = REAL_LIMITS.entitlement;
+  });
+  const reads = [];
+  limits.getEffectiveUserWeeklyLimitCents = async (_pool, userId) => { reads.push(userId); return weeklyCents; };
+  limits.getUserCreditEntitlement = async () => ({
+    limitCents: dailyCents, source: dailySource,
+    weeklyLimitCents: weeklyCents, weeklySource: 'default',
+  });
+  return reads;
+}
+
+test('management client creates one weekly-limited child key in the configured workspace', async (t) => {
   const originalFetch = global.fetch;
   let request;
   global.fetch = async (url, options) => {
@@ -24,9 +48,9 @@ test('management client creates one daily-limited child key in the configured wo
       data: {
         hash: '0123456789abcdef0123456789abcdef',
         label: 'usernode-user-7',
-        limit: 1.5,
-        limit_remaining: 1.5,
-        limit_reset: 'daily',
+        limit: 10.5,
+        limit_remaining: 10.5,
+        limit_reset: 'weekly',
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
@@ -37,7 +61,8 @@ test('management client creates one daily-limited child key in the configured wo
     baseUrl: 'https://openrouter.ai/api/v1',
     origin: 'https://usernode.dev',
     name: 'usernode-user-7',
-    limit: 1.5,
+    limit: 10.5,
+    limitReset: 'weekly',
     workspaceId: 'workspace-123',
   });
 
@@ -46,12 +71,44 @@ test('management client creates one daily-limited child key in the configured wo
   assert.equal(request.options.headers.Authorization, 'Bearer sk-or-v1-management');
   assert.deepEqual(JSON.parse(request.options.body), {
     name: 'usernode-user-7',
-    limit: 1.5,
-    limit_reset: 'daily',
+    limit: 10.5,
+    limit_reset: 'weekly',
     workspace_id: 'workspace-123',
   });
   assert.equal(result.key, 'sk-or-v1-child-secret');
   assert.equal(result.hash, '0123456789abcdef0123456789abcdef');
+  assert.equal(result.limitReset, 'weekly');
+});
+
+test('management client moves an issued key to a new allowance with one idempotent PATCH', async (t) => {
+  const originalFetch = global.fetch;
+  let request;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({
+      data: {
+        hash: '0123456789abcdef0123456789abcdef',
+        limit: 7,
+        limit_remaining: 6.25,
+        limit_reset: 'weekly',
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const result = await managementClient.setLimit({
+    apiKey: 'sk-or-v1-management',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    origin: 'https://usernode.dev',
+    hash: '0123456789abcdef0123456789abcdef',
+    limit: 7,
+    limitReset: 'weekly',
+  });
+
+  assert.equal(request.url, 'https://openrouter.ai/api/v1/keys/0123456789abcdef0123456789abcdef');
+  assert.equal(request.options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(request.options.body), { limit: 7, limit_reset: 'weekly' });
+  assert.deepEqual(result, { limit: 7, limitRemaining: 6.25, limitReset: 'weekly' });
 });
 
 test('an ambiguous create failure is surfaced after exactly one attempt', async (t) => {
@@ -93,8 +150,11 @@ test('default-open managed provisioning stores the key internally and returns on
     agentModels.listOpenRouterModels = originals.listModels;
     notifications.notifyManagedOpenRouterAdmins = originals.notify;
   });
+  const allowanceReads = stubAllowance(t, { weeklyCents: 17500 });
 
   let createCalls = 0;
+  let createArgs;
+  let reservation;
   let stored;
   let defaultModel;
   let notificationsSent = 0;
@@ -106,7 +166,10 @@ test('default-open managed provisioning stores the key internally and returns on
         identityQueries += 1;
         return { rows: [] };
       }
-      if (/INSERT INTO credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
+      if (/INSERT INTO credentials\.managed_openrouter_keys/.test(text)) {
+        reservation = params;
+        return { rows: [{ id: 17 }] };
+      }
       if (/SELECT id FROM credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
       if (/INSERT INTO user_agent_preferences/.test(text)) defaultModel = params[2];
       return { rows: [] };
@@ -118,15 +181,16 @@ test('default-open managed provisioning stores the key internally and returns on
     stored = args;
     return { id: 91, revision: 1 };
   };
-  managementClient.createKey = async () => {
+  managementClient.createKey = async (args) => {
     createCalls += 1;
+    createArgs = args;
     return {
       key: 'sk-or-v1-issued-once',
       hash: 'abcdef0123456789abcdef0123456789',
       label: 'usernode-user-7',
-      limit: 1,
-      limitRemaining: 1,
-      limitReset: 'daily',
+      limit: 175,
+      limitRemaining: 175,
+      limitReset: 'weekly',
     };
   };
   agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3-flash' });
@@ -144,7 +208,6 @@ test('default-open managed provisioning stores the key internally and returns on
       openrouterManagementApiKey: 'sk-or-v1-management',
       openrouterApiBase: 'https://openrouter.ai/api/v1',
       openrouterOrigin: 'https://usernode.dev',
-      openrouterManagedDailyLimitUsd: 1,
       openrouterManagedWorkspaceId: 'workspace-123',
       openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
       dataEncryptionKey: 'test-data-key',
@@ -153,6 +216,13 @@ test('default-open managed provisioning stores the key internally and returns on
 
   assert.equal(createCalls, 1);
   assert.equal(identityQueries, 0, 'the default policy must not query or require an identity proof');
+  assert.deepEqual(allowanceReads, [7], 'the allowance is resolved for the claimant');
+  assert.deepEqual(reservation.slice(2), [175, 'weekly'],
+    'the reservation records the platform weekly allowance it is about to request');
+  assert.equal(createArgs.limit, 175);
+  assert.equal(createArgs.limitReset, 'weekly');
+  assert.equal(stored.metadata.keyInfo.limitReset, 'weekly');
+  assert.equal(result.keyInfo.limitReset, 'weekly');
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
@@ -167,6 +237,47 @@ test('default-open managed provisioning stores the key internally and returns on
   assert.equal(notificationsSent, 1);
 });
 
+test('an account whose platform weekly allowance is zero cannot claim a company key', async (t) => {
+  const originals = {
+    withTransaction: credentialStore.withTransaction,
+    createKey: managementClient.createKey,
+  };
+  t.after(() => {
+    credentialStore.withTransaction = originals.withTransaction;
+    managementClient.createKey = originals.createKey;
+  });
+  let reservations = 0;
+  let createCalls = 0;
+  credentialStore.withTransaction = async () => { reservations += 1; };
+  managementClient.createKey = async () => { createCalls += 1; };
+  const config = { openrouterManagementApiKey: 'sk-or-v1-management' };
+  const refused = (pattern) => (err) => err instanceof managed.ManagedOpenRouterError
+    && err.statusCode === 403 && err.code === 'no_allowance' && pattern.test(err.message);
+
+  // An admin switched the weekly cap off.
+  stubAllowance(t, { weeklyCents: 0 });
+  await assert.rejects(managed.provision({ pool: {}, userId: 21, config }),
+    refused(/no included weekly allowance/));
+  assert.deepEqual(await managed.resolveAllowance({}, 21),
+    { cents: 0, limitUsd: 0, limitReset: 'weekly', identityGated: false });
+
+  // The identity tier grants the account nothing: the Claude side keeps an
+  // identity-derived daily 0 applying, and so does the included key.
+  stubAllowance(t, { weeklyCents: 17500, dailyCents: 0, dailySource: 'identity' });
+  await assert.rejects(managed.provision({ pool: {}, userId: 22, config }),
+    refused(/Connect GitHub or X/));
+  assert.deepEqual(await managed.resolveAllowance({}, 22),
+    { cents: 0, limitUsd: 0, limitReset: 'weekly', identityGated: true });
+
+  // An admin-set daily 0 is a weekly-only account, not a gate.
+  stubAllowance(t, { weeklyCents: 5000, dailyCents: 0, dailySource: 'admin_override' });
+  assert.deepEqual(await managed.resolveAllowance({}, 23),
+    { cents: 5000, limitUsd: 50, limitReset: 'weekly', identityGated: false });
+
+  assert.equal(reservations, 0, 'a refused claim never consumes the one lifetime issuance');
+  assert.equal(createCalls, 0, 'a refused claim never reaches OpenRouter');
+});
+
 test('the opt-in verification policy rejects an unverified account before provider creation', async (t) => {
   const originals = {
     withTransaction: credentialStore.withTransaction,
@@ -176,6 +287,7 @@ test('the opt-in verification policy rejects an unverified account before provid
     credentialStore.withTransaction = originals.withTransaction;
     managementClient.createKey = originals.createKey;
   });
+  stubAllowance(t);
 
   let createCalls = 0;
   let reservationCalls = 0;
@@ -237,11 +349,157 @@ test('identity-loss review notifications follow the same opt-in policy', async (
   assert.equal(notificationsSent, 1);
 });
 
-function loadManagedVerificationConfig(value, recommendedModels) {
+test('a key whose limit differs from the platform weekly allowance is re-limited on the next status read', async (t) => {
+  const originals = {
+    withTransaction: credentialStore.withTransaction,
+    mergeKeyInfo: credentialStore.mergeKeyInfoOnClient,
+    setLimit: managementClient.setLimit,
+  };
+  t.after(() => {
+    credentialStore.withTransaction = originals.withTransaction;
+    credentialStore.mergeKeyInfoOnClient = originals.mergeKeyInfo;
+    managementClient.setLimit = originals.setLimit;
+  });
+
+  const patches = [];
+  const updates = [];
+  const merges = [];
+  managementClient.setLimit = async (args) => {
+    patches.push(args);
+    return { limit: args.limit, limitRemaining: args.limit - 0.75, limitReset: 'weekly' };
+  };
+  const client = {
+    query: async (sql, params) => {
+      if (/UPDATE credentials\.managed_openrouter_keys/.test(String(sql))) updates.push(params);
+      return { rows: [] };
+    },
+  };
+  credentialStore.withTransaction = async (_pool, fn) => fn(client);
+  credentialStore.mergeKeyInfoOnClient = async (args) => { merges.push(args); return true; };
+  const config = {
+    openrouterManagementApiKey: 'sk-or-v1-management',
+    openrouterApiBase: 'https://openrouter.ai/api/v1',
+    openrouterOrigin: 'https://usernode.dev',
+  };
+  const weekly = (cents) => ({ cents, limitUsd: cents / 100, limitReset: 'weekly', identityGated: false });
+  const legacy = {
+    verified: true, managed_key_id: 2119, managed_status: 'active',
+    remote_key_hash: 'abcdef0123456789abcdef0123456789',
+    daily_limit_usd: '1.00000000', limit_reset: 'daily',
+  };
+
+  // A key issued before the weekly policy, resolved through the limits reads.
+  const reads = stubAllowance(t, { weeklyCents: 17500 });
+  const synced = await managed.syncAllowance({ pool: {}, userId: 7, state: legacy, config });
+  assert.deepEqual(reads, [7]);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].apiKey, 'sk-or-v1-management');
+  assert.equal(patches[0].hash, legacy.remote_key_hash);
+  assert.equal(patches[0].limit, 175);
+  assert.equal(patches[0].limitReset, 'weekly');
+  assert.deepEqual(updates, [[2119, 175, 'weekly']]);
+  assert.equal(merges[0].userId, 7);
+  assert.equal(merges[0].provider, 'openrouter');
+  assert.equal(merges[0].purpose, 'coding_agent');
+  assert.deepEqual(merges[0].keyInfo, { limit: 175, limitReset: 'weekly', limitRemaining: 174.25 });
+  assert.equal(synced.limit_reset, 'weekly');
+  assert.equal(synced.daily_limit_usd, 175);
+  const shown = managed.publicState(synced);
+  assert.equal(shown.limitUsd, 175);
+  assert.equal(shown.limitReset, 'weekly');
+  assert.equal('dailyLimitUsd' in shown, false, 'the public field no longer claims a cadence');
+
+  // Equal: nothing to do, the provider is not asked.
+  const current = { ...synced, daily_limit_usd: '175.00000000' };
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 7, state: current, config, allowance: weekly(17500),
+  }), current);
+  assert.equal(patches.length, 1);
+
+  // An admin changed this user's weekly cap: the key follows.
+  const lowered = await managed.syncAllowance({
+    pool: {}, userId: 7, state: current, config, allowance: weekly(5000),
+  });
+  assert.equal(patches.length, 2);
+  assert.equal(patches[1].limit, 50);
+  assert.deepEqual(updates[1], [2119, 50, 'weekly']);
+  assert.equal(lowered.daily_limit_usd, 50);
+
+  // A zero allowance is never written to an issued key.
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 7, state: lowered, config, allowance: weekly(0),
+  }), lowered);
+  assert.equal(patches.length, 2);
+
+  // Nothing that can be synced: no confirmed hash, deleted, unconfigured, no row.
+  const unconfirmed = { ...legacy, managed_key_id: 2120, remote_key_hash: null };
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 8, state: unconfirmed, config, allowance: weekly(17500),
+  }), unconfirmed);
+  const deleted = { ...legacy, managed_key_id: 2121, managed_status: 'deleted' };
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 9, state: deleted, config, allowance: weekly(17500),
+  }), deleted);
+  const unmanaged = { ...legacy, managed_key_id: 2122 };
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 10, state: unmanaged, allowance: weekly(17500),
+    config: { ...config, openrouterManagementApiKey: '' },
+  }), unmanaged);
+  const none = { verified: false };
+  assert.equal(await managed.syncAllowance({
+    pool: {}, userId: 11, state: none, config, allowance: weekly(17500),
+  }), none);
+  assert.equal(patches.length, 2);
+  assert.equal(reads.length, 1, 'a caller that already resolved the allowance is not made to resolve it again');
+});
+
+test('a failed allowance sync keeps the key truthful and is not retried for the same target in this process', async (t) => {
+  const originals = {
+    withTransaction: credentialStore.withTransaction,
+    setLimit: managementClient.setLimit,
+  };
+  t.after(() => {
+    credentialStore.withTransaction = originals.withTransaction;
+    managementClient.setLimit = originals.setLimit;
+  });
+
+  const attempts = [];
+  let writes = 0;
+  managementClient.setLimit = async (args) => { attempts.push(args.limit); throw new Error('HTTP 502'); };
+  credentialStore.withTransaction = async () => { writes += 1; };
+  const config = {
+    openrouterManagementApiKey: 'sk-or-v1-management',
+    openrouterApiBase: 'https://openrouter.ai/api/v1',
+  };
+  const weekly = (cents) => ({ cents, limitUsd: cents / 100, limitReset: 'weekly', identityGated: false });
+  const legacy = {
+    managed_key_id: 2123, managed_status: 'disabled',
+    remote_key_hash: 'fedcba9876543210fedcba9876543210',
+    daily_limit_usd: '1.00000000', limit_reset: 'daily',
+  };
+
+  const first = await managed.syncAllowance({
+    pool: {}, userId: 12, state: legacy, config, allowance: weekly(17500),
+  });
+  assert.equal(first, legacy, 'the status read still succeeds with the stored state');
+  assert.deepEqual(attempts, [175]);
+  assert.equal(writes, 0, 'nothing is recorded locally that OpenRouter did not confirm');
+  const second = await managed.syncAllowance({
+    pool: {}, userId: 12, state: legacy, config, allowance: weekly(17500),
+  });
+  assert.equal(second, legacy);
+  assert.deepEqual(attempts, [175], 'a later status read never waits on a provider call that just failed');
+  // A different target value (an admin changed the cap) is a new attempt.
+  await managed.syncAllowance({ pool: {}, userId: 12, state: legacy, config, allowance: weekly(5000) });
+  assert.deepEqual(attempts, [175, 50]);
+});
+
+function loadManagedVerificationConfig(value, recommendedModels, allowance = {}) {
   const keys = [
     'DATABASE_URL', 'SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD',
     'USERNODE_ENV', 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
     'OPENROUTER_DEFAULT_CODEX_MODEL', 'OPENROUTER_RECOMMENDED_MODELS',
+    'OPENROUTER_MANAGED_WEEKLY_LIMIT_USD', 'OPENROUTER_MANAGED_DAILY_LIMIT_USD',
   ];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
@@ -256,6 +514,10 @@ function loadManagedVerificationConfig(value, recommendedModels) {
   delete process.env.OPENROUTER_DEFAULT_CODEX_MODEL;
   if (recommendedModels === undefined) delete process.env.OPENROUTER_RECOMMENDED_MODELS;
   else process.env.OPENROUTER_RECOMMENDED_MODELS = recommendedModels;
+  if (allowance.weekly === undefined) delete process.env.OPENROUTER_MANAGED_WEEKLY_LIMIT_USD;
+  else process.env.OPENROUTER_MANAGED_WEEKLY_LIMIT_USD = allowance.weekly;
+  if (allowance.daily === undefined) delete process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD;
+  else process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD = allowance.daily;
 
   const realLog = console.log;
   console.log = () => {};
@@ -290,6 +552,131 @@ test('managed-key verification defaults off and can be enabled explicitly', () =
   assert.equal(loadManagedVerificationConfig('true').openrouterManagedRequireVerifiedIdentity, true);
   assert.equal(managed.requiresVerifiedIdentity({}), false);
   assert.equal(managed.requiresVerifiedIdentity({ openrouterManagedRequireVerifiedIdentity: true }), true);
+});
+
+test('the managed allowance is not a config value: it is the platform weekly allowance', () => {
+  const load = (allowance) => loadManagedVerificationConfig(undefined, undefined, allowance);
+  for (const config of [load({}), load({ daily: '1' }), load({ daily: 'not-a-number', weekly: '5' })]) {
+    assert.equal('openrouterManagedWeeklyLimitUsd' in config, false);
+    assert.equal('openrouterManagedDailyLimitUsd' in config, false);
+  }
+  const source = fs.readFileSync(path.join(root, 'src/config.js'), 'utf8');
+  assert.doesNotMatch(source, /process\.env\.OPENROUTER_MANAGED_(?:DAILY|WEEKLY)_LIMIT_USD/,
+    'the deploy still writes the old daily variable; nothing reads it');
+  assert.equal(managed.LIMIT_RESET, 'weekly');
+});
+
+// Evaluate settings.js the way tests/settings-mobile-push.test.js does, with
+// just enough DOM for _refreshOpenRouter to paint the OpenRouter section.
+function settingsHarness(credentialStatus) {
+  const elements = new Map();
+  const el = (id) => {
+    if (!elements.has(id)) {
+      const classes = new Set(['hidden']);
+      elements.set(id, {
+        id, textContent: '', placeholder: '', value: '', disabled: false,
+        classList: {
+          add: (...names) => names.forEach((name) => classes.add(name)),
+          remove: (...names) => names.forEach((name) => classes.delete(name)),
+          toggle: (name, force) => {
+            const on = force === undefined ? !classes.has(name) : !!force;
+            if (on) classes.add(name); else classes.delete(name);
+            return on;
+          },
+          contains: (name) => classes.has(name),
+        },
+      });
+    }
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    window: {},
+    document: {
+      addEventListener() {},
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      // No model select, so _loadOpenRouterModels returns before it fetches.
+      getElementById: (id) => (id === 'settings-openrouter-model' ? null : el(id)),
+    },
+    fetch: async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => (String(url).startsWith('/api/me/coding-agent')
+        ? { codexAvailable: true }
+        : credentialStatus),
+    }),
+    setTimeout, clearTimeout, setInterval, clearInterval, console,
+  });
+  context.window.window = context.window;
+  context.window.document = context.document;
+  vm.runInContext(fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8'), context);
+  return { Settings: context.window.Settings, el };
+}
+
+test('the settings screen names the platform allowance the key carries, from the stored cadence', async () => {
+  const issued = (limitReset, limit, limitRemaining) => ({
+    configured: true, status: 'valid', last4: 'ab12', revision: 1, source: 'usernode_managed',
+    keyInfo: { label: 'usernode-user-7', limit, limitRemaining, limitReset },
+    managed: { id: 17, status: 'active', label: 'usernode-user-7', limitUsd: limit, limitReset },
+    managedProvisioning: {
+      available: true, verified: true, verificationRequired: false, alreadyIssued: true,
+      canClaim: false, limitUsd: 175, limitReset: 'weekly', identityGated: false, reason: 'already_issued',
+    },
+  });
+
+  const weekly = settingsHarness(issued('weekly', 175, 174.25));
+  await weekly.Settings._refreshOpenRouter();
+  assert.equal(weekly.el('settings-openrouter-key-info').textContent,
+    'Homeroom-managed · Weekly limit: $175 · Remaining: $174.25');
+  assert.match(weekly.el('settings-openrouter-managed-message').textContent,
+    /key is active with the platform's \$175\.00 weekly allowance\. Admins can block or remove it/);
+
+  // A key issued before the weekly policy and not yet re-limited reads truthfully.
+  const legacy = settingsHarness(issued('daily', 1, 1));
+  await legacy.Settings._refreshOpenRouter();
+  assert.equal(legacy.el('settings-openrouter-key-info').textContent,
+    'Homeroom-managed · Daily limit: $1 · Remaining: $1');
+  assert.match(legacy.el('settings-openrouter-managed-message').textContent,
+    /active with a \$1\.00 daily limit until it is moved to the platform's weekly allowance\./);
+
+  // The claim card quotes the allowance a new key will carry.
+  const provisioning = (extra) => ({
+    available: true, verified: true, verificationRequired: false, alreadyIssued: false,
+    canClaim: false, limitUsd: 175, limitReset: 'weekly', identityGated: false, reason: null, ...extra,
+  });
+  const unissued = (managedProvisioning) => ({
+    configured: false, status: null, last4: null, keyInfo: null, source: null, managed: null,
+    managedProvisioning,
+  });
+  const claimable = settingsHarness(unissued(provisioning({ canClaim: true })));
+  await claimable.Settings._refreshOpenRouter();
+  assert.equal(claimable.el('settings-openrouter-managed-message').textContent,
+    "You can create one included key that carries the platform's $175.00 weekly allowance.");
+  assert.equal(claimable.el('settings-openrouter-claim').classList.contains('hidden'), false);
+
+  // No allowance: no key to create, and the claim button stays hidden.
+  const nothing = settingsHarness(unissued(provisioning({ limitUsd: 0, reason: 'no_allowance' })));
+  await nothing.Settings._refreshOpenRouter();
+  assert.equal(nothing.el('settings-openrouter-managed-message').textContent,
+    'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.');
+  assert.equal(nothing.el('settings-openrouter-claim').classList.contains('hidden'), true);
+
+  // Identity-gated zero: the way out is verification, and the card says so.
+  const gated = settingsHarness(unissued(provisioning({ limitUsd: 0, reason: 'no_allowance', identityGated: true })));
+  await gated.Settings._refreshOpenRouter();
+  assert.match(gated.el('settings-openrouter-managed-message').textContent,
+    /^Connect and verify GitHub or X .* then claim the company key\.$/);
+  assert.equal(gated.el('settings-openrouter-claim').classList.contains('hidden'), true);
+
+  // A personal key's cadence is whatever OpenRouter reports, which may be none.
+  const personal = settingsHarness({
+    configured: true, status: 'valid', last4: 'zz99', source: 'personal', managed: null,
+    keyInfo: { label: 'my key', limit: 10, limitRemaining: 4, limitReset: null },
+    managedProvisioning: provisioning({ reason: 'personal_key_configured' }),
+  });
+  await personal.Settings._refreshOpenRouter();
+  assert.equal(personal.el('settings-openrouter-key-info').textContent,
+    'Personal key · Limit: $10 · Remaining: $4');
 });
 
 test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-owned management credentials', () => {
@@ -346,6 +733,42 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(recommendedDeclaration.default, /deepseek\/deepseek-v4\.1-flash/);
   assert.match(routes, /verificationRequired/);
   assert.match(settings, /provisioning\.verificationRequired && !provisioning\.verified/);
+
+  // #2119: the key carries the platform weekly allowance, and every label
+  // derives from the stored cadence.
+  const adminUsers = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
+  const managementSource = fs.readFileSync(path.join(root, 'src/services/openrouter-management-client.js'), 'utf8');
+  const managedSource = fs.readFileSync(path.join(root, 'src/services/openrouter-managed-keys.js'), 'utf8');
+  assert.match(schema, /managed_openrouter_keys_limit_reset_check\n\s+CHECK \(limit_reset IN \('daily', 'weekly'\)\)/);
+  assert.doesNotMatch(managementSource, /limit_reset: 'daily'/,
+    'the cadence is policy the service owns, not a client default');
+  assert.match(managedSource, /limits\.getEffectiveUserWeeklyLimitCents\(pool, userId\)/,
+    'the amount is the same weekly allowance the Claude gate resolves');
+  assert.match(managedSource, /limits\.resolveCaps\(/, 'and an identity-gated zero is honoured the same way');
+  assert.match(routes, /resolveAllowance\(pool, req\.user\.id\)/);
+  assert.match(routes, /syncAllowance\(\{/);
+  assert.match(admin, /users\/:id\/weekly-limit'[\s\S]*?syncAllowance\(\{/,
+    'setting a user\'s weekly cap re-limits their included key');
+  assert.match(settings, /limitNoun\(managed\.limitReset\)/);
+  assert.match(settings, /limitNoun\(provisioning\.limitReset, 'allowance'\)/);
+  assert.match(settings, /provisioning\.reason === 'no_allowance'/);
+  assert.match(adminUsers, /RESET_PERIOD\[reset\]/);
+  assert.doesNotMatch(adminUsers, /toFixed\(2\)\}\/day/);
+  // No per-key amount from the environment: the deploy workflow is untouched
+  // (the old daily variable it still writes is inert), and nothing declares
+  // or documents a weekly one.
+  assert.doesNotMatch(deploy, /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
+  assert.match(deploy, /OPENROUTER_MANAGED_DAILY_LIMIT_USD=\$\{\{ vars\.OPENROUTER_MANAGED_DAILY_LIMIT_USD \|\| '1' \}\}/);
+  assert.doesNotMatch(envExample, /OPENROUTER_MANAGED_WEEKLY_LIMIT_USD/);
+  assert.equal(manifest.platform_env.some((item) => item.key === 'OPENROUTER_MANAGED_WEEKLY_LIMIT_USD'), false);
+  const dailyDeclaration = manifest.platform_env.find(
+    (item) => item.key === 'OPENROUTER_MANAGED_DAILY_LIMIT_USD',
+  );
+  assert.match(dailyDeclaration.description, /^No longer used\./);
+  for (const file of ['public/js/app-view.js', 'public/js/build-venues.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /included daily credits/,
+      `${file} must not promise a cadence it cannot read from the key`);
+  }
 });
 
 test('configured GLM 5.3 Flash is preferred without filtering the remaining model catalog', async (t) => {
