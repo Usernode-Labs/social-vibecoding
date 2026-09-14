@@ -1013,6 +1013,11 @@
       "expectText": "Reviewed working apps"
     },
     {
+      "name": "Show more is on every sort, not just Recommended (#1912)",
+      "path": "/?demo=1&curation=1&sort=users#apps",
+      "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])):not(:has(.browse-row[data-slug=\"directory-sample-broken\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
+    },
+    {
       "name": "Show more keeps demo and broken directory apps reachable (#1523)",
       "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
       "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
@@ -1964,15 +1969,21 @@
       "expectText": "[Mock] Voting"
     },
     {
-      "name": "The Workshop's Needs-you tab is one proposal at a time, with its vote button and the sentence a voter reads",
+      "name": "The Workshop's Needs-you tab is a feed of one decision per screen, with a Vote control on its rail",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-subject > .dev-ws-needs-scroll > .gc-vote-item:has(+ .dev-ws-needs-summary) button.dev-vote-btn",
+      "expectSelector": "#dev-workshop [data-ws-needs] > [data-ws-rail] > button[data-ws-rail-btn=\"vote\"]",
       "expectText": "Vote"
     },
     {
-      "name": "The Needs-you deck's ask box is present and ready to take a question about the card",
+      "name": "A Needs-you item leads with its title, then the sentence a voter reads, then the caption with who and when",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] [data-ws-ask] form.dev-ws-ask-composer input#dev-ws-ask-input"
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] > .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption > .dev-ws-item-by"
+    },
+    {
+      "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
+      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > [data-ws-rail] > button[data-ws-rail-btn=\"ask\"]",
+      "expectText": "Ask"
     },
     {
       "name": "The view strip marks Workshop as the one you are on",
@@ -3826,8 +3837,8 @@
     {
       "name": "The instructions themselves are on the card, for a clipboard that refuses",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] details.dc-flow-order pre[data-flow-order]",
-      "expectText": "Call prepare_work"
+      "expectSelector": "[data-flow-wizard] details.dc-flow-order:not([open]) > summary + pre[data-flow-order]",
+      "expectText": "Instructions"
     },
     {
       "name": "Without a connector the hand-off asks for one, because the agent needs it",
@@ -3858,6 +3869,23 @@
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"resolving\"]",
       "expectText": "Resolving conflicts automatically"
+    },
+    {
+      "name": "#2061: a locked app's admin-approval requirement is on the card at last",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000092\"] [data-req-headline]",
+      "expectText": "Waiting on an admin"
+    },
+    {
+      "name": "#2061: an automatic step says nobody has to act",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
+      "expectText": "Nothing needs you"
+    },
+    {
+      "name": "#2061: the checklist lists the steps after the one it is stuck on",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
     }
   ],
   "governance": {

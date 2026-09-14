@@ -208,7 +208,9 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
-  assert.match(WORKSHOP, /import \{ CardRowView, callAppView \} from '\.\.\/card\/fold';/);
+  // (`openHref` rides the same import since the Needs-you feed: its item title
+  // links to the card's own page by the fold's rule, not a second one.)
+  assert.match(WORKSHOP, /import \{ CardRowView, callAppView, openHref \} from '\.\.\/card\/fold';/);
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
     assert.ok(!WORKSHOP.includes(fn), `${fn} is not also in workshop.tsx`);
@@ -413,7 +415,21 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // deliberately not asserting it is enabled: the box is disabled on a row
   // with no resolvable reference, which is a legitimate state the demo
   // fixtures may well be in.
-  assert.equal(DAPP.tests.length, 605);
+  // 605 → 606: #1912 puts Show more on every sort, so one check pins the case
+  // that had none — a metric sort, where the demo and broken samples are the
+  // top two by users and used to lead the directory. It asserts the absence of
+  // the tier headings too, because "one list in its own order" is the half of
+  // the change that a Show-more selector alone would not catch.
+  // 605 → 606: the Needs-you feed replaces the deck. The ask-box check now walks
+  // to the rail's Ask control (the box lives on a sheet), the vote check to
+  // the rail's Vote control, and one new check pins the item's own order:
+  // title, then the sentence a voter reads, then the caption.
+  // 606 → 607: both of the above landed, on either side of a merge.
+  // 607 → 610: #2061 adds three checks for the merge-requirements checklist
+  // — the locked-app gate that had no UI at all, the "nobody has to act"
+  // wording, and the steps listed AFTER the one a proposal is stuck on,
+  // landing on the other side of a second merge.
+  assert.equal(DAPP.tests.length, 610);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
@@ -423,6 +439,41 @@ test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and 
   // card is the column's tile, as it always was.
   assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
   assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+});
+
+test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
+  // #2080 gave the Needs-you deck's three dialogs the bare `.dev-ws-sheet` —
+  // the name the fold's OPEN CARD has carried since the Workshop shipped —
+  // so the dialog's geometry landed on every unfolded card on every Workshop
+  // surface: `position: fixed; inset: 0` at `z-index: 30`, which took the
+  // card out of its column or its strip, painted its own fill across the
+  // viewport and swallowed every click underneath. On By stage and By
+  // category that reads as the whole board going opaque and dead; on Current
+  // status the card opens over the tiles it should be sitting under.
+  //
+  // One rule, three screens — so the full-screen geometry is keyed on the
+  // deck's OWN base class and the bare name stays the fold's.
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+    'the deck’s dialogs are the fixed, full-screen thing');
+  assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
+    'and nothing is keyed on the bare name, which is one open card sitting in its row');
+  for (const kind of ['vote', 'ask', 'comments']) {
+    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
+      `the ${kind} dialog carries the deck’s base class`);
+  }
+  assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
+    'and none of the three carries the fold’s');
+  // The open card keeps the bare name, because two declared checks select it
+  // that way — which is also why the deck is the side that moved.
+  assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
+  // Nothing is DECLARED for the geometry itself, and nothing can be: a
+  // selector cannot read a computed position — the card stayed inside its
+  // column in the DOM the whole time it was painting over the board — and the
+  // manifest holds its last 20 slots clear (tests/proposal-tests-manifest.test.js).
+  // What the gate does pin is the name, twice, which is why the deck is the
+  // side that moved rather than the fold.
+  const onTheSheet = DAPP.tests.filter((t) => /\.dev-ws-rowwrap-open > \.dev-ws-sheet/.test(t.expectSelector || ''));
+  assert.ok(onTheSheet.length >= 2, 'the declared checks still select the open card as `.dev-ws-sheet`');
 });
 
 // ── The card's controls and lines, after the fold (#1787) ─────────────────
@@ -578,7 +629,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-scroll > \.gc-vote-item:has\(\+ \.dev-ws-needs-summary\) button\.dev-vote-btn/);
+  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
+  // control; a second check pins the item's own order (title, then the
+  // sentence, then the caption) with the same `+`/`~` direction.
+  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
+  assert.match(byName(/leads with its title, then the sentence a voter reads/).expectSelector, /\.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption > \.dev-ws-item-by/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

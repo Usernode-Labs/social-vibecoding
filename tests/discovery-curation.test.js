@@ -82,7 +82,21 @@ test('directory renders reviewed apps first, leaves unreviewed visible, and disc
   assert.doesNotMatch(expanded, /data-demo="true"/, 'real demo apps retain their navigation and Add actions');
 });
 
-test('search and explicit sorts render all supplied results without disclosure', () => {
+test('#1912: a metric sort is one list in its own order, and still discloses the rest', () => {
+  // Supplied in "sort order" with an unreviewed app FIRST: ungrouped keeps it
+  // there instead of lifting the reviewed one above it under a heading.
+  const ordered = [rows[1], rows[0], rows[2], rows[3], rows[4]];
+  const html = render({ rows: ordered, grouped: false });
+  assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
+  assert.doesNotMatch(html, /<h2[^>]*>(Reviewed working apps|Not yet reviewed)</, 'no tier headings');
+  assert.match(render(), /<h2[^>]*>Reviewed working apps</, 'while Recommended keeps them');
+  assert.match(html, /Show more \(3\)/, 'the same disclosure as Recommended');
+  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
+  const expanded = render({ rows: ordered, grouped: false, moreExpanded: true });
+  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
+});
+
+test('search renders all supplied results without disclosure', () => {
   const html = render({ curated: false });
   for (const { slug } of rows) assert.ok(html.includes(`data-slug="${slug}"`));
   assert.doesNotMatch(html, /Show more|browse-more-apps/);
@@ -113,4 +127,46 @@ test('admin review explains the manual verification and exposes existing review 
   assert.match(html, /Sample: Needs fixes/);
   assert.match(html, /role="status"/);
   assert.doesNotMatch(html, /Save review/, 'no review can be saved before an app is selected');
+});
+
+test('directory review says what to do and what each outcome does', () => {
+  const { DirectoryReview, OUTCOMES } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
+  const html = renderToHtml(createElement(DirectoryReview, { apps: [], onSaved: () => {} }));
+  assert.match(html, /How to review an app/);
+  assert.match(html, /<ol[^>]*>[\s\S]*Choose the app below[\s\S]*Open app to test[\s\S]*Pick the outcome[\s\S]*<\/ol>/,
+    'the three steps, in order');
+  assert.match(html, /What each outcome does/);
+
+  // Every outcome the route accepts is explained, and only those.
+  assert.deepEqual(OUTCOMES.map((o) => o.value).sort(), [...curation.REVIEW_STATES].sort());
+  for (const o of OUTCOMES) {
+    assert.ok(html.includes(o.label), `${o.label} is described`);
+    assert.ok(o.when && o.effect, `${o.label} says when to pick it and what it does`);
+  }
+  // The effects agree with where describe() actually puts the app.
+  const byValue = Object.fromEntries(OUTCOMES.map((o) => [o.value, o.effect]));
+  const base = { status: 'running', icon_emoji: '🧪', main_sha: 'abc', last_deploy_at: '2026-01-01T00:00:00Z',
+    directory_reviewed_at: '2026-01-02T00:00:00Z', directory_reviewed_sha: 'abc' };
+  assert.equal(curation.describe({ ...base, directory_review_status: 'working' }).tier, 'ready');
+  assert.match(byValue.working, /Reviewed working apps[\s\S]*Featured[\s\S]*new version is deployed/);
+  for (const v of ['demo', 'broken']) {
+    assert.equal(curation.describe({ ...base, directory_review_status: v }).tier, 'more');
+    assert.match(byValue[v], /Show more[\s\S]*Cannot be featured/);
+  }
+  assert.equal(curation.describe({ ...base, directory_review_status: 'unreviewed' }).tier, 'unreviewed');
+  assert.match(byValue.unreviewed, /Not yet reviewed[\s\S]*Cannot be featured/);
+});
+
+test('directory review lists what "Reviewed working" still needs, with the fix', () => {
+  const { requirementsFor } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
+  const ready = requirementsFor({ slug: 'a', status: 'running', main_sha: 'abc', icon_emoji: '🧪' });
+  assert.deepEqual(ready.map((r) => r.ok), [true, true, true]);
+
+  const blocked = requirementsFor({ slug: 'b', status: 'error', main_sha: null });
+  assert.deepEqual(blocked.map((r) => r.ok), [false, false, false]);
+  assert.match(blocked[0].fix, /“error”[\s\S]*redeploy/);
+  assert.match(blocked[1].fix, /Deploy it once/);
+  assert.match(blocked[2].fix, /icon in the app’s dapp\.json/);
+  assert.equal(requirementsFor({ slug: 'c', status: 'running', main_sha: 'x', icon_url: '/app-icons/1' })[2].ok, true,
+    'an image icon counts as well as an emoji');
 });

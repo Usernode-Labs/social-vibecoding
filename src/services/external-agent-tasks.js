@@ -3407,13 +3407,21 @@ function workOrderTitle(brief, issueNumber) {
 // row and a session row hand the panel one shape. `icon_image_id`, NOT
 // `icon_url`: the table stores the id and the server builds the path — see the
 // derivation in routes/apps.js and the longer note at the sessions query.
-async function listOpenWorkOrders(pool, userId) {
+//
+// #1948: a task whose REQUEST has since closed is left out. A work order stays
+// `open` until its own agent submits or shares it, so a request built some
+// other way (a platform session, another agent) closes while the task does
+// not — and the row kept pointing at `dev/issues/<n>`, which the board only
+// resolves for OPEN issues, so tapping it fell back to the card list and
+// looked like a dead row. `fetchOpenIssues` is injectable for tests.
+async function listOpenWorkOrders(pool, userId, { fetchOpenIssues = githubService.fetchPublicIssues } = {}) {
   const id = Number(userId);
   if (!Number.isSafeInteger(id) || id <= 0) return [];
+  let rows;
   try {
-    const { rows } = await pool.query(
+    ({ rows } = await pool.query(
       `SELECT t.id, t.issue_number, t.branch_name, t.brief, t.client_id,
-              t.created_at, a.slug AS app_slug, a.name AS app_name,
+              t.created_at, a.slug AS app_slug, a.name AS app_name, a.repo_url,
               a.icon_emoji AS app_icon_emoji,
               CASE WHEN a.icon_image_id IS NOT NULL
                    THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
@@ -3425,8 +3433,15 @@ async function listOpenWorkOrders(pool, userId) {
           AND t.session_id IS NULL
         ORDER BY t.created_at DESC`,
       [id]
-    );
-    return rows.map((r) => ({
+    ));
+  } catch (err) {
+    // The panel is a read: a failed lookup costs the work-order rows and
+    // leaves the session list alone, rather than failing the whole call.
+    log.warn('external-agent-tasks', 'open work-order lookup failed', { err: err.message });
+    return [];
+  }
+  const live = await withoutClosedRequests(rows, fetchOpenIssues);
+  return live.map((r) => ({
       id: Number(r.id),
       issue_number: r.issue_number == null ? null : Number(r.issue_number),
       title: workOrderTitle(r.brief, r.issue_number),
@@ -3438,13 +3453,46 @@ async function listOpenWorkOrders(pool, userId) {
       created_at: r.created_at,
       app_slug: r.app_slug,
       app_name: r.app_name,
+      // Selected above for the panel's leading tile and, until #1948, dropped
+      // here — so every work-order row fell back to the app's initial.
+      app_icon_emoji: r.app_icon_emoji || null,
+      app_icon_url: r.app_icon_url || null,
     }));
-  } catch (err) {
-    // The panel is a read: a failed lookup costs the work-order rows and
-    // leaves the session list alone, rather than failing the whole call.
-    log.warn('external-agent-tasks', 'open work-order lookup failed', { err: err.message });
-    return [];
+}
+
+// Drop the rows whose issue is no longer open (#1948). One fetch per
+// repository, through github.fetchPublicIssues' cache — the same list the
+// board itself renders from, so "not in it" means exactly "the board cannot
+// open it". Only an AUTHORITATIVE list filters: a note (rate limited, fetch
+// failed, unavailable), a truncated list or a throw keeps every row of that
+// repository, because hiding work somebody handed out on a guess is worse
+// than one stale row. A task with no issue has nothing to check.
+async function withoutClosedRequests(rows, fetchOpenIssues) {
+  const repos = new Map();
+  for (const r of rows) {
+    if (r.issue_number == null) continue;
+    const parsed = githubService.parseGithubUrl(r.repo_url);
+    if (parsed) repos.set(`${parsed.owner}/${parsed.repo}`, parsed);
   }
+  if (!repos.size) return rows;
+
+  const openByRepo = new Map();
+  await Promise.all([...repos].map(async ([key, { owner, repo }]) => {
+    try {
+      const result = await fetchOpenIssues(owner, repo);
+      if (!result || result.note || result.truncatedList || !Array.isArray(result.issues)) return;
+      openByRepo.set(key, new Set(result.issues.map((i) => Number(i.number))));
+    } catch (err) {
+      log.warn('external-agent-tasks', 'open-issue check for work orders failed', { repo: key, err: err.message });
+    }
+  }));
+
+  return rows.filter((r) => {
+    if (r.issue_number == null) return true;
+    const parsed = githubService.parseGithubUrl(r.repo_url);
+    const open = parsed && openByRepo.get(`${parsed.owner}/${parsed.repo}`);
+    return !open || open.has(Number(r.issue_number));
+  });
 }
 
 function linkedIssuesFor(task) {

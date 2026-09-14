@@ -9295,7 +9295,9 @@ const DevChat = {
   // cross-device sync and the one-time migration of drafts that existed
   // only in this browser before #940.
   //
-  //   1. union server + local by id
+  //   1. union server + local by id — except a local row already marked
+  //      synced that the server no longer has: it was deleted on another
+  //      device (or sent there), so it is dropped, never re-uploaded
   //   2. anything tombstoned locally is dropped and DELETEd server-side
   //   3. anything local-and-unsynced is POSTed (the migration/offline flush)
   //   4. tombstones the server no longer knows about are discarded
@@ -9334,10 +9336,16 @@ const DevChat = {
     }
 
     // (1) union, minus tombstones. A server row wins on text (it is the
-    // authoritative copy); a local-only row survives to be uploaded.
+    // authoritative copy); a local-only row survives to be uploaded. A row
+    // this device has already seen on the server (`synced`) and the server
+    // no longer lists was deleted elsewhere (#1960/#1961): every DELETE
+    // pushes a drafts-changed event to the account's other devices, so
+    // re-uploading it here would resurrect the draft on all of them.
     const union = new Map();
     for (const d of mirror.drafts) {
-      if (!tombstoned.has(d.id)) union.set(d.id, d);
+      if (tombstoned.has(d.id)) continue;
+      if (d.synced && !serverById.has(d.id)) continue;
+      union.set(d.id, d);
     }
     for (const [id, d] of serverById) {
       if (!tombstoned.has(id)) union.set(id, d);
@@ -9371,7 +9379,7 @@ const DevChat = {
     // (3) flush anything the server hasn't got. After the paint, so an
     // offline device still shows the right list immediately.
     const uploads = merged
-      .filter((d) => !serverById.has(d.id))
+      .filter((d) => !d.synced && !serverById.has(d.id))
       .map((d) => DevChat._pushDraftAdd(sessionId, d));
 
     if (dropped) {
