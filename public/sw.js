@@ -159,16 +159,17 @@
 // catalog behind a separate search step. The dialog lives in the shell bundle,
 // so an installed client needs a new shell cache to receive the redesign.
 //
-// v20: an OpenRouter session's composer shows its spend again (#2118). The
-// server now reports the turn's cost and the key's remaining allowance, but
-// the meter that draws them is the shell bundle's, and the installed one
-// skips OpenRouter sessions entirely: without the bump the new responses
-// reach a reader that never asks for them. Also the platform rename to
-// Homeroom, bumped in the same release: the precached document's <title>
+// v20: the platform rename to Homeroom. The precached document's <title>
 // and /manifest.webmanifest's name/short_name both changed, and both are
 // served from the shell cache — without this bump every existing install
 // keeps showing the old name in the tab and on the home screen indefinitely.
-const SW_VERSION = 'v20';
+//
+// v21: an OpenRouter session's composer shows its spend again (#2118). The
+// server now reports the turn's cost and the key's remaining allowance, but
+// the meter that draws them is the shell bundle's, and the installed one
+// skips OpenRouter sessions entirely: without the bump the new responses
+// reach a reader that never asks for them.
+const SW_VERSION = 'v21';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
