@@ -201,9 +201,10 @@ export interface LedgerRow {
   stepDone?: boolean;
   label: string;
   /**
-   * The small line under the label. Two jobs: a count ("1 of 463 failing"),
-   * or, on a numbered step, who acts and when — "snait, now",
-   * "automatic, after 1".
+   * The small line under the label. Two jobs: a count ("1 of 463 failing" —
+   * followed, while the row still carries what the run cost, by "built in
+   * 20s · checked in 9m 40s", #2170), or, on a numbered step, who acts and
+   * when — "snait, now", "automatic, after 1".
    */
   sub?: string | null;
   /** The sentence, in the primary ink. */

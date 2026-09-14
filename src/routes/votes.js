@@ -167,6 +167,21 @@ function stagingMockProposals(viewer) {
     assignee: { top: 'staging-tester', count: 3, myValue: null },
     category: { top: 'improvement', count: 2, myValue: null },
   });
+  // The four build steps every mock run shares: the live fifth-step row
+  // (9000028 below) draws them under "Preparing the staging preview…", and
+  // the finished shape a verdict keeps (#2170, applied after the literals)
+  // sums them to "built in 20s". A fresh array per call, so no row can
+  // mutate another's.
+  const mockBuildSteps = () => [
+    { key: 'source_fetch', ms: 2555 },
+    { key: 'image_build', ms: 5372, phases: [
+      { name: 'FROM docker.io/library/node:22-…', ms: 212 },
+      { name: 'COPY . .', ms: 276 },
+      { name: 'COPY --from=css /build/public/c…', ms: 3708 },
+    ] },
+    { key: 'clone', ms: 2426, via: 'template' },
+    { key: 'health', ms: 9585 },
+  ];
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
     // window still running → "Goes live in ~2d" countdown pill.
@@ -623,16 +638,7 @@ function stagingMockProposals(viewer) {
           step: 'prepare_checks',
           queued: true,
           startedAt: hoursAgo(0.015),
-          steps: [
-            { key: 'source_fetch', ms: 2555 },
-            { key: 'image_build', ms: 5372, phases: [
-              { name: 'FROM docker.io/library/node:22-…', ms: 212 },
-              { name: 'COPY . .', ms: 276 },
-              { name: 'COPY --from=css /build/public/c…', ms: 3708 },
-            ] },
-            { key: 'clone', ms: 2426, via: 'template' },
-            { key: 'health', ms: 9585 },
-          ],
+          steps: mockBuildSteps(),
           totalMs: 19964,
         },
         updatedAt: hoursAgo(0.015),
@@ -951,6 +957,22 @@ function stagingMockProposals(viewer) {
       row.priority = null;
       row.category = null;
       row.assignee = null;
+    }
+  }
+  // #2170: the run's cost survives its verdict — storeChecks reduces the
+  // live progress to the finished build and the checks' wall clock instead
+  // of dropping it — so every mock that HAS a verdict carries the shape a
+  // real passed or failed row does, and the ledger's "built in 20s ·
+  // checked in 4m 12s" line is reviewable via ?demo=1. Applied after the
+  // literals, like the attribute overrides above, because mk() cannot
+  // stamp it without leaking into the pending mocks: a run in flight keeps
+  // its live shape (9000028) or has none, exactly as a real one would.
+  for (const row of rows) {
+    if ((row.check_state === 'passing' || row.check_state === 'failing') && row.checks_progress === undefined) {
+      row.checks_progress = {
+        build: { step: 'done', steps: [...mockBuildSteps(), { key: 'prepare_checks', ms: 3011 }], totalMs: 19964 },
+        checksMs: 252000,
+      };
     }
   }
   return rows.map((p) => {
