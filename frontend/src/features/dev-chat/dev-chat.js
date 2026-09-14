@@ -520,8 +520,8 @@ const DevChat = {
   // Three venues build somewhere else, and for all three a composer is the
   // wrong primary control: no turn will ever run here, so a text box that
   // looks like it starts one is a lie the wireframes deliberately remove.
-  // These three methods are the swap. public/js/launchpad.js owns the
-  // markup for `own-tools-pr`; the two web hand-offs reuse the walkthrough
+  // The own-tools guide is a React child; launchpad.js supplies its context.
+  // The two web hand-offs reuse the walkthrough
   // that has existed since #1049, re-sited from the transcript into the
   // composer's place.
   //
@@ -576,24 +576,7 @@ const DevChat = {
     const venue = DevChat._launchpadVenue();
     if (!venue) return '';
     const resume = DevChat._launchpadResumeState();
-    if (venue === 'own-tools-pr') {
-      const session = DevChat.currentSession || {};
-      return Launchpad.ownToolsHtml({
-        targetKind: resume.targetKind,
-        targetId: resume.targetId,
-        branchName: resume.branchName,
-        origin: (typeof window !== 'undefined' && window.location)
-          ? window.location.origin : '',
-        slug: App.currentApp || '',
-        // The request this session was opened from, when there was one —
-        // that is the whole of the prefill's brief, and the reason the
-        // block a user pastes into their agent says something more useful
-        // than "build the thing".
-        issueNumber: session.created_from_issue_number || null,
-        sessionTitle: session.session_title || session.pr_title || '',
-        canImport: !(typeof AppView !== 'undefined' && AppView.readOnly),
-      });
-    }
+    if (venue === 'own-tools-pr') return '';
     // web-claude-code / web-codex: the five-step walkthrough, which already
     // resolves every step from the server and resumes where the user left
     // off.
@@ -627,6 +610,31 @@ const DevChat = {
     });
   },
 
+  _ownToolsGuideView() {
+    if (DevChat._launchpadVenue() !== 'own-tools-pr') return null;
+    const session = DevChat.currentSession || {};
+    const resume = DevChat._launchpadResumeState();
+    return {
+      prompt: Launchpad.prefillText({
+        ...resume,
+        slug: App.currentApp || '',
+        issueNumber: session.created_from_issue_number || null,
+        sessionTitle: session.session_title || session.pr_title || '',
+      }),
+      resumeHtml: Launchpad.resumeBannerHtml(resume),
+      canImport: !(typeof AppView !== 'undefined' && AppView.readOnly),
+    };
+  },
+
+  _importOwnToolsPr() {
+    if (typeof AppView !== 'undefined' && AppView.readOnly) return;
+    if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
+      AppView.openImportPrModal();
+    } else {
+      window.location.hash = '#settings/cli';
+    }
+  },
+
   // Repaint whichever surface the walkthrough is currently living on.
   //
   // Every dev-flow action used to end in renderMessages(), because the card
@@ -652,21 +660,6 @@ const DevChat = {
   _wireLaunchpad() {
     const host = document.getElementById('dc-launchpad-slot');
     if (!host) return;
-    if (window.Launchpad) {
-      host.querySelectorAll('[data-launchpad]').forEach((el) => {
-        Launchpad.wire(el, {
-          onCopy: (key, text, button) => DevChat._launchpadCopy(text, button),
-          onAction: (action) => {
-            if (action !== 'import') return;
-            if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
-              AppView.openImportPrModal();
-            } else {
-              window.location.hash = '#settings/cli';
-            }
-          },
-        });
-      });
-    }
     // The walkthrough renders here now rather than in the transcript, so it
     // needs wiring here too — _wireDevFlowCard only ever scans #dc-messages,
     // and a card wired by nobody is the #1304 failure again.
@@ -677,20 +670,6 @@ const DevChat = {
         });
       });
     }
-  },
-
-  // Copy, with the button itself as the receipt. No toast: the button is
-  // under the user's finger and a toast for a copy is noise on a phone.
-  _launchpadCopy(text, button) {
-    const done = (ok) => {
-      if (!button) return;
-      const original = button.textContent;
-      button.textContent = ok ? 'Copied.' : 'Press ⌘C to copy';
-      setTimeout(() => { button.textContent = original; }, 1500);
-    };
-    try {
-      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
-    } catch { done(false); }
   },
 
   // Persist the venue this session is being built in (#1281).
@@ -2752,7 +2731,7 @@ const DevChat = {
   // It is normally the LAUNCHPAD that renders this (#1281), which is why
   // renderMessages() drops the card whenever _launchpadVenue() answers. The
   // transcript keeps it for the one case that has no launchpad to put it
-  // in: public/js/launchpad.js failing to load.
+  // in: features/dev-chat/launchpad.js failing to load.
   _devFlowTarget() {
     const session = DevChat.currentSession;
     if (!session || !window.DevFlowSelect) return null;
@@ -8455,6 +8434,7 @@ const DevChat = {
       // venue dropdown lives in the header, outside the swap, which is what
       // makes it reversible — it is the way back to a chat.
       launchpadHtml: DevChat._launchpadHtml(),
+      ownToolsGuide: DevChat._ownToolsGuideView(),
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.
