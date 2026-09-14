@@ -24,6 +24,7 @@
  */
 
 import { appFrameRefs, appFrameStore, COVER_DEFAULTS } from './app-frame-store.js';
+import { isSafeAppFrameSrc } from './app-frame-policy.js';
 
 /** Frames created. A tab switch must NEVER move this. */
 let mounts = 0;
@@ -53,12 +54,15 @@ export const appFrameBridge = {
    */
   mount({ slug, cover = null, faded = true } = {}) {
     if (!slug) return false;
-    if (appFrameStore.get().slug !== slug) mounts += 1;
+    const current = appFrameStore.get();
+    const sameFrame = current.slug === slug;
+    if (!sameFrame) mounts += 1;
     appFrameStore.set({
       slug,
       active: true,
       faded: !!faded,
-      background: appFrameStore.get().slug === slug ? appFrameStore.get().background : '',
+      background: sameFrame ? current.background : '',
+      sandboxReady: sameFrame ? current.sandboxReady : false,
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
     });
     return !!appFrameRefs.iframe;
@@ -94,7 +98,9 @@ export const appFrameBridge = {
   },
   /** Drop the frame entirely: the app is being left, not parked. */
   unmount() {
-    appFrameStore.set({ slug: '', active: false, faded: true, background: '', cover: null });
+    appFrameStore.set({
+      slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    });
   },
 
   slug() {
@@ -121,6 +127,10 @@ export const appFrameBridge = {
   setSrc(src) {
     const el = appFrameRefs.iframe;
     if (!el || !src) return false;
+    const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
+    if (!isSafeAppFrameSrc(src, platformOrigin)) return false;
+    // flushSync updates the sandbox on this same element before the navigation.
+    appFrameStore.set({ sandboxReady: true });
     navigations += 1;
     el.src = src;
     return true;

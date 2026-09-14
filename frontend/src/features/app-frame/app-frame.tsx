@@ -36,14 +36,15 @@ import { memo, useRef, type ReactNode } from 'react';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 
 /**
- * The one place the sandboxed-iframe attribute contract is written on the React
- * side. Must stay identical to `AppView._appIframeHtml` in
- * public/js/app-view.js, which is still the DOM adapter's copy.
+ * The permission-policy contract stays here; the sandbox policy is shared with
+ * the bridge because it has two phases. A source-less frame is fully
+ * restricted, then setSrc synchronously publishes sandboxReady before the
+ * verified cross-origin navigation starts.
  */
-const SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
 const ALLOW = 'clipboard-write; pointer-lock; geolocation';
 
 function LaunchCover({
@@ -120,7 +121,7 @@ const AppFrame = memo(function AppFrame(_props: { slug: string }): ReactNode {
         ref={iframeRef}
         className="w-full h-full border-0"
         style={{ opacity: state.faded ? 0 : 1, backgroundColor: state.background || undefined }}
-        sandbox={SANDBOX}
+        sandbox={state.sandboxReady ? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
         allow={ALLOW}
       >
       </iframe>
