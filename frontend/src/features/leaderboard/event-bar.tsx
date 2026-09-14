@@ -22,9 +22,9 @@
  *
  * ── Challenges draws no hero ───────────────────────────────────────────
  *
- * The Challenges tab says the event in its own season line ("Season 2 ·
- * 3/9 done · ends 1 Sep"), so a hero card repeating the name and dates above
- * it is left out there. Standings keeps its hero until a slice of its own.
+ * The Challenges tab names the event in its own progress ("3/9 done in
+ * Season 2") and in the picker, so a hero card repeating the name and dates
+ * above it is left out there. Standings keeps its hero until a slice of its own.
  * The section comes from ./section-store.ts, the seam the tab strip reads.
  *
  * ── `hidden` on the host is still someone else's ───────────────────────

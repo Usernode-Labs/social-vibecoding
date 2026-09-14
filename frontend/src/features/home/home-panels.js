@@ -417,19 +417,12 @@ const HomePanels = {
       Number.isFinite(Number(panel.all_total)) ? Number(panel.all_total) : 0
     );
     const expandable = expanded || rows.length < allTotal;
-    const rowViews = rows.map((c) => HomePanels.challengeRowView(c, panel));
     const season = HomePanels.seasonView(panel);
-    // The season's deadline lives on the cards now. When no card shows one —
-    // every challenge on screen is finished or closed — the ring's second line
-    // carries it, so the block never drops how long the season has left.
-    if (season && season.deadline && !rowViews.some((r) => r.deadline)) {
-      season.sub = season.sub ? `${season.sub} · ${season.deadline}` : season.deadline;
-    }
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
-      // Still computed, and still the one-line form of the same three fields
-      // the ring draws — it is the block's accessible summary and what the ⋮
+      // Still computed, and still the one-line form of the same counts
+      // the season progress draws — it is the block's accessible summary and what the ⋮
       // menu and the tests read. It is no longer rendered in the section
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
@@ -437,7 +430,7 @@ const HomePanels = {
       onboardingNote: panel.onboarding
         ? (panel.onboarding.unlocked
           ? 'Persistent and weekly challenges are unlocked.'
-          : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
+          : 'Finish these to unlock persistent and weekly challenges.')
         : null,
       total,
       allTotal,
@@ -650,47 +643,38 @@ const HomePanels = {
     };
   },
 
-  // ── The season ring ────────────────────────────────────────────────
+  // ── The season progress ────────────────────────────────────────────
   //
-  // The counter that used to ride the section HEADING as "· 1 of 6 · 3,900 pts
-  // left", drawn as a ring at the top of the card instead. Two reasons it
-  // moved. The heading already carries the area's name, the leaderboard link
-  // and the ⋮, and 15px of counter after all that pushed the label into an
-  // ellipsis on a phone — its own comment said so. And the fact it states is
-  // the one a challenges block exists to state, which makes it content rather
-  // than chrome.
+  // "3/9 done in Season 2" over one segment per challenge, drawn by
+  // features/leaderboard/season-progress.tsx: the component the Leaderboard
+  // screen's Challenges tab opens on too, so the season reads the same on
+  // both. It replaced a ring with a points lead and a count under it, which
+  // took three lines to say what the segments say in one.
   //
-  // Everything here comes off the panel payload: `done`, `total` and
-  // `points_remaining` are the same three fields summaryLine reads. Nothing is
-  // invented — there is no season NAME on this payload, so the ring says how
-  // far through the set you are and what is still on the table, which is what
-  // a viewer opens the block to find out.
+  // The scope is the season (the payload's own `done` of `total`), except
+  // while setup gates the rest: the block then holds only the setup
+  // challenges, so the progress is setup's ("done in Get started"), the
+  // board's "progress has a scope" rule. Deadlines and points stay on the
+  // cards.
   seasonView(panel) {
     const total = Number(panel && panel.total) || 0;
     if (!total) return null;
-    const done = Math.max(0, Math.min(total, Number(panel.done) || 0));
-    const remaining = panel && panel.points_remaining;
-    const hasPoints = typeof remaining === 'number'
-      && Number.isFinite(remaining) && remaining > 0;
-    const counted = `${done} of ${total} challenges done`;
+    const gate = panel.onboarding;
+    if (gate && !gate.unlocked && Number(gate.total) > 0) {
+      const t = Number(gate.total);
+      return {
+        done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
+        total: t,
+        caption: 'done in Get started',
+      };
+    }
+    const name = panel.season && typeof panel.season.name === 'string'
+      ? panel.season.name.trim() : '';
     return {
-      pct: HomePanels.progressPercent(done, total),
-      fraction: `${done}/${total}`,
-      // The points lead when there are any: "what is left to win" is the
-      // motivating number, and the ring is already showing the fraction.
-      lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
-      sub: hasPoints ? counted : null,
-      deadline: HomePanels.seasonDeadline(panel),
-      label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
+      done: Math.max(0, Math.min(total, Number(panel.done) || 0)),
+      total,
+      caption: name ? `done in ${name}` : 'done',
     };
-  },
-
-  // How long the SEASON has left: "7d left". It is the deadline a card shows
-  // when its challenge carries no end of its own (challengeRowView), and the
-  // ring's second line carries it only when no card on screen shows one
-  // (challengesView).
-  seasonDeadline(panel) {
-    return HomePanels.timeLeft(panel && panel.season && panel.season.ends_at);
   },
 
   // An end date as the cards say it, in the board's short form: whole days

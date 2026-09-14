@@ -27,6 +27,7 @@
 import { createStore } from '../../lib/plain-store.js';
 
 import type { IconView } from './grid-store';
+import type { SeasonProgressView } from '../leaderboard/season-progress';
 
 /** `data-*` attributes the block stamps on its own article AND on its host. */
 export interface PanelStamps {
@@ -114,30 +115,8 @@ export interface ChallengeRowView {
   earned: string | null;
 }
 
-/** The ring at the top of the card — how far through the season you are. */
-export interface SeasonView {
-  /** 0-100, the ring's arc. */
-  pct: number;
-  /** "1/6", inside the ring. */
-  fraction: string;
-  /** "3,900 pts left" — what is still on the table, or the count if none. */
-  lead: string;
-  /**
-   * "1 of 6 challenges done", or null when `lead` already says it. When no
-   * card on screen shows a deadline, challengesView adds the season's to it
-   * ("1 of 6 challenges done · 3d left", or "3d left" alone).
-   */
-  sub: string | null;
-  /** The whole fact in one string, for the ring's accessible name. */
-  label: string;
-  /**
-   * "7d left" — how long the SEASON has to run, or null between seasons
-   * and when the payload carries no end date. Each open card says its own
-   * deadline (ChallengeRowView.deadline), so the ring adds this to `sub` only
-   * when no card on screen shows one.
-   */
-  deadline: string | null;
-}
+/** How far through the season you are — see features/leaderboard/season-progress.tsx. */
+export type SeasonView = SeasonProgressView;
 
 export interface ChallengesView {
   key: string;
