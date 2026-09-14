@@ -1550,7 +1550,7 @@ function rowView(n) {
   };
 
   if (n.kind === 'test_alert') {
-    return { ...base, label: 'Usernode test alert', icon: '🔔',
+    return { ...base, label: 'Homeroom test alert', icon: '🔔',
       segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
   }
 
@@ -1626,10 +1626,10 @@ function rowView(n) {
       segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
   }
 
-  // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so
-  // the name stays in the headline and `by` stays null. They carry no app —
-  // a company key is an account-level fact — and clicking one opens Admin →
-  // Users, so that is what the meta line names as their source.
+  // Managed OpenRouter review alerts, plus historical successful-issuance
+  // rows created before #2121. `who` is WHOSE KEY it is, not who acted, so
+  // the name stays in the headline and `by` stays null. They carry no app and
+  // click through to Admin → Users, so that is what the meta line names.
   if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
     const review = n.kind === 'openrouter_key_review';
     return {
@@ -1637,7 +1637,7 @@ function rowView(n) {
       appLine: 'Admin',
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      label: review ? 'Company key needs review' : 'Company key issued',
+      label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
       segments: [{ t: 'who', v: who }],
     };
   }

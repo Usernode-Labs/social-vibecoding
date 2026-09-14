@@ -20,7 +20,9 @@
  *
  * `#dev-kanban-filterbar` stays an innerHTML host that the module fills
  * (`_renderKanbanFilterBar()`); React renders it empty, with a constant
- * className, and never reconciles inside it.
+ * className, and never reconciles inside it. This row ASKS to be filled, on
+ * the effect after it mounts — see the call below for why `_repaintDevBody`'s
+ * own call cannot reach the host on the Workshop.
  *
  * EXACTLY ONE of the two call sites renders at a time — ./board-frame.tsx when
  * the Dev screen is on the Board, ./workshop/workshop.tsx when it is on the
@@ -33,15 +35,16 @@
  * a table.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, GitHubIcon, KeyIcon, PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { callAppView } from './card/fold';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
 
 export interface DevActionsRowProps {
@@ -159,6 +162,71 @@ export function DevActionsRow({
   showsMembers,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
+  /**
+   * FILL THE FILTER HOST THE FRAME BELOW RENDERS, as soon as it exists.
+   *
+   * `_renderKanbanFilterBar()` is called from `_repaintDevBody()`, and on the
+   * Workshop that call runs BEFORE the surface it is filling has rendered:
+   * the branch creates an empty `#dev-workshop` and then calls the filler,
+   * but `#dev-kanban-filterbar` is a node of THIS row, which the Workshop's
+   * All-items pane renders — so the filler found no host, returned, and the
+   * search field only appeared on whatever repaint happened to come next.
+   * A WebSocket push or a pull-to-refresh, which is why it read as "the
+   * search is missing for a few seconds, then it is there".
+   *
+   * So the host asks to be filled itself, on the effect after it mounts.
+   * `mountKanbanFilters` is idempotent per host (legacy-portals keeps one
+   * entry per element and reconciles on a re-mount), and the publish that
+   * follows it is the same view model `_repaintDevBody` would have sent.
+   *
+   * IN A MICROTASK, which is React's own advice and not a superstition. The
+   * mount publishes inside `flushSync` (lib/legacy-portals.tsx — that is
+   * where the module's synchronous-DOM contract comes from), and React
+   * answers a `flushSync` raised while it is still committing with "flushSync
+   * was called from inside a lifecycle method… Consider moving this call to a
+   * scheduler task or micro task". An effect body is inside that commit,
+   * passive or not. Verified both ways in a browser against a DEVELOPMENT
+   * React build, which is the only build that carries the complaint: from the
+   * effect body it fires, from the microtask it does not. The shipped shell
+   * is a production build, so this is not what stands between the app and a
+   * green check — it is the difference between calling this where React says
+   * it is legal and calling it where React says it is not.
+   *
+   * Nothing waits on the microtask: it runs as soon as React's work loop
+   * unwinds, and the host below holds the field's row open with `min-h-8`
+   * from the frame's first paint, so arriving a beat later shifts nothing.
+   *
+   * AND ASK FOR THE "+" TO BE WIRED (#2141) — the same bug, one line later
+   * in the module. `_wirePlusMenu` binds the button's handlers by looking
+   * `#dev-plus-btn` up, and `_repaintDevBody` re-runs it right after
+   * `_rerenderWorkshop()`, which is sound only while the pane is in the DOM
+   * by then. Twice it is not. A tap on the All items tab mounts this row
+   * from `setTab`, on React's own schedule, and `_setWorkshopTab` only
+   * persists the choice. And on the first Workshop paint of a page session
+   * a deep-linked or remembered `ws=all` reaches the pane through the
+   * late-arrival effect on `v.tab` (workshop/workshop.tsx): a state update
+   * raised inside a passive effect is scheduled at default priority, so that
+   * render lands a task AFTER the synchronous publish `_rewirePlusMenu()`
+   * follows. Both ways the button arrived after the one call that wires it
+   * and stayed dead until the next body repaint — a WebSocket-driven reload,
+   * a vote, a card action — or until a Dev re-entry remounted the Workshop
+   * with its tab already in the store. Whether the "+" worked depended on
+   * what else had happened since: "sometimes need to refresh before it
+   * works".
+   *
+   * `_rewirePlusMenu` aborts the previous controller before binding, so
+   * this call on top of the module's own leaves exactly one handler per
+   * node. In the effect BODY, not the microtask: it binds listeners and
+   * flushes nothing through React, and the nodes it looks up are committed
+   * by the time any effect runs — which is also before anyone can have
+   * tapped.
+   */
+  useEffect(() => {
+    let live = true;
+    queueMicrotask(() => { if (live) callAppView('_renderKanbanFilterBar'); });
+    callAppView('_rewirePlusMenu');
+    return () => { live = false; };
+  }, []);
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -188,7 +256,7 @@ export function DevActionsRow({
         title={
           readOnly
             ? 'Fork this app'
-            : 'Import a PR or manage this app'
+            : 'File an issue, import a PR or manage this app'
         }
       >
         +
@@ -199,28 +267,48 @@ export function DevActionsRow({
       >
         {readOnly ? null : (
           <>
-            {/* New change and Give feedback live in Improve (#1490). */}
+            {/*
+                New change lives in Improve (#1490). Filing an issue is back
+                HERE as well (#1900): #1490 folded it into Improve's Give
+                feedback beside New change, and people on the board could not
+                find "create an issue" any more. Same dialog, opened with the
+                open app preselected — the row needs nothing of the viewer
+                beyond a writeable board, so it is the one action in this group
+                that is not gated on canCollaborate, and the group heading is
+                unconditional because of it.
+            */}
+            <PlusMenuHeading label="Add to the board" groupKey="build" divider={false} />
+            <PlusRow
+              data-plus="issue"
+              icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="File an issue"
+              sub="Report a problem or idea without building it yourself"
+            />
             {canCollaborate ? (
-              <>
-                <PlusMenuHeading label="Import a change" groupKey="build" divider={false} />
-                <PlusRow
-                  data-plus="import-pr"
-                  icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                  title="Import Feature from a PR"
-                  sub={(
-                    <>
-                      Your computer &middot; your own tools. You have already built it, so
-                      there is no chat for this one
-                    </>
-                  )}
-                />
-              </>
+              <PlusRow
+                data-plus="import-pr"
+                icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Import Feature from a PR"
+                sub={(
+                  <>
+                    Your computer &middot; your own tools. You have already built it, so
+                    there is no chat for this one
+                  </>
+                )}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+              />
             ) : null}
             <PlusMenuHeading
               label="Settings &amp; rules"
               groupKey="settings"
-              divider={canCollaborate}
+              divider={true}
             />
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_delete ? <PlusRow
+              data-plus="app-settings"
+              icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="App settings"
+              sub="Manage app deletion in the Danger zone"
+            /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

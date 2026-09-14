@@ -36,6 +36,7 @@ test('underway and review share context, sections and check explanations', () =>
   for (const status of ['active', 'promoted']) {
     const v = av._topicViewFor(status === 'active' ? 'session' : 'proposal', { ...failing, status });
     assert.equal(v.body.issues[0].title, av._ghIssues[0].title);
+    assert.equal(v.body.issueOptions[0].title, av._ghIssues[0].title);
     assert.match(v.body.issues[0].href, /dev\/issues\/1993$/);
     assert.equal(row(v, 'checks').fails[0].reason, 'Expected app, received login');
     assert.ok(row(v, 'checks').actions.some((a) => /re-run/i.test(a.label)));
@@ -45,17 +46,87 @@ test('underway and review share context, sections and check explanations', () =>
   }
 });
 
-test('promotion remains blocked while checks fail, run, or belong to an unready handoff', () => {
+test('promotion is blocked by a VERDICT, not by an answer that has not arrived (#2074)', () => {
   const av = context();
-  for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }, { status: 'paused' }, { check_state: 'passing', proposal_state: 'ready', busy: true }, { check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }]) {
-    const v = av._topicViewFor('session', { ...failing, ...patch });
-    assert.equal(v.card.actions.find((a) => a.key === 'propose-change').disabled, true);
+  const disabled = (patch) => av._topicViewFor('session', { ...failing, ...patch })
+    .card.actions.find((a) => a.key === 'propose-change').disabled;
+
+  // `failing` is a cli_handoff whose proposal_state is 'failed', so the first
+  // three are the managed-handoff contract: it must have a tested, uploaded
+  // revision before it can be promoted. That contract is deliberate and
+  // untouched.
+  for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }]) {
+    assert.equal(disabled(patch), true, `handoff without a ready revision: ${JSON.stringify(patch)}`);
   }
+  assert.equal(disabled({ status: 'paused' }), true, 'a paused change has to be resumed first');
+
+  // And these two used to block, which is what #2074 is about. A build in
+  // flight and a checks-ran-on-older-main caveat are not verdicts: the first
+  // is an answer that has not arrived, and the second is one #2038 declares
+  // SOFT — "a caveat on a green result, not a failure, so it never blocks the
+  // vote". Waiting on either spent a build to start a vote that takes days,
+  // while the connector's submit_work put the identical state in front of the
+  // group with no wait at all.
+  assert.equal(disabled({ check_state: 'passing', proposal_state: 'ready', busy: true }), false,
+    'a build in flight no longer blocks submission');
+  assert.equal(disabled({ check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }), false,
+    'nor does a soft stale-base caveat');
+
   const ready = av._topicViewFor('session', { ...failing, check_state: 'passing', proposal_state: 'ready' });
   assert.equal(ready.card.actions.find((a) => a.key === 'propose-change').disabled, false);
   const review = av._topicViewFor('proposal', { ...failing, status: 'promoted' });
   assert.equal(row(review, 'review'), undefined);
   assert.ok(review.card.actions.some((a) => a.key === 'yes'));
+});
+
+test('every blocked reason names its own condition (#2074)', () => {
+  // Five conditions shared one sentence — "Finish the build and pass checks
+  // for the current revision" — which is what turned a temporary state into a
+  // bug report: it named checks that were not running, and gave no way to tell
+  // whether waiting would help.
+  const av = context();
+  const reason = (patch) => av.changeSubmissionState({ ...failing, ...patch }).reason;
+
+  assert.match(reason({ status: 'paused' }), /Resume this change/);
+  assert.match(reason({ proposal_state: 'checking' }), /tested commit uploaded/,
+    'the managed-handoff contract says what it wants');
+  // `failing` is a cli_handoff, whose contract is checked first — so the
+  // generic verdicts need an ordinary session to be reachable at all.
+  const plain = { source: null, proposal_state: undefined };
+  assert.match(reason({ ...plain, check_state: 'failing' }), /checks on this revision are failing/);
+  assert.match(reason({ ...plain, check_state: 'error' }), /checks could not run/);
+
+  // No two of them are the same sentence — the whole point.
+  const reasons = [
+    reason({ status: 'paused' }),
+    reason({ proposal_state: 'checking' }),
+    reason({ ...plain, check_state: 'failing' }),
+    reason({ ...plain, check_state: 'error' }),
+  ];
+  assert.equal(new Set(reasons).size, reasons.length, 'four conditions, four reasons');
+
+  // And none of them promises a control that does not exist.
+  for (const r of reasons) assert.doesNotMatch(r, /submit anyway/i);
+});
+
+test('an ordinary session submits while its checks are still running (#2074)', () => {
+  // The case this change exists for. Checks gate MERGE — "Merge is blocked
+  // until checks pass" — and the connector's submit_work already puts exactly
+  // this state to the group with no wait, so the browser refusing it guarded
+  // one doorway while the other stood open.
+  const av = context();
+  const ordinary = { ...failing, source: null, proposal_state: undefined };
+  for (const check_state of ['pending', null, undefined]) {
+    assert.equal(av.changeSubmissionState({ ...ordinary, check_state }).kind, 'ready',
+      `check_state ${String(check_state)} is an answer that has not arrived, not a verdict`);
+  }
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'passing', busy: true }).kind,
+    'ready', 'and a build in flight is the same kind of not-yet');
+
+  // A real verdict still blocks: putting a known-broken change in front of the
+  // group is the thing worth refusing.
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'failing' }).kind, 'blocked');
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'error' }).kind, 'blocked');
 });
 
 test('readers cannot promote, sync, or open the private workspace', () => {
@@ -84,6 +155,60 @@ test('underway freshness does not claim an automatic sync or scheduled merge is 
   assert.doesNotMatch(JSON.stringify(v.body.details.ledger), /automatic, now|automatic, after|retries the merge/);
 });
 
+// #2038 measures drift into the integration_* record and retired the sweep
+// that kept freshness_* current, so a proposal up for vote usually has the
+// first and not the second. The card used to read only the second — and
+// said "not verified yet" under a merge gate that had just measured the
+// proposal 3 commits behind (#2100). The Main row and the pill go through
+// one reader, and that reader takes whichever measurement is newer.
+test('the Main row reads the integration record when that is the measurement the gate has', () => {
+  const av = context();
+  const promoted = { ...failing, status: 'promoted', check_state: 'passing', proposal_state: 'ready' };
+  const mainRow = (patch) => av._topicViewFor('proposal', { ...promoted, ...patch })
+    .body.details.ledger.find((r) => ['main', 'behind', 'sync', 'conflict', 'mergeability'].includes(r.key));
+
+  // Measured by the gate only: the count is reported, with the platform's
+  // sync named as the next step — the same row a legacy measurement gets.
+  const behind = mainRow({ integration_behind_by: 3, integration_measured_at: '2026-09-14T12:42:29Z', integration_merges_clean: true });
+  assert.equal(behind.key, 'behind');
+  assert.match(behind.text.join(' '), /3 commits ahead/);
+  assert.doesNotMatch(behind.text.join(' '), /not been verified/);
+  const legacy = mainRow({ freshness_behind_by: 3, freshness_checked_at: '2026-09-14T12:42:29Z' });
+  assert.deepEqual(behind.text, legacy.text, 'one measurement, one row, whichever column carried it');
+
+  // Level with main by the same record: says so, rather than "unverified".
+  const level = mainRow({ integration_behind_by: 0, integration_measured_at: '2026-09-14T12:42:29Z', integration_merges_clean: true });
+  assert.match(level.text.join(' '), /Up to date with main/);
+
+  // Nothing measured either way still reads as unknown, never as fine.
+  const unknown = mainRow({});
+  assert.match(unknown.text.join(' '), /not been verified yet/);
+
+  // A row with both: the newer measurement wins in either direction, so a
+  // live freshness patch that arrived after the record still shows through.
+  const f = av._freshnessOf({
+    integration_behind_by: 3, integration_measured_at: '2026-09-14T12:42:29Z',
+    freshness_behind_by: 0, freshness_checked_at: '2026-09-14T12:00:00Z',
+  });
+  assert.equal(f.behindBy, 3, 'the gate measured after the sweep did');
+  assert.equal(f.checkedAt, '2026-09-14T12:42:29Z');
+  const g = av._freshnessOf({
+    integration_behind_by: 3, integration_measured_at: '2026-09-14T12:00:00Z',
+    freshness_behind_by: 0, freshness_checked_at: '2026-09-14T12:42:29Z',
+  });
+  assert.equal(g.behindBy, 0, 'a later freshness patch outranks an older record');
+
+  // A real conflict measured by the gate carries its paths, and they are the
+  // complete list — git named them, nobody estimated them.
+  const c = av._freshnessOf({
+    integration_measured_at: '2026-09-14T12:42:29Z', integration_merges_clean: false,
+    integration_conflict_paths: ['src/a.js', 'src/b.js'],
+  });
+  assert.equal(c.mergeability, 'conflict');
+  assert.deepEqual(c.files, ['src/a.js', 'src/b.js']);
+  assert.equal(c.filesComplete, true);
+});
+
 test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
@@ -100,6 +225,9 @@ test('actual shared component renders the entire card and escapes the issue titl
   for (const label of ['Where it stands', 'Addresses', 'Testing instructions', 'Screenshots', 'Activity', 'Discussion', 'Expected app, received login']) assert.ok(html.includes(label), label);
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
+  assert.match(html, />Edit issues</, 'the owner can manage associations after creation');
+  assert.match(html, /rounded-full bg-violet-500\/10/, 'the issue number is a compact identity chip');
+  assert.match(html, /rounded-xl bg-zinc-100\/80/, 'the linked issue is a full navigable row');
   assert.match(html, /role="tablist" aria-label="Conversation"/);
   assert.match(html, /role="tab"[^>]+aria-selected="true"[^>]*>Build/);
   assert.ok(html.includes('Build'));
@@ -276,13 +404,56 @@ test('Build defaults only for underway authors and explicit tab links win', () =
   assert.equal(initialConversationTab(failing, { ...own, workspace: null, transcript: { id: failing.id } }, null, true), 'workspace');
 });
 
-test('unlinked changes omit the empty issue message', () => {
+test('the issue picker normalizes, searches and ranks the local issue catalog', () => {
+  const { normalizeLinkedIssues, parseExactIssueNumber, filterIssueOptions } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.deepEqual(normalizeLinkedIssues([27, 12, 27, 0, Number.NaN]), [12, 27]);
+  assert.deepEqual(parseExactIssueNumber('#27'), { issue: 27, error: '' });
+  assert.deepEqual(parseExactIssueNumber('authentication'), { issue: null, error: '' });
+  assert.match(parseExactIssueNumber('2147483648').error, /too large/);
+
+  const options = [
+    { n: 91, title: 'Preview authentication', href: '#91' },
+    { n: 19, title: 'Authentication status', href: '#19' },
+    { n: 1993, title: 'Wait for authentication before opening previews', href: '#1993' },
+    { n: 199, title: 'Unrelated', href: '#199' },
+  ];
+  assert.deepEqual(filterIssueOptions('auth', options, []).map((issue) => issue.n), [19, 91, 1993],
+    'title prefix sorts ahead of a title-body match');
+  assert.deepEqual(filterIssueOptions('#19', options, [19]).map((issue) => issue.n), [199, 1993],
+    'selected issues are excluded and number-prefix matches remain ranked');
+  assert.deepEqual(filterIssueOptions('', options, []), [], 'an empty search never opens a giant list');
+});
+
+test('the issue picker computes bounded add/remove deltas for the existing PATCH route', () => {
+  const { linkedIssueDelta } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.deepEqual(linkedIssueDelta([12, 27, 44], [27, 50, 50]), {
+    addIssues: [50], removeIssues: [12, 44],
+  });
+
+  const src = fs.readFileSync('frontend/src/features/dev-board/topic/topic-head.tsx', 'utf8');
+  assert.match(src, /Search by number or title/);
+  assert.match(src, /aria-label={`Remove #\$\{issue\.n}: \$\{issue\.title}`}/);
+  assert.match(src, /event\.key === 'Escape'/);
+  assert.match(src, /if \(suggestions\[0\]\) addIssue/);
+  assert.match(src, /disabled=\{saving \|\| !changed\}/);
+  assert.match(src, /JSON\.stringify\(\{ addIssues, removeIssues \}\)/);
+});
+
+test('an unlinked owner gets the empty editor affordance while a reader sees no empty aside', () => {
   const av = context();
   const item = { ...failing, linked_issues: [] };
   const v = av._topicViewFor('session', item);
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
-  assert.doesNotMatch(html, /No issue linked yet|Issues this change addresses/);
+  assert.match(html, /No issues linked yet/);
+  assert.match(html, />Add issue</);
+
+  const reader = context({ id: 99 });
+  const readView = reader._topicViewFor('session', item);
+  const readHtml = renderToHtml(createElement(ChangeDetail, {
+    ...readView, item, conversation: true,
+  }));
+  assert.doesNotMatch(readHtml, /No issues linked yet|Issues this change addresses|Edit issues/);
 });
 
 test('imported underway PR archive is owner-only and works from compact and full cards', async () => {

@@ -58,6 +58,13 @@ function demoUser(id, username) {
   return { id, username, avatarUrl: null };
 }
 
+// A 96x64 solid PNG for the staging demo's screenshot attachment (#2113).
+const DEMO_SCREENSHOT_NAME = 'Screenshot 2026-08-13 at 12.44.10\u202fPM.png';
+const DEMO_SCREENSHOT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAaUlEQVR42u3QMQ0AAAgDsPnECsq5cMDN0aQKmurhEAWCBAkSJEiQIEEIEiRIkCBBggQhSJAgQYIECRKEIEGCBAkSJEiQIAQJEiRIkCBBghAkSJAgQYIECUKQIEGCBAkSJEgQggQJEvTPAqsgmoaz8xeCAAAAAElFTkSuQmCC',
+  'base64'
+);
+
 function demoConversations(user) {
   const self = demoUser(user.id, user.username || 'you');
   const ada = demoUser(910001, 'ada');
@@ -127,7 +134,7 @@ function demoMessages(user, conversationId) {
       reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: ['ada', self.username] }],
       attachments: [], objects: [{
         type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
-        sessionId: 3327, title: 'Platform Messages', subtitle: 'Usernode', state: 'active',
+        sessionId: 3327, title: 'Platform Messages', subtitle: 'Homeroom', state: 'active',
         author: 'ada', href: '#app/usernode/dev/proposals/3327',
       }],
     },
@@ -137,11 +144,11 @@ function demoMessages(user, conversationId) {
       reply: { id: 9100101, sender: ada, content: 'Can you look at the latest proposal?' },
       reactions: [], attachments: [], objects: [{
         type: 'app', appId: 1, appSlug: 'usernode', available: true,
-        title: 'Usernode', subtitle: 'Platform app', state: 'active', author: 'ada',
+        title: 'Homeroom', subtitle: 'Platform app', state: 'active', author: 'ada',
         href: '#app/usernode',
       }, {
         type: 'issue', appId: 1, appSlug: 'usernode', issueNumber: 488, available: true,
-        title: 'Platform-wide private messaging', subtitle: 'Usernode · Issue #488',
+        title: 'Platform-wide private messaging', subtitle: 'Homeroom · Issue #488',
         state: 'open', author: 'ada', href: '#app/usernode/dev/issues/488',
       }],
     },
@@ -150,11 +157,11 @@ function demoMessages(user, conversationId) {
       content: 'The proposal card is ready to review.', createdAt: '2026-08-13T13:30:00Z', editedAt: null,
       reply: null, reactions: [], attachments: [], objects: [{
         type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
-        available: true, title: 'Platform Messages spec v1', subtitle: 'Usernode',
+        available: true, title: 'Platform Messages spec v1', subtitle: 'Homeroom',
         state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
       }, {
         type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
-        available: true, title: 'Enable Messages rollout', subtitle: 'Usernode governance',
+        available: true, title: 'Enable Messages rollout', subtitle: 'Homeroom governance',
         state: 'open', author: 'ada', href: '#app/usernode/dev/governance/701',
       }, { type: 'spec', available: false }],
     },
@@ -166,6 +173,15 @@ function demoMessages(user, conversationId) {
       id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', name: 'launch-checklist.md', size: 842,
       contentType: 'text/markdown', kind: 'markdown',
       url: `/api/conversations/${conversationId}/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?demo=1`,
+      viewUrl: null,
+    }, {
+      // #2113: a screenshot named the way macOS names them, with a narrow
+      // no-break space before "PM". Serving it used to 500 because that
+      // character cannot travel in a Content-Disposition header, so the
+      // preview shows the fix: the image renders instead of breaking.
+      id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: DEMO_SCREENSHOT_NAME,
+      size: DEMO_SCREENSHOT_PNG.length, contentType: 'image/png', kind: 'image',
+      url: `/api/conversations/${conversationId}/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1`,
       viewUrl: null,
     }], objects: [],
   }];
@@ -593,13 +609,21 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     const attachmentId = String(req.params.attachmentId || '');
     if (!id || !/^[a-f0-9]{32}$/.test(attachmentId)) return null;
-    if (isDemo(req) && id === 910002
-        && attachmentId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' && !htmlOnly) {
-      return {
-        id: attachmentId, kind: 'markdown', filename: 'launch-checklist.md',
-        content_type: 'text/markdown', message_id: 9100201, user_id: 910001,
-        data: Buffer.from('# Launch checklist\n\n- Verify consent states\n- Verify private cards\n'),
-      };
+    if (isDemo(req) && id === 910002 && !htmlOnly) {
+      if (attachmentId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+        return {
+          id: attachmentId, kind: 'markdown', filename: 'launch-checklist.md',
+          content_type: 'text/markdown', message_id: 9100201, user_id: 910001,
+          data: Buffer.from('# Launch checklist\n\n- Verify consent states\n- Verify private cards\n'),
+        };
+      }
+      if (attachmentId === 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') {
+        return {
+          id: attachmentId, kind: 'image', filename: DEMO_SCREENSHOT_NAME,
+          content_type: 'image/png', message_id: 9100201, user_id: 910001,
+          data: DEMO_SCREENSHOT_PNG,
+        };
+      }
     }
     const membership = await conversations.loadMembership(pool, id, req.user.id);
     if (!membership || !(await conversations.canDirectInteract(pool, membership, req.user.id))) return null;
@@ -619,7 +643,6 @@ function conversationRoutes(config) {
     try {
       const row = await loadAttachment(req, res);
       if (!row) return res.status(404).end();
-      const safeName = String(row.filename || 'file').replace(/["\\\r\n]/g, '_');
       const inline = row.kind === 'image';
       const contentType = inline
         ? (row.content_type || 'application/octet-stream')
@@ -627,7 +650,13 @@ function conversationRoutes(config) {
           ? (row.content_type === 'application/zip' ? 'application/zip' : 'application/octet-stream')
           : 'text/plain; charset=utf-8';
       res.set('Content-Type', contentType);
-      res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`);
+      // The stored filename is arbitrary UTF-8, and a header value may only
+      // carry Latin-1: build the header through the shared helper rather
+      // than interpolating the name, or res.set() throws and the response
+      // becomes a 500 (#2113).
+      res.set('Content-Disposition', attachments.attachmentDisposition(
+        inline ? 'inline' : 'attachment', row.filename
+      ));
       return res.send(row.data);
     } catch (err) {
       log.error('conversations', 'attachment download failed', { err: err.message });
@@ -639,11 +668,10 @@ function conversationRoutes(config) {
     try {
       const row = await loadAttachment(req, res, { htmlOnly: true });
       if (!row) return res.status(404).end();
-      const safeName = String(row.filename || 'file.html').replace(/["\\\r\n]/g, '_');
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.set('Content-Security-Policy', 'sandbox allow-scripts');
       res.set('Referrer-Policy', 'no-referrer');
-      res.set('Content-Disposition', `inline; filename="${safeName}"`);
+      res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'file.html'));
       return res.send(row.data);
     } catch (err) {
       log.error('conversations', 'attachment view failed', { err: err.message });
@@ -728,10 +756,11 @@ function conversationRoutes(config) {
       try {
         const row = await loadReportedAttachment(req);
         if (!row) return res.status(404).end();
-        const safeName = String(row.filename || 'evidence').replace(/["\\\r\n]/g, '_');
         const inline = row.kind === 'image';
         res.set('Content-Type', inline ? row.content_type : 'application/octet-stream');
-        res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`);
+        res.set('Content-Disposition', attachments.attachmentDisposition(
+          inline ? 'inline' : 'attachment', row.filename || 'evidence'
+        ));
         return res.send(row.data);
       } catch (err) {
         log.error('conversations', 'report attachment failed', { err: err.message });
@@ -747,11 +776,10 @@ function conversationRoutes(config) {
       try {
         const row = await loadReportedAttachment(req, { htmlOnly: true });
         if (!row) return res.status(404).end();
-        const safeName = String(row.filename || 'evidence.html').replace(/["\\\r\n]/g, '_');
         res.set('Content-Type', 'text/html; charset=utf-8');
         res.set('Content-Security-Policy', 'sandbox allow-scripts');
         res.set('Referrer-Policy', 'no-referrer');
-        res.set('Content-Disposition', `inline; filename="${safeName}"`);
+        res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'evidence.html'));
         return res.send(row.data);
       } catch (err) {
         log.error('conversations', 'report attachment view failed', { err: err.message });

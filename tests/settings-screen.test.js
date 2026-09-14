@@ -1042,7 +1042,7 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
     'the per-fragment re-apply deliberately leaves the traversal driver out');
 });
 
-// ── Usernode-app section: a failed native read is diagnosable ───────────
+// ── Homeroom-app section: a failed native read is diagnosable ───────────
 //
 // The bridge's chrome reads resolve null on a timeout, on a native
 // rejection AND on a refused privileged handshake alike, so the section
@@ -1073,7 +1073,7 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(usernodeTsx, /Could not load Usernode app settings\./,
+  assert.match(usernodeTsx, /Could not load Homeroom app settings\./,
     'the headline is unchanged so existing reports stay recognisable');
   // #1079: the box is sections/usernode.tsx now. The MODEL carries the
   // app's own message and the component renders it verbatim in a mono run.
@@ -1245,9 +1245,9 @@ test('the local-agent block lives in Experimental and ships hidden', () => {
   // so it costs nothing for the overwhelming majority who never run the CLI.
   assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
   assert.match(experimental, /Local coding agent/);
-  // The copy has to answer "what still happens on Usernode?", because
-  // "runs on your machine" otherwise reads as "Usernode stops working".
-  assert.match(experimental, /Usernode still opens the pull request/);
+  // The copy has to answer "what still happens on Homeroom?", because
+  // "runs on your machine" otherwise reads as "Homeroom stops working".
+  assert.match(experimental, /Homeroom still opens the pull request/);
 });
 
 // The label is free text typed on someone's own laptop and arrives here
@@ -1350,7 +1350,7 @@ test('the Experimental toggle still gates the whole section', () => {
   assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
 
-// ── "Usernode app: connection" (the diagnostics panel) ─────────────────
+// ── "Homeroom app: connection" (the diagnostics panel) ─────────────────
 
 test('the usernode section is gated on being in the app, not on a capability', () => {
   const section = settingsJs.slice(
@@ -1395,7 +1395,7 @@ test('the panel has stable ids and both actions', () => {
   }
 });
 
-// ── Settings → "Usernode app: widget icons" ────────────────────────
+// ── Settings → "Homeroom app: widget icons" ────────────────────────
 //
 // The homescreen widget's icon path is invisible from both ends: the
 // user sees "the tile is the wrong colour", and SV's side of the story
@@ -1406,7 +1406,7 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Usernode app: widget icons/);
+  assert.match(usernodeTsx, /Homeroom app: widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1473,7 +1473,7 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
     settingsJs.indexOf('    // The row’s truth, read BEFORE it can mislead.'),
   );
   assert.match(section, /this\._widgetIconsDemo\(\) \|\|/,
-    'the demo link opens the Usernode section it lives in');
+    'the demo link opens the Homeroom section it lives in');
   // A fixed snapshot: no bridge call, no writes — and deliberately the
   // interesting state rather than the healthy one.
   const demo = settingsJs.slice(
@@ -1789,7 +1789,7 @@ test('the local-agent setup guide is always-visible section markup', () => {
   assert.match(guide, /<code>claude<\/code>/);
   assert.match(guide,
     /Create a proposal for &lt;app name&gt; that &lt;describe the change you want&gt;\./);
-  assert.match(guide, /authorize access on a Social Vibecoding web page/);
+  assert.match(guide, /authorize access on a Homeroom web page/);
   assert.equal((guide.match(/>Copy<\/button>/g) || []).length, 4,
     'repository setup, each alternative agent, and the prompt copy separately');
   const copyLabels = guide.match(/aria-label="Copy [^"]+"/g) || [];
@@ -1848,6 +1848,80 @@ test('settings.js publishes the rows rather than building them', () => {
   // follows the keyset cursor and the status line has three writers.
   assert.match(render, /more\.classList\.toggle\('hidden', !this\._cliTokenCursor\)/);
   assert.match(render, /status\.textContent = 'Demo data/);
+});
+
+// ── App AI permissions rows (#1957) ───────────────────────────────────
+//
+// `#llm-grants-list` is features/settings/grants-list.tsx's, driven by what
+// `Settings._renderLlmGrants` publishes. A revoked row used to be the badge
+// and nothing else: the only way back was the app's own consent dialog, which
+// an app that never asks again never opens. Re-enable is that way back, and
+// the branch renders differently, so it gets executed coverage like the CLI
+// rows above rather than a source grep.
+
+const GRANTS_LIST = 'frontend/src/features/settings/grants-list.tsx';
+const grantRows = (state) => renderComponent(GRANTS_LIST, 'GrantsListView', state);
+const grantView = (over) => ({
+  appId: 11, appName: 'Demo App', appSlug: 'demo-app', revoked: false,
+  spent: '0.37', cap: '1.00', capValue: '1.00', capCents: 100,
+  showByok: false, allowByok: false, ...over,
+});
+
+test('the permissions list renders its host states, and idle draws nothing', () => {
+  // `idle` is the PRERENDER state: the shipped host is an empty div, and a
+  // first render that drew a line would mismatch on hydration.
+  assert.equal(grantRows({ phase: 'idle', grants: [] }), '');
+  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(grantRows({ phase: 'loading', grants: [] }), /Loading…/);
+  assert.match(grantRows({ phase: 'error', grants: [] }), /Failed to load app permissions\./);
+  assert.match(grantRows({ phase: 'ready', grants: [] }), /No apps have asked to use AI yet\./);
+});
+
+test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {
+  const html2 = grantRows({
+    phase: 'ready',
+    grants: [
+      grantView(),
+      grantView({
+        appId: 12, appName: 'Quiet App', appSlug: 'quiet-app', revoked: true,
+        cap: '2.50', capValue: '2.50', capCents: 250, allowByok: true,
+      }),
+    ],
+  });
+  assert.equal((html2.match(/>Revoke</g) || []).length, 1, 'exactly one Revoke, on the active row');
+  assert.equal((html2.match(/>Re-enable</g) || []).length, 1, 'exactly one Re-enable, on the revoked row');
+  assert.match(html2, /data-role="re-enable"/,
+    'the control is addressable, which is what the declared #settings/app-ai check selects on');
+  // The copy beside it names what comes back, so the click is an informed one.
+  assert.match(html2, /Re-enabling restores its \$2\.50 daily cap\./);
+  // The revoked row keeps its muted badge — Re-enable sits beside it, not in
+  // place of it — and grows no cap editor or BYOK toggle: those are the
+  // ACTIVE row's controls and take over once the grant is back.
+  assert.match(html2, />Revoked</);
+  assert.equal((html2.match(/data-role="cap"/g) || []).length, 1, 'one cap editor, on the active row');
+  assert.equal((html2.match(/data-role="byok"/g) || []).length, 0, 'no BYOK toggle without a key on file');
+  // The language's compact accent action, not a bespoke box.
+  assert.match(html2, /data-role="re-enable" class="shrink-0 rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors"/);
+});
+
+test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (#1957)', () => {
+  const view = sliceMethod(settingsJs, '_grantView');
+  assert.match(view, /appSlug: String\(g\.appSlug \?\? ''\)/,
+    'the view carries the slug the re-grant endpoint is keyed on');
+  assert.match(view, /capCents: Number\(g\.dailyCapCents\) \|\| 0/,
+    'and the previous cap, in the cents the endpoint takes');
+  const handler = code(sliceMethod(settingsJs, '_onGrantReenable'));
+  assert.match(handler, /fetch\('\/api\/me\/llm-grants', \{\s*method: 'POST'/,
+    "the consent dialog's own upsert — a PATCH on the revoked id would not re-activate it");
+  assert.match(handler, /appSlug: grant\.appSlug, allowByok: !!grant\.allowByok/,
+    'the BYOK consent the user gave before is restored, never widened');
+  assert.match(handler, /dailyCapCents: grant\.capCents/, 'the previous cap is what comes back');
+  assert.match(handler, /r\.status === 400 && !j\.code/,
+    'a cap the allowance no longer covers falls back to the default cap instead of stranding the row');
+  assert.match(handler, /this\._isDemoGrant\(grant\.appId\)/, 'staging demo rows never reach the API');
+  assert.match(handler, /this\._renderLlmGrants\(\)/, 'success re-renders, so the row comes back active');
+  assert.doesNotMatch(handler, /ConfirmModal/, 're-enabling is not destructive and asks nothing twice');
 });
 
 
@@ -1987,7 +2061,7 @@ test('the reviewable claims travel with the row that makes them', () => {
       heading: 'GitHub · @octo',
       state: { tone: 'emerald', text: 'Ownership verified · counts toward the single $10/day social tier.' },
       linkedAt: 'linked 1 Jan',
-      noToken: 'Usernode holds no GitHub access token for your account.',
+      noToken: 'Homeroom holds no GitHub access token for your account.',
       connect: null,
       unlink: { disabled: false },
       strandedNote: 'Your last GitHub connection attempt didn’t complete.',

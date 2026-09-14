@@ -179,10 +179,44 @@ export interface TitleSpec {
   title: string;
 }
 
+/** One step of "what this still needs before it merges" (#2061). */
+export interface RequirementSpec {
+  key: string;
+  label: string;
+  /** 'auto' | 'author' | 'admin' | 'group' — who can clear it. */
+  actor: string;
+  /** 'done' | 'active' | 'waiting' | 'blocked' | 'pending'. */
+  state: string;
+  /** The one-line "why", when the gate recorded one. */
+  note?: string | null;
+  /**
+   * The one control a gate can carry, for the viewer who can clear it. Today
+   * only `main_healthy` has one: an admin's "Resume merges" while main's
+   * unit suite is red. Absent for everyone else.
+   */
+  action?: { label: string; title?: string; act: ActionRef } | null;
+}
+
 /** An extra row under the four bands (the work note, the admin claim list). */
 export type ExtraSpec =
   | { t: 'note'; key: string; text: string; workState: string }
-  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] };
+  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] }
+  | {
+    t: 'requirements';
+    key: string;
+    /** The collapsed line — the whole answer for most people. */
+    headline: string;
+    detail?: string | null;
+    done: number;
+    total: number;
+    /**
+     * Whether to open on first paint. The card opens itself only when the
+     * step it is stuck on is one THIS viewer can clear; an admin-approval
+     * row put in front of a non-admin is a chore they cannot do.
+     */
+    open: boolean;
+    gates: RequirementSpec[];
+  };
 
 /** The card's right-edge rail: ⋯ at the top, the eye at the bottom. */
 export interface RailSpec {
@@ -360,6 +394,25 @@ export interface DevWorkshopView {
     ask: string;
     yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
     no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    /** The caption's facts, lifted off the card's meta line. */
+    who?: string | null;
+    ago?: string;
+    number?: number | null;
+    /** An issue's body as one plain run, the claim item's sub-hero. */
+    body?: string | null;
+    /**
+     * The item's picture: the first before/after capture pair the checks
+     * shot, one still per side. Null when there is none, and the feed then
+     * leaves the space under the summary empty rather than faking one.
+     */
+    visuals?: {
+      path: string;
+      mobile: boolean;
+      before: string | null;
+      after: string | null;
+      beforeWebm: string | null;
+      afterWebm: string | null;
+    } | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
   votes: {
@@ -495,7 +548,10 @@ export interface DevWorkshopView {
     /** The shared filter bar is narrowing what the themes hold. */
     filtered: boolean;
   };
-  /** A row to open on paint (the ?shot= deep links) — theme id and item key. */
+  /**
+   * A row to open on paint (the ?shot= deep links): the row's scope — a
+   * theme id, or `mine` for "What you are working on" — and its key.
+   */
   autoExpand: { theme: string; key: string } | null;
 }
 
@@ -513,7 +569,7 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
-  /** The app, for the open card's "Open on its own page" link. */
+  /** The app, for the open card's page link ("Open page ›", #1886). */
   slug?: string;
   canPost?: boolean;
   /**

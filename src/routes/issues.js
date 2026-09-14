@@ -23,6 +23,12 @@ const topicAttrs = require('../services/topic-attributes');
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
+// #2089: the board search's server half. Shorter queries are not asked
+// (the browser applies the same floor); the hit list is capped because the
+// browser only ever intersects it with the cards it already holds.
+const BOARD_SEARCH_MIN_CHARS = 2;
+const BOARD_SEARCH_MAX_HITS = 200;
+
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
 function parseOwnerRepo(repoUrl) {
@@ -902,7 +908,7 @@ function issueRoutes(config) {
         // DEPLOY, not through a rebuild of a container — so don't promise a
         // redeploy the apply path deliberately never performs.
         description = description?.trim() ||
-          `${req.user.username} (via Usernode) proposed ${
+          `${req.user.username} (via Homeroom) proposed ${
             action === 'delete' ? 'removing' : 'setting'
           } the env var "${key}". ${app.self_hosted
             ? 'Auto-applies when a majority of active users vote up; the value reaches the platform on its next deploy.'
@@ -1233,6 +1239,56 @@ function issueRoutes(config) {
   // `refreshed` and `refreshRetryMs` so the FE can disable its button for
   // the cooldown window; the normal payload shape is unchanged.
   // ----------------------------------------------------------------
+  // #2089: the board search reads past the title. Titles, authors, numbers
+  // and the bodies the board payload already carries filter in the browser;
+  // the discussion under a card does not travel with it (a thread loads when
+  // its card opens), so this answers "which threads on this app mention the
+  // query" and the browser folds the keys in. One thread type per card
+  // family, mirroring the thread_type / thread_ref pairs chat.js writes:
+  //   issue      -> GitHub issue number   (issue cards)
+  //   session    -> chat_sessions.id      (proposal, merged and session cards)
+  //   governance -> issues.id             (governance cards)
+  // Human messages only (msg_type = 'message'), so a vote or lifecycle row
+  // quoting the query does not surface a card. View-gated like the board.
+  router.get('/api/apps/:slug/board-search', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const q = String(req.query.q || '').trim().slice(0, 200);
+      const out = { q, issues: [], sessions: [], gov: [] };
+      if (q.length < BOARD_SEARCH_MIN_CHARS) return res.json(out);
+      // A substring match: the query is data, so its LIKE metacharacters
+      // are escaped rather than interpreted.
+      const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const { rows } = await pool.query(
+        `SELECT thread_type, thread_ref
+           FROM chat_messages
+          WHERE app_id = $1
+            AND msg_type = 'message'
+            AND thread_type IN ('issue', 'session', 'governance')
+            AND thread_ref IS NOT NULL
+            AND content ILIKE $2 ESCAPE '\\'
+          GROUP BY thread_type, thread_ref
+          ORDER BY MAX(created_at) DESC
+          LIMIT $3`,
+        [app.id, pattern, BOARD_SEARCH_MAX_HITS]
+      );
+      for (const r of rows) {
+        const ref = r.thread_ref == null ? NaN : Number(r.thread_ref);
+        if (!Number.isInteger(ref) || ref <= 0) continue;
+        if (r.thread_type === 'issue') out.issues.push(ref);
+        else if (r.thread_type === 'session') out.sessions.push(ref);
+        else out.gov.push(ref);
+      }
+      return res.json(out);
+    } catch (err) {
+      log.error('issues', 'Failed to search the board', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/github-issues', async (req, res) => {
     try {
       // View-level (#621): the GitHub issue list is read-only.
@@ -3058,8 +3114,8 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
       await github.closeIssue(parsed.owner, parsed.repo, issueNumber);
 
       let commentBody = force
-        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Usernode.`
-        : `Closed by group vote (${upCount}/${required}) on Usernode.`;
+        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Homeroom.`
+        : `Closed by group vote (${upCount}/${required}) on Homeroom.`;
       const reason = typeof locked.payload?.reason === 'string'
         ? locked.payload.reason.trim() : '';
       if (reason) {

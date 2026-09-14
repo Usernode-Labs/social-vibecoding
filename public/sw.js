@@ -144,7 +144,32 @@
 // previous build for at least one load. That lag is exactly what made two
 // earlier rounds of this bar look unfixed: every report was of the deploy
 // before the one being discussed.
-const SW_VERSION = 'v16';
+//
+// v17: the Workshop's selection marker — the tab bar's selected fill becomes
+// one element that slides rather than a background redrawn per tab. app.css
+// and the shell bundle are the whole user-visible surface, so the bump belongs
+// in this proposal, per v10.
+//
+// v18: the marker appears on FIRST open, and the desktop strip stops moving
+// between panes. The whole surface is app.css and the shell bundle again, and
+// v17 is already installed on the devices that previewed the marker — so
+// without this bump the fix reaches nobody who saw the bug.
+//
+// v19: Generate proposal becomes a short confirmation with its full model
+// catalog behind a separate search step. The dialog lives in the shell bundle,
+// so an installed client needs a new shell cache to receive the redesign.
+//
+// v20: the platform rename to Homeroom. The precached document's <title>
+// and /manifest.webmanifest's name/short_name both changed, and both are
+// served from the shell cache — without this bump every existing install
+// keeps showing the old name in the tab and on the home screen indefinitely.
+//
+// v21: an OpenRouter session's composer shows its spend again (#2118). The
+// server now reports the turn's cost and the key's remaining allowance, but
+// the meter that draws them is the shell bundle's, and the installed one
+// skips OpenRouter sessions entirely: without the bump the new responses
+// reach a reader that never asks for them.
+const SW_VERSION = 'v21';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -421,7 +446,6 @@ const SHELL_ASSETS = [
   '/js/social-push.js',
   '/js/build-venues.js',
   '/js/credit-options.js',
-  '/js/launchpad.js',
   // The profile screen's renderer used to be listed here. #1083 chunk F moved
   // it into the React bundle, so /shell/assets/shell.js above is what
   // precaches it now.
@@ -539,6 +563,16 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
+
+  // Group-chat attachment responses are files, not JSON or SPA documents.
+  // In particular, clicking an image opens this URL as a navigation. If the
+  // worker races that navigation against its cached document, the 200ms shell
+  // fallback can replace a slow image response with the app home screen.
+  // Leave both the byte route and the sandboxed HTML preview to the browser;
+  // their server responses already carry the appropriate private cache rules.
+  if (/^\/api\/apps\/[^/]+\/chat-attachments\/[a-f0-9]{32}(?:\/view)?$/.test(p)) {
+    return 'bypass';
+  }
 
   // Online-only rules must run before this fallback. OAuth Connect and
   // callback URLs are document navigations too: serving index.html after

@@ -396,7 +396,7 @@ test('a branch that is not in the author\'s own fork is refused, and nothing is 
   }, {}, log);
   assert.equal(result.ok, false);
   assert.equal(result.code, 'not_your_fork', 'renamed for what the CALLER did, not for the mirror path');
-  assert.match(result.message, /owned by the GitHub account linked to your Usernode profile/);
+  assert.match(result.message, /owned by the GitHub account linked to your Homeroom profile/);
   assert.equal(log.push, undefined);
 });
 
@@ -1937,6 +1937,103 @@ test('somebody else\'s pull request keeps its title, and the caller is TOLD it d
   assert.equal(session.pr_title, 'Their own name for it');
 });
 
+// #2138. The proposal submit_work itself opens is an imported row whose head
+// the PLATFORM wrote: the mirror rung copies the author's verified fork branch
+// into `usernode/from-…` in the app repository and opens the pull request from
+// the bot (#1196). callerOwnsPr held that head repository's owner — the app's
+// — against the author's login, so every connector-opened proposal was refused
+// its own name and body on every revision, and told the pull request belonged
+// to "another GitHub account". Proposals 4185 and 4208: both opened by the
+// same user through submit_work, both revised by that user; the code moved,
+// the title and the description did not.
+
+test('a connector-opened proposal is its author\'s own: the mirrored pull request takes their title and description', async () => {
+  const log = {};
+  const renames = [];
+  const patches = [];
+  const mirrors = [];
+  // Exactly what the mirror rung records: head in the app repository under
+  // the platform's own prefix, pull request opened by the bot, the row owned
+  // by the user whose task it was.
+  const session = importedSession({
+    branch_name: 'usernode/from-evan-gh-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+    imported_pr_author: 'usernode-bot',
+    pr_title: 'Snap cards to the grid',
+  });
+  const pool = fakePool([
+    ['SET pr_title', (params) => { renames.push(params); return []; }],
+    ['SET pr_body', (params) => { mirrors.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 3 }]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getPR: async () => ({
+        state: 'open', merged: false, html_url: 'https://github.com/o/r/pull/91',
+        head: { ref: 'usernode/from-evan-gh-t3-8510c5ac', sha: NATIVE_HEAD, repo: { owner: { login: 'usernode-bot' } } },
+        body: 'The first submission\'s description.\n\nCloses #2138',
+      }),
+      updatePR: async (o, r, n, patch) => { patches.push(patch); },
+    },
+  }, {
+    title: 'Snap cards to the grid, and remember the toggle',
+    description: 'The toggle now survives a reload.',
+  }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.branchHome, 'app_repo');
+  assert.equal(result.updated, true, 'the code moved, as it always did');
+  assert.equal(result.titleUpdated, true, 'and this time the name moved with it');
+  assert.equal(result.titleRejected, undefined,
+    'no `imported_pr` — the "other GitHub account" was the platform\'s own');
+  assert.equal(result.descriptionUpdated, true);
+  assert.equal(result.descriptionRejected, undefined);
+  assert.deepEqual(renames[0], ['Snap cards to the grid, and remember the toggle', 601]);
+  assert.equal(session.pr_title, 'Snap cards to the grid, and remember the toggle');
+  assert.deepEqual(patches.find((p) => p.title), { title: 'Snap cards to the grid, and remember the toggle' });
+  const body = patches.find((p) => p.body).body;
+  assert.match(body, /The toggle now survives a reload\./);
+  assert.doesNotMatch(body, /first submission/);
+  assert.match(body, /Closes #2138/, 'the managed block survives the rewrite');
+  assert.equal(mirrors[0][0], body, 'and the row mirrors it so get_proposal can report it');
+  // Underneath, still the app-repo push and the import reconcile of #1196.
+  assert.equal(log.push.length, 1);
+  assert.equal(log.synced.length, 1);
+});
+
+test('a same-repo pull request somebody else pushed by hand is still theirs', async () => {
+  const log = {};
+  // Imported from the board: a collaborator's own branch in the app
+  // repository, opened by them. Not in the platform's namespace, so the pull
+  // request is judged as it always was — by its head repository's owner,
+  // which is not the caller.
+  const session = importedSession({
+    branch_name: 'feature/dark-mode',
+    imported_pr_head_repo: 'o/r',
+    imported_pr_author: 'octo-contributor',
+    pr_title: 'Dark mode',
+  });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool,
+    gh: {
+      // The caller's fork branch is already this proposal's head: a
+      // same-commit resubmit carrying only a new name and body.
+      getBranchSha: async () => FORK_HEAD,
+      updatePR: async () => { throw new Error('must not rewrite a collaborator\'s pull request'); },
+    },
+  }, { title: 'A name of my own choosing', description: 'Mine now' }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.branchHome, 'app_repo', 'the head is in the app repository — but the platform did not put it there');
+  assert.equal(result.titleUpdated, false);
+  assert.equal(result.titleRejected, 'imported_pr');
+  assert.equal(result.descriptionUpdated, false);
+  assert.equal(result.descriptionRejected, 'imported_pr');
+  assert.equal(session.pr_title, 'Dark mode');
+});
+
 test('the fork path applies the title when the head MOVES, not only on a resubmit', async () => {
   const log = {};
   const renames = [];
@@ -2180,6 +2277,149 @@ test('applyLinkedIssues: neither a DB failure nor a GitHub failure escapes', asy
   assert.deepEqual(s2.pr_linked_issues_applied, [], 'not marked applied when the body was never patched');
 });
 
+test('updateLinkedIssues: removals rewrite only Usernode-managed closing lines', async () => {
+  const writes = [];
+  const bodies = [];
+  const pool = fakePool([
+    ['SET linked_issues', (params) => { writes.push(['linked', params]); return []; }],
+    ['SET pr_body', (params) => { writes.push(['body_mirror', params]); return []; }],
+    ['SET pr_linked_issues_applied', (params) => { writes.push(['applied', params]); return []; }],
+  ]);
+  const session = {
+    id: 501,
+    source: 'native',
+    linked_issues: [12, 18],
+    pr_number: 42,
+    pr_linked_issues_applied: [12, 18],
+  };
+  const gh = {
+    getPR: async () => ({
+      state: 'open', merged: false,
+      body: 'Summary\n\nCloses #12\nCloses #18\n\nFixes #99',
+    }),
+    updatePR: async (_owner, _repo, _number, patch) => { bodies.push(patch.body); },
+  };
+
+  const result = await svc.updateLinkedIssues({
+    pool, gh, session, owner: 'o', repo: 'r', addIssues: [27], removeIssues: [12],
+  });
+
+  assert.deepEqual(result, {
+    changed: true,
+    linkedIssues: [18, 27],
+    addedIssues: [27],
+    removedIssues: [12],
+    prBodyUpdated: true,
+    prBodyStatus: 'updated',
+  });
+  assert.deepEqual(bodies, ['Summary\n\nCloses #18\n\nFixes #99\n\nCloses #27']);
+  assert.deepEqual(session.pr_linked_issues_applied, [18, 27]);
+  assert.deepEqual(writes.map(([kind]) => kind), ['linked', 'body_mirror', 'applied']);
+});
+
+test('updateLinkedIssues: repeating a DB no-op repairs a previously missed PR body update', async () => {
+  const writes = [];
+  const pool = fakePool([
+    ['SET pr_body', () => []],
+    ['SET pr_linked_issues_applied', (params) => { writes.push(params); return []; }],
+  ]);
+  const session = {
+    id: 501,
+    source: 'native',
+    linked_issues: [27],
+    pr_number: 42,
+    pr_linked_issues_applied: [],
+  };
+  let body = 'Summary';
+  const gh = {
+    getPR: async () => ({ state: 'open', merged: false, body }),
+    updatePR: async (_owner, _repo, _number, patch) => { body = patch.body; },
+  };
+
+  const result = await svc.updateLinkedIssues({
+    pool, gh, session, owner: 'o', repo: 'r', addIssues: [27], removeIssues: [],
+  });
+
+  assert.equal(result.changed, false, 'the durable association was already present');
+  assert.equal(result.prBodyUpdated, true, 'the same delta still repairs GitHub');
+  assert.equal(body, 'Summary\n\nCloses #27');
+  assert.deepEqual(writes, [[[27], 501]]);
+  assert.ok(!pool.queries.some(({ sql }) => sql.includes('SET linked_issues')),
+    'a retry does not rewrite the source-of-truth column');
+});
+
+test('updateLinkedIssues: imported and closed PR bodies remain outside Usernode ownership', async () => {
+  for (const [source, pr, status] of [
+    ['imported', null, 'imported_pr'],
+    ['native', { state: 'closed', merged: false, body: 'Closes #12' }, 'pr_not_open'],
+  ]) {
+    let githubWrites = 0;
+    const pool = fakePool([['SET linked_issues', () => []]]);
+    const session = {
+      id: 501, source, linked_issues: [12], pr_number: 42,
+      pr_linked_issues_applied: [12],
+    };
+    const gh = {
+      getPR: async () => {
+        if (source === 'imported') throw new Error('must not read imported body');
+        return pr;
+      },
+      updatePR: async () => { githubWrites++; },
+    };
+    const result = await svc.updateLinkedIssues({
+      pool, gh, session, owner: 'o', repo: 'r', addIssues: [], removeIssues: [12],
+    });
+    assert.deepEqual(result.linkedIssues, []);
+    assert.equal(result.prBodyStatus, status);
+    assert.equal(githubWrites, 0);
+  }
+});
+
+// #2138. The same "somebody else's body" mistake on the request linkage: a
+// connector-opened proposal is `source='imported'` too, so its `Closes #N`
+// was never written and update_proposal_issues said the body belonged to an
+// external author. The platform opened that pull request itself.
+test('updateLinkedIssues: a pull request the platform opened for its author takes the closing block', async () => {
+  const bodies = [];
+  const pool = fakePool([
+    ['SET linked_issues', () => []],
+    ['SET pr_body', () => []],
+    ['SET pr_linked_issues_applied', () => []],
+  ]);
+  const mirrored = {
+    id: 601, source: 'imported', branch_name: 'usernode/from-evan-gh-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r', repo_url: 'https://github.com/o/r',
+    imported_pr_author: 'usernode-bot',
+    linked_issues: [], pr_number: 91, pr_linked_issues_applied: [],
+  };
+  const gh = {
+    getPR: async () => ({ state: 'open', merged: false, body: 'Built with Claude Code.' }),
+    updatePR: async (_owner, _repo, _number, patch) => { bodies.push(patch.body); },
+  };
+  const result = await svc.updateLinkedIssues({
+    pool, gh, session: mirrored, owner: 'o', repo: 'r', addIssues: [2138], removeIssues: [],
+  });
+  assert.equal(result.prBodyStatus, 'updated');
+  assert.equal(result.prBodyUpdated, true);
+  assert.deepEqual(bodies, ['Built with Claude Code.\n\nCloses #2138']);
+  assert.deepEqual(mirrored.pr_linked_issues_applied, [2138]);
+
+  // A collaborator's own branch in the same repository, imported from the
+  // board, is not the platform's: its body is still left to its author.
+  const byHand = {
+    id: 602, source: 'imported', branch_name: 'feature/dark-mode',
+    imported_pr_head_repo: 'o/r', repo_url: 'https://github.com/o/r',
+    imported_pr_author: 'octo-contributor',
+    linked_issues: [], pr_number: 92, pr_linked_issues_applied: [],
+  };
+  const r2 = await svc.updateLinkedIssues({
+    pool, gh: { getPR: async () => { throw new Error('must not read a collaborator\'s body'); } },
+    session: byHand, owner: 'o', repo: 'r', addIssues: [2138], removeIssues: [],
+  });
+  assert.equal(r2.prBodyStatus, 'imported_pr');
+  assert.equal(bodies.length, 1);
+});
+
 test('an update that carries linkedIssues stores them before the tails, on every path', async () => {
   // Behavioural half: the promoted-native path end to end.
   const log = {};
@@ -2194,7 +2434,7 @@ test('an update that carries linkedIssues stores them before the tails, on every
   const result = await run({
     session, pool,
     gh: {
-      getPR: async () => ({ state: 'open', merged: false, body: 'Dev session by evan via Usernode' }),
+      getPR: async () => ({ state: 'open', merged: false, body: 'Dev session by evan via Homeroom' }),
       updatePR: async (owner, repo, prNumber, patch) => { order.push(['body', patch.body]); },
     },
     votes: {
@@ -2206,7 +2446,7 @@ test('an update that carries linkedIssues stores them before the tails, on every
   assert.deepEqual(session.linked_issues, [45]);
   assert.deepEqual(order.map((o) => o[0]), ['linked', 'body', 'reconcile'],
     'stored, then the live body patched, then the tail — never the other way round');
-  assert.equal(order[1][1], 'Dev session by evan via Usernode\n\nCloses #45');
+  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\nCloses #45');
 
   // Source half, for the ORDER on the paths the stubs above do not read
   // (same reasoning as the testing-metadata order test).

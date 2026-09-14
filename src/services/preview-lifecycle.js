@@ -221,7 +221,85 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
     });
   }
 
-  return { enabled, run, request, current, guardedPool, cancelled, isCancelled, teardown };
+  // Take over a run whose owner died with its Jobs still going
+  // (services/check-harvest.js). Nothing is created or locked: the row
+  // already names this run, and the returned operation checks that on every
+  // guarded query exactly as the original owner's did, so a successor that
+  // has since replaced the run aborts the adopter's writes the same way.
+  // Null when the row no longer names the run as running — it finished, or
+  // something newer took the session — and null where the lifecycle is off,
+  // which the caller reads as "settle with the plain pool, as a live run
+  // without an operation would".
+  async function adopt(config, { sessionId, runId, revision }) {
+    if (!enabled(config)) return null;
+    const pool = poolFor(config);
+    const { rows } = await pool.query('SELECT * FROM preview_operations WHERE session_id = $1', [sessionId]);
+    const row = rows[0];
+    if (!row || row.run_id !== runId || row.state !== 'running' || row.desired_revision !== revision) return null;
+    const controller = new AbortController();
+    const operation = {
+      sessionId: Number(sessionId), revision, runId, signal: controller.signal, adopted: true,
+      abort(reason = cancelled()) { if (!controller.signal.aborted) controller.abort(reason); },
+      async check(client = pool, lockRow = false, ignoreAbort = false) {
+        if (!ignoreAbort) controller.signal.throwIfAborted();
+        if (lockRow) await client.query('SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
+        if (!ignoreAbort) controller.signal.throwIfAborted();
+        const { rows: state } = await client.query(`SELECT o.run_id
+          FROM preview_operations o JOIN chat_sessions s ON s.id = o.session_id
+          WHERE o.session_id = $1 AND o.run_id = $2 AND o.desired_revision = $3
+            AND o.state = 'running'
+            AND s.status IN ('active', 'paused', 'promoted', 'merging')
+            AND (s.checks_commit_sha IS NULL OR s.checks_commit_sha = $3)
+            AND (s.imported_pr_head_sha IS NULL OR s.imported_pr_head_sha = $3)`, [sessionId, runId, revision]);
+        if (!state.length) { operation.abort(); throw cancelled(); }
+      },
+    };
+    operation.pool = guardedPool(pool, operation);
+    operation.cleanupPool = pool;
+    operation.tasks = new Set();
+    operation.track = task => {
+      operation.tasks.add(task);
+      task.then(() => operation.tasks.delete(task), () => operation.tasks.delete(task));
+      return task;
+    };
+    // Registered like a live run so a request for a newer revision aborts
+    // the harvest at once rather than at its next guarded write.
+    active.set(operation.sessionId, operation);
+    let polling = false;
+    const timer = setInterval(async () => {
+      if (polling) return;
+      polling = true;
+      try { await operation.check(); } catch (err) { operation.abort(err); }
+      finally { polling = false; }
+    }, pollMs);
+    timer.unref();
+    operation.release = () => {
+      clearInterval(timer);
+      if (active.get(operation.sessionId) === operation) active.delete(operation.sessionId);
+    };
+    return operation;
+  }
+
+  // Close an adopted run's row the way run() closes its own: 'completed'
+  // with the result, or 'superseded' / 'error'. Only a row still naming this
+  // run as running is touched — a successor's row is never overwritten.
+  async function settleAdopted(config, operation, { result = null, error = null } = {}) {
+    if (!operation) return false;
+    operation.release?.();
+    const pool = poolFor(config);
+    const statePool = guardedPool(pool, { check: client => client.query(
+      'SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [operation.sessionId]) });
+    const { rowCount } = error
+      ? await statePool.query(`UPDATE preview_operations SET state = $3, finished_at = NOW(), updated_at = NOW()
+          WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
+      [operation.sessionId, operation.runId, isCancelled(error) ? 'superseded' : 'error'])
+      : await statePool.query(`UPDATE preview_operations SET state = 'completed', result = $3,
+          finished_at = NOW(), updated_at = NOW() WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
+      [operation.sessionId, operation.runId, result == null ? null : JSON.stringify(result)]);
+    return rowCount > 0;
+  }
+
+  return { enabled, run, request, current, guardedPool, cancelled, isCancelled, teardown, adopt, settleAdopted };
 }
 
 module.exports = { ...createLifecycle(), createLifecycle };

@@ -5,7 +5,7 @@
 
 import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
+import { EllipsisHorizontalIcon, EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -16,9 +16,14 @@ import {
   type MergeLife,
   type SessionHeaderState,
 } from './session-header-store';
+import type { SessionAction } from './session-list-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
+}
+
+function platformUi(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
 /**
@@ -148,9 +153,15 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
-  const { previewSessionId, previewUrl, previewActive } = useStoreState(improveStore) as {
-    previewSessionId: number | null; previewUrl: string | null; previewActive: boolean;
+  const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
+    previewSessionId: number | null; previewUrl: string | null;
+    previewBuildable: boolean; previewActive: boolean;
   };
+  // #2069: a live preview OR one the click can build. ensure-staging rebuilds
+  // from the branch's latest commit and has authorized this case since #439;
+  // only this gate had not caught up, so the single control that would restore
+  // a missing preview disappeared exactly when the preview went missing.
+  const hasPreview = !!previewUrl || !!previewBuildable;
   const seeing = !!previewActive;
   const trackRef = useRef<HTMLSpanElement | null>(null);
   const eyeRef = useRef<HTMLButtonElement | null>(null);
@@ -161,7 +172,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   // its text's, so this cannot be computed ahead of the paint. `seeing` and
   // `busy` are the two inputs that change which segment is wide.
   useIsomorphicLayoutEffect(() => {
-    if (!previewUrl) { setThumb(null); return undefined; }
+    if (!hasPreview) { setThumb(null); return undefined; }
     const measure = () => {
       const active = seeing ? eyeRef.current : penRef.current;
       if (!active) return;
@@ -173,11 +184,15 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (ro && trackRef.current) ro.observe(trackRef.current);
     return () => ro?.disconnect();
-  }, [seeing, busy, previewUrl]);
+  }, [seeing, busy, hasPreview]);
 
   // #1594: with no preview to switch to, Building is status, not an action.
   // Keep it compact and neutral; the accent-filled controls remain clickable.
-  if (!previewUrl) {
+  //
+  // #2069 narrows "no preview to switch to": a session whose branch has a
+  // commit HAS one to switch to, it just has to be built first. Only a session
+  // with nothing to build falls through to the status chip.
+  if (!hasPreview) {
     if (!busy) return null;
     return (
       <span
@@ -223,9 +238,11 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label="Preview this change"
+        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
         aria-pressed={seeing ? 'true' : 'false'}
-        title="Preview this change on staging"
+        title={previewUrl
+          ? 'Preview this change on staging'
+          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
@@ -251,6 +268,106 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         {!seeing ? <span id="dc-mode-chip">Building</span> : null}
       </button>
     </span>
+  );
+}
+
+/**
+ * The session's own actions — Pause / Free worker / Resume / Unarchive /
+ * Archive — behind a ⋯ at the strip's right edge (#1904).
+ *
+ * ── Why a menu, and why these rows ────────────────────────────────────
+ *
+ * Those buttons live on the session's row in the list, and opening the
+ * session put every one of them out of reach: the strip carried the name,
+ * the PR link, the venue and the mode switch, and nothing that acted on the
+ * session itself. The rows here are THE LIST'S — `DevChat._sessionRow`
+ * decides them once and the store carries them (see
+ * ./session-header-store.ts) — so the two surfaces cannot disagree about
+ * what is offered or how Archive is gated, and each row dispatches the same
+ * `DevChat` method by name the list's button does, confirm dialog included.
+ *
+ * ── One call, both idioms ─────────────────────────────────────────────
+ *
+ * `PlatformUI.menu` is the venue dropdown's own presenter (BuildVenues.open):
+ * a bottom action sheet on touch, an anchored popover on desktop, from one
+ * actionSheet-shaped call. The rows are handed to the kit rather than
+ * rendered here for the reason that sheet gives — the kit reparents what it
+ * is handed, and a React subtree under it would reconcile against a parent
+ * that no longer holds it.
+ *
+ * With nothing to offer — a viewer who does not own the session, a merged
+ * one — there is no button at all, rather than a menu with no rows.
+ */
+
+/** A row as `PlatformUI.menu` takes it — the kit's own actionSheet shape. */
+export interface SessionActionItem {
+  label: string;
+  title?: string;
+  destructive: boolean;
+  handler: () => void;
+}
+
+/**
+ * The rows the ⋯ hands the kit, from the store's actions. Each `handler` is
+ * the list button's click: the named `DevChat` method, with the row's own
+ * args — so Archive still goes through `_sessionListArchive`'s confirm, and
+ * Free worker still answers "Worker freed". The list flashed that answer on
+ * the button it was about to replace; a menu row is gone by then, so the
+ * answer becomes a toast.
+ */
+export function sessionActionItems(actions: SessionAction[]): SessionActionItem[] {
+  return actions.map((a) => ({
+    label: a.label,
+    ...(a.title ? { title: a.title } : null),
+    destructive: a.tone === 'danger',
+    handler: () => {
+      const dc = controller();
+      if (!dc || typeof dc[a.fn] !== 'function') return;
+      void Promise.resolve(dc[a.fn](...a.args)).then((flash: unknown) => {
+        if (flash) platformUi()?.toast?.(String(flash));
+      });
+    },
+  }));
+}
+
+/**
+ * Present the rows against the trigger. Resolves once the menu has settled
+ * — a pick or a dismissal — which is what the trigger's `aria-expanded`
+ * follows. Nothing to present without the kit, the same silent degradation
+ * the venue sheet has.
+ */
+export async function openSessionActionsMenu(
+  actions: SessionAction[],
+  anchorEl?: HTMLElement | null,
+): Promise<void> {
+  const pu = platformUi();
+  if (!pu || typeof pu.menu !== 'function') return;
+  await pu.menu({ anchorEl: anchorEl || undefined, items: sessionActionItems(actions) });
+}
+
+function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (!actions.length) return null;
+  return (
+    <button
+      type="button"
+      id="dc-session-actions"
+      className={'shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full '
+        + 'text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 '
+        + 'dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 un-touch-target'}
+      data-session-actions="1"
+      aria-haspopup="menu"
+      aria-expanded={open ? 'true' : 'false'}
+      aria-label="Session actions"
+      title="Session actions"
+      onClick={(e: MouseEvent<HTMLButtonElement>) => {
+        if (open) return;
+        setOpen(true);
+        void openSessionActionsMenu(actions, e.currentTarget).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="w-4 h-4" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -304,6 +421,10 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           is what gives way. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
       {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
+      {/* #1904: the session's own actions, last — the far right of the strip,
+          beside the two switchers. Absent, not empty, when there is nothing
+          to offer. */}
+      <SessionActionsMenu actions={s.actions || []} />
     </>
   );
 }

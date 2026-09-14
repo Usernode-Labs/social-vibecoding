@@ -311,7 +311,7 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
       ],
     },
   );
-  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search title, author, or #"/);
+  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search cards, comments, or #"/);
   assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
   assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
   // The chip reads as SET while any dialog filter is on — the filled tonal state.
@@ -528,6 +528,35 @@ test('persistence helpers survive a storage-less environment', () => {
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
   AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
+});
+
+test('?q= seeds the search on the first load, and only the first (#2090)', () => {
+  const store = makeMemoryStore();
+  const sandbox = makeCtx({ sessionStorage: store });
+  const AppView = sandbox.__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  // The sandbox has no URL of its own; hand it the deep link.
+  sandbox.location = { search: '?demo=1&q=%20ripple%20' };
+  sandbox.URLSearchParams = URLSearchParams;
+  // A falsy slug never touches storage — and does not spend the seed either.
+  assert.deepEqual(plain(AppView._loadKanbanFilters('')), none);
+  assert.equal(AppView._loadKanbanFilters('my-app').q, 'ripple', 'trimmed, over the stored set');
+  // Written straight to storage, so a surface switch restores it exactly as
+  // it would a typed search…
+  assert.equal(JSON.parse(store.getItem(key)).q, 'ripple');
+  // …and the viewer's clearing of it is the last word, though the URL still
+  // says `?q=ripple` on every one of these loads. Held rather than consumed,
+  // the seed would put the search straight back — #2090 in a new coat.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(AppView._loadKanbanFilters('my-app').q, '', 'a cleared search stays cleared');
+  assert.equal(AppView._loadKanbanFilters('other-app').q, '', 'and no other app inherits it');
+  // Blank is absent: nothing seeded, nothing written.
+  const blank = makeCtx({ sessionStorage: makeMemoryStore() });
+  blank.location = { search: '?q=%20%20' };
+  blank.URLSearchParams = URLSearchParams;
+  assert.deepEqual(plain(blank.__AppView._loadKanbanFilters('my-app')), none);
+  assert.equal(blank.sessionStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
 });
 
 // ── Session cards have only the filters their data supports ─────────────────
@@ -789,4 +818,96 @@ test('a repaint republishes the whole strip: count and chips track the filters',
       { key: 'needsVote', label: 'Waiting on you' },
     ],
   );
+});
+
+// #2089: the search reads past the title — the bodies the board payload
+// already carries, and the discussion under a card, which the server
+// answers per query and the paint folds in as `commentHits`.
+test('text search reads an issue body and a proposal summary or PR body (#2089)', () => {
+  const AppView = makeAppView();
+  const body = 'On a 360px-wide viewport the action buttons push past the card edge.';
+  assert.equal(AppView._devCardMatches('issue', issue({ body }), { ...none, q: 'VIEWPORT' }), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ body }), { ...none, q: 'leaderboard' }), false);
+  assert.equal(AppView._devCardMatches('issue', issue({ body: null }), { ...none, q: 'viewport' }), false);
+  assert.equal(
+    AppView._devCardMatches('proposal', prop({ pr_summary_md: 'Cards now wrap on phones.' }), { ...none, q: 'phones' }),
+    true
+  );
+  assert.equal(
+    AppView._devCardMatches('proposal', prop({ pr_body: '## Testing\nOpen the board at 360px.' }), { ...none, q: '360px' }),
+    true
+  );
+  assert.equal(
+    AppView._devCardMatches('merged', merged({ pr_body: 'Restores the scroll offset.' }), { ...none, q: 'offset' }),
+    true
+  );
+  assert.equal(AppView._devCardMatches('gov', gov({ body: 'Rename because the old name confused people.' }), { ...none, q: 'confused' }), true);
+  // Sessions ship no spec, so a body-only query does not match one.
+  assert.equal(
+    AppView._devCardMatches('session', { id: 5, session_title: 'Fix header', username: 'sam', spec_md: 'viewport' }, { ...none, q: 'viewport' }),
+    false
+  );
+});
+
+test('comment hits match cards by their thread key (#2089)', () => {
+  const AppView = makeAppView();
+  const hits = { issues: [42], sessions: [9000001], gov: [7] };
+  const f = { ...none, q: 'flaky', commentHits: hits };
+  assert.equal(AppView._devCardMatches('issue', issue({}), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 43 }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({}), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ id: 9000002 }), f), false);
+  assert.equal(AppView._devCardMatches('merged', merged({ id: 9000001 }), f), true);
+  assert.equal(AppView._devCardMatches('session', { id: 9000001, session_title: 'Work', username: 'sam' }, f), true);
+  assert.equal(AppView._devCardMatches('gov', gov({}), f), true);
+  assert.equal(AppView._devCardMatches('gov', gov({ id: 8 }), f), false);
+  // Hits are per query: with none supplied, the same cards do not match.
+  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, q: 'flaky' }), false);
+  // Hits widen the match; they never narrow a title hit.
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 43 }), { ...f, q: 'dark mode' }), true);
+});
+
+test('_kanbanMatchFilters asks the server once per query and folds the answer in (#2089)', async () => {
+  const calls = [];
+  let answer = { issues: [42], sessions: [], gov: [] };
+  const sandbox = makeCtx({
+    fetch: async (url) => { calls.push(url); return { ok: true, json: async () => answer }; },
+  });
+  const AppView = sandbox.__AppView;
+  sandbox.URLSearchParams = URLSearchParams;
+  sandbox.App.currentApp = 'demo-app';
+  sandbox.location = { search: '?demo=1' };
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+
+  // Below the floor nothing is asked.
+  AppView._kanbanFilters = { ...none, q: 'f' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null);
+  assert.deepEqual(calls, []);
+
+  AppView._kanbanFilters = { ...none, q: 'Flaky ' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null, 'unknown until the answer lands');
+  assert.equal(calls.length, 1);
+  AppView._kanbanMatchFilters();
+  assert.equal(calls.length, 1, 'a second paint while the answer is in flight does not ask again');
+  assert.match(calls[0], /^\/api\/apps\/demo-app\/board-search\?q=flaky&demo=1$/);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(repaints, 1, 'an answer naming a card repaints');
+  const f = AppView._kanbanMatchFilters();
+  assert.deepEqual(Array.from(f.commentHits.issues), [42]);
+  assert.equal(calls.length, 1, 'the same query is not asked twice');
+
+  // A different query asks again; an empty answer folds in without a repaint.
+  answer = { issues: [], sessions: [], gov: [] };
+  AppView._kanbanFilters = { ...none, q: 'quiet' };
+  AppView._kanbanMatchFilters();
+  assert.equal(calls.length, 2);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(repaints, 1);
+  assert.deepEqual(Array.from(AppView._kanbanMatchFilters().commentHits.issues), []);
+
+  // Clearing the box drops the hits.
+  AppView._kanbanFilters = { ...none, q: '' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null);
+  assert.equal(AppView._kanbanCommentHits, null);
 });

@@ -207,7 +207,9 @@ test('the header back/home control is a real anchor', () => {
 });
 
 test('the header click handler guards before it preventDefaults', () => {
-  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1400);
+  // 1700: the claim chain grew by the Challenges page's line, and the span only
+  // has to reach the home fallback at the end of it.
+  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1700);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'the modified-click guard went missing');
@@ -216,7 +218,10 @@ test('the header click handler guards before it preventDefaults', () => {
   // dev session's claim (Streamlined Concept) last before the home fallback.
   assert.ok(body.indexOf('AdminConsole?.handleBack') < body.indexOf('Settings?.handleBack'));
   assert.ok(body.indexOf('Settings?.handleBack') < body.indexOf('Browse?.handleBack'));
-  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('DevChat?.handleBack'));
+  // The Challenges tab's detail page is a level of the Leaderboard screen and
+  // claims the chevron the same way, after Browse and before a dev session.
+  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('TopochainChallenges?.handleBack'));
+  assert.ok(body.indexOf('TopochainChallenges?.handleBack') < body.indexOf('DevChat?.handleBack'));
   assert.ok(body.indexOf('DevChat?.handleBack') < body.indexOf('App.navigateHome()'));
 });
 
@@ -601,10 +606,12 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
   );
 
   // The session's back control is the header's own anchor now (Streamlined
-  // Concept — #dc-back retired), so its check pins a#back-btn at the Board.
+  // Concept — #dc-back retired), so its check pins a#back-btn at the card
+  // area. That address is the WORKSHOP: the Board view retired, its columns
+  // are the Workshop's stage pane, and `boardHref` has one answer left.
   const session = (dapp.tests || []).find(
     (t) => typeof t.expectSelector === 'string'
-      && /a#back-btn[^"]*\[href="#app\/[^"]+\/board"\]/.test(t.expectSelector)
+      && /a#back-btn[^"]*\[href="#app\/[^"]+\/workshop"\]/.test(t.expectSelector)
   );
   assert.ok(session, 'the session back anchor needs its own check');
   assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');

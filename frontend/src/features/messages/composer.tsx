@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
@@ -37,6 +37,12 @@ export function MessageComposer() {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // #1955: the paperclip and the share tray were two adjacent icons that both
+  // answered "put something in this message", and neither said which was
+  // which — two guesses at a 40px target, on the narrowest row in the app.
+  // One "+" opens both as named rows instead.
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // #1408: grow with the message, up to the max-height already in app.css.
   useAutoGrow(inputRef, value);
@@ -127,6 +133,23 @@ export function MessageComposer() {
     }
   }
 
+  // The menu closes the way every other transient panel in the shell does: a
+  // press outside it, or Escape. Bound only while it is open, so a closed
+  // composer costs nothing.
+  useEffect(() => {
+    if (!addOpen) return undefined;
+    const onDown = (event: MouseEvent) => {
+      if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAddOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [addOpen]);
+
   async function submit() {
     if (sending || uploading || (!value.trim() && !attachments.length && !object)) return;
     setSending(true); setError(''); notifyTyping(false);
@@ -153,8 +176,24 @@ export function MessageComposer() {
       {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
-        <button type="button" className="messages-composer-action" onClick={() => fileRef.current?.click()} disabled={attachments.length + uploading >= MAX_ATTACHMENTS} aria-label="Attach files" title="Attach files"><PaperClipIcon aria-hidden="true" /></button>
-        <button type="button" className="messages-composer-action" onClick={() => window.UsernodeReact?.dialogs?.messagesShare?.open()} aria-label="Share Usernode item" title="Share item"><ArrowUpTrayIcon aria-hidden="true" /></button>
+        <div className="messages-composer-add" ref={addRef}>
+          <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label="Add to message" title="Add to message"><PlusIcon aria-hidden="true" /></button>
+          {addOpen ? (
+            <div className="messages-composer-menu" role="menu" aria-label="Add to message">
+              {/* The attachment cap disables the ROW, not the whole control:
+                  sharing an item is still available with four files queued,
+                  which a disabled "+" would have taken away with it. */}
+              <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
+                <PaperClipIcon aria-hidden="true" />
+                <span>Attach files</span>
+              </button>
+              <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
+                <ArrowUpTrayIcon aria-hidden="true" />
+                <span>Share item</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
         <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <ArrowUpIcon aria-hidden="true" />}</button>
       </div>

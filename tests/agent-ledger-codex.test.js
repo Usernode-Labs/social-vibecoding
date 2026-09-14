@@ -239,7 +239,7 @@ function makeTransactionPool() {
       const r = {
         id: params[0], session_id: params[1], user_id: params[2],
         requested_model: params[3], reasoning_effort: params[4],
-        status: 'running', metadata: JSON.parse(params[11] || '{}'),
+        routed_model: null, status: 'running', metadata: JSON.parse(params[11] || '{}'),
       };
       rowsById.set(params[0], r);
       return { rows: [r] };
@@ -251,7 +251,7 @@ function makeTransactionPool() {
     }
     if (/UPDATE agent_turns SET/.test(sql)) {
       const r = rowsById.get(params[0]);
-      const reconcileTerminalUsage = params[20] === true;
+      const reconcileTerminalUsage = params[19] === true;
       if (r && (r.status === 'running' || reconcileTerminalUsage)) {
         if (!reconcileTerminalUsage) r.status = params[1];
         r.agent_thread_id = params[4] || r.agent_thread_id || null;
@@ -265,7 +265,7 @@ function makeTransactionPool() {
         r.provider_cache_write_input_tokens_total = params[12];
         r.provider_output_tokens_total = params[13];
         r.provider_reasoning_output_tokens_total = params[14];
-        r.metadata = JSON.parse(params[19] || '{}');
+        r.metadata = JSON.parse(params[18] || '{}');
         r.updated = true;
       }
       return { rows: r && r.status ? [{ id: params[0] }] : [] };
@@ -305,6 +305,8 @@ test('completeCodexAttempt completes once and is idempotent on repeat', async ()
   assert.equal(first.delta.inputTokens, 100);
   assert.equal(first.estimatedCost.costSource, 'requested_model_catalog_estimate');
   assert.equal(rowsById.get(started.turnUuid).status, 'completed');
+  assert.equal(rowsById.get(started.turnUuid).routed_model, null,
+    'the provider-served model remains unknown when Codex does not report it');
 
   const second = await completeCodexAttempt({
     pool, turnUuid: started.turnUuid, status: 'completed', threadId: 'thr-1',
@@ -675,6 +677,58 @@ test('attempt loop: terminal after a single successful dispatch (no retry)', asy
   });
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0].status, 'completed');
+});
+
+// #2118: the figure the dev-chat composer shows for an OpenRouter turn is the
+// ledger's own estimate, summed over the turn's attempts — published on the
+// session's progress entry for the /status poll and returned to the caller.
+test('attempt loop: the turn\'s recorded cost is published for the live meter and returned', async () => {
+  const workerProgress = require('../src/services/worker-progress');
+  const { pool, attempts } = makeLoopPool();
+  workerProgress.clear(1);
+  let dispatchCalls = 0;
+  const result = await runCodexAttemptLoop({
+    pool,
+    session: { id: 1, agent_config_version: 1 },
+    userId: 1, config: {},
+    resolveRuntime: async () => ({
+      agentBackend: 'codex_openrouter', agentModel: 'openai/gpt-5.3-codex',
+      pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 },
+    }),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
+        // A markerless first attempt that still consumed tokens was paid
+        // for, so it counts towards the turn.
+        return { exitCode: -1, resultSeen: false, lastResultText: '', inputTokens: 1000, outputTokens: 500 };
+      }
+      return { exitCode: 0, resultSeen: true, agentThreadId: 'thr-1', inputTokens: 2000, outputTokens: 1000 };
+    },
+    retryPredicate: (r) => r && r.exitCode === -1 && !r.resultSeen,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(attempts.length, 2);
+  // 1,500 tokens at $1/M, then 3,000 at $1/M: $0.0015 + $0.003.
+  assert.ok(Math.abs(result.estimatedCostUsd - 0.0045) < 1e-12, String(result.estimatedCostUsd));
+  assert.deepEqual(workerProgress.get(1).spend, { costCents: 0.45, estimated: true });
+  workerProgress.clear(1);
+});
+
+test('attempt loop: a turn whose usage was never observed reports no cost, not zero', async () => {
+  const workerProgress = require('../src/services/worker-progress');
+  const { pool } = makeLoopPool();
+  workerProgress.clear(1);
+  const result = await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({
+      agentBackend: 'codex_openrouter', agentModel: 'm',
+      pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 },
+    }),
+    dispatchOnce: async () => ({ exitCode: 0, resultSeen: true }),
+    retryPredicate: () => false,
+  });
+  assert.equal(result.estimatedCostUsd, null);
+  assert.equal(workerProgress.get(1), null, 'nothing is published for the meter to show');
 });
 
 test('attempt loop: a requested stop terminalizes the observed attempt as cancelled', async () => {

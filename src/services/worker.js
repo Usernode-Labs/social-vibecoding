@@ -94,7 +94,9 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
 // v10 publishes bootstrap readiness and fences turns after container restarts.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
+// v11 refreshes warm workers so synthetic OpenRouter models use a
+// provider-neutral identity instead of claiming to be GPT (#2120).
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v11';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -1770,7 +1772,7 @@ async function _bootstrapWarmContainer(sessionId, {
   }
   if (privacy.private) {
     throw new Error(
-      `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Usernode requires public repositories. Make it public on GitHub or delete this app and re-import.`
+      `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Homeroom requires public repositories. Make it public on GitHub or delete this app and re-import.`
     );
   }
 
@@ -2181,7 +2183,13 @@ async function execInWorker(sessionId, {
     throw new Error(`execInWorker: no warm worker registered for session ${sessionId}`);
   }
   if (meta.inFlight) {
-    throw new Error(`execInWorker: a turn is already in flight for session ${sessionId}`);
+    // Coded so a caller can tell "wait for the running turn" from a real
+    // dispatch failure without matching on the message — the merge queue
+    // treats this one as in-progress rather than as a sync that failed.
+    throw Object.assign(
+      new Error(`execInWorker: a turn is already in flight for session ${sessionId}`),
+      { code: 'TURN_IN_FLIGHT' }
+    );
   }
   if (!prompt && !reusePromptFile) {
     throw new Error('execInWorker: prompt required');
@@ -2335,7 +2343,7 @@ async function execInWorker(sessionId, {
     SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
     MODE: mode,
     BRANCH: branchName || '',
-    COMMIT_MSG: commitMsg || 'Changes via Usernode',
+    COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
     ...(isClaude ? {
@@ -3567,7 +3575,7 @@ async function execPushFromWorker(sessionId, branchName) {
     err.permanent = true;
     err.userMessage =
       'This session does not have a git branch yet, so there is nothing to push to. '
-      + 'Send a message in the session first. Usernode creates the branch on the '
+      + 'Send a message in the session first. Homeroom creates the branch on the '
       + 'first turn and the push will work from then on.';
     throw err;
   }

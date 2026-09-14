@@ -966,12 +966,16 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
 -- Live progress of the run in flight: `{ ran, passed, failed, expected,
--- updatedAt, unit }`, written as the capture container's per-check frames
--- stream in and cleared with the verdict. `unit` is the repo unit suite's
--- own `{ phase, ran, passed, failed, skipped, expected, done }`, read off
--- its TAP output the same way. NULL outside a run. The verdict itself
--- stays in test_results; this is only what "checks running" has to say
--- between the start and the end, which used to be nothing.
+-- updatedAt, unit, build }`, written as the capture container's per-check
+-- frames stream in. `unit` is the repo unit suite's own `{ phase, ran,
+-- passed, failed, skipped, expected, done }`, read off its TAP output the
+-- same way; `build` is the staging build's steps and their times. The
+-- verdict itself stays in test_results; this is what "checks running" has
+-- to say between the start and the end, which used to be nothing. With
+-- the verdict (#2170) the snapshot is reduced to what the run cost —
+-- `{ build, checksMs }`, the finished build and the checks' wall clock —
+-- so the card can still say how long both took; the next run's start
+-- clears it. NULL before a run has reported.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
 -- The unit suite's size from its last completed run (`# tests`), so the
 -- next run's live bar has a denominator before the suite finishes.
@@ -6106,9 +6110,14 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   status               VARCHAR(24) NOT NULL DEFAULT 'provisioning'
                          CHECK (status IN ('provisioning', 'active', 'disabled',
                                            'deleted', 'needs_review')),
+  -- The allowance per reset period. Named for the daily cadence keys were
+  -- issued with before #2119; the column keeps that name because renaming it
+  -- would need a data migration for nothing, and limit_reset is what labels
+  -- it ('weekly' for keys issued under the current policy, 'daily' for
+  -- older ones until they are migrated).
   daily_limit_usd      NUMERIC(18,8) NOT NULL CHECK (daily_limit_usd > 0),
   limit_reset          VARCHAR(16) NOT NULL DEFAULT 'daily'
-                         CHECK (limit_reset = 'daily'),
+                         CHECK (limit_reset IN ('daily', 'weekly')),
   last_error_code      VARCHAR(64),
   issued_at            TIMESTAMPTZ,
   disabled_at          TIMESTAMPTZ,
@@ -6116,6 +6125,15 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- #2119: databases created before the weekly policy carry the original
+-- CHECK (limit_reset = 'daily') under PostgreSQL's generated name. Replace
+-- it by that name on every boot; a fresh database gets the same name from
+-- the inline CHECK above, so there this is a no-op.
+ALTER TABLE credentials.managed_openrouter_keys
+  DROP CONSTRAINT IF EXISTS managed_openrouter_keys_limit_reset_check;
+ALTER TABLE credentials.managed_openrouter_keys
+  ADD CONSTRAINT managed_openrouter_keys_limit_reset_check
+  CHECK (limit_reset IN ('daily', 'weekly'));
 CREATE INDEX IF NOT EXISTS managed_openrouter_keys_status_idx
   ON credentials.managed_openrouter_keys (status, updated_at DESC);
 COMMENT ON TABLE credentials.managed_openrouter_keys IS 'staging:private';
@@ -7372,12 +7390,89 @@ BEGIN
   END IF;
 END $$;
 
+-- ── What a proposal still needs before it merges ───────────────────────
+--
+-- A recording of what checkAndMerge actually did on its last run: an ordered
+-- list of the gates it cleared and the one that refused, written from the same
+-- call sites that already narrate into merge_debug_runs.
+--
+-- It is a DESCRIPTION, never an input. Nothing reads it to decide whether a
+-- proposal may merge — checkAndMerge re-evaluates everything from scratch
+-- every time — so a stale or missing record costs a card its checklist and
+-- costs the merge nothing. services/merge-gate.js turns it, plus that file's
+-- static gate order, into the list the card renders.
+--
+-- Why a recording rather than a second evaluator: re-deriving the gate's
+-- conditions anywhere else means two implementations of "can this merge",
+-- drifting, with the describing one eventually lying about the deciding one.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements_at TIMESTAMPTZ;
+
 -- The measurement sweep's candidate ordering: promoted rows, least recently
 -- measured first, never-measured ahead of everything. Mirrors the freshness
 -- index above, which it replaces once that pass is retired.
 CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
   ON chat_sessions (integration_measured_at NULLS FIRST)
   WHERE status = 'promoted';
+
+-- ── Direct-merge lanes ─────────────────────────────────────────────────
+--
+-- A proposal that merges cleanly with main merges as it stands: being
+-- behind is no longer a reason to bring it up to date first, and the
+-- platform's own sync no longer precedes a merge (services/merge-queue.js).
+-- Only a measured CONFLICT costs a worker turn, and the conflict lane
+-- admits one pre-approval resolution per authored head — the author's work
+-- gets one chance to be made mergeable before anyone has voted on it, and
+-- unlimited chances once the group has approved it. What ties a resolution
+-- to "this authored head" is the approval epoch: an authored push bumps
+-- it, a mechanical or resolved move does not (see The approval epoch,
+-- above), so "spent in this epoch" is exactly "spent on this author's
+-- work".
+--
+--   integration_resolved_epoch  the approval_epoch during which the queue
+--                               last spent a pre-approval resolution on
+--                               this proposal. NULL: never. Equal to the
+--                               current approval_epoch: the one resolution
+--                               this authored head gets before approval is
+--                               used, and a further conflict waits for the
+--                               vote. Different: the author has pushed
+--                               since, and the new head has its own.
+--
+-- check_phase gains 'deferred' beside 'building' / 'testing': a promoted
+-- head that conflicts with main gets its preview and screenshots (so the
+-- group can review it) but no assertions and no unit suite, because a
+-- tree that cannot merge is not the tree that would be tested after the
+-- resolution. The verdict stays 'pending' with this phase until the head
+-- merges cleanly, at which point the checks run (services/check-admission.js).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch INTEGER;
+
+-- ── Main watch ─────────────────────────────────────────────────────────
+--
+-- The safety net under direct merges. Each merge lands a tree nobody ran
+-- the checks against as a whole (the proposal was checked on its own head,
+-- against the main of the time), so after every merge the repo's unit
+-- suite runs once more on the merge commit (services/main-watch.js). Red
+-- pauses the app's merges until a fix lands or an admin resumes them;
+-- nothing is rolled back, and the culprit is whatever landed since the
+-- last green.
+--
+--   main_check_state        'running' | 'passing' | 'failing' | 'error' |
+--                           'skipped'. NULL: never run. 'error' is a run
+--                           that could not happen (no runner, no clone)
+--                           and does not pause anything; 'skipped' is a
+--                           repo with no runnable test script.
+--   main_check_sha          the merge commit the state describes.
+--   main_check_at           when that run finished (or started, while
+--                           'running').
+--   main_check_detail       the run's own account: failing tests, the
+--                           TAP summary, the PR that landed it.
+--   main_check_resumed_sha  an admin's "resume merges" for exactly this
+--                           red sha. A later red is a new pause.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_state VARCHAR(16);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_sha VARCHAR(40);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
 
 -- The Needs-you deck's ask box (services/workshop-ask.js): one person's
 -- own questions about one card, and the answers they got.
@@ -7419,6 +7514,27 @@ COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
 -- the same transaction and can share a timestamp.
 CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
   ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);
+
+-- Durable manifest of a checks run whose containers are in flight
+-- (services/check-runs.js). Written just before the capture / unit-suite
+-- Jobs are created, heartbeated by the owning process while they run, and
+-- deleted once the verdict is stored. Its only reader is the harvester
+-- (services/check-harvest.js), which adopts a row whose owner has stopped
+-- heartbeating — a platform rollout replaced the Pod — and settles the run
+-- from the Job's own output instead of starting the suite over. The
+-- manifest holds everything the verdict needs that is not in the log:
+-- the dispatch table, the capture targets, the staging origin, the trigger.
+CREATE TABLE IF NOT EXISTS check_runs (
+  run_id       UUID PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_sha   VARCHAR(40),
+  owner        TEXT NOT NULL,
+  manifest     JSONB NOT NULL,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE check_runs IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
 -- ────────────────────────────────────────────────────────────────────
 -- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.

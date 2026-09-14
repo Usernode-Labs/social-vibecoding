@@ -7,9 +7,10 @@ Docker daemon or socket. Talos workloads are observed through Kubernetes APIs.
 
 ## Ownership and releases
 
-The `Build Kubernetes images` workflow builds the platform, worker and capture
-Dockerfiles in CI and publishes one OCI Helm chart containing all three image
-digests. `main` produces the stable `0.1.*` releases tracked by Argo CD. The
+The `Build Kubernetes images` workflow builds the platform Dockerfile in CI,
+builds or reuses worker/capture images by their tracked build inputs, and
+publishes one OCI Helm chart containing all three image digests. `main`
+produces the stable `0.1.*` releases tracked by Argo CD. The
 platform's own release uses this workflow; generated child apps use kpack and
 Paketo from exact Git revisions. Child-app Dockerfiles are not executed by kpack.
 
@@ -67,9 +68,39 @@ changing the preview. Cancellation is not an app test failure.
 Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
 requests foreground deletion and confirms Job/Pod termination. API errors keep
 replacement blocked; a DELETE acknowledgement alone does not establish that
-the browser stopped. After a platform restart, the next owner stops orphaned
-check Jobs before using the preview. Existing recovery schedules restart work;
-this is not resumption from an arbitrary point inside a capture.
+the browser stopped. After a platform restart, a successor for a NEWER revision
+stops orphaned check Jobs before using the preview; a run for the revision the
+session is still waiting on is harvested instead (below).
+
+## Harvesting check runs across platform rollouts
+
+Every merge to the self-app rolls the platform Deployment, and every checks
+run in flight at that moment loses the process that was streaming its capture
+and unit-suite Jobs. The Jobs themselves belong to the cluster and finish
+regardless. `services/check-harvest.js` reads them rather than starting over.
+
+Each run writes a manifest row to `check_runs` (session, commit, owner
+`hostname:pid`, launch context) before its Jobs are created and heartbeats it
+every `CHECK_RUN_HEARTBEAT_MS` (15s). A row with no heartbeat for
+`CHECK_RUN_ORPHAN_MS` (60s) is an orphan. The leader sweeps once at boot —
+before the stuck-checks reconcile, so a harvestable run is never re-driven as
+stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
+`CHECK_HARVEST_CONCURRENCY` (3) adoptions at a time. An orphan is:
+
+- **settled** when its Jobs are found by the `preview-run-id` label: a finished
+  Job's log is read, a running one is waited on with progress re-published to
+  the proposal card, and the output goes through the same settlement a live
+  run ends with (same parse, verdict, stores, commit guards, broadcasts);
+- **re-driven immediately** when there is nothing to read — the process died
+  before creating the Jobs, or the Jobs are gone (TTL, or cancelled);
+- **moot** when the session no longer wants the run — decided meanwhile, head
+  moved, session closed, or (under the preview lifecycle) a newer run owns it.
+
+Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
+`preview_operations` row first and writes through the same ownership check a
+live run does; a request for a newer revision aborts the harvest. Outside the
+Kubernetes capture runtime the harvester is a no-op. The stale sweep
+(`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
@@ -154,15 +185,19 @@ ready replica can still serve while the desired image is failing to start.
 ResourceQuota reports reservations and object counts, not measured CPU or
 memory consumption. Do not substitute Docker host statistics for cluster usage.
 
-Capture Jobs default to an 8-CPU / 4Gi limit for eight concurrent browser groups,
-with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow at least
-8 CPUs per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and `TEST_CONCURRENCY`
-override these settings on the platform; keep CPU capacity aligned with browser
-concurrency when tuning them. CPU requests are scheduling reservations, so the
-larger limit allows bursts but does not guarantee eight idle cores. Check
-historical CPU throttling as well as completion: a successful Job can still
-produce timing-sensitive assertion failures under CPU contention. Unit-suite
-and coding-worker resource settings are independent.
+Capture Jobs default to an 8-CPU / 6Gi limit for sixteen concurrent browser
+groups, with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow
+at least 8 CPUs and 6Gi per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and
+`TEST_CONCURRENCY` override these settings on the platform. Memory is the bound
+on the pool — budget roughly 150 MiB per concurrent page plus 1 GiB for the
+browser — since the capture browser composites in software (Skia, not a
+SwiftShader GPU process) and a page load costs well under a CPU-second. CPU
+requests are scheduling reservations, so the larger limit allows bursts but
+does not guarantee eight idle cores. Check historical CPU throttling as well as
+completion: a successful Job can still produce timing-sensitive assertion
+failures under CPU contention. Unit-suite Jobs default to 8 CPUs / 4Gi (the CPU
+quota sets `node --test`'s process-pool size); coding-worker resource settings
+are independent.
 
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their

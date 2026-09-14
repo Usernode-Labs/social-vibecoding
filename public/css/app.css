@@ -1072,6 +1072,38 @@ html.un-kb .platform-safe-sheet {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #1955 — the one "+" and the two named rows it opens. The wrapper is the
+   positioning context AND the outside-press boundary, so the menu has to
+   live inside it rather than beside the button. */
+.messages-composer-add { position: relative; flex: 0 0 auto; }
+.messages-composer-menu {
+  position: absolute;
+  z-index: 25;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 176px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+  box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
+}
+.messages-composer-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* 40px tall: this is a phone target, and the control it replaced was two
+     36px circles the width of a fingertip apart. */
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+  white-space: nowrap;
+}
+.messages-composer-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
+.messages-composer-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-composer-menu button:disabled { opacity: .35; }
 .messages-send {
   display: inline-flex;
   align-items: center;
@@ -2494,27 +2526,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 
 /* `.home-panel-rows--metered` and the `.home-panel-bar-track` geometry rule
-   lived here. The first reserved the meter lane on every row of a panel that
-   had any numeric challenge; the second derived the bar's inset, height and
-   clearance from that lane, including a `left: 1.75rem` that was the row's
-   own `px-2.5 + glyph + gap-2` restated as a literal — so moving the gutter
-   or the glyph silently desynchronised the bar from the text it measured.
+   are gone with the lane, and the track and fill names went with the count
+   capsule that inherited them: a Home challenge card draws the Challenges
+   tab's shared progress rail now (features/leaderboard/challenge-card.tsx),
+   and the declared checks select on its `[role=progressbar]`. */
 
-   Both are gone with the lane (see --home-panel-row-h above). The track is an
-   ordinary block on the row's second line, sized by Tailwind utilities on the
-   element itself, so it spans the text column by LAYOUT rather than by a
-   number copied out of a sibling's padding. `.home-panel-bar-track` and
-   `.home-panel-bar-fill` remain as the names dapp.json's declared checks and
-   tests/home-panels-render.test.js select on; they carry no rules of their
-   own. */
-
-/* THE SEASON RING's own hairline, inset like the row rules above it — the
-   ring is the card's first band and the rows follow it, so the seam between
-   them has to read as the same kind of seam as the ones between rows. It is a
-   ::after (the band's own bottom) rather than a ::before on the first row,
-   because the rows list draws no leading rule by design: with no ring above
-   it — the between-seasons block — a rule at the top of row one would be a
-   line against the card's own edge. */
+/* THE SEASON PROGRESS's own hairline, inset like the row rules above it —
+   the progress is the card's first band and the rows follow it, so the seam
+   between them has to read as the same kind of seam as the ones between rows.
+   It is a ::after (the band's own bottom) rather than a ::before on the first
+   row, because the rows list draws no leading rule by design: with no
+   progress above it — the between-seasons block — a rule at the top of row
+   one would be a line against the card's own edge. */
 .home-panel-season {
   position: relative;
 }
@@ -2788,8 +2811,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
    The lane is a rail of cards (see `.home-discover-rail` below) and the block
    is a section that grows to its content, so none of that arithmetic has
-   anything left to constrain. What survives is the lane wrapper, the
-   "Popular" divider between the two rails and the empty note.
+   anything left to constrain. What survives is the lane wrapper and the
+   empty note.
 
    The NAME keeps its class and loses its clamp: on a 152px card a real name
    has room to be read on one line, and the second line would only ever be
@@ -2797,21 +2820,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* The "Popular" caption sits on its own hairline row between the two rails. */
-.home-discover-divider {
-  position: relative;
-  min-height: 1.125rem; /* 18px */
-}
-.home-discover-divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0.625rem;
-  right: 0;
-  height: 1px;
-  background: var(--border-light);
-  pointer-events: none;
-}
+/* `.home-discover-divider` is RETIRED. It drew the hairline row that carried
+   the "Popular" caption between the block's two rails. Discover is one
+   category and one rail now — the curated apps and the most-used ones flow
+   as a single continuous set of cards — so there is no sub-group left to
+   label and no seam left to draw. */
 /* The empty state: no rail at all, one centred line in its place, so the
    block reads as a compact strip rather than a mostly-blank box. */
 /* #1913: a card now, in the rail's card language (the tint vars come from
@@ -2943,6 +2956,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   scrollbar-width: none;
   margin-inline: -0.75rem;
   padding-inline: 0.75rem;
+  /* The snap position must be the KEYLINE, not the rail's own edge. Without
+     it `scroll-snap-align: start` lines the first card up with the scrollport
+     edge — 0.75rem outside the section's gutter, since the negative margin
+     above cancelled it — and WebKit applies that snap on layout, so on iOS
+     the rail arrived pre-scrolled with the first card stuck to the screen. */
+  scroll-padding-inline: 0.75rem;
   /* Room for the cards' own shadow-less hairline to not be clipped, and for
      a focus ring on the last card. */
   padding-block: 0.125rem;
@@ -2994,7 +3013,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
 /* ── Challenges: the plate, and the cards on it ─────────────
    The block was one white card of divided rows. It is a PLATE holding the
-   season summary and one tinted card per challenge — the reference's shape —
+   season summary and one card per challenge — the reference's shape —
    and the plate is what keeps them reading as one area rather than four
    things that happen to be adjacent.
 
@@ -3016,86 +3035,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.10);
 }
-.home-challenge-card {
-  border-radius: 0.875rem;
-  background: var(--tint-bg);
-  border: 1px solid var(--tint-line);
-}
-/* The white pill under each title: the challenge's state on one line. It is
-   opaque white on the tint in both modes — a translucent pill over a tinted
-   card over a translucent plate is three layers of glass to read one number
-   through. */
-.home-challenge-pill {
-  background: #fff;
-  border-radius: 9999px;
-}
-.dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
-/* THE COUNTED CHALLENGE'S STATE: a capsule that fills, in the place a
-   yes-or-no challenge puts its circle. It replaces a 3px rail that ran along
-   the pill's bottom edge — one element in the pill instead of one in it and a
-   rule under it, and it carries the exact count as well, which the rail had
-   no room for.
-
-   THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and the
-   difference matters because this comment said the opposite for a while. The
-   claim was that a fill narrower than the capsule's corner radius is drawn
-   inside the cap and painted over, so the floor had to clear the radius. That
-   is true of the RAIL this replaced — 3px tall and flush with a 16px corner,
-   where the bottom row really is all corner — and false of the capsule: its
-   cap is a semicircle of half its height, so a 5px fill still covers 14.8px
-   of the 16px it is tall. Narrow, never invisible.
-
-   So the floor is simply the shortest fill that reads as "started, barely"
-   rather than as a smudge, and it is small on purpose: at the radius-derived
-   14px it was a quarter of the capsule, which read as real progress on a
-   challenge nobody had begun. tests/home-panels-render.test.js pins that it
-   stays well under the radius, and scripts/measure-meter-zero.mjs measures
-   what a browser actually paints. */
-.home-challenge-meter {
-  --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
-  --home-meter-floor: 0.375rem;  /* 6px — a nub, not a quarter of the track */
-  min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
-}
-/* The fill is a TINT, not the solid accent: the count sits on top of it, and
-   a solid fill would swallow the digits the moment progress passed them.
-
-   THE TINT IS OF THE ACCENT BLUE (violet-500 — read the hex, that scale is
-   the shell's blue), not of --brand-ink. Brand ink is a deep periwinkle
-   navy, and a navy at a third of its strength composites to a blue-GREY: it
-   read as "the track, slightly darker" rather than as progress. The accent
-   at this strength composites to an unmistakable light blue, and the count
-   in brand ink still clears 4.5:1 on it — which is the constraint that keeps
-   the fill a tint at all. */
-.home-challenge-meter-fill {
-  opacity: 0.45;
-}
-.dark .home-challenge-meter-fill {
-  opacity: 0.5;
-}
-
-/* The art well on a challenge card. Lighter than the card so the
-   illustration sits ON something, the same relationship the Discover card's
-   art block has to its footer. */
-.home-challenge-art {
-  background: rgba(255, 255, 255, 0.6);
-}
-/* THE FALLBACK WORD, when a challenge's kind carries no icon. A category is
-   free text on the template and is usually one word — "ONBOARDING" at 9px
-   with letter-spacing measures wider than the 62px well, and a single
-   unbreakable word does not wrap, so it ran straight out of the square.
-   Breaking anywhere is what a well can do that a line of prose should not,
-   and two lines is what the box has room for; a longer one ellipsises rather
-   than pushing the card taller. The tracking goes with it — at this size it
-   was buying width the well does not have. */
-.home-challenge-art-word {
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-.dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
+/* The cards on the plate carry no rules of their own. Each is the Challenges
+   tab's shared card (features/leaderboard/challenge-card.tsx), drawn entirely
+   in utilities; `.home-challenge-card` survives only as the root class the
+   declared checks and tests select on. The tinted card, the white pill, the
+   count capsule and the category well that lived here are retired with the
+   design they drew. */
 
 /* ── Create-app widget ──────────────────────────────────────
    A 1x1 tile: the whole thing is the button, since a single cell has no
@@ -3179,8 +3124,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      is the same element, one specificity step up, so the intended phone
      padding lands without an !important or a #app-list scope that would
      miss the landing grid's tiles. It also buys the label 8px of extra
-     line width, which at 11px is roughly two more characters per line. */
-  .app-card.app-card { padding: 0.5rem; }
+     line width, which at 11px is roughly two more characters per line.
+
+     NOT the Discover card. It carries `.app-card` only as the wiring contract
+     with `_wireDiscoveryCards`; it is a tile of its own whose art block is
+     meant to run edge to edge, and this padding inset the illustration inside
+     a frame of tint on every phone. */
+  .app-card.app-card:not(.home-discover-card) { padding: 0.5rem; }
 
   /* `.home-panel-slot > .home-panel--fit { align-self: flex-start }` lived
      here: the phone-only release from the slot's stretch-to-fill, so a short
@@ -4270,8 +4220,8 @@ body:has(#platform-header.hidden) #app-frame-host {
    cards in the message stream, and they render metres apart. */
 /* ── The launchpad (#1281) ───────────────────────────────────────────────
    What a session shows instead of a composer when the work is happening
-   somewhere else. Markup comes from public/js/launchpad.js (own-tools-pr)
-   and public/js/dev-flow-select.js (the two web hand-offs); dev-chat.js
+   somewhere else. Markup comes from features/dev-chat/own-tools-guide.tsx
+   (own-tools-pr) and public/js/dev-flow-select.js (web hand-offs); dev-chat.js
    renders whichever into #dc-launchpad-slot and hides
    #dc-composer-controls beside it.
 
@@ -6870,6 +6820,24 @@ span.gc-vote-btn-icon { cursor: default; }
   overscroll-behavior: contain;
 }
 .gc-mention-menu.hidden { display: none; }
+/* #2145: the Activity feed's reply box (features/dev-board/card/
+   feed-thread.tsx) opens this same menu from its own `@`. Its composer is a
+   React island with one field per row, so the list is a sibling of the
+   textarea inside the form (position: relative there) rather than the
+   body-level element group-chat.js measures — placed above the field, as
+   the chat composers' are, and stopping short of the 36px send disc and its
+   8px gap on the right. `-below` is the flip for a field with no room above
+   it (a short thread in the Needs-you comments sheet, whose body scrolls). */
+.gc-mention-menu.dev-feed-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 44px;
+  bottom: calc(100% + 4px);
+}
+.gc-mention-menu.dev-feed-mention-menu-below {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
 .gc-mention-option {
   display: flex;
   align-items: center;
@@ -7063,35 +7031,39 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-model-select {
   appearance: none;
   -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  display: block;
   background: none;
   border: 0;
-  padding: 0;
-  max-width: 100%;
+  padding: 0 1.1rem 0 0;
+  max-width: min(100%, 16rem);
   min-width: 0;
   cursor: pointer;
   color: inherit;
   font: inherit;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* The name is what truncates — the caret must not, or the control loses the
-   only thing that says it opens. */
+/* Shared with the proposal-workshop select, which uses this utility to keep
+   a long model name from widening its control. */
 .dc-model-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dc-model-select > svg { flex: none; }
-/* The caret sits inside the button now, but this rule still earns its place:
-   it is what gives the row its colour in dark mode, where the caret was
-   invisible until it stopped inheriting from the field. */
+.dc-model-caret {
+  position: absolute;
+  right: 0;
+  flex: none;
+  pointer-events: none;
+}
+/* The native select's arrow is replaced so it follows the tuned foreground
+   colour in both themes. */
 .dc-venue-detail-inline {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
   min-width: 0;
   color: var(--text-primary);
 }
@@ -10608,7 +10580,7 @@ body.is-offline [data-offline-disabled] {
   display: none;
 }
 
-/* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
+/* "Your OpenRouter key is not set, so this turn ran on Homeroom · Claude"
    — the one place a venue the user did not choose is confessed. A whole
    sentence, so it lives above the composer where it can wrap, rather than
    in the header control that names the venue. */
@@ -10618,9 +10590,8 @@ body.is-offline [data-offline-disabled] {
   line-height: 1.4;
 }
 
-/* Provider-specific model controls. Claude renders its chat-model select;
-   OpenRouter renders the one model pinned to both chat and coding. The
-   other four venues have nothing to choose here. */
+/* The grouped model/key selector. Both in-chat providers render it in the
+   card; the other four venues have nothing to choose here. */
 .dc-venue-detail {
   display: flex;
   flex-wrap: wrap;
@@ -10629,52 +10600,10 @@ body.is-offline [data-offline-disabled] {
   padding: 0 0.1rem 0.25rem;
 }
 
-/* …except Claude's, which shares the status strip with the runner and the
-   meter since #1353. It is a segment of that row rather than a row of its
-   own, so it brings no padding of its own to sit on. */
+/* It shares the card row with the runner and meter, so it brings no padding
+   of its own. */
 .dc-venue-detail-inline {
   padding: 0;
-}
-
-.dc-openrouter-model {
-  min-width: 0;
-  max-width: min(100%, 30rem);
-  overflow: hidden;
-  color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dc-openrouter-model-change {
-  flex: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent-light);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.dc-openrouter-model-change:hover {
-  color: var(--accent);
-}
-
-.dc-openrouter-model-change:focus-visible {
-  outline: none;
-  border-radius: 3px;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
-}
-
-.dc-openrouter-model-change:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  text-decoration: none;
 }
 
 /* The session-card chip on the dev feed (#1087 card actions row). Names
@@ -12015,6 +11944,43 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    note's 16px so the two share a left edge. */
 .dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
 .dev-ws-reveal-chev { width: 14px; height: 14px; }
+/* ── Since your last visit ───────────────────────────────────
+   A HEADING over rows, not a disclosure. It was one collapsed line with a
+   caret, on the reasoning that most visits do not need the fact — and what
+   that produced was a strip nobody opened: the count said something had
+   moved and the rows saying what were behind a press. The bargain is the
+   LIST'S LENGTH now (three, then `Show older`), not its existence, which is
+   what the week walk one pane up already does with its own history.
+
+   `.dev-ws-since-head` is what `.dev-ws-since-row` was, minus everything
+   that said "press me": no pill radius, no pointer, no hover ink, no caret.
+   It is the pane's eyebrow, with a count riding it.
+
+   These rules live beside the reveal control the strip shares, not under
+   the tab they were first written for. They were born inside the old
+   Needs-you block, and #2080, rewriting that tab into a feed, took them out
+   with the rest of it — while the strip had already moved to Current status
+   in #2065 and its markup went on emitting the classes. Two bare inline
+   spans were what was left: "Since your last visit2" (#2097). */
+.dev-ws-since-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 2px 2px 0;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+}
+.dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand-tint); color: var(--brand-ink);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+/* `Show older` is the week walk's own control — `.dev-ws-reveal`, centred,
+   caret down at what it is about to reveal — and it sits under a stack of
+   full-width rows exactly as that one does, so it takes the centred form
+   rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
+   the air between it and the last row. */
+.dev-ws-since-more { margin-top: 2px; }
 
 /* ── Where the summary came from ─────────────────────────────
    Two clauses of the category footnote, moved onto the tab that holds the
@@ -12101,6 +12067,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-direction: column;
 }
 #dev-workshop > .dev-ws { flex: 1 1 auto; width: 100%; }
+/* ...AND THE FITTED TAB HAS TO BE ABLE TO SHRINK INSIDE IT. `.dev-ws` is a
+   flex ITEM of the chain above, and a flex item's automatic minimum size is
+   its CONTENT — every other link here carries `min-height: 0` for that
+   reason and this one did not. So on Needs you a long summary did not make
+   `.dev-ws-needs-scroll` scroll: the deck refused to shrink, the lander grew
+   instead, and the answers and the ask box went down with it. Measured at
+   402x874 against a nine-paragraph summary: `.dev-ws` 1803px tall with the
+   composer 910px below the fold, in the NATIVE layout — the one whose
+   definite scroller was supposed to bound it — and at a 34px inset as well
+   as at none.
+   ONLY THAT TAB. The other two are meant to grow: #dev-forum-scroll is the
+   scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
+   so shrinking them to the viewport would clip what they hold rather than
+   make it reachable. */
+#dev-workshop > .dev-ws[data-ws-tab="needs"] { min-height: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* The tab body takes the space and carries the clearance; the rail follows
    it. `margin-top: auto` on the rail is gone with it — the body's `flex: 1`
@@ -12221,10 +12202,68 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    thing: where you are, and where you could go. A black pill was the only
    flat-black object on the screen and read as a different product.
    The tokens carry their own dark values, so there is no dark variant. */
+/* THE INK STAYS ON THE TAB; THE FILL MOVED TO THE MARKER. A background drawn
+   by the selected tab itself cannot travel — it can only appear on one and
+   vanish from another, which is the snap this replaces. One element that slides
+   is the whole idea, so the tab is left with the colour change, which has
+   nothing to animate between. */
 .dev-ws-tab[aria-selected="true"] {
-  background: var(--brand-tint);
   color: var(--brand-ink);
+}
+/* Above the marker, which is painted first and sits at the floor of the
+   stacking context. `position: relative` is what puts them on that ladder at
+   all — without it the tabs and the marker are both static and the marker,
+   coming later in paint order for positioned elements, would cover the
+   labels. */
+.dev-ws-tab { position: relative; z-index: 1; }
+/* THE MARKER. Every number it uses is measured off the live tab (see
+   workshop.tsx), so this rule carries no geometry — which is what lets it
+   serve the phone's 58px equal-width pill and the desktop strip's 32px
+   content-width segments without a breakpoint of its own.
+
+   `top: 0; left: 0` and then translated: the transform is the only thing that
+   moves, and a transform is the one property that animates without asking the
+   layout engine anything. */
+.dev-ws-tab-marker {
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: var(--brand-tint);
   box-shadow: inset 0 0 0 1px var(--brand-line);
+  pointer-events: none;
+  /* Hidden until measured — see the note in workshop.tsx. */
+  opacity: 0;
+}
+.dev-ws-tab-marker[data-ws-marker-at] { opacity: 1; }
+/* THE TRANSITION IS ON A SECOND ATTRIBUTE, and `data-ws-marker-slide` is not
+   `data-ws-marker-at`. `at` means MEASURED, which is what the opacity above
+   waits for; `slide` means the measurement was caused by the SELECTION
+   CHANGING. Only the second is worth animating, and keeping them apart is
+   what stops a re-measure of the tab you are already on from replaying the
+   slide — see useTabMarker in workshop.tsx, which owns the distinction.
+
+   Both were one attribute, and that conflated three things the marker does.
+   The first placement was one: `at` arrives in the same commit as the
+   transform, so the transition was live for a change from `none` at zero
+   width, and the marker slid in from the nav's left edge on every cold open
+   of the All items tab — the exact slide-in the null-until-measured render
+   was written to avoid, reintroduced by the rule meant to enforce it. A
+   re-measure was the other: any layout shift under the bar re-expressed an
+   unmoved tab in new coordinates and the marker animated to where it already
+   was. Neither is a selection changing, and neither carries `slide`.
+
+   `width` and `height` are in the list because the desktop segments are
+   content-width: "Current status" and "Needs you" are different sizes, so a
+   transform alone would slide a box of the wrong width. On the phone all
+   three match and those two properties simply never change. */
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-tab-marker[data-ws-marker-slide] {
+    transition:
+      transform .26s cubic-bezier(.32, .72, 0, 1),
+      width .26s cubic-bezier(.32, .72, 0, 1),
+      height .26s cubic-bezier(.32, .72, 0, 1);
+  }
 }
 
 /* ── Needs you: one question, the whole screen ───────────────
@@ -12283,29 +12322,425 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-bar) - var(--ws-lift)
   );
+  /* AND THE SCROLLER'S OWN CONTENT BOX, which is a DIFFERENT quantity and
+     not `--ws-area` plus something. That floor clears the floating pill,
+     which rests `--ws-lift` off the screen's foot; this is simply where
+     `.dev-ws` ends when the chain above it has a definite height — the
+     reading area, less `.platform-safe-scroll`'s reservation and
+     `#dev-body`'s own bottom padding, which are the two things below it.
+     The pill then overlays the last `--ws-bar` of it, exactly as it
+     overlays every other tab, and `.dev-ws-tabbody`'s clearance is what
+     holds the content off it.
+     The two coincide only at a zero inset. At a 34px one the pill lifts by
+     14 and the scroller gives back 34, so a fitted tab written in terms of
+     the floor would be 20px out on a phone with an indicator and nowhere
+     else. */
+  --ws-fit: calc(
+    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    - var(--ws-gap) - var(--platform-safe-bottom, 0px)
+  );
 }
-.dev-ws-needs {
-  /* The lander is a flex column with a floor under its height, so the deck
-     simply takes what is left between the head of the tab and the rail —
-     no second copy of the viewport arithmetic to keep in step with the
-     first. */
-  flex: 1 1 auto;
-  min-height: 360px;
-  display: grid;
-  /* Two thirds to the thing being decided, one to the place you can ask
-     about it — enough to say the pane is there and take a question. */
-  grid-template-rows: 1fr auto;
-  gap: 8px;
-}
-/* Until it is used the ask pane is ONE ROW — the box and nothing else, which
-   is `auto` above. It opened at a third of the screen with a heading and a
-   hint in it, and that spent a third of a decision screen on an invitation
-   nobody had accepted.
+/* ── Needs you is a FITTED SCREEN on a phone, in both layouts ──────────
+   With the rule above it is, in the NATIVE one: #dev-forum-scroll has a
+   definite height there, the flex chain bounds the deck, and
+   `.dev-ws-needs-scroll` is what takes a long card — so the answers, the
+   page arrows and the ask box are pinned. Measured at 402x874: the composer
+   ends 8px under the pill whatever the card holds, at a 34px inset and at
+   none.
 
-   Once you have asked something the conversation is what you are reading and
-   the card is context for it, so it takes half. It stops there: the card is
-   the subject, and a chat that swallows its subject is a chat about nothing. */
-.dev-ws-needs-engaged { grid-template-rows: 1fr 1fr; }
+   In a mobile BROWSER the page itself scrolls (`html[data-browser-scroller]`,
+   see browser-scroll.ts), #dev-forum-scroll is `height: auto`, and every
+   height below it resolves to content. `--ws-area` is only a FLOOR there, so
+   it could not stop a long card growing the deck — and on a SHORT one it
+   stopped the deck early instead, because it is not the same number as the
+   clearance `.dev-ws-tabbody` reserves: measured, 79px of dead air between
+   the composer and the pill at a zero inset and 51px at 34, against the
+   native layout's 8 at both. The inset-independence the tab body's padding
+   is built for cannot survive a floor that disagrees with it.
+
+   So the tab takes `--ws-fit` as a definite HEIGHT — the box the native
+   chain arrives at on its own — and the tab body's clearance is what holds
+   the composer off the pill, exactly as it does on every other tab. One
+   reservation, one layout, both engines, any inset.
+
+   Scoped to the phone as well as to the layout, and that is load-bearing:
+   `data-browser-scroller` is set on any coarse pointer (MOBILE_PAGE_QUERY),
+   tablets included, and above 700px the pill is in flow at the head of the
+   column, so the whole arithmetic below it is a different one. 700px is the
+   same decision as the `@media (min-width: 700px)` block below and as
+   `useRailHost`'s query. */
+@media (max-width: 699.98px) {
+  html[data-browser-scroller] .dev-ws[data-ws-tab="needs"] {
+    height: var(--ws-fit);
+    min-height: var(--ws-fit);
+  }
+}
+/* ═══════════════════════════════════════════════════════════════════════
+   NEEDS YOU: A FEED OF DECISIONS. One item per screen, the rail of
+   actions at the right edge, sheets over the item. workshop.tsx's NeedsFeed
+   header is the argument; this is the geometry.
+
+   THE LANDER IS THE STAGE. `.dev-ws-needs` takes what is left between the
+   head of the tab and the pill's clearance (the flex chain above, with
+   `--ws-fit` on a phone), and the SCROLLER inside it is the snap container:
+   every item is exactly its height, `scroll-snap-type: y mandatory` finishes
+   any drag on an item boundary, and nothing inside an item scrolls — a long
+   summary clamps and the title links to the full page.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-ws-needs {
+  flex: 1 1 auto; min-height: 320px;
+  position: relative;
+  display: flex; flex-direction: column;
+}
+.dev-ws-needs-scroll {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  border-radius: 22px;
+}
+.dev-ws-needs-scroll::-webkit-scrollbar { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-needs-scroll { scroll-behavior: smooth; }
+}
+/* ── The item ─────────────────────────────────────────────────────────
+   A column: progress line and eyebrow, title, summary, then the picture
+   (or the air where one would go), then the caption at the floor. The
+   caption keeps the rail's width free at its right, and the picture stops
+   short of the rail, so nothing the rail covers is text. The tint
+   alternates so a swipe reads as a new item, not the same one with new
+   words; the pair is soft enough that the pastel ground shows through. */
+.dev-ws-item {
+  position: relative;
+  height: 100%; box-sizing: border-box;
+  scroll-snap-align: start; scroll-snap-stop: always;
+  display: flex; flex-direction: column;
+  padding: 20px 16px 10px;
+  border-radius: 22px;
+  overflow: hidden;
+  background-color: var(--dc-sheet-fill);
+}
+.dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(244, 114, 182, .08)); }
+.dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
+.dark .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
+.dark .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+.dev-ws-item-progress {
+  position: absolute; left: 22px; right: 22px; top: 9px; height: 3px;
+  border-radius: 2px; background: var(--state-neutral-bg);
+}
+.dev-ws-item-progress > i { display: block; height: 100%; border-radius: 2px; background: var(--accent); min-width: 8px; }
+.dev-ws-item-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 20px;
+}
+.dev-ws-item-of {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* After a vote the eyebrow IS the confirmation: the same line, in the ok
+   tone, with a tick — no toast over the title. */
+.dev-ws-item-done {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  font-size: 13px; font-weight: 700; color: var(--state-ok);
+}
+.dev-ws-item-tick {
+  width: 18px; height: 18px; flex: none; padding: 3px; box-sizing: border-box;
+  border-radius: 9999px; background: var(--state-ok); color: #fff;
+}
+.dev-ws-item-title {
+  margin: 18px 20px 0 0;
+  font-size: 26px; line-height: 1.18; font-weight: 700; letter-spacing: -.016em;
+  color: var(--text-primary);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  text-wrap: balance;
+}
+.dev-ws-item-title > a { color: inherit; text-decoration: none; }
+.dev-ws-item-title > a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.dev-ws-item-summary {
+  margin: 10px 20px 0 0;
+  font-size: 18px; line-height: 1.42; color: var(--text-secondary);
+  white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dev-ws-item-nosummary { color: var(--text-muted); font-style: italic; font-size: 16px; }
+.dev-ws-item-spacer { flex: 1 1 auto; min-height: 0; }
+.dev-ws-item-caption {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 12px 74px 0 0;
+}
+.dev-ws-item-by {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  font-size: 13px; color: var(--text-muted);
+}
+.dev-ws-item-by b { color: var(--text-primary); font-weight: 600; }
+.dev-ws-item-avatar {
+  width: 24px; height: 24px; border-radius: 9999px; flex: none;
+  display: grid; place-items: center;
+  color: #fff; font-size: 11px; font-weight: 700;
+}
+.dev-ws-item-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dev-ws-chip {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
+  border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: var(--state-neutral-bg); color: var(--text-secondary);
+}
+.dev-ws-chip-ok { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-ws-chip-progress { background: var(--state-progress-bg); color: var(--state-progress); }
+.dev-ws-chip-warn { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
+
+/* ── The picture: the two stills, cropped to what changed ──────────────
+   The view is the box the still is placed in; the still keeps its natural
+   size and is moved and scaled with a transform (workshop.tsx computes the
+   crop), so the outline can sit on the changed region in the same
+   coordinates. It takes the height the text leaves, stops short of the
+   rail, and never scrolls. */
+.dev-ws-media {
+  position: relative;
+  flex: 1 1 auto; min-height: 120px;
+  margin: 14px 0 0;
+  display: flex; flex-direction: column;
+}
+.dev-ws-media-view {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  margin-right: 74px;
+  border-radius: 16px; overflow: hidden;
+  background: #111114;
+  box-shadow: 0 8px 24px rgba(24, 39, 75, .18);
+}
+.dev-ws-media-img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; display: block; }
+.dev-ws-media-spot {
+  position: absolute; pointer-events: none;
+  border: 2px solid #16a34a; border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .25), 0 0 22px rgba(22, 163, 74, .35);
+}
+.dev-ws-media-wait {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .10), rgba(255, 255, 255, .04));
+}
+/* The way out is a pill at the picture's foot; the Before/After switch sits
+   at its head, so the two never share a row — on a phone the picture is
+   about 300px wide, which is not room for both. */
+.dev-ws-media-full {
+  position: absolute; left: 10px; bottom: 10px;
+  padding: 6px 11px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; line-height: 1.2;
+  background: rgba(20, 20, 26, .72); color: #fff;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.dev-ws-seg {
+  position: absolute; right: calc(74px + 10px); top: 10px;
+  display: inline-flex; padding: 3px; border-radius: 9999px;
+  background: rgba(20, 20, 26, .72);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.dev-ws-seg-btn {
+  padding: 6px 14px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 700;
+  background: none; color: rgba(255, 255, 255, .8);
+}
+.dev-ws-seg-btn[aria-pressed="true"] { background: #fff; color: #141418; }
+.dev-ws-seg-one { padding: 6px 14px; font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, .85); }
+
+/* ── The rail ─────────────────────────────────────────────────────────
+   One column of round buttons at the right edge, bottom-aligned with the
+   caption, over the item. Frosted so it reads on a picture as well as on
+   the tint. Vote is filled in the accent: it is the thing to press. */
+.dev-ws-rail {
+  position: absolute; right: 8px; bottom: 10px; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.dev-ws-rail-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 60px; margin: 0; padding: 0; border: 0; background: none;
+  color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.dev-ws-rail-btn:disabled { opacity: .4; cursor: default; }
+.dev-ws-rail-ic {
+  width: 46px; height: 46px; border-radius: 9999px;
+  display: grid; place-items: center;
+  background-color: var(--dc-sheet-fill);
+  border: 1px solid var(--app-sheet-line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
+  backdrop-filter: var(--dc-frost); -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-rail-ic { background-color: var(--dc-sheet); }
+}
+.dev-ws-rail-ic > svg { width: 24px; height: 24px; }
+.dev-ws-rail-lab { font-size: 11px; font-weight: 600; line-height: 1; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-ws-rail-key { display: none; }
+.dev-ws-rail-vote .dev-ws-rail-ic,
+.dev-ws-rail-take .dev-ws-rail-ic { background-color: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 10px rgba(10, 110, 224, .3); }
+.dev-ws-rail-vote .dev-ws-rail-lab,
+.dev-ws-rail-take .dev-ws-rail-lab { color: var(--accent); }
+.dev-ws-rail-vote.is-on .dev-ws-rail-ic { background-color: var(--state-ok); border-color: var(--state-ok); box-shadow: 0 2px 8px rgba(21, 128, 61, .28); }
+.dev-ws-rail-vote.is-on .dev-ws-rail-lab { color: var(--state-ok); }
+.dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { box-shadow: 0 0 0 3px var(--accent-wash); }
+.dev-ws-move { display: none; }
+.dev-ws-keys { display: none; }
+
+/* ── The Needs-you deck's sheets ──────────────────────────────────────
+   Fixed, which inside the lifted strip means the strip's own box: from
+   under the header to the foot of the screen, which is the area a sheet
+   should cover. The pill hides while one is up — a bar floating over a
+   sheet's answers is a bar in the way.
+
+   KEYED ON `.dev-ws-sheet-modal`, AND NOT ON `.dev-ws-sheet`, WHICH IS A
+   DIFFERENT OBJECT. `.dev-ws-sheet` is the OPEN CARD — the sheet a folded
+   row unfolds into (card/fold.tsx, `.dev-ws-rowwrap-open > .dev-ws-sheet >
+   .gc-vote-item`), and it has carried that name since the Workshop shipped;
+   two declared checks select it that way. #2080 gave the deck's three
+   dialogs the same bare class, so this rule landed on every unfolded card on
+   every Workshop surface: the card left its column or its strip, became a
+   full-viewport `position: fixed` box at `z-index: 30` painting its own fill
+   over the board, and swallowed every click underneath it. That is "the
+   whole board goes opaque and stops responding" on By stage and By category,
+   and "the card opens but the layout is wrong" on Current status — one rule,
+   three screens.
+
+   So the deck's dialogs carry a base class of their own and the bare name
+   stays the fold's. The `.dev-ws-sheet-*` PARTS below (card, handle, head,
+   title, sub, x, body) are the deck's either way — they appear in no folded
+   card — as are the breakpoint rules further down, which were already keyed
+   on the -vote / -ask / -comments modifiers. */
+/* The floor lifts by what the on-screen keyboard took (workshop.tsx measures
+   the visual viewport into `--ws-kb` while a sheet is up), so the field being
+   typed into is above the keys rather than under them. */
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--ws-kb, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+.dev-ws-scrim {
+  position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
+  background: var(--pane-scrim);
+}
+.dev-ws-sheet-card {
+  position: relative;
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 66%; min-height: 0;
+  padding: 8px 16px calc(12px + var(--platform-safe-bottom, 0px)); box-sizing: border-box;
+  border-radius: 22px 22px 0 0;
+  background-color: var(--dc-sheet);
+  box-shadow: 0 -10px 30px rgba(24, 39, 75, .2);
+}
+.dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + var(--platform-safe-bottom, 0px)); }
+/* With the keyboard up the sheet is short; let the card have all of it. */
+.dev-ws-needs[data-ws-kb] .dev-ws-sheet-card { max-height: 100%; }
+/* ── Open and close MOVE. The card rises from the floor and the scrim fades
+   in; on the way out (`[data-ws-leaving]`, which workshop.tsx keeps mounted
+   for exactly this long) both reverse. The names are variables so the wide
+   block can swap them for a panel's slide and a popover's pop without a
+   second reduced-motion query of its own. */
+.dev-ws-sheet-modal { --ws-sheet-in: dev-ws-sheet-up; --ws-sheet-out: dev-ws-sheet-down; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-sheet-modal > .dev-ws-scrim { animation: dev-ws-scrim-in .22s ease-out both; }
+  .dev-ws-sheet-modal > .dev-ws-sheet-card {
+    animation-name: var(--ws-sheet-in); animation-duration: .28s;
+    animation-timing-function: cubic-bezier(.32, .72, 0, 1); animation-fill-mode: both;
+  }
+  .dev-ws-sheet-modal[data-ws-leaving] > .dev-ws-scrim { animation: dev-ws-scrim-out .2s ease-in both; }
+  .dev-ws-sheet-modal[data-ws-leaving] > .dev-ws-sheet-card {
+    animation-name: var(--ws-sheet-out); animation-duration: .2s;
+    animation-timing-function: ease-in; animation-fill-mode: both;
+  }
+}
+@keyframes dev-ws-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes dev-ws-sheet-down { from { transform: none; } to { transform: translateY(100%); } }
+@keyframes dev-ws-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dev-ws-scrim-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes dev-ws-panel-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes dev-ws-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(28px); } }
+@keyframes dev-ws-pop-in { from { opacity: 0; transform: translateX(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes dev-ws-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(10px) scale(.96); } }
+.dev-ws-sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 0 auto 4px; flex: none; }
+.dev-ws-sheet-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border-light); flex: none;
+}
+.dev-ws-sheet-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.dev-ws-sheet-sub { font-size: 12px; color: var(--text-muted); font-weight: 500; margin-left: 8px; }
+.dev-ws-sheet-x {
+  border: 0; padding: 4px 10px; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600;
+  background: var(--bg-secondary); color: var(--text-secondary);
+}
+.dev-ws-sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+/* The vote sheet's own lines. */
+.dev-ws-ask-q { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
+.dev-ws-vote-sub { margin: 0 0 8px; font-size: 14px; line-height: 1.4; color: var(--text-muted); }
+.dev-ws-answer-row { display: flex; gap: 10px; }
+.dev-ws-answer-btn {
+  flex: 1 1 0; min-width: 0; height: 56px;
+  border: 1.5px solid currentColor; border-radius: 14px; cursor: pointer;
+  font: inherit; font-size: 18px; font-weight: 700;
+}
+.dev-ws-answer-btn:disabled { opacity: .4; cursor: default; }
+.dev-ws-answer-yes { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-ws-answer-no { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-ws-vote-later {
+  margin: 6px auto 0; border: 0; background: none; padding: 6px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--text-muted);
+}
+.dev-ws-keys-hint { display: none; }
+
+/* ── The ask pane, inside its sheet ────────────────────────────────── */
+.dev-ws-ask { gap: 8px; }
+.dev-ws-ask-log {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 6px 0 2px;
+}
+.dev-ws-ask-hint { margin: 0; font-size: 13px; color: var(--text-muted); font-style: italic; }
+.dev-ws-ask-msg {
+  margin: 0; max-width: 88%; padding: 9px 13px; border-radius: 17px;
+  font-size: 15px; line-height: 1.36; white-space: pre-wrap;
+}
+.dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+.dev-ws-ask-ai { align-self: flex-start; background: var(--bg-secondary); color: var(--text-primary); border-bottom-left-radius: 6px; }
+/* The answer on its way: a breathing bubble, still while it grows. */
+.dev-ws-ask-pending {
+  color: var(--text-muted);
+  animation: dev-ws-ask-breathe 1.6s ease-in-out infinite;
+}
+@keyframes dev-ws-ask-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .dev-ws-ask-pending { animation: none; }
+}
+.dev-ws-ask-failed { color: var(--state-blocked); background: var(--state-blocked-bg); }
+/* THE COMPOSER is the dev session's (`.dc-card`), padded evenly so its
+   resting line sits on its own middle — `.dc-card`'s 14-over-10 is for a
+   tall field with controls under it. */
+.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; flex: none; }
+.dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
+.dev-ws-ask-input {
+  min-width: 0; border: 0; background: none; padding: 6px 0;
+  font: inherit; font-size: 16px; color: var(--text-primary);
+}
+.dev-ws-ask-input:focus { outline: none; }
+.dev-ws-ask-input::placeholder { color: var(--text-muted); }
+.dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-row > .dev-ws-ask-send { margin-left: auto; }
+.dev-ws-ask-model { display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; }
+.dev-ws-ask-model > select { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+.dev-ws-ask-model-chev { flex: none; width: 14px; height: 14px; color: var(--text-muted); }
+.dev-ws-ask-send { width: 34px; height: 34px; }
+.dev-ws-ask-send-icon { width: 17px; height: 17px; }
+.dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
+
+/* ── The end of the feed ──────────────────────────────────────────── */
+.dev-ws-needs-done { align-items: center; justify-content: center; text-align: center; padding: 24px 28px; gap: 10px; }
+.dev-ws-done-ring { width: 112px; height: 112px; margin-bottom: 8px; }
+.dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
+.dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-muted); }
+.dev-ws-done-cta {
+  margin-top: 12px; height: 44px; padding: 0 20px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600;
+  background: var(--accent); color: #fff;
+}
+
+/* ── The tab pill steps aside for a sheet ─────────────────────────── */
+@media (max-width: 699.98px) {
+  body:has(.dev-ws-needs[data-ws-sheet]) #dev-ws-rail-host { visibility: hidden; }
+}
 /* ── The deck at the top, on a wide screen ───────────────────
    On a phone the deck fills the reading area and the answers sit at the
    floor, which is where the thumb is. On a desktop that same rule spends
@@ -12319,25 +12754,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    auto`, not by the deck's height. The ask log takes a cap instead of a
    fraction of the screen for the same reason. */
 @media (min-width: 700px) {
-  /* THE DECK AT THE TOP, THE ASK AT THE FLOOR. `flex: 0 0 auto` with
-     `align-content: start` used to content-size the whole deck, which put the
-     ask box directly under the answers and left the rest of the window empty
-     beneath it — measured at 1440x900, 271px of gap between the composer and
-     the rail. Filling the area and giving the SECOND row the free space keeps
-     the deck content-sized at the top (the reason the rule exists) while the
-     box you type in sits where the bar is, which is where the hand already
-     is. `align-self: end` on the pane rather than `align-items` so the
-     subject above it still stretches to its own row. */
-  .dev-ws-needs,
-  .dev-ws-needs-engaged {
-    flex: 1 1 auto;
-    grid-template-rows: auto 1fr;
-    align-content: stretch;
-    min-height: 0;
-  }
-  .dev-ws-needs > .dev-ws-ask { align-self: end; }
-  .dev-ws-needs-scroll { flex: 0 1 auto; }
-  .dev-ws-ask-log { max-height: 40vh; }
 
   /* ── A wide window reads the tabs at the TOP, as a segmented control ───
      A pill pinned to the floor of a 900px window puts the switch as far from
@@ -12383,17 +12799,76 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   }
   .dev-ws-tabs {
     order: 0;
-    position: static;
-    /* A BLOCK, not the pill. It inherits the 760px reading column and its
-       centring, which is what keeps the strip on the same left edge whether
-       the pane beside it is the category list at 760 or the full-bleed board
-       at the window's width. The pill is `.dev-ws-tabtrack` inside it. */
-    display: block;
+    /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
+       column — that part is unchanged — but the bar has to remain the
+       CONTAINING BLOCK for the selection marker, and the element `offsetLeft`
+       and `offsetTop` resolve against when workshop.tsx measures a tab. On a
+       phone `position: fixed` gives that for free; here it has to be asked
+       for, and `static` would send both the marker and the measurement to
+       whatever ancestor happened to be positioned. */
+    position: relative;
+    /* THE PHONE BAR'S OFFSETS ARE NOT THIS BAR'S, and leaving them in place
+       is what made the strip sit crooked in both axes.
+
+       `left: 10px; right: 10px; bottom: var(--ws-lift)` size and place a
+       FIXED pill against the viewport. `position: relative` does not ignore
+       them — it SHIFTS the element by them — so the strip was displaced 10px
+       right of the reading column it is supposed to line up with, and lifted
+       `--ws-lift` (8px) off its own place in the flow. Measured at 1280px
+       wide: 2px of air above the strip and 18px below, against the 10 and 10
+       the two rules below actually declare. Every fix aimed at that air had
+       been aimed at the wrong pair of numbers.
+
+       `max-width` and `margin-inline` leak the same way and cost the
+       alignment below: 740px with auto side margins is a shrink-to-fit box
+       centred in the column, and a row cannot be left-aligned inside a box
+       that has already centred itself. The board pane re-states both at
+       higher specificity (`#dev-workshop:has(.dev-ws-board) > .dev-ws > …`),
+       which is the one place they are wanted up here. */
+    inset: auto;
+    max-width: none;
+    /* LEFT-ALIGNED, not centred. The pill is `.dev-ws-tabtrack` inside this
+       nav and it is content-width, so whatever positions the pill is what
+       decides where the strip appears — and the nav now spans the same
+       reading column the pane below it does, so `flex-start` puts the strip's
+       left edge on the pane's left edge. Centring put it on the WINDOW's
+       centre line, which belongs to nothing on the screen: the strip drifted
+       right as the column widened and lined up with no edge at any width.
+       `flex` rather than `text-align: center`, because an inline-level box
+       positioned by an INHERITED property is one stray `text-align` on any
+       ancestor away from moving on its own.
+
+       IT ALSO SETTLES THE SELECTION MARKER. The marker is placed from
+       `offsetLeft` against this nav (see workshop.tsx), and under
+       `justify-content: center` that number is `(nav - pill) / 2` plus the
+       tab's own offset — so it MOVED whenever the nav's width did, while the
+       tab stayed exactly where it was on screen. Switching By category →
+       By stage widens the nav from the pill's width to the full 760 and the
+       marker's coordinate jumped 158px for a tab that had not moved a pixel,
+       which the transition then animated. Against `flex-start` the pill sits
+       at offset 0 and the number is the tab's own, whatever the nav's width.
+       (workshop.tsx no longer animates a re-measure either; this is the half
+       that stops the coordinate changing in the first place.) */
+    display: flex;
+    justify-content: flex-start;
     gap: 0; padding: 0;
     border: 0; border-radius: 0;
     background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
-    margin-bottom: 4px;
+    /* NO MARGIN OF ITS OWN. `.dev-ws` is a flex column with `gap: 10px`, so a
+       margin here stacks on top of it: 14px below the strip against the 8px
+       of `#dev-body` padding above it, which is the unbalanced air. The gap
+       alone sets both sides, once the padding below matches it. `margin: 0`
+       rather than `margin-bottom: 0` because the side halves are the phone
+       rule's `margin-inline: auto`, retired with the rest of its box above. */
+    margin: 0;
   }
+  /* The other half of that balance: 10px above, to equal the column gap
+     below. The 8px here is the phone's, where the strip is `position: fixed`
+     at the foot and this padding is just the top of the page.
+     Both numbers are finally what lands: with the leaked `bottom` gone the
+     strip no longer floats 8px up out of the air it was given, which is the
+     "too little above, too much below" this pair always claimed to prevent. */
+  #dev-body:has(> #dev-workshop) { padding-top: 10px; }
   .dev-ws-tabtrack {
     display: inline-flex; align-items: center; gap: 2px;
     padding: 2px;
@@ -12410,208 +12885,118 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      it — that clearance exists only for a bar that floats over what scrolls
      beneath it. */
   .dev-ws-tabbody { padding-bottom: 0; }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .dev-ws-needs { transition: grid-template-rows .22s ease; }
-}
-.dev-ws-needs-subject,
-.dev-ws-ask {
-  min-height: 0;
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 12px 14px;
-  border-radius: 22px;
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-needs-subject, .dev-ws-ask { background-color: var(--dc-sheet); }
-}
-.dev-ws-needs-head,
-.dev-ws-ask-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.dev-ws-needs-scroll {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 2px;
-}
-/* The voter-facing sentence, and the biggest type on the screen after the
-   card's own title: on a screen whose only job is a decision, what changes
-   for a person using the app is the thing to read first. */
-.dev-ws-needs-summary {
-  margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-primary);
-  white-space: pre-wrap;
-}
-.dev-ws-needs-nosummary { color: var(--text-muted); font-size: 14px; font-style: italic; }
-/* ── The three answers ───────────────────────────────────────
-   Big, because this is the one thing the screen is for and a decision is a
-   poor place for a small target. Three rather than two: "not now" is a real
-   answer, and a queue that accepts only yes or no gets answered carelessly
-   by people who want it to end. */
-.dev-ws-answer { display: flex; flex-direction: column; gap: 8px; }
-.dev-ws-ask-q {
-  margin: 0; text-align: center;
-  font-size: 15px; font-weight: 600; color: var(--text-primary);
-}
-.dev-ws-answer-row { display: flex; gap: 8px; }
-/* ── The move row: WHICH card, not what about it ───────────────────────
-   Quieter than the answers above it, on purpose. Those are decisions and
-   this is a page turn, so it takes the same width and half the weight: no
-   fill, a hairline, and the muted ink the lander already uses for things
-   that are navigation rather than acts. Shorter too — 44px is the shell's
-   tap minimum, and turning a page does not need the thumb-sized target a
-   vote does. */
-.dev-ws-move-row {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 10px;
-}
-/* CONTENT WIDTH, AT THE EDGES. Full-width boxes here were two equal boxes
-   under two equal boxes, and the row read as two more answers. Sized to their
-   own words they cannot line up with the pair above — "Previous" is a wider
-   word than "Next", so they are visibly not a matched set — and pushing them
-   apart leaves the centre for the count. Words rather than bare chevrons for
-   the same reason: a label says navigation where an arrow alone says button. */
-.dev-ws-move-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 40px; padding: 0 14px;
-  border: 1px solid var(--app-sheet-line); border-radius: 14px;
-  background: transparent; color: var(--text-muted);
-  font: inherit; font-size: 13.5px; font-weight: 600;
-  cursor: pointer;
-}
-.dev-ws-move-btn:hover:not(:disabled) { background: var(--state-neutral-bg); color: var(--text-primary); }
-.dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
-.dev-ws-move-icon { width: 16px; height: 16px; }
-.dev-ws-answer-btn {
-  flex: 1 1 0; min-width: 0; height: 52px;
-  border-radius: 16px; border: 1px solid transparent;
-  font: inherit; font-size: 16px; font-weight: 600;
-  cursor: pointer;
-}
-.dev-ws-answer-btn:disabled { opacity: .4; cursor: default; }
-.dev-ws-answer-yes { background: var(--state-ok-bg); color: var(--state-ok); border-color: currentColor; }
-/* `--state-blocked` is the platform's own red — the same token the blocked
-   pills use — rather than a literal. There is no `--state-bad`. */
-.dev-ws-answer-no { background: var(--state-blocked-bg); color: var(--state-blocked); border-color: currentColor; }
-/* Skip is deliberately the quiet one: it is always available and should
-   never be the easiest thing to hit by accident. */
-.dev-ws-answer-skip {
-  background: transparent; color: var(--text-muted);
-  border-color: var(--app-sheet-line); font-weight: 500;
-}
-.dev-ws-answer-btn[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
-/* ── Since your last visit, as one line ──────────────────────
-   A row, not a pane, until it is opened. It was a whole section of the
-   status tab — heading, summary line, control — spent on a fact most visits
-   do not need, sitting above the door to the app's chat. */
-.dev-ws-since-row {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 8px 12px;
-  border: 0; border-radius: 999px; background: transparent;
-  font: inherit; font-size: 13px; font-weight: 600;
-  color: var(--text-muted); text-align: left; cursor: pointer;
-}
-.dev-ws-since-row:hover { color: var(--accent); }
-.dev-ws-since-row:disabled { cursor: default; opacity: .6; }
-.dev-ws-since-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* Shut, it is the only thing on the status tab with no surface of its own —
-   which is the point: it is a line, and opening it makes it a pane. */
-.dev-ws-since-shut { margin-block: -2px; }
-.dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
-.dev-ws-since-n {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
-  background: var(--brand-tint); color: var(--brand-ink);
-  font-size: 11px; font-variant-numeric: tabular-nums;
-}
-.dev-ws-since-chev { flex: none; width: 14px; height: 14px; }
-.dev-ws-since-row[aria-expanded="true"] .dev-ws-since-chev { transform: rotate(90deg); }
-/* ── The ask box's model ─────────────────────────────────────
-   The dev session's own list, and only once the box is in use: a picker over
-   an empty composer is a setting nobody has a use for yet. */
-/* The dev session's own control: `.dc-model-select` strips it back to plain
-   text and `.dc-model-name` truncates it. The caret is a sibling here rather
-   than a child, because a <select> cannot contain one — the session uses a
-   button and a kit menu, which this pane has no use for yet. */
-/* `min-width: 0` and a cap, both: a <select>'s intrinsic width is its
-   LONGEST OPTION, so "Fable 5.1 — design, taste, and difficult coding"
-   silently widened the deck past the screen. The document did not scroll —
-   the overflow was inside the frame — which is exactly the kind that hides
-   from a page-level check. */
-.dev-ws-ask-model { display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; }
-.dev-ws-ask-model > select { min-width: 0; max-width: 100%; flex: 0 1 auto; }
-.dev-ws-ask-model-chev { flex: none; width: 14px; height: 14px; color: var(--text-muted); }
-.dev-ws-needs-nav { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.dev-ws-needs-of { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-/* In its own pane the note needs no lane indent. */
-.dev-ws-since-note { margin-left: 0; }
-.dev-ws-needs-done {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; text-align: center; padding: 48px 16px;
-}
-.dev-ws-needs-done-line { margin: 0; font-size: 17px; font-weight: 600; }
-.dev-ws-needs-done-sub { margin: 0; font-size: 14px; color: var(--text-muted); }
 
-/* ── Ask about this change ───────────────────────────────────
-   NOT WIRED UP. The composer is real; the answer is a placeholder that says
-   so on screen, because there is no endpoint that answers questions about a
-   proposal and inventing one before this layout is agreed is the wrong
-   order of work. */
-.dev-ws-ask-log {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 6px;
+  /* ── THE FEED ON A WIDE WINDOW: THE STAGE ──
+     Above 700px the lander is a ROW: the feed as a 720px card at the centre,
+     the rail standing beside it with a word and a key under each button, and
+     the arrows below the rail doing what the wheel does. Anything that was a
+     sheet becomes a PANEL to the right, and the row re-centres around it, so
+     the item stays readable while you use it; the vote is a popover on its
+     own button. The Workshop column widens past its 760px reading measure
+     for this tab alone — the same release the Board pane has. */
+  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) { max-width: none; }
+  /* The tab strip keeps the reading column while the stage takes the window
+     (the same re-statement the board pane makes for itself below): a
+     left-aligned strip inside a 1440px nav would sit at the window's edge,
+     lined up with nothing, while the card it belongs to sits at the centre. */
+  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) > .dev-ws > :not(.dev-ws-tabbody) {
+    width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+  }
+  /* `place-content`, not `justify-content: center`, here and on the key
+     legend below: on a single-line row the two are the same centring, and the
+     wide block is held to never spelling the latter (the tab strip's test)
+     because a centred STRIP moved the selection marker; a centred stage
+     moves nothing. */
+  .dev-ws-needs {
+    flex-direction: row; place-content: center; align-items: stretch;
+    gap: 22px; min-height: 480px;
+    /* A line of its own under the stage for the key legend, so the legend
+       never lies across the card's caption or the arrows below the rail. */
+    padding-bottom: 30px;
+  }
+  .dev-ws-needs-scroll { flex: 0 1 720px; max-width: 720px; border-radius: 24px; }
+  .dev-ws-item { padding: 26px 32px 22px; border-radius: 24px; }
+  .dev-ws-item-title { font-size: 32px; line-height: 1.14; margin-right: 0; max-width: 30ch; }
+  .dev-ws-item-summary { font-size: 19px; line-height: 1.45; margin-right: 0; max-width: 62ch; }
+  .dev-ws-item-caption { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; padding-right: 0; }
+  /* The by-line keeps its one line; the chips take the rest and wrap. */
+  .dev-ws-item-by { flex: 0 0 auto; max-width: 55%; }
+  .dev-ws-item-chips { flex: 1 1 auto; justify-content: flex-end; }
+  .dev-ws-media-view { margin-right: 0; }
+  .dev-ws-seg { right: 12px; }
+  .dev-ws-rail {
+    position: relative; right: auto; bottom: auto; z-index: auto;
+    flex: 0 0 84px; padding-top: 6px; gap: 14px;
+  }
+  .dev-ws-rail-btn { width: 84px; }
+  .dev-ws-rail-ic { width: 52px; height: 52px; background-color: var(--dc-sheet); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .dev-ws-rail-lab { font-size: 12px; }
+  .dev-ws-rail-key { display: block; font-size: 10px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
+  .dev-ws-move { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: auto; padding-top: 14px; }
+  .dev-ws-move-btn {
+    width: 44px; height: 44px; border-radius: 9999px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--dc-sheet); color: var(--text-primary);
+    display: grid; place-items: center;
+  }
+  .dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
+  .dev-ws-move-icon { width: 20px; height: 20px; }
+  .dev-ws-keys {
+    display: flex; place-content: center; align-items: center; gap: 8px;
+    position: absolute; left: 0; right: 0; bottom: 0; height: 30px; margin: 0;
+    white-space: nowrap;
+    font-size: 12px; color: var(--text-muted); font-family: ui-monospace, Menlo, monospace;
+  }
+  .dev-ws-keys kbd {
+    display: inline-block; padding: 1px 6px; margin: 0 2px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--dc-sheet); color: var(--text-secondary);
+    font: inherit; font-weight: 600;
+  }
+  /* The panels: Ask and comments beside the rail, the stage's full height.
+     They slide in from the right rather than rising from a floor they do not
+     sit on (the names feed the base block's one animation rule). */
+  .dev-ws-sheet-ask, .dev-ws-sheet-comments {
+    position: relative; inset: auto; flex: 0 0 400px; z-index: auto;
+    display: flex; flex-direction: column;
+    --ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;
+  }
+  .dev-ws-sheet-ask > .dev-ws-scrim, .dev-ws-sheet-comments > .dev-ws-scrim { display: none; }
+  .dev-ws-sheet-ask > .dev-ws-sheet-card, .dev-ws-sheet-comments > .dev-ws-sheet-card {
+    flex: 1 1 auto; max-height: none; min-height: 0;
+    padding: 18px 20px 12px;
+    border-radius: 24px;
+    border: 1px solid var(--app-sheet-line);
+    box-shadow: 0 18px 50px rgba(24, 39, 75, .12);
+  }
+  .dev-ws-sheet-handle { display: none; }
+  /* The vote: a popover on its button, arrow towards it. */
+  .dev-ws-sheet-vote { position: absolute; inset: auto calc(100% + 12px) auto auto; top: -8px; width: 340px; z-index: 6; display: block; }
+  .dev-ws-sheet-vote { --ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out; }
+  .dev-ws-sheet-vote > .dev-ws-scrim { position: fixed; background: transparent; }
+  .dev-ws-sheet-vote > .dev-ws-sheet-card {
+    max-height: none; padding: 18px 18px 16px;
+    border-radius: 18px; border: 1px solid var(--app-sheet-line);
+    box-shadow: 0 18px 50px rgba(24, 39, 75, .22);
+  }
+  .dev-ws-sheet-vote > .dev-ws-sheet-card::after {
+    content: ""; position: absolute; right: -8px; top: 24px; width: 16px; height: 16px;
+    background: var(--dc-sheet); border-right: 1px solid var(--app-sheet-line); border-top: 1px solid var(--app-sheet-line);
+    transform: rotate(45deg);
+  }
+  .dev-ws-ask-q { font-size: 18px; }
+  .dev-ws-vote-sub { font-size: 13px; }
+  .dev-ws-answer-btn { height: 46px; font-size: 15px; border-radius: 12px; }
+  .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
+  .dev-ws-ask-msg { font-size: 14px; }
+  .dev-ws-ask-log { max-height: none; }
 }
-.dev-ws-ask-hint { margin: 0; font-size: 13px; color: var(--text-muted); font-style: italic; }
-.dev-ws-ask-msg {
-  margin: 0; padding: 7px 11px; border-radius: 14px;
-  font-size: 14px; line-height: 1.45; max-width: 88%;
+
+/* Between the breakpoint and a wide desktop the panel would push the card
+   off the stage, so it OVERLAYS the stage's right side instead. */
+@media (min-width: 700px) and (max-width: 1179.98px) {
+  .dev-ws-sheet-ask, .dev-ws-sheet-comments {
+    position: absolute; right: 0; top: 0; bottom: 0; width: min(400px, 60%); z-index: 8;
+  }
 }
-.dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; }
-.dev-ws-ask-ai { align-self: flex-start; background: var(--dc-sheet); color: var(--text-primary); }
-/* An answer on its way. It occupies the bubble the answer will fill, so the
-   pane does not jump when it lands; muted and italic so it never reads as
-   the answer itself. The pulse is the only thing saying it is still going,
-   and it is dropped for anyone who has asked for less motion. */
-.dev-ws-ask-pending {
-  color: var(--text-muted); font-style: italic;
-  animation: dev-ws-ask-breathe 1.6s ease-in-out infinite;
-}
-@keyframes dev-ws-ask-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-@media (prefers-reduced-motion: reduce) {
-  .dev-ws-ask-pending { animation: none; }
-}
-/* A question that did not get an answer. Tinted rather than shouted: the
-   text in it is the server's own sentence ("you are out of allowance", "too
-   many at once"), which is information, not an alarm — but it must not be
-   mistakable for an answer about the change. */
-.dev-ws-ask-failed {
-  background: var(--danger-soft, rgba(220, 38, 38, 0.10));
-  color: var(--danger-strong, #b91c1c);
-}
-/* The composer is `.dc-card`: one white surface holding the field and a row
-   of controls under it. Everything here is what that card does NOT carry —
-   the field's own reset, and the row's spacing. */
-.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; }
-/* THE RESTING LINE: the field and the send circle, always both. The send used
-   to live in the controls row and so appeared only on focus, which left the
-   card with no visible way to send — a text box and nothing else. The model
-   row is the part that earns its height on use; the send button is the
-   affordance that says the box does something. */
-.dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
-.dev-ws-ask-input {
-  width: 100%; min-width: 0;
-  border: 0; padding: 0; background: transparent;
-  color: var(--text-primary); font: inherit; font-size: 15px; line-height: 1.4;
-}
-.dev-ws-ask-input:focus { outline: none; }
-.dev-ws-ask-input::placeholder { color: var(--text-muted); }
-.dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-/* Smaller than the session's 44px circle: that one is the primary action of
-   a whole screen, this is the second control in a pane that is a third of
-   one. The fill, the ink and the halo are `.dc-circle-send`'s. */
-.dev-ws-ask-send { width: 34px; height: 34px; }
-.dev-ws-ask-send-icon { width: 17px; height: 17px; }
-.dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
 .dev-ws-week-note {
   margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
@@ -12718,20 +13103,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
 /* The offer under a lane's heading, where the heading states the fact. */
 .dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
-/* ── "What needs you": the ring ────────────────────────────────
-   The pane stated a debt in the warning tint with no way to close it. The
-   ring is the home screen's Challenges primitive saying the same thing as
-   progress.
-
-   It sits ON THE LANE HEADING now, not in the strip head — it counts the
-   vote lane, and the strip head covers two lanes. `.dev-ws-needs-end` (the
-   ring-and-words wrapper) and `.dev-ws-needs-count` (the words) are retired
-   with that move: the words are the lane's `.dev-ws-lane-note`, in the same
-   place the free-to-take lane keeps its own line.
-
-   22px, not 30px: the heading it now rides is 12px tracked-out caps, and
-   the old size set the height of the whole row. */
-.dev-ws-vote-ring { width: 22px; height: 22px; flex: none; margin-left: 2px; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -12782,11 +13153,30 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    between pills would read as two unrelated toggles. Deliberately NOT
    .dev-ws-chip — those are the sort order WITHIN the category pane and sit
    one row below, so the two controls have to look like different kinds of
-   thing or the row reads as five options over one list. */
+   thing or the row reads as five options over one list.
+
+   IT IS THE SAME CONTROL AS THE LANDER'S OWN TAB STRIP, and now says so.
+   The geometry was already `.dev-ws-tabtrack`'s — a fully round rail, 2px
+   between the halves — but the surface and the selected state were a second
+   answer to a question the bar above had already answered: a recessed
+   `--dc-strip` rail with a hairline, and a selected half painted in the
+   plain sheet with a drop shadow, against the bar's raised track and its
+   periwinkle. Two tab strips two rows apart on one screen, in two
+   vocabularies. So the track is `--dc-sheet-raise` with no ring, and the
+   selected half is `--brand-tint` / `--brand-ink` / `--brand-line` — the
+   bar's own three tokens, for the reason its note gives: this is where you
+   are, drawn the way the header above draws where you are.
+
+   TWO THINGS STAY DIFFERENT, both on purpose. The WIDTH, which is the real
+   distinction from the sort chips a row below. And the selected state is
+   painted on the HALF rather than on a marker that slides between them
+   (#2063): the slide is worth its measuring machinery across three tabs of
+   unequal width, and a two-state switch has neither that machinery nor a
+   use for it. The colours are the same either way, which is what a reader
+   sees. */
 .dev-ws-group {
   display: flex; align-items: stretch; gap: 2px;
-  padding: 3px; border-radius: 999px; background: var(--dc-strip);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  padding: 2px; border-radius: 999px; background: var(--dc-sheet-raise);
 }
 /* Full width of the reading column, the two panes splitting it evenly — the
    same edge-to-edge the General-discussion card above it takes. Shrunk to
@@ -12800,9 +13190,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
 }
+/* The tokens carry their own dark values, so there is no dark variant —
+   the same note `.dev-ws-tab[aria-selected="true"]` carries. */
 .dev-ws-group-tab[aria-selected="true"] {
-  background: var(--dc-sheet); color: var(--text-primary);
-  box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
+  background: var(--brand-tint); color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
 /* ── The working pane ──────────────────────────────────────────────────
@@ -13086,6 +13478,33 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      to hover still eases, because that one is not feedback about a gesture. */
   transition: none;
 }
+/* -- The press, on touch: held back until the finger settles (#1928) ------
+   On a phone a card list is mostly scrolled, not tapped, and every scroll
+   starts as a touch on some card. Both press treatments above engage
+   instantly -- the fill here, and the kit's scale + brightness dim on every
+   role="button" card (the folded row, the session rows) -- so a flick down
+   the board flashed a pressed state on whichever card the finger landed on,
+   for a gesture that opened nothing. iOS lists wait a beat before
+   highlighting, so a touch that becomes a scroll never lights up.
+
+   Same here: the press still engages with no easing, but after 120ms. A
+   scroll clears :active well inside that, so the pending change is
+   cancelled and nothing is drawn; a real tap is held longer and tints as
+   before. `transition` on the :active rule is the one read on the way IN;
+   the way out keeps each element's own easing. Touch only -- a mouse press
+   is never a scroll, so desktop keeps the instant feedback the rule above
+   exists for. Real buttons inside the cards (Vote, Preview) are untouched:
+   they are pressed on purpose. */
+@media (hover: none) {
+  .dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
+  .dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
+    a:active, button:active, input:active, textarea:active, select:active,
+    .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+  )),
+  #dev-forum-scroll [role="button"]:active {
+    transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
@@ -13276,6 +13695,7 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .dev-ws-detail .dev-topic-sheet {
   background: transparent; box-shadow: none; border-radius: 0; padding: 0;
 }
+/* The "Open session" link under a card about the viewer's own session (#1887). */
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }

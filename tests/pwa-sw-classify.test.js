@@ -76,7 +76,7 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
     URL, Headers, Response, Map, Set, Promise,
     caches: { open: async () => {
       cacheReads++;
-      return { match: async () => new Response('<h1>Cached Social Vibecoding</h1>') };
+      return { match: async () => new Response('<h1>Cached Homeroom</h1>') };
     } },
     // The server/provider may take indefinitely long. A hard bypass must
     // neither fetch on its behalf nor arm the shell fallback timer.
@@ -125,6 +125,18 @@ test('native notification invalidations bypass stale API-cache fallbacks', () =>
 test('the key-filtered OpenRouter catalog always reaches the network', () => {
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter'), 'bypass');
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1'), 'bypass');
+});
+
+test('group-chat attachment files and previews never fall back to the SPA shell', () => {
+  const id = 'a'.repeat(32);
+  for (const path of [
+    `/api/apps/demo/chat-attachments/${id}`,
+    `/api/apps/demo/chat-attachments/${id}/view`,
+  ]) {
+    for (const mode of ['navigate', 'cors', 'no-cors']) {
+      assert.equal(classify('GET', path, 'text/html', mode), 'bypass', `${path} (${mode})`);
+    }
+  }
 });
 
 test('shell assets classify as shell', () => {

@@ -504,7 +504,7 @@ export function Shell() {
           now (features/header/), which is deferred and therefore still runs
           after this tag. header-layout.js was retired here too — it is
           features/header/use-header-layout.ts. All of them no-op outside the
-          Usernode app webview.
+          Homeroom app webview.
       */}
       <script src={assetUrl('/js/native-chrome.js')} />
       <script src={assetUrl('/js/dev-host.js')} />
@@ -536,13 +536,6 @@ export function Shell() {
           the Generate-proposal modal. Loaded before its three consumers.
       */}
       <script src={assetUrl('/js/credit-options.js')} />
-      {/*
-          #1281: the launchpad that replaces the composer when a session is
-          being built somewhere else — the MCP connect command and the
-          "tell your agent" prefill for `own-tools-pr`. Pure render + wire,
-          no fetching; dev-chat.js reads window.Launchpad.
-      */}
-      <script src={assetUrl('/js/launchpad.js')} />
       {/*
           #1049: the "how do you want to build this?" picker and its guided
           Claude Code / Codex walkthrough. Pure render + wire, no fetching —

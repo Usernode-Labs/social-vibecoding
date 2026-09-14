@@ -109,9 +109,10 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
-  captureMemory: 4g
+  captureMemory: 6g
   captureCpus: "8"
   # Match application defaults here; each cluster declares its own capacity.
+  dbPoolMax: 10
   maxGlobalSessions: 25
   maxUserSessions: 3
   maxUserPromotedSessions: 5
@@ -151,6 +152,11 @@ secrets:
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""
   gmailOauthRefreshToken: ""
+  # Optional mobile push settings. Supply all four through encrypted external values.
+  mobilePushEnabled: false
+  pushEnv: ""
+  firebaseProjectId: ""
+  firebaseServiceAccountJsonB64: ""
 
 ingress:
   enabled: true

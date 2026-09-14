@@ -84,6 +84,7 @@ declare global {
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
+      navigateHome?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
@@ -234,6 +235,7 @@ declare global {
     DevChat?: {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
       dismissReturnHint(): void;
+      _importOwnToolsPr(): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

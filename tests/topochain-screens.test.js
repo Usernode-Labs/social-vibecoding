@@ -356,6 +356,32 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
   }
 });
 
+// ITERATION 03 (S3): Challenges says the event in its own season line, so the
+// shared bar draws only the picker there. Standings keeps its hero.
+test('the event bar draws no hero on the Challenges tab, and names its picker', () => {
+  const props = {
+    mounted: true,
+    options: [{ id: 7, label: 'Season 2 (season)' }],
+    placeholder: null,
+    selectedId: 7,
+    hero: {
+      kind: 'event', name: 'Season 2', statusLabel: 'season', statusClass: '',
+      description: null, dates: 'Sep 1, 2026 – Sep 30, 2026', participants: null,
+      seasonNote: true, fallbackNote: false,
+    },
+  };
+  const file = 'frontend/src/features/leaderboard/event-bar.tsx';
+  const challenges = renderComponent(file, 'EventBarView', { ...props, section: 'challenges' });
+  assert.match(challenges, /<select[^>]*id="tc-ev-select"/, 'the picker stays');
+  assert.match(challenges, /<select[^>]*aria-label="Event"/, 'named without its visible label');
+  assert.match(challenges, /id="tc-ev-hero"/, 'the hero host stays, empty');
+  assert.doesNotMatch(challenges, /<h2/, 'but no hero card');
+  assert.doesNotMatch(challenges, /tc-ev-season-note/);
+  const standings = renderComponent(file, 'EventBarView', { ...props, section: 'topochain' });
+  assert.match(standings, /<h2[^>]*>Season 2<\/h2>/, 'Standings keeps the hero');
+  assert.match(standings, /id="tc-ev-season-note"/);
+});
+
 // The standings pane's replacement for the two tests above. It has no escaping
 // discipline to keep because it has no HTML: the safety property is now
 // "produces no markup at all", which is a stronger statement than "escapes

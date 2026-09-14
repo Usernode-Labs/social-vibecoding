@@ -6,9 +6,33 @@ const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
+const buildkit = require('./kubernetes-buildkit');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
+
+// How often a build or rollout is re-read while it is being waited on. The
+// wait is a cheap GET against a cached object; what the interval buys is
+// how long a finished step sits unnoticed, which at 2-3s was a visible
+// slice of a ~25s preview turnaround.
+const BUILD_POLL_MS = 1000;
+const ROLLOUT_POLL_MS = 1000;
+
+// The app container's health probes. The startup probe decides how soon a
+// booted container is seen (its period is the latency, its threshold the
+// boot budget: 120s for an app, 60s for the asset server); the readiness
+// probe decides how soon after that the Pod is Ready — the kubelet runs it
+// on its own period once startup has passed, so 5s there was up to 5s of
+// waiting on a container already answering /health. 2s is still one GET
+// every 2s per pod in steady state. Liveness stays coarse.
+function httpProbes({ startupFailureThreshold }) {
+  const health = { httpGet: { path: '/health', port: 'http' } };
+  return {
+    startupProbe: { ...health, periodSeconds: 1, failureThreshold: startupFailureThreshold },
+    readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
+    livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
+  };
+}
 
 let clients;
 
@@ -177,11 +201,57 @@ async function compatibleCompletedBuilds(config, body, repository) {
   }
 }
 
+// What services/kubernetes-buildkit.js needs from this module: the shared
+// client, naming, label and diagnostics helpers, handed over rather than
+// imported so the two files stay one-directional.
+function buildkitRuntime() {
+  return {
+    getClients, clientsLogApi, attachLineObserver, labels, dnsName, withSuffix, deleteIfPresent, isNotFound,
+    collectPodDiagnostics, boundedText,
+    getCloneUrl: (owner, name) => require('./github').getCloneUrl(owner, name),
+  };
+}
+
+// The builder for this tree under BUILD_ENGINE (see config.js): a kpack
+// Build, or a BuildKit Job when the source carries a Dockerfile and the
+// engine setting admits it. Both return the same `{ buildRef, imageRef,
+// requestedTag, phases, reused }` and fail with the same buildFailed/buildLog
+// contract, so nothing downstream tells them apart.
+//
+// Under `auto`, a lane the cluster cannot run — no namespace or RBAC for it
+// yet, or a node without user namespaces for the rootless daemon — is a
+// reason to build with kpack, not to fail the app's preview: the lane is
+// an optimisation, and the fleet turns it on one piece at a time (the
+// foundation chart, then the node sysctl). The verdict is remembered for a
+// while so a cluster without the lane does not pay for a doomed Job per
+// build. Under `buildkit` the failure surfaces, because that setting is the
+// way to find out the lane is not actually being used.
+async function createBuild(config, params) {
+  const { engine } = buildkit.selectEngine(config, params.sourceDir);
+  if (engine !== buildkit.ENGINE) return createKpackBuild(config, params);
+  const strict = config.kubernetes.buildEngine === buildkit.ENGINE;
+  const remembered = strict ? null : buildkit.unavailableReason();
+  if (remembered) {
+    log.debug('kubernetes', 'BuildKit lane recently unavailable; building with kpack', { appId: params.app?.id, reason: remembered });
+    return createKpackBuild(config, params);
+  }
+  try {
+    return await buildkit.createBuild(config, params, buildkitRuntime());
+  } catch (err) {
+    if (strict || !err?.engineUnavailable) throw err;
+    buildkit.noteUnavailable(err);
+    log.warn('kubernetes', 'BuildKit lane unavailable; building with kpack', {
+      appId: params.app?.id, revision: params.revision, reason: err.message,
+    });
+    return createKpackBuild(config, params);
+  }
+}
+
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
 // phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
 // is running, how long the finished ones took, and the last line the running
 // phase printed. Best-effort throughout; a status read that fails is skipped.
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
+async function createKpackBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -397,7 +467,10 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
         throw err;
       }
       await observe(build);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // One status read a second: each kpack phase boundary and the final
+      // Succeeded flip used to wait up to 3s to be noticed, ~2s on average
+      // over a build, for a read that costs the API server nothing.
+      await new Promise((resolve) => setTimeout(resolve, BUILD_POLL_MS));
     }
     const err = new Error(`Timed out waiting for kpack Build ${name}`);
     err.killed = true;
@@ -591,22 +664,16 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
           spec: {
             serviceAccountName: cfg.generatedAppServiceAccount,
             automountServiceAccountToken: false,
-            securityContext: podSecurityContext(),
+            // Dockerfile.kubernetes declares USER node; Kubernetes needs
+            // the numeric UID to verify runAsNonRoot before starting it.
+            securityContext: nodePodSecurityContext(),
             containers: [{
               name: 'assets', image, imagePullPolicy: 'IfNotPresent',
-              // Through the CNB launcher, NOT a bare `node`. The image is
-              // built by kpack/Paketo, and a command that bypasses
-              // /cnb/lifecycle/launcher does not get the buildpack's launch
-              // environment (PATH to the node layer among it), so the
-              // container never starts and the Service has no ready
-              // endpoints — which the ingress answers as 503 on every asset
-              // path. See the buildEnv comment above on launcher env.
-              command: ['/cnb/lifecycle/launcher'],
-              args: ['node scripts/serve-platform-assets.js'],
+              // The platform's node:22-alpine image provides Node on PATH.
+              // The CNB launcher belongs to kpack-built child-app images.
+              command: ['node', 'scripts/serve-platform-assets.js'],
               ports: [{ name: 'http', containerPort: 3000 }],
-              startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 20 },
-              readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
-              livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
+              ...httpProbes({ startupFailureThreshold: 60 }),
               resources: { requests: { cpu: '25m', memory: '64Mi' }, limits: { cpu: '500m', memory: '256Mi' } },
               securityContext: containerSecurityContext(),
             }],
@@ -685,9 +752,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
               : [],
             envFrom: [{ secretRef: { name: secretName } }],
-            startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 40 },
-            readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
-            livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
+            ...httpProbes({ startupFailureThreshold: 120 }),
             resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
             securityContext: containerSecurityContext(),
           }],
@@ -768,7 +833,7 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
         && status.updatedReplicas === desired && status.replicas === desired
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
   }
   const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
   err.rolloutDetails = rolloutDetails;
@@ -886,6 +951,7 @@ async function deleteBuilds(config, appId) {
     plural: 'builds', labelSelector: `social.usernode.io/app-id=${appId}`,
     propagationPolicy: 'Background',
   });
+  await buildkit.deleteBuilds(config, appId, buildkitRuntime());
 }
 
 async function deleteFailedBuilds(config) {
@@ -902,7 +968,11 @@ async function deleteFailedBuilds(config) {
   for (const build of failed) {
     await deleteBuild(config, build.metadata.name);
   }
-  return { examined: items.length, deleted: failed.length };
+  const jobs = await buildkit.deleteFailedBuilds(config, buildkitRuntime()).catch((err) => {
+    log.warn('kubernetes', 'Failed BuildKit Job sweep skipped', { err: err.message });
+    return { examined: 0, deleted: 0 };
+  });
+  return { examined: items.length + jobs.examined, deleted: failed.length + jobs.deleted };
 }
 
 function buildApiParams(config) {
@@ -1316,7 +1386,7 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, { memory: '4g', cpus: '8', ...options }, 'capture');
+  return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {
@@ -1611,6 +1681,158 @@ async function runCheckJob(config, {
   }
 }
 
+// ── Harvesting a run whose launcher died (services/check-harvest.js) ──
+//
+// runCheckJob above owns a Job for the life of the process that created it.
+// When that process is replaced mid-run — a platform rollout — the Job runs
+// on to completion regardless, and these two functions are how a later
+// process finds it and reads what it produced, without creating or deleting
+// anything. Deletion stays with the Job's own TTL / activeDeadline and with
+// cancelPreviewChecks, which a newer run for the session calls first.
+
+function describeCheckJob(job) {
+  const failedCondition = (job.status?.conditions || []).find(c => c.type === 'Failed' && c.status === 'True');
+  const failed = !!(job.status?.failed || failedCondition);
+  const succeeded = !failed && !!job.status?.succeeded;
+  return {
+    name: job.metadata?.name || '',
+    uid: job.metadata?.uid || null,
+    state: failed ? 'failed' : (succeeded ? 'succeeded' : 'running'),
+    failedReason: failedCondition?.reason || null,
+    startedAt: job.status?.startTime || job.metadata?.creationTimestamp || null,
+  };
+}
+
+// The check Jobs one run created, by kind: `{ capture, unitSuite }`, each
+// a describeCheckJob() summary or null when that Job does not exist (never
+// created, already garbage-collected, or deleted by a newer run). Matched by
+// the preview-run-id label runCheckJob stamps, so a session's OTHER runs are
+// never mistaken for this one.
+async function findCheckJobs(config, { sessionId, previewRunId }) {
+  if (!previewRunId) return { capture: null, unitSuite: null };
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  const found = { capture: null, unitSuite: null };
+  for (const job of jobs.items || []) {
+    const name = job.metadata?.name || '';
+    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.capture = describeCheckJob(job);
+    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`)) found.unitSuite = describeCheckJob(job);
+  }
+  return found;
+}
+
+// Wait for a check Job to end and return its whole output. Same shape a
+// runCheckJob caller sees, minus the throw: `{ state, stdout, stderr,
+// exitCode, timedOut, partial, partialReason }`, where `state` is 'succeeded'
+// | 'failed' | 'gone' (the Job disappeared — a newer run cancelled it, or
+// the TTL collected it) | 'timeout' (our own wait ran out; the Job's
+// activeDeadline should have ended it long before, so this is a stuck
+// cluster rather than a slow suite). A Job that is still running is
+// polled every 2s, and its log is re-read every few ticks so `onStdoutLine`
+// sees the frames as they land — the same cadence runCheckJob's polled path
+// gives, which is what keeps the card's bar moving across the hand-over.
+// Lines are delivered from the START of the log, so an observer rebuilding
+// progress state sees every frame the run ever printed. An aborted `signal`
+// ends the wait with state 'aborted' — the adopter was superseded, and the
+// Job is the successor's to cancel.
+async function collectCheckJob(config, {
+  name, kind, timeoutMs = 20 * 60 * 1000, maxBuffer = 64 * 1024 * 1024, onStdoutLine = null, signal = null,
+}) {
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const unitSuite = kind === 'unit-suite';
+  const PROGRESS_EVERY_TICKS = 3;
+  let podName = null;
+  let consumed = 0;
+  let tick = 0;
+  const findPod = async () => {
+    if (podName) return podName;
+    const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+    podName = pods.items?.[0]?.metadata?.name || null;
+    return podName;
+  };
+  const readLog = async ({ limitBytes }) => {
+    if (!(await findPod())) return '';
+    return String(await core.readNamespacedPodLog({ name: podName, namespace, container: kind, limitBytes }) || '');
+  };
+  const deliverNew = (text) => {
+    if (typeof onStdoutLine !== 'function') return;
+    if (text.length <= consumed) return;
+    const fresh = text.slice(consumed);
+    const lastNl = fresh.lastIndexOf('\n');
+    if (lastNl === -1) return;
+    for (const line of fresh.slice(0, lastNl).split('\n')) {
+      try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+    }
+    consumed += lastNl + 1;
+  };
+  const boundedOutput = text => {
+    const bytes = Buffer.from(text || '', 'utf8');
+    let end = Math.min(bytes.length, maxBuffer);
+    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString('utf8');
+  };
+  const finish = async (job) => {
+    const described = describeCheckJob(job);
+    let raw = '';
+    let logFailed = false;
+    try { raw = await readLog({ limitBytes: unitSuite ? maxBuffer : maxBuffer + 1 }); }
+    catch { logFailed = true; }
+    // Everything the observer has not yet seen, so the progress state the
+    // caller is rebuilding ends level with the verdict it is about to read.
+    deliverNew(raw.endsWith('\n') ? raw : `${raw}\n`);
+    const over = !unitSuite && Buffer.byteLength(raw, 'utf8') > maxBuffer;
+    const stdout = over ? boundedOutput(raw) : raw;
+    let exitCode = null;
+    let terminatedReason = null;
+    try {
+      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      const terminated = pods.items?.[0]?.status?.containerStatuses?.find(c => c.name === kind)?.state?.terminated;
+      if (terminated) { exitCode = terminated.exitCode ?? null; terminatedReason = terminated.reason || null; }
+    } catch { /* the Job's own status is enough */ }
+    const timedOut = described.failedReason === 'DeadlineExceeded' || terminatedReason === 'OOMKilled';
+    const partial = described.state === 'failed' || over || logFailed;
+    return {
+      state: described.state,
+      stdout,
+      stderr: [described.failedReason, terminatedReason].filter(Boolean).join(': '),
+      exitCode,
+      timedOut,
+      partial,
+      partialReason: !partial ? ''
+        : over ? 'output over maxBuffer'
+          : logFailed ? 'capture log unavailable'
+            : terminatedReason === 'OOMKilled' ? 'capture OOM killed'
+              : timedOut ? 'run timed out' : `job ${described.failedReason || 'failed'}`,
+    };
+  };
+  const empty = (state, partialReason) => ({
+    state, stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason,
+  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return empty('aborted', 'harvest superseded');
+    let job;
+    try { job = await batch.readNamespacedJob({ name, namespace }); }
+    catch (err) {
+      if (isNotFound(err)) return empty('gone', 'job gone');
+      throw err;
+    }
+    const described = describeCheckJob(job);
+    if (described.state !== 'running') return finish(job);
+    tick += 1;
+    if (tick % PROGRESS_EVERY_TICKS === 1 && typeof onStdoutLine === 'function') {
+      try { deliverNew(await readLog({ limitBytes: maxBuffer })); } catch { /* progress is best-effort */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  let stdout = '';
+  try { stdout = boundedOutput(await readLog({ limitBytes: maxBuffer })); } catch { /* nothing salvageable */ }
+  return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
+}
+
 // The pod-log follow client: an injected `logs` for tests, else one built
 // on the real kube config. Null where neither exists (a test that injected
 // only the typed API clients), which leaves the polled read in charge.
@@ -1739,7 +1961,8 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, execInWorker, _getClients: getClients,
+  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,

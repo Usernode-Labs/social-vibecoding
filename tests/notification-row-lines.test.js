@@ -197,13 +197,20 @@ test('no row can reach the renderer with an empty kind line', async () => {
   }
 });
 
-test('the two key rows keep the name as their subject and claim no actor', async () => {
+test('OpenRouter key rows name the provider, owner, and no false actor', async () => {
   // `sourceUsername` there is WHOSE key it is, not who did something, so
   // "by @them" would be a false claim — it stays on the subject line.
-  const l = await lines({ kind: 'openrouter_key_review', sourceUsername: 'grace' });
-  assert.equal(l.label, 'Company key needs review');
-  assert.equal(l.subject, '@grace');
-  assert.equal(l.meta, 'Admin · 4m ago', 'no by-line');
+  const review = await lines({ kind: 'openrouter_key_review', sourceUsername: 'grace' });
+  assert.equal(review.label, 'OpenRouter key needs admin review');
+  assert.equal(review.subject, '@grace');
+  assert.equal(review.meta, 'Admin · 4m ago', 'no by-line');
+
+  // Existing successful-issuance rows remain understandable even though
+  // successful provisioning no longer creates new ones.
+  const legacy = await lines({ kind: 'openrouter_key_created', sourceUsername: 'grace' });
+  assert.equal(legacy.label, 'OpenRouter access enabled');
+  assert.equal(legacy.subject, '@grace');
+  assert.equal(legacy.meta, 'Admin · 4m ago', 'no by-line');
 });
 
 // ─── 3. The renderer draws them in that order ───────────────────────────
@@ -268,7 +275,7 @@ test('the three lines are visually ranked, not three of the same thing', () => {
 
 test('a push test has clear account-level copy without inventing a completed session', async () => {
   const row = (await load())({ ...ROW, kind: 'test_alert', appName: null, appSlug: null, sessionId: null });
-  assert.equal(row.label, 'Usernode test alert');
+  assert.equal(row.label, 'Homeroom test alert');
   assert.equal(row.appLine, '');
   assert.match(row.segments[0].v, /You requested a push notification test/);
 });

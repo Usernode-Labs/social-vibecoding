@@ -66,6 +66,7 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
+  await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
   await seedStagingDevFlowWizard(pool, config);
   await seedStagingSessionOptions(pool, config);
@@ -1085,7 +1086,7 @@ async function seedSelfApp(pool, config) {
 
   // Single UPSERT keyed on slug. Insert covers fresh-DB; the DO UPDATE
   // covers every subsequent boot so main_sha and manifest_snapshot
-  // reflect the running build. The insert seeds name='Usernode'; the
+  // reflect the running build. The insert seeds name='Homeroom'; the
   // DO UPDATE deliberately does NOT touch name — the reconcile below is
   // the single place the self-app display name is resolved from
   // dapp.json (so a merged self-app rename PR actually applies on the
@@ -1095,7 +1096,7 @@ async function seedSelfApp(pool, config) {
        (name, slug, repo_url, container_id, status, self_hosted,
         main_sha, last_deploy_at, manifest_snapshot)
      VALUES
-       ('Usernode', $1, $2, 'usernode', 'running', TRUE,
+       ('Homeroom', $1, $2, 'usernode', 'running', TRUE,
         $3, NOW(), $4::jsonb)
      ON CONFLICT (slug) DO UPDATE SET
        repo_url          = EXCLUDED.repo_url,
@@ -2274,7 +2275,7 @@ async function seedStagingEnvProposal(pool, config) {
       [
         appId,
         fixtureTitle,
-        `[staging fixture] ${creator.username} (via Usernode) proposed setting the env var "${fixtureKey}". `
+        `[staging fixture] ${creator.username} (via Homeroom) proposed setting the env var "${fixtureKey}". `
           + 'Auto-applies when a majority of active users vote up; the value reaches the platform on its next deploy.',
         JSON.stringify(payload),
         creator.id,
@@ -2791,6 +2792,77 @@ async function seedStagingSavedDrafts(pool, config) {
   });
 }
 
+// #1960: the fixture the DELETE check trashes from.
+//
+// A dedicated session, and the reason is the same one 990402 gives for not
+// living on 990401: this check is DESTRUCTIVE. `?shot=draft-delete` really
+// trashes `dropthisdraft` through the real handler, the real route and the
+// real table, because a delete that only pretends to happen cannot catch a
+// delete that comes back. Putting that on 990402 would empty the fixture
+// whose two rows another check asserts by text, and check order is not
+// something a proposal gets to choose.
+//
+// Idempotent on retry as well as on reboot: the shot deletes ONE KNOWN ID,
+// so a second run finds it already gone and the surviving row is the same
+// either way. The two texts are deliberately self-describing, because the
+// only thing the check can see is which of them is on screen.
+//
+// 990414 continues the 9904xx dev-session block (990401-990413 are taken).
+const STAGING_DRAFT_DELETE_SESSION_ID = 990414;
+
+const STAGING_DRAFT_DELETE_DRAFTS = [
+  { id: 'dropthisdraft', text: 'Staging demo draft: the one this check trashes.', minutesAgo: 6 },
+  { id: 'keepthisdraft', text: 'Staging demo draft: the one that is still here afterwards.', minutesAgo: 5 },
+];
+
+async function seedStagingDraftDelete(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging draft-delete fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging draft-delete fixture');
+  if (!owner) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/draft-delete', NULL,
+             '[staging fixture] Trashing a saved draft', 'active',
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '4 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_DRAFT_DELETE_SESSION_ID, appId, owner.id]
+  );
+
+  let drafts = 0;
+  for (const d of STAGING_DRAFT_DELETE_DRAFTS) {
+    const { rowCount: added } = await pool.query(
+      `INSERT INTO chat_session_drafts (session_id, user_id, draft_id, content, saved_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))
+       ON CONFLICT (session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+      [STAGING_DRAFT_DELETE_SESSION_ID, owner.id, d.id, d.text, d.minutesAgo]
+    );
+    drafts += added;
+  }
+
+  log.info('db', 'Staging draft-delete fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId: STAGING_DRAFT_DELETE_SESSION_ID,
+    sessionInserted: rowCount,
+    draftsInserted: drafts,
+  });
+}
+
 // #1049 / #1086: the venue line above the composer, and the walkthrough
 // behind one of its answers.
 //
@@ -2803,10 +2875,10 @@ async function seedStagingSavedDrafts(pool, config) {
 // reach by hand on a staging clone.
 //
 //   990403 — /#app/<self-slug>/dev/sessions/990403
-//            the line in its ordinary state: Usernode · Claude, the
+//            the line in its ordinary state: Homeroom · Claude, the
 //            default nobody chose, now said out loud.
 //   990409 — /#app/<self-slug>/dev/sessions/990409
-//            Usernode · OpenRouter — a pinned backend with a model, which
+//            Homeroom · OpenRouter — a pinned backend with a model, which
 //            is also the one venue that renders the model row underneath.
 //   990410 — /#app/<self-slug>/dev/sessions/990410
 //            the same session AFTER a silent fallback: the saved default
@@ -2862,7 +2934,7 @@ async function seedStagingVenueLine(pool, config) {
 
   // The venue is read off the session's own columns (build-venues.js's
   // currentVenue precedence), so each row IS its fixture: leave the backend
-  // defaulted for Usernode · Claude, pin it for Usernode · OpenRouter. The
+  // defaulted for Homeroom · Claude, pin it for Homeroom · OpenRouter. The
   // third row is the OpenRouter DEFAULT that could not be honoured, which
   // is why it is seeded as a claude_code session — landing somewhere the
   // default did not name is the whole point of it. The note that explains
@@ -2872,14 +2944,14 @@ async function seedStagingVenueLine(pool, config) {
     {
       id: STAGING_VENUE_LINE_SESSION_ID,
       branch: 'staging-fixture/venue-usernode-claude',
-      title: '[staging fixture] Venue line — Usernode · Claude',
+      title: '[staging fixture] Venue line — Homeroom · Claude',
       backend: 'claude_code',
       model: null,
     },
     {
       id: STAGING_VENUE_OPENROUTER_SESSION_ID,
       branch: 'staging-fixture/venue-usernode-openrouter',
-      title: '[staging fixture] Venue line — Usernode · OpenRouter',
+      title: '[staging fixture] Venue line — Homeroom · OpenRouter',
       backend: 'codex_openrouter',
       model: 'openai/gpt-5.3-codex',
     },
@@ -2912,7 +2984,7 @@ async function seedStagingVenueLine(pool, config) {
   // The venue sheet offers the two web hand-offs against a saved
   // preference, and the walkthrough fixture next door needs that null to
   // still mean "not yet answered". Clearing it keeps both readable: the
-  // line above says Usernode · Claude because nothing else was chosen,
+  // line above says Homeroom · Claude because nothing else was chosen,
   // which is the exact silence #1086 is about.
   await pool.query(
     'UPDATE users SET dev_flow_preference = NULL WHERE id = $1',
@@ -4200,7 +4272,7 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
     'resolves nor rejects, so every flow that waits on a wallet address',
     'hangs on a spinner until the user force-closes the app.',
     '',
-    'How to reproduce: open any wallet-connected app inside the Usernode',
+    'How to reproduce: open any wallet-connected app inside the Homeroom',
     'mobile app, background it for at least ten minutes, then reopen it and',
     'tap a flow that reads the node address. On iOS the WebView appears to',
     'suspend the bridge message channel; queued postMessage calls made',
@@ -5833,7 +5905,7 @@ async function seedStagingViewOnlyAdmin(pool) {
 }
 
 // Linked-wallet fixtures (issue #422). The admin Users list now shows each
-// user's linked Usernode wallet and lets a full admin edit it inline. The
+// user's linked Homeroom wallet and lets a full admin edit it inline. The
 // wallet column (users.usernode_pubkey) is NOT staging-scrubbed, so cloned
 // prod rows keep their addresses — but to demonstrate every path
 // deterministically (display, the "none" placeholder, and the
@@ -9996,7 +10068,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
       headSha: 'b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8',
       agent: 'claude-code',
       title: '[staging fixture] Built with Claude Code — keyboard shortcuts for the vote panel',
-      summary: 'In plain terms: a member asked Claude Code on the web to build this. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+      summary: 'In plain terms: a member asked Claude Code on the web to build this. Their own coding agent wrote the code in their GitHub fork, and Homeroom opened the pull request so the group can vote on it.',
       body: '## What changed\n\nThe vote panel now supports keyboard shortcuts for casting and clearing a vote.\n\n## How to test\n\n1. Focus the vote panel.\n2. Use the displayed shortcuts.\n3. Confirm the selected vote updates without leaving the proposal.',
     },
     {
@@ -10005,7 +10077,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
       headSha: 'd2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3',
       agent: 'codex',
       title: '[staging fixture] Built with Codex — remember the last tab you were on',
-      summary: 'In plain terms: a member asked Codex to build this from their ChatGPT account. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+      summary: 'In plain terms: a member asked Codex to build this from their ChatGPT account. Their own coding agent wrote the code in their GitHub fork, and Homeroom opened the pull request so the group can vote on it.',
       body: '## What changed\n\nThe Dev screen remembers the last tab you selected and restores it when you return.\n\n## How to test\n\n1. Select a different Dev tab.\n2. Leave the screen and return.\n3. Confirm the selected tab is restored.',
     },
   ];

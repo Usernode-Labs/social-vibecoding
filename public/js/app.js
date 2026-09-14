@@ -77,7 +77,7 @@ const App = {
   // visits to an app's own subdomain — the shell still injects the
   // iframe token, refreshes it, and hosts the bridge/LLM-consent flows,
   // so a shared link "just works". The only chrome is a floating
-  // "Open in Usernode" pill (see _mountChromelessPill) that switches to
+  // "Open in Homeroom" pill (see _mountChromelessPill) that switches to
   // the regular /app/<slug> view. Driven purely by the route via
   // restoreFromHash/setChromeless.
   chromeless: false,
@@ -1295,8 +1295,24 @@ const App = {
   // behind it, not env-gated (same reasoning as ?shot=improve above).
   _applyLaunchShot() {
     let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    let settled = false;
+    try {
+      const params = new URLSearchParams(location.search);
+      shot = params.get('shot');
+      settled = params.get('settle') === '1';
+    } catch (err) { /* ignore */ }
     if (shot !== 'app-launching') return;
+    // #2154: the paired settled state deliberately uses the SAME route as
+    // the old loading fixture. On the base commit `settle=1` is ignored and
+    // the spinner stays up; on this commit it synthesises the race (terminal
+    // event first, stale detail response second) and shows the resulting live
+    // frame. That makes the before/after capture observe the actual fix.
+    if (settled) {
+      setTimeout(() => {
+        try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
     // Wait (briefly, and bounded) for the home feed's app list to land, so
     // the cover shows a REAL app's icon and name rather than the stub —
     // Home.load's fetch is in flight while boot finishes. Paints regardless
@@ -2329,7 +2345,12 @@ const App = {
 
     // Update app view if we're looking at this app
     if (App.currentApp === data.slug && App.currentTab === 'app') {
-      if (data.status === 'running' && AppView.appData) {
+      // On the first open, the terminal event can beat the detail request.
+      // There is no record to mutate yet, so preserve the event for open() to
+      // reconcile with the fetched snapshot instead of discarding it.
+      if (!AppView.appData || AppView.appData.slug !== data.slug) {
+        AppView._rememberPendingAppStatus?.(data);
+      } else if (data.status === 'running') {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
         // Share lives in the Improve panel now, and the panel reads
@@ -2346,12 +2367,21 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
-      } else if (data.status === 'error' && AppView.appData) {
+      } else if (data.status === 'error') {
         // #416: a watched spin-up just failed — flip the App tab to the
         // error state immediately, carrying the broadcast one-line
         // reason so the user isn't left with a bare "Error".
         AppView.appData.status = 'error';
         if (data.errorReason) AppView.appData.errorReason = data.errorReason;
+        AppView.renderAppTab();
+      } else if (data.status === 'awaiting_secrets') {
+        // This is terminal for the initial deploy too. Leaving appData at
+        // `creating` would strand the same spinner as a missed running event;
+        // render the actionable blocked state immediately.
+        AppView.appData.status = 'awaiting_secrets';
+        if (Array.isArray(data.missingSecrets)) {
+          AppView.appData.missingSecrets = data.missingSecrets;
+        }
         AppView.renderAppTab();
       }
     }
@@ -2964,7 +2994,7 @@ const App = {
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
   // The home screen shows the PLATFORM's Improve button (#1367) — "improve
-  // Social Vibecoding itself", pointed at its own self-hosted app row.
+  // Homeroom itself", pointed at its own self-hosted app row.
   //
   // THE UI OVERHAUL shipped this once and #1363 reverted it, and that revert
   // is why the publish does NOT live here. That version re-targeted the platform row
@@ -3065,6 +3095,8 @@ const App = {
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
+      // A challenge's detail page claims it as "up to the grid".
+      if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
       // A dev SESSION claims it as "back to the Board" (Streamlined
       // Concept); declines when no session is open.
       if (App.currentApp && window.DevChat?.handleBack?.()) return;
@@ -3099,7 +3131,7 @@ const App = {
     // frontend/src/features/dialogs/feedback-controller.js, which the island
     // `init()`s from its layout effect. That module also re-publishes
     // `App.openFeedbackModal`, so `App._applyFeedbackShot` and the Dev "+"
-    // menu's "New issue" item still reach the dialog by name.
+    // menu's "File an issue" item still reach the dialog by name.
 
     // The header's App/Dev segmented switch (#app-mode-switch) used to be
     // wired here. THE UI OVERHAUL retired it: an app is just an app now, and
@@ -3345,7 +3377,7 @@ const App = {
           // name if document.title was set elsewhere (e.g. a stale
           // value persisted across a Flutter WebView session).
           App._ensureHomeVisible();
-          App.setHeaderTitle('Social Vibecoding');
+          App.setHeaderTitle('Homeroom');
           Home.load();
         }
         return;
@@ -3362,7 +3394,7 @@ const App = {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
-          App.setHeaderTitle('Social Vibecoding');
+          App.setHeaderTitle('Homeroom');
           Home.load();
         }
         App.showCreateModal();
@@ -3588,7 +3620,20 @@ const App = {
         // `activity` is the retired Activity feed's address; the Workshop
         // replaced it as the lander, so the old links land there.
         if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
-        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
+        // `board` is the retired Board view's address. Those columns are the
+        // Workshop's "By stage" pane now, so an old link lands on the Workshop
+        // with that pane up rather than on a mode that no longer exists — the
+        // same treatment `activity` gets above, one pane deeper.
+        else if (tab === 'board') {
+          tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop';
+          // TWO answers, not one: those columns are the `stage` grouping of the
+          // `all` TAB, and setting the grouping alone lands on the default tab,
+          // where the grouping control is not rendered at all.
+          if (typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
+            AppView._overrideWorkshopTab('all');
+            AppView._overrideWorkshopGroup('stage');
+          }
+        }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -3691,7 +3736,7 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
-        App.setHeaderTitle('Social Vibecoding');
+        App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
         // Improve-button bug, in its unrecognised-hash variant).
@@ -3724,7 +3769,7 @@ const App = {
 
   // ── Chromeless full-screen mode ──────────────────────────────────────
   // Hide/show the shared header and mount/unmount the floating "Open in
-  // Usernode" pill. Idempotent; only ever driven by restoreFromHash (the
+  // Homeroom" pill. Idempotent; only ever driven by restoreFromHash (the
   // mode is route-addressed, so history back/forward keeps working) plus a
   // defensive clear in navigateHome.
   //
@@ -4795,7 +4840,7 @@ const App = {
     // "whiteboard-abc123" — which the Flutter WebView's AppBar then
     // mirrors via document.title. Leaving the previous header title
     // in place during the brief /api/apps/:slug round-trip is much
-    // better UX: from home you see "Social Vibecoding" briefly, then "Whiteboard";
+    // better UX: from home you see "Homeroom" briefly, then "Whiteboard";
     // from app A to app B you see "App A" briefly, then "App B". The
     // user never sees the raw slug.
     //
@@ -4914,7 +4959,7 @@ const App = {
       // and none on a cold boot at `/`. Home.render() is what makes it
       // consistent; see Home.publishImproveTarget.
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Social Vibecoding');
+      App.setHeaderTitle('Homeroom');
     }, {
       type: App._entryTransition('zoom-out', av),
       el: av,
@@ -5004,7 +5049,7 @@ const App = {
 
   // Mirror the visible header text into both the on-screen <h1> and
   // the browser tab title so the OS/window surface reflects the
-  // current screen (home → "Social Vibecoding", app open → app display name,
+  // current screen (home → "Homeroom", app open → app display name,
   // leaderboard → "Kudos leaderboard"). The browser tab title is
   // also used by Notifications._updateTitle() to prepend an unread
   // count "(N) "; we re-invoke it here so a navigation that happens
@@ -5020,7 +5065,7 @@ const App = {
   // races with the next JS task, and the result is that the AppBar
   // shows the title that was current at the *previous* pushState.
   // To pin the AppBar to whatever we just set, we also fire-and-forget
-  // a `titleChanged` message over the existing Usernode JS channel.
+  // a `titleChanged` message over the existing Homeroom JS channel.
   // The native side handles it by setting `_pageTitle` directly
   // (see lib/features/dapps/dapp_webview_screen.dart). Older app
   // builds that don't know `titleChanged` ignore the message

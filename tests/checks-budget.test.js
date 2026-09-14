@@ -59,12 +59,13 @@ test('the whole suite fits inside the container run timeout', () => {
   assert.ok(perCheck < suiteDeadline, 'one check cannot outlast the whole suite');
   assert.ok(suiteDeadline < runTimeout, 'the suite cannot outlast the container');
   assert.ok(runTimeout - suiteDeadline >= 120000,
-    'and the media pass runs before the suite, so it needs room of its own');
+    'and the browser launch plus a media pass that outlives the suite (they '
+    + 'run side by side now) need room of their own');
 });
 
 test('the budget is big enough for a full manifest at measured speed', () => {
   // Production timing: ~3.9s marginal per check. A FULL manifest at the
-  // ceiling — 630 now (600, 580, 560, 530, 480 since #1417, 430, 400 since #1125)
+  // ceiling — 660 now (630, 600, 580, 560, 530, 480 since #1417, 430, 400 since #1125)
   // — is ~293s of ideal work over a pool of 8; at the 55-70% efficiency a
   // shared preview actually delivers, ~370-470s. The budget has to clear that
   // with room, or the tail of a real manifest gets cut every single build and
@@ -78,7 +79,13 @@ test('the budget is big enough for a full manifest at measured speed', () => {
   // and the NEXT bump moves both again. It did, twice more on the same rule:
   // 530 → 560 took the deadline 520s → 560s and RUN_TIMEOUT_MS 640s → 680s,
   // and 580 → 600 (#1824) took them 570s → 590s and 690s → 710s, and
-  // 600 → 630 (#1876) took them 590s → 620s and 710s → 740s.
+  // 600 → 630 (#1876) took them 590s → 620s and 710s → 740s, and 630 → 660
+  // (#1960) took them 620s → 650s and 740s → 770s.
+  //
+  // The pool then doubled 8 → 16 (software compositing freed the container's
+  // CPU), which halved the ideal work to ~161s. The deadline stayed at 650s
+  // on purpose — it bounds a wedged suite, not a healthy one — so the margin
+  // is ~4x for now and the next ceiling bumps are free until it is not.
   const suiteDeadline = numericConstant('TESTS_DEADLINE_MS');
   const perCheckSeconds = 3.9;
   const pool = capture.poolSize({});
@@ -91,15 +98,43 @@ test('the budget is big enough for a full manifest at measured speed', () => {
 test('the capture container is sized for a pool of pages, not one', () => {
   const memory = constant('CAPTURE_MEMORY');
   const cpus = constant('CAPTURE_CPUS');
-  assert.match(memory, /process\.env\.CAPTURE_MEMORY \|\| '4g'/,
-    'each Chromium page is ~50-80 MiB of renderer on top of the browser itself');
+  assert.match(memory, /process\.env\.CAPTURE_MEMORY \|\| '6g'/,
+    'each Chromium page is ~80-150 MiB of renderer on top of the browser itself');
   assert.match(cpus, /process\.env\.CAPTURE_CPUS \|\| '8'/);
-  assert.ok(numericConstant('CAPTURE_CPUS') >= capture.poolSize({}),
-    'the default capture quota must provide at least one core per browser group');
+
+  // Memory is what bounds the pool. Budget 150 MiB per concurrent page plus
+  // 1 GiB for the browser, the GPU process and the media pass (its own
+  // pages, the recording and the GIF transcode) — and the container's
+  // ceiling on TEST_CONCURRENCY must fit too, since an operator can raise
+  // the env var up to it without touching CAPTURE_MEMORY.
+  const memoryMiB = Number(/'(\d+)g'/.exec(memory)[1]) * 1024;
+  const budgetFor = (pages) => pages * 150 + 1024;
+  assert.ok(memoryMiB >= budgetFor(capture.poolSize({})),
+    `${memoryMiB} MiB must cover ${capture.poolSize({})} pages (${budgetFor(capture.poolSize({}))} MiB)`);
+  assert.ok(memoryMiB >= budgetFor(capture.poolSize({ TEST_CONCURRENCY: '999' })),
+    'and the widest pool the container will accept');
+
+  // CPU is not, since compositing left the SwiftShader GPU process (see
+  // CHROMIUM_LAUNCH_ARGS): a group is well under a core. But not zero — two
+  // lanes per core is the measured comfortable ratio, and whoever widens the
+  // pool past it should have to re-measure rather than discover the old
+  // saturation the hard way.
+  assert.ok(capture.poolSize({}) <= numericConstant('CAPTURE_CPUS') * 2,
+    'no more than two browser groups per core of the default quota');
   // And they must actually reach the container — a limit computed and not
   // passed is the same as no limit.
   assert.match(visualsSrc, /memory: CAPTURE_MEMORY,\s*\n\s*cpus: CAPTURE_CPUS,/,
     'the limits must be handed to runOneShot');
+});
+
+test('the capture browser composites in software, and still has a GPU process for WebGL', () => {
+  // The single largest cost in the capture pod before this flag: the
+  // SwiftShader GPU process compositing every page on the CPU, ~5.6 of the
+  // pod's 8 cores. It is what let the pool double without the container
+  // growing, so the pool size above assumes it.
+  assert.ok(capture.CHROMIUM_LAUNCH_ARGS.includes('--disable-gpu-compositing'));
+  assert.ok(!capture.CHROMIUM_LAUNCH_ARGS.includes('--disable-gpu'),
+    'compositing moves to Skia, but the GPU process stays for WebGL contexts');
 });
 
 test('the pool bounds are passed to the capture image', () => {
