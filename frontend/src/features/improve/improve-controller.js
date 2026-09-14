@@ -81,6 +81,34 @@ function liveBusy(session) {
 }
 
 /**
+ * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
+ * both the caption's "Needs you" and the pill's "Ready for your input", so
+ * the two cannot say different things.
+ *
+ * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
+ * the transcript (sessionAwaitsInput in routes/sessions.js): the last
+ * conversational row is the assistant's, and it either asked with answer
+ * chips or closed a spec whose Questions section is still open. A finished
+ * spec with nothing to answer, or a finished build, is plain Ready — the
+ * pill says "for your input" only when something in the session is asking.
+ *
+ * The two status values are the seam #1417 left for a connector agent's
+ * notify_awaiting_input. Nothing publishes them into this payload yet; they
+ * stay so a row that does arrive in that state reads right.
+ *
+ * A turn in flight is never waiting on anyone. The live store wins here for
+ * the same reason it wins for `busy` (#1958): the payload is a snapshot, and
+ * a push that starts a turn must take "Needs you" down in the same frame it
+ * puts the spinner up.
+ */
+function awaitsInput(session) {
+  if (!session || liveBusy(session)) return false;
+  if (session.awaiting_input === true) return true;
+  const state = String(session.status || '').toLowerCase();
+  return state === 'awaiting_input' || state === 'needs_input';
+}
+
+/**
  * A PARKED session (owner review).
  *
  * "Changes in progress" and "Changes in other apps" are lists of what is
@@ -103,7 +131,7 @@ function statusLabel(session) {
   if (isBusy(session)) return 'Working…';
   const state = String(session.status || '').toLowerCase();
   if (state === 'paused') return 'Paused';
-  if (state === 'awaiting_input' || state === 'needs_input') return 'Needs you';
+  if (awaitsInput(session)) return 'Needs you';
   return null;
 }
 
@@ -147,6 +175,7 @@ function toRow(session, appNameFallback) {
     href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
     status: statusLabel(session),
     busy: liveBusy(session),
+    awaitingInput: awaitsInput(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
@@ -183,6 +212,9 @@ function taskToRow(task, appNameFallback) {
       : `#app/${task.app_slug}/dev`,
     status: agentLabel(task.agent),
     busy: false,
+    // Same reasoning as `busy`: whether the agent on the user's machine is
+    // waiting on them is not something this side can see per work order.
+    awaitingInput: false,
     sortAt: timeOf(task.created_at),
   };
 }

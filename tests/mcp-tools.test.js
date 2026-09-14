@@ -2560,7 +2560,10 @@ test('list_my_proposals asks for imported proposals, which is what it opens', ()
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
-  assert.match(route.slice(0, 3000), /cs\.source IS DISTINCT FROM 'imported'/);
+  // The window is "the route's own query", not a fixed distance: the filter
+  // sat 15 characters inside 3000 until #1959 put a second LATERAL and two
+  // columns ahead of the WHERE clause.
+  assert.match(route.slice(0, 4000), /cs\.source IS DISTINCT FROM 'imported'/);
   assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
 
   // And the connector allowlist matches on the PATH, so the query string
