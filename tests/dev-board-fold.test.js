@@ -348,10 +348,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
     assert.ok(t && /cards=open/.test(t.path), `${name} runs with the cards open`);
   }
 
-  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board is the card area as a kanban, its cards folded to rows');
+  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board resolves onto the stage pane, its cards folded to rows');
   assert.ok(folded, 'the board route check pins the fold');
   assert.equal(folded.path, '/?demo=1#app/usernode-2d5619/board', 'with no cards=open: this IS the default');
-  assert.match(folded.expectSelector, /#dev-kanban-board #dev-kanban \.dev-kanban-col \.dev-ws-rowwrap > \.dev-ws-row\[role="button"\]\[aria-expanded="false"\]\[data-issue-row\]/);
+  // The host moved with the surface: the Board view mode retired and those
+  // columns are the Workshop's stage pane, so the chain is anchored on
+  // `[data-ws-stage]` rather than on the standalone board's own #dev-kanban-board.
+  assert.match(folded.expectSelector, /\[data-ws-stage\] #dev-kanban \.dev-kanban-col \.dev-ws-rowwrap > \.dev-ws-row\[role="button"\]\[aria-expanded="false"\]\[data-issue-row\]/);
 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
@@ -419,7 +422,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // deliberately not asserting it is enabled: the box is disabled on a row
   // with no resolvable reference, which is a legitimate state the demo
   // fixtures may well be in.
-  // 605 → 606: #1912 puts Show more on every sort, so one check pins the case
+  // 605 → 604: the Board VIEW MODE retired. Its columns are the Workshop's
+  // "By stage" pane, so three checks moved onto that pane's markup and the
+  // fourth went outright — the kanban-only general-discussion CARD, which the
+  // Workshop already answers for with a row of its own (there is a check for
+  // that row, and another pinning that the Workshop does not draw the card
+  // too). Nothing was declared to replace it.
+  // 604 → 605: #1912 puts Show more on every sort, so one check pins the case
   // that had none — a metric sort, where the demo and broken samples are the
   // top two by users and used to lead the directory. It asserts the absence of
   // the tier headings too, because "one list in its own order" is the half of
@@ -433,7 +442,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // — the locked-app gate that had no UI at all, the "nobody has to act"
   // wording, and the steps listed AFTER the one a proposal is stuck on,
   // landing on the other side of a second merge.
-  assert.equal(DAPP.tests.length, 610);
+  // 610 → 609: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 605 → 604 by retiring the
+  // kanban-only general-discussion check (the entry above with that arrow);
+  // main independently took the SAME 605 to 610 with the five entries listed
+  // between. One −1 and one +5 against a shared 605 is 609 — not the 610 main
+  // reached without this branch's removal, which is the figure the sync's
+  // conflict resolution kept and the repo unit suite then caught. A literal is
+  // the right shape for this assertion precisely because that mismatch is
+  // otherwise silent; it is the arithmetic that needed saying, not the check.
+  assert.equal(DAPP.tests.length, 609);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
