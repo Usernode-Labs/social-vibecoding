@@ -2708,6 +2708,7 @@
     {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",
       "path": "/?demo=1#settings/app-ai",
+      "expectSelector": "[data-settings-section=\"app-ai\"]:not(.hidden) #llm-grants-list [data-role=\"re-enable\"]",
       "expectText": "Staging demo app A"
     },
     {
