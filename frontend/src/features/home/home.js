@@ -3228,7 +3228,7 @@ const Home = {
     // rechecks it on DELETE. Keep the full-admin fallback for older payloads
     // already in memory while a deployment rolls over.
     if (user.canAdminWrite || app.can_delete) {
-      items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
+      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     return items;
   },
@@ -3704,16 +3704,6 @@ const Home = {
     } catch (err) {
       PlatformUI.toast(`Lock toggle failed: ${err.message}`);
     }
-  },
-
-  async _menuDelete(app) {
-    if (!await PlatformUI.confirm({ title: 'Delete this app?', message: 'This removes the app for everyone.', confirmLabel: 'Delete', danger: true })) return;
-    const res = await fetch(`/api/apps/${app.slug}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      PlatformUI.toast(data.error || `Delete failed (HTTP ${res.status})`);
-    }
-    await Home.load();
   },
 
   // ===== "Your apps" drag-and-drop (issue #128) =====
