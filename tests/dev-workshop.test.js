@@ -826,7 +826,7 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
 
 test('since-your-last-visit sits with the other things addressed to you', () => {
   const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
@@ -884,7 +884,7 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
 
 test('the since heading is styled: each class it emits has a rule, and the count is a pill beside the label', () => {
   const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
@@ -3143,7 +3143,7 @@ test('the ask card is padded evenly, so its resting line sits on its own middle'
 
 test('since-your-last-visit shows three and reveals the rest, like the week walk', () => {
   const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   // Four merges instead of one, so the strip holds more than it draws.
