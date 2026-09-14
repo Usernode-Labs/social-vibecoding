@@ -147,9 +147,9 @@ test('an OpenRouter task opens on favorites without replacing an uncommon curren
   assert.match(SRC, /Platform recommendations start in Favorites/);
 });
 
-test('the task-time picker ships through a fresh shell cache', () => {
+test('the simplified proposal picker ships through a fresh shell cache', () => {
   const version = Number(String(SW_VERSION).replace(/^v/, ''));
-  assert.ok(version >= 11, `expected a post-v10 shell cache, got ${SW_VERSION}`);
+  assert.ok(version >= 19, `expected the proposal-dialog shell cache, got ${SW_VERSION}`);
 });
 
 test('forced catalog refresh and favorite writes bypass browser caches', async () => {
@@ -231,6 +231,7 @@ test('the first real build action provisions OpenRouter and reloads the saved de
 
   const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
   assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'usernode_managed');
   assert.equal(preferenceReads, 2, 'the post-provision default is read back');
   assert.equal(h.app.user.openrouterAvailable, true,
     'venue availability updates without a page reload');
@@ -239,6 +240,37 @@ test('the first real build action provisions OpenRouter and reloads the saved de
     '/api/me/credentials/openrouter',
     '/api/me/credentials/openrouter/managed',
     '/api/me/coding-agent',
+  ]);
+});
+
+test('an existing personal OpenRouter key is identified for accurate billing copy', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return {
+        ok: true,
+        json: async () => ({
+          defaultBackend: 'codex_openrouter',
+          backends: { codex_openrouter: { model: 'openai/gpt-6-astra', isDefault: true } },
+          codexAvailable: true,
+        }),
+      };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return {
+        ok: true,
+        json: async () => ({ configured: true, status: 'valid', source: 'personal' }),
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
+  assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'personal');
+  assert.deepEqual(h.requests.map((request) => request.url), [
+    '/api/me/coding-agent',
+    '/api/me/credentials/openrouter',
   ]);
 });
 
@@ -314,7 +346,7 @@ test('a concurrent first-use claim accepts the valid key created by the other re
         ok: true,
         json: async () => statusReads === 1
           ? { configured: false, status: null }
-          : { configured: true, status: 'valid' },
+          : { configured: true, status: 'valid', source: 'usernode_managed' },
       };
     }
     if (url === '/api/me/credentials/openrouter/managed') {
@@ -329,6 +361,7 @@ test('a concurrent first-use claim accepts the valid key created by the other re
 
   const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
   assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'usernode_managed');
   assert.equal(statusReads, 2);
   assert.equal(h.app.user.openrouterAvailable, true);
 });
