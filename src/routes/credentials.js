@@ -99,11 +99,16 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     try {
-      // The managed state is read first so a pre-#2119 daily key can be
-      // moved to the weekly allowance before the credential's key-info is
-      // read; that merged key-info is what the settings limit line renders.
-      const managedRow = await managedOpenRouter.migrateLegacyAllowance({
-        pool, userId: req.user.id, config,
+      // #2119: the included key carries the platform's weekly allowance for
+      // this user. It is resolved once here, for the claim card and for the
+      // sync, and the managed state is synced before the credential's
+      // key-info is read, because that merged key-info is what the settings
+      // limit line renders.
+      const allowance = config.openrouterManagementApiKey
+        ? await managedOpenRouter.resolveAllowance(pool, req.user.id)
+        : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET, identityGated: false };
+      const managedRow = await managedOpenRouter.syncAllowance({
+        pool, userId: req.user.id, config, allowance,
         state: await managedOpenRouter.stateForUser(pool, req.user.id),
       });
       const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
@@ -112,6 +117,7 @@ function credentialRoutes(config) {
       const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
       const verificationRequired = managedOpenRouter.requiresVerifiedIdentity(config);
       const identityEligible = !verificationRequired || !!managedRow.verified;
+      const hasAllowance = allowance.cents > 0;
       res.json({
         configured,
         status: meta?.status || null,
@@ -126,13 +132,16 @@ function credentialRoutes(config) {
           verified: !!managedRow.verified,
           verificationRequired,
           alreadyIssued: !!managed,
-          canClaim: available && identityEligible && !managed && !configured,
-          limitUsd: config.openrouterManagedWeeklyLimitUsd,
-          limitReset: managedOpenRouter.LIMIT_RESET,
+          canClaim: available && identityEligible && hasAllowance && !managed && !configured,
+          limitUsd: allowance.limitUsd,
+          limitReset: allowance.limitReset,
+          identityGated: !!allowance.identityGated,
           reason: !betaAllowed(req.user.id) ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
               : (!identityEligible ? 'verification_required'
-                : (managed ? 'already_issued' : (configured ? 'personal_key_configured' : null)))),
+                : (managed ? 'already_issued'
+                  : (!hasAllowance ? 'no_allowance'
+                    : (configured ? 'personal_key_configured' : null))))),
         },
       });
     } catch (err) {

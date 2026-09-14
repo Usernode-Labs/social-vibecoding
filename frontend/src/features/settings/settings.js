@@ -76,13 +76,13 @@
   }
 
   // #2119: an OpenRouter key's allowance is named from the reset cadence the
-  // server reports for it ('weekly' for company keys issued under the
-  // current policy, 'daily' for older ones until they are migrated, whatever
+  // server reports for it ('weekly' for company keys carrying the platform
+  // allowance, 'daily' for older ones until they are re-limited, whatever
   // OpenRouter says for a personal key, which may be nothing), never from a
   // hard-coded word, so the copy stays truthful for every key it describes.
-  function limitNoun(reset) {
+  function limitNoun(reset, noun = 'limit') {
     const cadence = typeof reset === 'string' ? reset.trim().toLowerCase() : '';
-    return cadence ? `${cadence} limit` : 'limit';
+    return cadence ? `${cadence} ${noun}` : noun;
   }
 
   // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
@@ -2989,7 +2989,13 @@
         if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
         if (managedMessage) {
           if (managed?.status === 'active') {
-            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.limitUsd || 0).toFixed(2)} ${limitNoun(managed.limitReset)}. Admins can block or remove it; you may choose any available model.`;
+            // The key carries the platform's weekly allowance; a key issued
+            // before that policy keeps its own limit until it is re-limited.
+            const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
+            const carries = managed.limitReset === 'weekly'
+              ? `with the platform's ${amount} weekly allowance`
+              : `with a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+            managedMessage.textContent = `Your Usernode-managed key is active ${carries}. Admins can block or remove it; you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
             managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
@@ -3000,10 +3006,14 @@
             managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
           } else if (!provisioning.available) {
             managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'no_allowance') {
+            managedMessage.textContent = provisioning.identityGated
+              ? 'Connect and verify GitHub or X in Social accounts & connectors to unlock included credits, then claim the company key.'
+              : 'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.';
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset)}.`;
+            managedMessage.textContent = `You can create one included key that carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';

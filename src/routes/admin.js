@@ -1194,6 +1194,18 @@ function adminRoutes(config) {
         weeklyLimitCents: rows[0].weekly_limit_cents,
         by: req.user.username,
       });
+      // #2119: the user's included OpenRouter key carries this allowance, so
+      // bring it in line now rather than on their next settings read. The
+      // cap is already saved; the sync is best-effort and never fails this
+      // request (a provider failure is logged inside it).
+      try {
+        await managedOpenRouter.syncAllowance({
+          pool, userId, config,
+          state: await managedOpenRouter.stateForUser(pool, userId),
+        });
+      } catch (err) {
+        log.warn('admin', 'managed OpenRouter allowance sync skipped', { userId, err: err.message });
+      }
       res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user weekly limit update failed', { message: err.message });

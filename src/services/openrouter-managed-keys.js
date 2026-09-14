@@ -6,12 +6,38 @@ const managementClient = require('./openrouter-management-client');
 const agentModels = require('./agent-models');
 const agentPreferences = require('./agent-preferences');
 const notifications = require('./notifications');
+const limits = require('./limits');
 
 const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
 // The reset cadence every company-funded key is issued with (#2119). Keys
-// issued earlier were daily; migrateLegacyAllowance brings them up to this.
+// issued earlier were daily; syncAllowance brings them up to this.
 const LIMIT_RESET = 'weekly';
+
+// #2119: the included key carries the platform's weekly allowance, the same
+// figure the Claude side enforces as its weekly cap (limits.resolveCaps: an
+// admin's per-user override, else the platform default, else 17500 cents).
+// The two backends do not share a pool (OpenRouter enforces the child key's
+// own limit; Claude spend is metered here); they share the NUMBER, so one
+// place answers "how much does the company give this account a week".
+//
+// Zero refuses a company key rather than minting an unlimited or zero-limit
+// one, and it is zero in two cases: an admin switched the weekly cap off, or
+// the identity tier grants the account nothing at all. The second is read
+// the way checkBudget reads it: an identity-derived daily 0 keeps applying
+// (tiered policy, unverified account), so the Claude side refuses every
+// platform-funded turn for that account, and the included key must not
+// become the way around that gate.
+async function resolveAllowance(pool, userId) {
+  const [weeklyCents, entitlement] = await Promise.all([
+    limits.getEffectiveUserWeeklyLimitCents(pool, userId),
+    limits.getUserCreditEntitlement(pool, userId),
+  ]);
+  const caps = limits.resolveCaps(entitlement);
+  const identityGated = caps.dailyApplies && caps.dailyLimitCents <= 0;
+  const cents = identityGated ? 0 : Math.max(0, Math.round(Number(weeklyCents) || 0));
+  return { cents, limitUsd: cents / 100, limitReset: LIMIT_RESET, identityGated };
+}
 
 class ManagedOpenRouterError extends Error {
   constructor(statusCode, code, message) {
@@ -132,6 +158,18 @@ async function provision({ pool, userId, config }) {
       'Company OpenRouter keys are not configured yet. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.',
     );
   }
+  // Resolved before the reservation so an account with nothing to draw on
+  // does not spend its one lifetime issuance on a refusal.
+  const allowance = await resolveAllowance(pool, userId);
+  if (allowance.cents <= 0) {
+    throw new ManagedOpenRouterError(
+      403,
+      'no_allowance',
+      allowance.identityGated
+        ? 'Connect GitHub or X in Settings to unlock included Usernode credits before claiming a company OpenRouter key.'
+        : 'This account has no included weekly allowance, so there is no company OpenRouter key to create. Add a personal OpenRouter key in Settings instead.',
+    );
+  }
 
   // Reserve the user's one lifetime issuance before the provider call. The
   // user row serializes concurrent claims. When the optional verification
@@ -162,7 +200,7 @@ async function provision({ pool, userId, config }) {
        VALUES ($1, $2, $3, $4, 'provisioning')
        ON CONFLICT (user_id) DO NOTHING
        RETURNING id`,
-      [userId, config.openrouterManagedWorkspaceId || null, config.openrouterManagedWeeklyLimitUsd, LIMIT_RESET],
+      [userId, config.openrouterManagedWorkspaceId || null, allowance.limitUsd, LIMIT_RESET],
     );
     if (!rows.length) {
       throw new ManagedOpenRouterError(409, 'already_issued', 'This account has already received its company OpenRouter key.');
@@ -175,7 +213,7 @@ async function provision({ pool, userId, config }) {
     remote = await managementClient.createKey({
       ...managementOptions(config),
       name: `usernode-user-${userId}`,
-      limit: config.openrouterManagedWeeklyLimitUsd,
+      limit: allowance.limitUsd,
       limitReset: LIMIT_RESET,
       workspaceId: config.openrouterManagedWorkspaceId || undefined,
     });
@@ -375,42 +413,56 @@ async function notifyIdentityReview({ pool, userId, config }) {
   return true;
 }
 
-// #2119: keys issued before the weekly policy still reset daily at
-// OpenRouter. Rather than a boot-time sweep that talks to the provider for
-// every row, each one is brought up to the current allowance lazily, the next
-// time its owner's credential status is read (the settings screen and the
-// first-use build flow both read it). Best-effort, and attempted once per key
-// per process: a failure leaves the row, and therefore its label, truthfully
-// daily and is logged, instead of stalling every later status read behind a
-// provider timeout while OpenRouter is unreachable. PATCH is idempotent, so
-// the retry after a restart is safe even when the provider call succeeded
-// and only the local write did not.
-const allowanceMigrationAttempted = new Set();
+// #2119: the key mirrors an allowance that can change under it: a key issued
+// before the weekly policy still resets daily at OpenRouter, an admin can
+// change the user's weekly cap, the platform default can move. Rather than a
+// boot-time sweep that talks to the provider for every row, each key is
+// brought in line lazily, the next time its owner's credential status is
+// read (the settings screen and the first-use build flow both read it), and
+// eagerly when an admin sets that user's weekly cap. Best-effort, attempted
+// once per key per target value per process: a failure leaves the row, and
+// therefore its label, truthful and is logged, instead of stalling every
+// later status read behind a provider timeout while OpenRouter is
+// unreachable. PATCH is idempotent, so the retry after a restart is safe
+// even when the provider call succeeded and only the local write did not.
+// A zero allowance is never written to an issued key (neither zero nor
+// unlimited is a limit this code will set): the key keeps its last amount,
+// and an admin blocks or deletes it from Admin > Users.
+const allowanceSyncAttempted = new Set();
 
-function needsAllowanceMigration(state, config) {
+function syncable(state, config) {
   return Boolean(state?.managed_key_id
     && ['active', 'disabled'].includes(state.managed_status)
-    && state.limit_reset !== LIMIT_RESET
     && state.remote_key_hash
     && config?.openrouterManagementApiKey);
 }
 
-async function migrateLegacyAllowance({ pool, userId, state, config }) {
-  if (!needsAllowanceMigration(state, config)) return state;
+async function syncAllowance({ pool, userId, state, config, allowance }) {
+  if (!syncable(state, config)) return state;
+  const target = allowance || await resolveAllowance(pool, userId);
   const id = state.managed_key_id;
-  if (allowanceMigrationAttempted.has(id)) return state;
-  allowanceMigrationAttempted.add(id);
-  const limit = config.openrouterManagedWeeklyLimitUsd;
+  const currentCents = Math.round(Number(state.daily_limit_usd) * 100);
+  if (currentCents === target.cents && state.limit_reset === LIMIT_RESET) return state;
+  const attempt = `${id}:${target.cents}:${LIMIT_RESET}`;
+  if (allowanceSyncAttempted.has(attempt)) return state;
+  allowanceSyncAttempted.add(attempt);
+  if (target.cents <= 0) {
+    log.warn('openrouter-managed', 'managed key keeps its last limit: the platform weekly allowance is zero', {
+      userId, managedKeyId: id, remoteHash: state.remote_key_hash,
+    });
+    return state;
+  }
   try {
     const remote = await managementClient.setLimit({
-      ...managementOptions(config), hash: state.remote_key_hash, limit, limitReset: LIMIT_RESET,
+      ...managementOptions(config), hash: state.remote_key_hash,
+      limit: target.limitUsd, limitReset: LIMIT_RESET,
     });
     await credentialStore.withTransaction(pool, async (client) => {
       await client.query(
         `UPDATE credentials.managed_openrouter_keys
             SET daily_limit_usd = $2, limit_reset = $3, updated_at = NOW()
           WHERE id = $1`,
-        [id, limit, LIMIT_RESET],
+        [id, target.limitUsd, LIMIT_RESET],
       );
       await credentialStore.mergeKeyInfoOnClient({
         client, userId, ...OPENROUTER,
@@ -421,12 +473,12 @@ async function migrateLegacyAllowance({ pool, userId, state, config }) {
         },
       });
     });
-    log.info('openrouter-managed', 'managed key allowance moved to the weekly policy', {
-      userId, managedKeyId: id, remoteHash: state.remote_key_hash, limit,
+    log.info('openrouter-managed', 'managed key limit synced to the platform weekly allowance', {
+      userId, managedKeyId: id, remoteHash: state.remote_key_hash, limit: target.limitUsd,
     });
-    return { ...state, daily_limit_usd: limit, limit_reset: LIMIT_RESET };
+    return { ...state, daily_limit_usd: target.limitUsd, limit_reset: LIMIT_RESET };
   } catch (err) {
-    log.warn('openrouter-managed', 'managed key allowance migration failed; the key keeps its daily reset', {
+    log.warn('openrouter-managed', 'managed key allowance sync failed; the key keeps its current limit', {
       userId, managedKeyId: id, remoteHash: state.remote_key_hash, err: err.message,
     });
     return state;
@@ -441,7 +493,8 @@ module.exports = {
   publicState,
   stateForUser,
   provision,
-  migrateLegacyAllowance,
+  resolveAllowance,
+  syncAllowance,
   setDisabled,
   remove,
   notifyIdentityReview,
