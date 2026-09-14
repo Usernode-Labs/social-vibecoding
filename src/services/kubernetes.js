@@ -664,8 +664,8 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
           spec: {
             serviceAccountName: cfg.generatedAppServiceAccount,
             automountServiceAccountToken: false,
-            // Dockerfile.kubernetes declares USER node; Kubernetes needs
-            // the numeric UID to verify runAsNonRoot before starting it.
+            // Dockerfile.kubernetes runs as UID 1000; keep the explicit pod
+            // identity aligned with it for the shared asset backend.
             securityContext: nodePodSecurityContext(),
             containers: [{
               name: 'assets', image, imagePullPolicy: 'IfNotPresent',

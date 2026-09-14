@@ -51,8 +51,9 @@ COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/ta
 # so Kubernetes verifies non-root from the image's own user, and it can only
 # do that for a numeric one. kpack images carry a numeric CNB user; this
 # image, built by the rootless BuildKit lane, has to say 1000:1000 itself
-# (the node user in node:22-alpine). `USER node` fails to schedule with
-# "image has non-numeric user (node), cannot verify user is non-root".
+# (the node:22-alpine `node` account's UID/GID). `USER node` fails to
+# schedule with "image has non-numeric user (node), cannot verify user is
+# non-root".
 USER 1000:1000
 EXPOSE 3000
 CMD ["node", "server.js"]

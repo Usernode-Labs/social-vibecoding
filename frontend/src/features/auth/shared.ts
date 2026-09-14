@@ -52,6 +52,7 @@ export interface ZoomOpts {
 interface LegacyWindow {
   PlatformUI?: {
     transition(fn: () => void, opts: { type?: string } & Record<string, unknown>): void;
+    toast?(message: string, opts?: { error?: boolean }): void;
     pullToRefresh(
       el: Element | null,
       onRefresh: () => void,
@@ -78,6 +79,7 @@ interface LegacyWindow {
     lastSessionFailure?(): NativeSessionFailureRecord | null;
   };
   AppView?: {
+    _mintToken?(slug: string): Promise<string | null>;
     mountViewerCover?(
       viewer: Element,
       frame: Element | null,

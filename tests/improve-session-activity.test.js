@@ -128,7 +128,7 @@ test('the tile still shows the app, and is no longer a positioning context', () 
 
 // ── The declared checks follow the markup ──────────────────────────────
 
-test('the two mock rows are the rendered evidence, and no check was added', () => {
+test('the two mock rows are the rendered evidence, with one check per row', () => {
   const at = (href) => MANIFEST.tests.filter((t) =>
     (t.expectSelector || '').includes(`/sessions/${href}"]`));
 
