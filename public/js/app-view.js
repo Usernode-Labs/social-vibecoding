@@ -4811,10 +4811,14 @@ const AppView = {
     // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
     // inserts a newline (default). On touch the on-screen return key
     // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. Bubble phase, so the autocomplete's
-    // capture-phase keydown still owns Enter while its dropdown is open.
+    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
+    // included: the chord every other composer on the platform answers to,
+    // and the one way to send from a hardware keyboard on a touch screen.
+    // Bubble phase, so the autocomplete's capture-phase keydown still owns
+    // Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+      if (e.key !== 'Enter') return;
+      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
         e.preventDefault();
         submitGeneral();
       }

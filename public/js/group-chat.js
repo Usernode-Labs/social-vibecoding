@@ -790,10 +790,14 @@ const GroupChat = {
       });
       // Multi-line submit semantics, same as the general composer: Enter
       // sends, Shift+Enter inserts a newline, touch keyboards always insert
-      // a newline (Send button sends). Bubble phase so the autocomplete's
+      // a newline (Send button sends) — and ⌘/Ctrl+Enter sends anywhere
+      // (#2145), touch included: it is the chord every other composer on the
+      // platform answers to, and the one way to send from a hardware
+      // keyboard on a touch screen. Bubble phase so the autocomplete's
       // capture-phase Enter handling wins while its dropdown is open.
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+        if (e.key !== 'Enter') return;
+        if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
           e.preventDefault();
           submitThread();
         }
