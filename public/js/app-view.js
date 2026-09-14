@@ -3283,6 +3283,11 @@ const AppView = {
     body.changeId = item.id;
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
+    body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
+      n: Number(issue.number),
+      title: issue.title || `Issue #${issue.number}`,
+      href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${issue.number}`,
+    })).filter((issue) => Number.isSafeInteger(issue.n) && issue.n > 0);
     if (mine && underway && item.source !== 'imported') {
       const own = AppView._mySessionCardModel(item);
       card.rail.menuKey = own.rail.menuKey;
