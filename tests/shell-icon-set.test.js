@@ -202,12 +202,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
     // (TrophyIcon left this list with #1823: the app menu's Challenges row
     // draws it, and that menu ships in the cold document.)
-    // BookmarkIcon — the outline half of the save toggle (#1280). It has no
-    // React call site at all: the button it draws belongs to the message,
-    // which public/js/group-chat.js renders as an HTML string, so this
-    // export exists to BE the source of truth for that duplicate (see the
-    // note beside it in icons.tsx) rather than to be rendered here.
-    'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     'M12 19V5M5 12l7-7 7 7',
