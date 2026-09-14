@@ -550,6 +550,16 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
 
+  // Group-chat attachment responses are files, not JSON or SPA documents.
+  // In particular, clicking an image opens this URL as a navigation. If the
+  // worker races that navigation against its cached document, the 200ms shell
+  // fallback can replace a slow image response with the app home screen.
+  // Leave both the byte route and the sandboxed HTML preview to the browser;
+  // their server responses already carry the appropriate private cache rules.
+  if (/^\/api\/apps\/[^/]+\/chat-attachments\/[a-f0-9]{32}(?:\/view)?$/.test(p)) {
+    return 'bypass';
+  }
+
   // Online-only rules must run before this fallback. OAuth Connect and
   // callback URLs are document navigations too: serving index.html after
   // 200ms replaces their redirect with the app, even while the network
