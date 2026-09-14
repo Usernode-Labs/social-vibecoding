@@ -94,7 +94,9 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
 // v10 publishes bootstrap readiness and fences turns after container restarts.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
+// v11 refreshes warm workers so the image's Codex catalog builder names the
+// selected OpenRouter model instead of GPT-5 (#2120).
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v11';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the

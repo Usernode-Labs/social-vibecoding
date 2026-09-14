@@ -353,10 +353,16 @@ async function lockAttempt(client, turnUuid) {
 // changing its status or double-counting.
 // One physical invocation = one attempt; a retry writes a NEW attempt row
 // and never overwrites the prior attempt's usage (plan 6.1, 6.5).
+// `servedModel` is the model the provider REPORTED serving, when something
+// observed one; it lands in routed_model. The direct Codex transport reports
+// none (#2120): Codex 0.146.0's `exec --json` events carry no model field and
+// its Responses client ignores the payload's `model`, so callers pass nothing
+// and the column stays NULL instead of echoing requested_model as if it had
+// been observed. Telemetry's served_model still falls back to requested_model.
 async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
-  telemetryMetrics = null,
+  telemetryMetrics = null, servedModel = null,
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -493,7 +499,7 @@ async function completeCodexAttempt({
        cost != null ? cost.estimatedCostUsd : null,
        cost != null ? cost.costSource : 'unavailable',
        resetDetected,
-       row.requested_model || null,
+       servedModel || null,
        JSON.stringify(metadata),
        reconcileTerminalUsage],
     );

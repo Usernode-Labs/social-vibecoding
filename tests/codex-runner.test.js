@@ -12,9 +12,32 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
-const { buildCodexModelCatalog } = require('../worker/build-codex-model-catalog');
+const {
+  DEFAULT_BASE_INSTRUCTIONS,
+  buildCatalogFromEnvironment,
+  buildCodexModelCatalog,
+  nameSelectedModel,
+} = require('../worker/build-codex-model-catalog');
 
 const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
+// The exact opening of the pinned CLI's bundled prompts (`codex debug models
+// --bundled` at 0.146.0): every GPT-5.4/5.5/5.6 entry leads with one of the
+// first two sentences asserted below, gpt-5.2 with the third. The builder
+// copies the first entry, so the selected OpenRouter model used to be told
+// it is GPT-5 (#2120).
+const BUNDLED_GPT5_OPENING = 'You are Codex, an agent based on GPT-5. '
+  + 'You and the user share one workspace, and your job is to collaborate with them '
+  + 'until their goal is genuinely handled.\n\n# Personality\n\nAs Codex, you are an excellent engineer.';
+const GLM_IDENTITY = 'You are Codex, a coding agent running on Z.AI: GLM 5.3 Flash '
+  + '(z-ai/glm-5.3-flash) through OpenRouter.';
+
+function writeBundledCatalogFixture(dir, baseInstructions = BUNDLED_GPT5_OPENING) {
+  const file = path.join(dir, 'bundled-models.json');
+  fs.writeFileSync(file, JSON.stringify({
+    models: [{ slug: 'gpt-5.6-sol', display_name: 'GPT-5.6-Sol', base_instructions: baseInstructions }],
+  }));
+  return file;
+}
 const CLAUDE_RUNNER = path.join(__dirname, '..', 'worker', 'run-cc.sh');
 
 test('worker runtime contract invalidates warm images from before the new runners', () => {
@@ -221,6 +244,7 @@ exit 1
   env.AGENT_MODEL_CONTEXT_WINDOW = '1048576';
   env.AGENT_REASONING_EFFORT = 'medium';
   env.CONFIG_INJECTION_SENTINEL = 'must-never-enter-codex-config';
+  env.CODEX_BUNDLED_MODELS_PATH = writeBundledCatalogFixture(path.dirname(env.PROMPT_FILE));
   // Let build mode reach the shared config writer without needing a real
   // remote branch. Codex exits non-zero immediately afterward, before the
   // runner's commit/push block.
@@ -278,6 +302,14 @@ exit 1
   assert.equal(catalog.models[0].context_window, 1_048_576);
   assert.equal(catalog.models[0].default_reasoning_level, 'medium');
   assert.ok(catalog.models[0].base_instructions.length > 100);
+  // #2120: the installed metadata names the selected model, not GPT-5, and
+  // keeps the rest of the bundled instructions.
+  assert.ok(catalog.models[0].base_instructions.startsWith(
+    'You are Codex, a coding agent running on DeepSeek V4 Flash Latest '
+    + '(~deepseek/deepseek-v4-flash-latest) through OpenRouter. '
+    + 'You and the user share one workspace'));
+  assert.ok(catalog.models[0].base_instructions.endsWith('As Codex, you are an excellent engineer.'));
+  assert.doesNotMatch(catalog.models[0].base_instructions, /GPT-5/);
   assert.doesNotMatch(JSON.stringify(catalog), /CONFIG_INJECTION_SENTINEL|sk-or-v1-test/);
   assert.equal(fs.statSync(catalogPath).mode & 0o777, 0o600,
     'the generated model catalog remains private to the worker user');
@@ -296,6 +328,52 @@ test('model catalog omits reasoning levels for a non-reasoning OpenRouter model'
   assert.equal(catalog.models[0].default_reasoning_level, null);
   assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
   assert.equal(catalog.models[0].context_window, 64_000);
+});
+
+test('model catalog names the selected model in place of the bundled GPT-5 identity (#2120)', () => {
+  const selected = { modelId: 'z-ai/glm-5.3-flash', displayName: 'Z.AI: GLM 5.3 Flash' };
+  const guidance = BUNDLED_GPT5_OPENING.slice('You are Codex, an agent based on GPT-5.'.length);
+  assert.equal(nameSelectedModel(BUNDLED_GPT5_OPENING, selected), `${GLM_IDENTITY}${guidance}`,
+    'only the identity sentence changes; the tool-use guidance after it is byte-identical');
+  // The other two openings the pinned catalog ships.
+  assert.equal(
+    nameSelectedModel('You are Codex, a coding agent based on GPT-5. You and the user share the same workspace.', selected),
+    `${GLM_IDENTITY} You and the user share the same workspace.`);
+  assert.equal(
+    nameSelectedModel('You are GPT-5.2 running in the Codex CLI, a terminal-based coding assistant. '
+      + 'Codex CLI is an open source project led by OpenAI.', selected),
+    `${GLM_IDENTITY} Codex CLI is an open source project led by OpenAI.`);
+  // Tolerant of case, surrounding whitespace/markdown and a dotted version.
+  assert.equal(
+    nameSelectedModel('\n\n**you are codex, an agent based on gpt-5.6.** Rest.', selected),
+    `\n\n**${GLM_IDENTITY}** Rest.`);
+  // A display name that is the slug (or missing) names the slug once; a
+  // catalog display name is collapsed to one line before entering the prompt.
+  assert.ok(nameSelectedModel(BUNDLED_GPT5_OPENING, { modelId: 'a/b', displayName: 'a/b' })
+    .startsWith('You are Codex, a coding agent running on a/b through OpenRouter. You and the user'));
+  assert.ok(nameSelectedModel(BUNDLED_GPT5_OPENING, { modelId: 'a/b' })
+    .startsWith('You are Codex, a coding agent running on a/b through OpenRouter. You and the user'));
+  assert.ok(nameSelectedModel(BUNDLED_GPT5_OPENING, { modelId: 'a/b', displayName: 'Name\nWith   newline' })
+    .startsWith('You are Codex, a coding agent running on Name With newline (a/b) through OpenRouter.'));
+
+  // Loaded from a bundled catalog the way the runner does it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-catalog-'));
+  const fromEnvironment = buildCatalogFromEnvironment({
+    CODEX_BUNDLED_MODELS_PATH: writeBundledCatalogFixture(dir),
+    AGENT_MODEL: 'z-ai/glm-5.3-flash',
+    AGENT_MODEL_NAME: 'Z.AI: GLM 5.3 Flash',
+  });
+  assert.equal(fromEnvironment.models[0].base_instructions, `${GLM_IDENTITY}${guidance}`);
+});
+
+test('model catalog prepends the identity when the instructions carry no bundled one', () => {
+  const selected = { modelId: 'z-ai/glm-5.3-flash', displayName: 'Z.AI: GLM 5.3 Flash' };
+  assert.equal(nameSelectedModel('Work carefully.\n\nRun the tests.', selected),
+    `${GLM_IDENTITY}\n\nWork carefully.\n\nRun the tests.`);
+  // The neutral fallback stays neutral in the source and is named at build time.
+  assert.doesNotMatch(DEFAULT_BASE_INSTRUCTIONS, /GPT|OpenAI|OpenRouter/);
+  const catalog = buildCodexModelCatalog({ modelId: 'z-ai/glm-5.3-flash', displayName: 'Z.AI: GLM 5.3 Flash' });
+  assert.equal(catalog.models[0].base_instructions, `${GLM_IDENTITY}\n\n${DEFAULT_BASE_INSTRUCTIONS}`);
 });
 
 test('runner: exact OpenRouter key is redacted before streamed JSONL', () => {
