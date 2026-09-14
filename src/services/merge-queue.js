@@ -46,7 +46,7 @@ const github = require('./github');
 const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
-const { currentVotePredicateSql } = require('./pr-vote-revision');
+const { currentVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -89,6 +89,21 @@ function enqueue(config, appId, options = {}) {
 // The next proposal worth spending a worker turn on: promoted, eligible on
 // votes, and not the one we just merged. Ordered by the vote tally so the
 // group's strongest preference goes first, then longest-waiting.
+//
+// Two more things a sync cannot fix are filtered here rather than discovered
+// after the worker turn has been spent. Both used to reach checkAndMerge,
+// which refused them at a gate the queue had no way to satisfy, and the
+// pass then moved on to the next candidate and synced that one too:
+//
+//   - a locked app with no admin yes vote in the current epoch. The lock
+//     gate is exactly the admin's say-so; integrating ahead of it spends
+//     tokens on a change that may never merge, and the admin's vote itself
+//     enqueues the app when it lands;
+//   - checks that FAILED (or errored) against the commit currently pinned.
+//     "They re-run on the next push" — the author has to act, and a merge of
+//     main into a failing branch does not change that. A verdict about an
+//     OLDER commit is not a reason to skip: the pinned head still needs its
+//     rebuild, which the checks gate kicks.
 async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   const governance = require('./governance');
   const gov = await governance.getGovernance(pool, appId);
@@ -97,6 +112,14 @@ async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   const { rows } = await pool.query(
     `SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval,
             cs.integration_behind_by, cs.integration_merges_clean, cs.check_state,
+            cs.checks_commit_sha,
+            ${reviewedHeadSql('cs')} AS reviewed_head,
+            a.locked AS app_locked,
+            EXISTS (SELECT 1 FROM pr_votes pv
+                      JOIN users u ON u.id = pv.user_id
+                     WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                       AND ${currentVotePredicateSql('pv', 'cs')}
+                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                 AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
@@ -104,6 +127,7 @@ async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
                 AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
        FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2
         AND NOT (cs.id = ANY($3::int[]))`,
     [appId, excludeId, attempted]
@@ -116,10 +140,18 @@ async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   const eligible = rows.filter((r) => {
     const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0 })
       : { yes: r.yes_count, no: r.no_count };
-    return governance.computeGate(
+    if (!governance.computeGate(
       gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at, null,
       { explicitApproval: !!r.requires_explicit_approval }
-    ).mergeable;
+    ).mergeable) return false;
+    const blockedBy = unintegrableReason(r);
+    if (blockedBy) {
+      log.debug('merge-queue', 'candidate skipped: a sync cannot unblock it', {
+        appId, sessionId: r.id, blockedBy,
+      });
+      return false;
+    }
+    return true;
   });
 
   const toMs = (v) => (v instanceof Date ? v.getTime()
@@ -131,6 +163,20 @@ async function nextCandidate(pool, appId, { excludeId = 0, attempted = [] }) {
   return eligible[0] || null;
 }
 
+// Why a vote-eligible candidate is still not worth a worker turn, or null.
+// `undefined` fields exist only in narrow unit-test rows that predate the
+// selected columns; PostgreSQL returns null or a value for a real row.
+function unintegrableReason(row) {
+  if (row.app_locked === true && row.admin_yes === false) return 'lock';
+  const verdictIsCurrent = row.checks_commit_sha !== undefined
+    && row.reviewed_head !== undefined
+    && sameSha(row.checks_commit_sha, row.reviewed_head);
+  if ((row.check_state === 'failing' || row.check_state === 'error') && verdictIsCurrent) {
+    return `checks_${row.check_state}`;
+  }
+  return null;
+}
+
 async function loadSession(pool, sessionId) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name,
@@ -140,6 +186,33 @@ async function loadSession(pool, sessionId) {
     [sessionId]
   );
   return rows[0] || null;
+}
+
+// Outcomes after which the pass has nothing useful left to do, because what
+// happens next arrives as its own trigger:
+//
+//   merged      — main just moved, so every other candidate's measurement is
+//                 now stale and a sync for it would be the SECOND sync it
+//                 needs. finalizeMerge re-kicks the queue (excluding the
+//                 merged row), and that fresh pass measures against the new
+//                 main. Carrying on here was the "thundering herd" of #2100:
+//                 one merge, then every sibling synced and rebuilt in a row,
+//                 each to be synced and rebuilt again once the next one landed.
+//   checks      — a run is in flight for the current pin. Nothing merges
+//                 before it reports, and visuals.maybeAutoMergeAfterChecks
+//                 enqueues the app the moment it does. Syncing the next
+//                 candidate meanwhile would only put it behind whatever this
+//                 one merges.
+//   in_progress — another caller holds the merge claim; its finalizer
+//                 cascades.
+//
+// Everything else — a conflict only the author can fix, checks that failed,
+// a lock with no admin yes, an epoch that moved under the vote, a budget cap
+// — leaves the candidate and lets the next one be tried, as before.
+function passShouldStop(outcome) {
+  if (!outcome) return false;
+  if (outcome.reason === 'merged' || outcome.reason === 'in_progress') return true;
+  return outcome.reason === 'checks' && outcome.waiting === true;
 }
 
 async function runQueue(config, appId, { excludeSessionId = 0 } = {}) {
@@ -172,10 +245,17 @@ async function runQueue(config, appId, { excludeSessionId = 0 } = {}) {
     }
     seen.add(candidate.id);
     attempted.push(candidate.id);
+    let outcome = null;
     try {
-      await integrateOne(config, pool, candidate.id);
+      outcome = await integrateOne(config, pool, candidate.id);
     } catch (err) {
       log.error('merge-queue', 'integrateOne threw', { sessionId: candidate.id, err: err.message });
+    }
+    if (passShouldStop(outcome)) {
+      log.info('merge-queue', 'pass complete; the next step arrives as its own trigger', {
+        appId, sessionId: candidate.id, reason: outcome.reason,
+      });
+      return;
     }
   }
   log.warn('merge-queue', 'queue pass hit its iteration cap', { appId, attempted: attempted.length });
@@ -273,6 +353,14 @@ async function integrateOneInner(config, pool, sessionId) {
     return { ok: false, reason: 'unresolved_conflict' };
   }
 
+  // The integrating phase is over on EVERY path from here, whatever the merge
+  // attempt decides. 'integrating' is the one block reason the server owns
+  // (the card derives the rest), and checkAndMerge only clears it on a
+  // successful claim — so a row whose merge then stopped at approvals, the
+  // lock or a pending check kept a card that said "syncing with main" long
+  // after the sync had finished (#2100's "the UI is not matching up").
+  await integration.setBlockReasons(pool, session.id, []);
+
   // Re-read: the sync moved the head, and the reconciliation inside
   // checkAndMerge needs the current row.
   const fresh = await loadSession(pool, session.id);
@@ -280,7 +368,11 @@ async function integrateOneInner(config, pool, sessionId) {
     broadcast(session, { integrating: false });
     return { ok: true, reason: 'no_longer_promoted' };
   }
-  await integration.measureDeduped({ pool, session: fresh }, { force: true }).catch(() => {});
+  // measure() carries the row's recorded reasons forward unless told
+  // otherwise, and a row read a moment ago may still say 'integrating'.
+  await integration.measureDeduped(
+    { pool, session: fresh }, { force: true, blockReasons: [] }
+  ).catch(() => {});
   broadcast(fresh, { integrating: false });
 
   return runMerge(config, pool, fresh, checkAndMerge);
@@ -303,11 +395,16 @@ async function runMerge(config, pool, session, checkAndMerge) {
     } catch (_) { /* ws non-fatal */ }
     return { ok: true, reason: 'merged' };
   }
+  if (result?.inProgress) return { ok: true, reason: 'in_progress' };
   // Not merged. The block reason is already recorded on the integration
   // record by the gate that refused, so there is nothing to announce here —
   // the old code posted a vote tally at this point even when the blocker was
-  // the checks, which is #2038's F5.
-  return { ok: true, reason: result?.blockReason || 'blocked' };
+  // the checks, which is #2038's F5. `waiting` tells the pass whether the
+  // blocker resolves on its own (a run in flight) or needs a person.
+  const reason = result?.blockReason || 'blocked';
+  const waiting = reason === 'checks'
+    && result.checkState !== 'failing' && result.checkState !== 'error';
+  return { ok: true, reason, waiting, checkState: result?.checkState };
 }
 
 function broadcast(session, extra) {

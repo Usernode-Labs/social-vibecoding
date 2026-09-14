@@ -13512,6 +13512,33 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      to hover still eases, because that one is not feedback about a gesture. */
   transition: none;
 }
+/* -- The press, on touch: held back until the finger settles (#1928) ------
+   On a phone a card list is mostly scrolled, not tapped, and every scroll
+   starts as a touch on some card. Both press treatments above engage
+   instantly -- the fill here, and the kit's scale + brightness dim on every
+   role="button" card (the folded row, the session rows) -- so a flick down
+   the board flashed a pressed state on whichever card the finger landed on,
+   for a gesture that opened nothing. iOS lists wait a beat before
+   highlighting, so a touch that becomes a scroll never lights up.
+
+   Same here: the press still engages with no easing, but after 120ms. A
+   scroll clears :active well inside that, so the pending change is
+   cancelled and nothing is drawn; a real tap is held longer and tints as
+   before. `transition` on the :active rule is the one read on the way IN;
+   the way out keeps each element's own easing. Touch only -- a mouse press
+   is never a scroll, so desktop keeps the instant feedback the rule above
+   exists for. Real buttons inside the cards (Vote, Preview) are untouched:
+   they are pressed on purpose. */
+@media (hover: none) {
+  .dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
+  .dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
+    a:active, button:active, input:active, textarea:active, select:active,
+    .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+  )),
+  #dev-forum-scroll [role="button"]:active {
+    transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
