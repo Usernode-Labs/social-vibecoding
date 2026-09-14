@@ -1144,10 +1144,10 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
+      "name": "The Dev '+' menu separates adding to the board from managing the app (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Import a change"
+      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
+      "expectText": "Add to the board"
     },
     {
       "name": "Improve keeps the New change action after deduplicating the '+' menu (#1490)",
@@ -1162,9 +1162,10 @@
       "expectText": "Give feedback"
     },
     {
-      "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
+      "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
+      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
+      "expectText": "File an issue"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
