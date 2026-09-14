@@ -93,7 +93,9 @@ test('createBuild reports each phase as the pod advances, follows the running ph
   });
   const seen = [];
   const t = setTimeout;
-  global.setTimeout = (fn, ms, ...rest) => t(fn, ms === 3000 ? 5 : ms, ...rest);
+  // waitForBuild's status poll (BUILD_POLL_MS), shortened so the test does
+  // not wait it out for real.
+  global.setTimeout = (fn, ms, ...rest) => t(fn, ms === 1000 ? 5 : ms, ...rest);
   try {
     const run = kubernetes.createBuild({ kubernetes: {
       buildNamespace: 'social-builds', buildServiceAccount: 'sa', repositoryPrefix: 'ghcr.io/x', cacheRepositoryPrefix: 'ghcr.io/c',

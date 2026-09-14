@@ -334,13 +334,13 @@ function testsDeadlineMs(env) {
   // reached 512 and left 18 of the 20 required slots; then 560000 → 570000
   // with 560 → 580, a proposal in flight at the same time; then 570000 →
   // 590000 with 580 → 600 (#1824); then 590000 → 620000 with 600 → 630
-  // (#1876). The two defaults are asserted equal by
+  // (#1876); then 620000 → 650000 with 630 → 660 (#1960). The two defaults are asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the
   // suite as merely unfinished.
   const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 620000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 650000;
 }
 
 // Whether this run also produces the before/after media artifacts. The
@@ -1549,7 +1549,7 @@ async function runTests(browser, tests, opts) {
   // reaches this — so the cost is paid only by pages that are genuinely stuck,
   // and a stuck navigation is itself bounded by NAV_TIMEOUT_MS.
   const navBudgetMs = Number(o.navBudgetMs) > 0 ? Number(o.navBudgetMs) : perTestMs;
-  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 620000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 650000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
   if (!list.length) {

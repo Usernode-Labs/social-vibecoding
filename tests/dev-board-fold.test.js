@@ -190,9 +190,16 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
   assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
   assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
-  // #1886: no second link under the sheet any more — the Workshop's pill is
-  // the page link once the card is open.
-  assert.ok(!FOLD.includes('dev-ws-sheet-actions'), 'no "Open on its own page" line under the sheet');
+  // #1886: no page link under the sheet any more — the Workshop's pill is
+  // the page link once the card is open. The one line the sheet still draws
+  // is #1887's, on a card about the viewer's OWN session: the session is a
+  // destination the pill does not cover, so it keeps a link under the sheet
+  // — on the Workshop only, and alone on its line.
+  assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
+  assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
+  assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
+  assert.match(FOLD, /\{session && mode === 'inline' \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+    'the session link, on the Workshop, and nothing beside it');
   assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
     'the open Workshop card\u2019s pill is the page link');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
@@ -451,7 +458,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conflict resolution kept and the repo unit suite then caught. A literal is
   // the right shape for this assertion precisely because that mismatch is
   // otherwise silent; it is the arithmetic that needed saying, not the check.
-  assert.equal(DAPP.tests.length, 609);
+  // 609 → 609: #2090 keeps the All items pane — and the search box in it —
+  // on screen when a search matches nothing. It RETARGETS the Workshop
+  // search-bar check rather than adding one (same box, the pane now opened
+  // already narrowed by `?q=` to a search nothing matches, with the note
+  // under it proving the search applied), so the count is unchanged.
+  // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
+  // count the trash left behind and one for which draft is still standing.
+  assert.equal(DAPP.tests.length, 611);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

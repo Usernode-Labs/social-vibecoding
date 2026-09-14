@@ -658,14 +658,14 @@
       "expectText": "Please add a description"
     },
     {
-      "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
+      "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season ring leads the plate, and a yes-or-no card draws no meter",
+      "name": "Challenges: the season ring leads the plate, above the shared challenge cards",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card:not(:has(.home-panel-bar-track)) .home-challenge-pill .home-panel-glyph"
+      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -1001,9 +1001,9 @@
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes at every width: curated cards, then Popular",
+      "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
       "path": "/?demo=1",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular.home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"]:not([data-featured=\"0\"]):not([data-popular=\"0\"]) .home-panel:not(:has(.home-discover-divider)):not(:has(.home-discover-lane ~ .home-discover-lane)) .home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
@@ -1024,10 +1024,10 @@
       "expectText": "Show less"
     },
     {
-      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "name": "With nothing to discover, the block shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
-      "expectText": "Nothing featured right now"
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"][data-popular=\"0\"]:has(.home-panel-browse) .home-panel:not(:has(.home-discover-rail)) .home-discover-empty",
+      "expectText": "Nothing to discover right now"
     },
     {
       "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
@@ -1953,9 +1953,10 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
-      "name": "The Workshop carries the board's search and filter bar, not just the +",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
+      "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",
+      "path": "/?demo=1&ws=all&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search",
+      "expectText": "Nothing here matches the current search and filters."
     },
     {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
@@ -2108,6 +2109,18 @@
       "expectText": "on all your devices"
     },
     {
+      "name": "Trashing a saved draft removes it, and a resync does not bring it back (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-trash",
+      "expectText": "Saved drafts (1)"
+    },
+    {
+      "name": "…and the draft left standing is the one that was not trashed (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-text",
+      "expectText": "the one that is still here afterwards"
+    },
+    {
       "name": "Saved drafts render from the database, with no ?shot param (#940)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
@@ -2130,8 +2143,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "Busy own session card renders (working state, two-row layout)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
+      "path": "/?demo=1&shot=mine-session#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
     {

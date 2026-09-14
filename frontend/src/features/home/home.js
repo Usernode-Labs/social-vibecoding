@@ -300,16 +300,24 @@ const Home = {
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
-  // feature" is what a viewer sees once they have added the featured apps,
-  // and no URL could reach it — so the Discover widget's compact state was
-  // invisible to the before/after screenshots and to every declared check.
-  // Pure UI state: it changes one derived list at render time, writes
-  // nothing, and is not env-gated, so it works in production immediately.
+  // discover" is what a viewer sees once they have added everything on
+  // offer, and no URL could reach it — so the Discover widget's compact
+  // state was invisible to the before/after screenshots and to every
+  // declared check. Pure UI state: it changes the derived lists at render
+  // time, writes nothing, and is not env-gated, so it works in production
+  // immediately.
+  //
+  // It empties BOTH halves. The block draws one lane now, so its note is the
+  // whole category's empty state; emptying only the curated half would put
+  // "nothing to discover" directly above four perfectly good popular cards.
+  _shotDiscoverEmpty() {
+    try {
+      return new URLSearchParams(location.search).get('shot') === 'discover-empty';
+    } catch (err) { return false; }
+  },
 
   featuredApps(apps) {
-    try {
-      if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
-    } catch (err) { /* ignore */ }
+    if (Home._shotDiscoverEmpty()) return [];
     return (apps || [])
       .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
@@ -321,13 +329,13 @@ const Home = {
       .slice(0, Home.FEATURED_LIMIT);
   },
 
-  // How many tiles the Discover widget's "Popular" lane shows. Same number
-  // as FEATURED_LIMIT because both lanes share the same six-track grid —
-  // see .home-discover-lane in app.css.
+  // How many popular apps the Discover rail appends. Same number as
+  // FEATURED_LIMIT: the two halves are the two halves of a twelve-card
+  // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The Popular lane's contents (#949): what everyone else is actually
-  // using, for the desktop widget's second row. Derived from the SAME
+  // The popular half of the rail (#949): what everyone else is actually
+  // using, appended after the curated cards. Derived from the SAME
   // /api/apps payload the grid already holds — `active_users` rides along
   // with every row (see the au join in src/routes/apps.js), so this costs
   // no query.
@@ -341,12 +349,15 @@ const Home = {
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
   // Only currently reviewed working apps with icons qualify. Also exclude:
-  //   * `featured` — the lane above already offers those.
+  //   * `featured` — the curated half of the same lane already offers those.
+  //     The renderer dedupes by slug anyway, since one lane is where a
+  //     double-listing would show as the same card twice.
   //   * isYours — the whole point is apps you don't have yet.
   // And a floor of one active user: an app nobody uses is not "popular",
   // and padding the lane out with zero-user rows would misrepresent it.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
+    if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
       .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
@@ -3212,6 +3223,11 @@ const Home = {
           : 'Lock this app. An admin yes vote will also be required to merge changes.',
         run: () => Home._menuToggleLock(app),
       });
+    }
+    // The server computes this from the shared contributor definition and
+    // rechecks it on DELETE. Keep the full-admin fallback for older payloads
+    // already in memory while a deployment rolls over.
+    if (user.canAdminWrite || app.can_delete) {
       items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
     }
     return items;

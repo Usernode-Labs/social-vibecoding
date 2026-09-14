@@ -9,7 +9,8 @@
 //     excluded, issue #311);
 //   - menuItemsFor gates each item exactly like the old corner buttons
 //     did: favorite-toggle on every app (everyone gets ≥1 item),
-//     check-updates/lock/delete behind canAdminWrite, retry behind
+//     check-updates/lock behind canAdminWrite, delete behind can_delete
+//     (with a full-admin compatibility fallback), retry behind
 //     errored + creator-or-admin. #618: member apps get a working
 //     Remove/Add pair driven by the per-user your_apps_hidden flag
 //     (display-only opt-out; membership/access untouched).
@@ -581,6 +582,32 @@ test('menu: full admin on a running repo app gets check-updates, lock and delete
     ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
+});
+
+test('menu: a sole contributor gets Delete app without admin-only controls (#1897)', () => {
+  const Home = makeHome({ id: ME });
+  const items = Home.menuItemsFor(baseApp({
+    created_by: ME,
+    contributor_count: 1,
+    can_delete: true,
+  }));
+  assert.ok(keys(items).includes('delete'));
+  assert.ok(!keys(items).includes('lock'), 'sole contributor is not made an admin');
+  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+});
+
+test('menu: an ineligible creator or app admin gets no Delete app action (#1897)', () => {
+  const Home = makeHome({ id: ME });
+  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    created_by: ME,
+    contributor_count: 2,
+    can_delete: false,
+  }))).includes('delete'));
+  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    created_by: OTHER,
+    can_manage: true,
+    can_delete: false,
+  }))).includes('delete'), 'general app management does not grant deletion');
 });
 
 test('menu: locked app offers Unlock', () => {

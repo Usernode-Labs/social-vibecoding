@@ -117,7 +117,14 @@ async function attachForkLineage(pool, apps) {
 // helper is spread across every row of the home feed and a per-row
 // query would be N round-trips. Omitting it just means "no app-admin
 // rights", which is the correct fallback for an anonymous viewer.
-function accessFlags(app, user, isCollaborator, adminAppIds = null) {
+function canDeleteApp(app, user, contributorCount) {
+  return !!user?.canAdminWrite
+    || (user?.id != null
+      && app?.created_by === user.id
+      && Number(contributorCount) === 1);
+}
+
+function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorCount = null) {
   const isAdmin = !!user?.isAdmin;
   // `can_collaborate` is a visibility/read affordance → stays on isAdmin
   // (view-only admins keep it). `can_manage` gates mutating management
@@ -130,6 +137,10 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null) {
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
+    // Deletion is deliberately narrower than general app management. App
+    // admins can manage settings, but only a full platform admin or the
+    // creator while they remain the app's ONE contributor may destroy it.
+    can_delete: canDeleteApp(app, user, contributorCount),
   };
 }
 
@@ -800,9 +811,10 @@ function appRoutes(config) {
           || (req.user?.id != null && a.created_by === req.user.id);
         const lf = (canSeeFailure && a.last_failure && typeof a.last_failure === 'object')
           ? a.last_failure : null;
+        const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
-          contributor_count: contributorCounts.get(a.id) || 0,
+          contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -825,7 +837,7 @@ function appRoutes(config) {
           merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
-          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds),
+          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount),
         };
       }));
       // Resolve fork lineage (live source-name lookup, "<deleted>"
@@ -1210,8 +1222,14 @@ function appRoutes(config) {
       const phaseEntry = appRow.status === 'creating'
         ? appCreationPhase.read(appRow.slug) : null;
 
+      const [adminAppIds, contributorCounts] = await Promise.all([
+        appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
+        contributors.loadContributorCounts(pool, [appRow.id]),
+      ]);
+      const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        contributor_count: contributorCount,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
@@ -1219,8 +1237,10 @@ function appRoutes(config) {
         url,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
-        ...accessFlags(appRow, req.user, isCollaborator,
-          await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
+        // The whole-tree verdict under direct merges (services/main-watch.js):
+        // is main green, and are this app's merges paused because it is not?
+        mainCheck: require('../services/main-watch').describe(appRow),
+        ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount),
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
@@ -2126,6 +2146,30 @@ function appRoutes(config) {
     }
   });
 
+  // Resume merges while main's unit suite is red (services/main-watch.js).
+  // The pause is the safety net under direct merges — a merge commit whose
+  // suite failed stops every further merge on the app until a fix lands.
+  // This is the admin's "I know, let them through": it applies to exactly
+  // the red sha the app is paused on, so the next red is a new pause. The
+  // cheaper way out is still to merge the fix; this is for when the red is
+  // a flake, an unrelated breakage, or the fix IS the proposal waiting.
+  router.post('/api/apps/:slug/main-check/resume', drainGuard, async (req, res) => {
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
+    try {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const mainWatch = require('../services/main-watch');
+      const resumed = await mainWatch.resume(config, pool, rows[0].id, { by: req.user });
+      if (!resumed) {
+        return res.status(409).json({ error: 'Merges are not paused for this app' });
+      }
+      res.json({ ok: true, mainCheck: resumed });
+    } catch (err) {
+      log.error('apps', 'Main-check resume failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Propose a visibility change (issue #124). The two statuses live in
   // dapp.json's top-level `visibility` block, so changing them is a
   // manifest-editing PR — same lifecycle as a rename: the PR drops into
@@ -2614,13 +2658,29 @@ function appRoutes(config) {
     }
   });
 
-  // Delete an app (admin only)
+  // Delete an app. Full admins retain the operational override; otherwise
+  // the app's creator may delete it only while they are its sole contributor.
+  // The contributor count is read at mutation time (not trusted from the
+  // list/detail payload) so a newly accepted member or merged author closes
+  // the gate before any destructive teardown starts.
   router.delete('/api/apps/:slug', async (req, res) => {
-    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+
+      let contributorCount = null;
+      if (!req.user?.canAdminWrite
+          && req.user?.id != null
+          && app.created_by === req.user.id) {
+        const counts = await contributors.loadContributorCounts(pool, [app.id]);
+        contributorCount = counts.get(app.id) || 0;
+      }
+      if (!canDeleteApp(app, req.user, contributorCount)) {
+        return res.status(403).json({
+          error: "Only a full admin or the app's sole contributor can delete this app",
+        });
+      }
 
       // Teardown through the backend that owns this app. Historical rows
       // without runtime_kind/runtime_name remain Docker-compatible.
@@ -2925,4 +2985,4 @@ function appRoutes(config) {
   return router;
 }
 
-module.exports = { appRoutes, sweepStuckCreatingApps, accessFlags };
+module.exports = { appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp };

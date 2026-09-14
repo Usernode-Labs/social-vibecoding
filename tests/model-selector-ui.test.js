@@ -391,12 +391,11 @@ test('the declared checks follow the control they guard (#1589, 2B)', () => {
   }
 });
 
-test('the guidance copy survives on the helper, for the picker that has room', () => {
-  // `modelOptionText` is UNCHANGED and still the Generate-proposal picker's
-  // option text (public/js/app-view.js). The positioning it encodes —
+test('the guidance copy survives on the helper and proposal summaries stay concise', () => {
+  // The positioning encoded by `changeSize.short` remains the same:
   // Sonnet = simple/small, Opus = general coding, Fable = design/taste plus
-  // the most difficult coding — is guarded here rather than through the
-  // composer's markup, which no longer carries it.
+  // the most difficult coding. Generate proposal now renders the short value
+  // as a separate summary instead of concatenating it into an option label.
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
   assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
@@ -405,8 +404,10 @@ test('the guidance copy survives on the helper, for the picker that has room', (
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  assert.match(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
-    'and that popup still calls it');
+  assert.match(APP_VIEW, /m\.changeSize && m\.changeSize\.short/,
+    'the proposal summary reads the same authoritative short guidance');
+  assert.doesNotMatch(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
+    'the dialog no longer builds a verbose select label');
 });
 
 test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
@@ -499,11 +500,7 @@ test('the composer paints no model caption at all (#1353)', () => {
     'and the filler is gone rather than left pointing at an absent element');
 });
 
-test('the caption text itself survives, for the picker that is met once', () => {
-  // app-view.js's Generate-proposal popup renders it: there the model list
-  // is new to the reader, and a full sentence is worth its line. The
-  // lower-casing of the first character is what makes it read as one
-  // sentence after the label.
+test('the retired long-caption helper stays safe but Generate proposal no longer uses it', () => {
   const { DevChat } = makeHarness();
   assert.equal(
     DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
@@ -524,10 +521,8 @@ test('the caption text itself survives, for the picker that is met once', () => 
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  // The popup builds its caption PER OPTION now (#1367 retired the change
-  // handler that rewrote one <p>), so the call site takes the model rather
-  // than the currently-chosen one — but it is still this helper.
-  assert.match(APP_VIEW, /DevChat\.modelNoteText\(m\)/, 'and that popup still calls it');
+  assert.doesNotMatch(APP_VIEW, /DevChat\.modelNoteText\(m\)/,
+    'the simplified dialog does not render the redundant long caption');
 });
 
 test('the picker still follows the selection without a caption to update', () => {
