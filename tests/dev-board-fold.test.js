@@ -425,7 +425,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the rail's Vote control, and one new check pins the item's own order:
   // title, then the sentence a voter reads, then the caption.
   // 606 → 607: both of the above landed, on either side of a merge.
-  assert.equal(DAPP.tests.length, 607);
+  // 607 → 610: #2061 adds three checks for the merge-requirements checklist
+  // — the locked-app gate that had no UI at all, the "nobody has to act"
+  // wording, and the steps listed AFTER the one a proposal is stuck on,
+  // landing on the other side of a second merge.
+  assert.equal(DAPP.tests.length, 610);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
