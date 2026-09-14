@@ -275,10 +275,11 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
 ## Proposal checks in Kubernetes
 
 Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
-Docker (eight CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
-matching the observed browser working set; smaller limit overrides also lower
-the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
-1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.
+Docker (eight CPUs / 6 GiB by default, for a pool of sixteen concurrent
+browser groups). Their requests are one CPU / 3 GiB, matching the observed
+browser working set; smaller limit overrides also lower the requests so
+Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
+requested / 4 GiB limited. Changes apply to newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker
@@ -294,8 +295,10 @@ checks. Each Job has no service-account token or shared workspace volume,
 uses the existing worker service account for image pulls, and runs as UID 1000.
 Clone credentials are in a temporary Secret owned by the Job and deleted when
 the runner finishes. Jobs have no retries, a default ten-minute deadline, and
-a one-hour cleanup TTL. The default limit is four CPUs / 2 GiB, with requests
-of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`, `UNIT_SUITE_MEMORY` and
+a one-hour cleanup TTL. The default limit is eight CPUs / 4 GiB (`node --test`
+sizes its process pool from the CPU quota, so the limit sets the suite's
+parallelism), with requests of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`,
+`UNIT_SUITE_MEMORY` and
 `UNIT_SUITE_TIMEOUT_MS` settings apply. Allow worker quota for simultaneous
 capture and unit-suite Jobs. Unit-suite log reads are bounded to 32 MiB.
 

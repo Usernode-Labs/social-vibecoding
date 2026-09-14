@@ -185,15 +185,19 @@ ready replica can still serve while the desired image is failing to start.
 ResourceQuota reports reservations and object counts, not measured CPU or
 memory consumption. Do not substitute Docker host statistics for cluster usage.
 
-Capture Jobs default to an 8-CPU / 4Gi limit for eight concurrent browser groups,
-with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow at least
-8 CPUs per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and `TEST_CONCURRENCY`
-override these settings on the platform; keep CPU capacity aligned with browser
-concurrency when tuning them. CPU requests are scheduling reservations, so the
-larger limit allows bursts but does not guarantee eight idle cores. Check
-historical CPU throttling as well as completion: a successful Job can still
-produce timing-sensitive assertion failures under CPU contention. Unit-suite
-and coding-worker resource settings are independent.
+Capture Jobs default to an 8-CPU / 6Gi limit for sixteen concurrent browser
+groups, with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow
+at least 8 CPUs and 6Gi per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and
+`TEST_CONCURRENCY` override these settings on the platform. Memory is the bound
+on the pool — budget roughly 150 MiB per concurrent page plus 1 GiB for the
+browser — since the capture browser composites in software (Skia, not a
+SwiftShader GPU process) and a page load costs well under a CPU-second. CPU
+requests are scheduling reservations, so the larger limit allows bursts but
+does not guarantee eight idle cores. Check historical CPU throttling as well as
+completion: a successful Job can still produce timing-sensitive assertion
+failures under CPU contention. Unit-suite Jobs default to 8 CPUs / 4Gi (the CPU
+quota sets `node --test`'s process-pool size); coding-worker resource settings
+are independent.
 
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their
