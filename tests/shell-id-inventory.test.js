@@ -566,6 +566,18 @@ const ADDED_IDS = {
   // BOTH blocks above in place, so the copy buttons already there pick up the
   // corrected rules — hence a field and no button of its own.
   'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
+  // #1892: only Claude and ChatGPT had a walkthrough. The Codex CLI gets one
+  // with the two copyable forms its setup takes (the `codex mcp add` command
+  // and the ~/.codex/config.toml entry), and any other MCP client gets the
+  // transport, auth-discovery, callback and tool-name facts the product
+  // walkthroughs leave implicit. The pre blocks ship with a URL placeholder
+  // that Settings._renderConnectors() swaps for the live connector URL.
+  'connector-setup-codex': 'Settings → Connectors walkthrough for the Codex CLI (#1892).',
+  'connector-codex-add': 'The `codex mcp add homeroom --url …` command, URL filled in at render time.',
+  'connector-codex-add-copy': 'Copy button for the Codex command.',
+  'connector-codex-config': 'The `[mcp_servers.homeroom]` entry for ~/.codex/config.toml, URL filled in at render time.',
+  'connector-codex-config-copy': 'Copy button for the config.toml entry.',
+  'connector-setup-generic': 'Settings → Connectors walkthrough for any other MCP client or agent (#1892).',
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Homeroom item chooser for Messages (#488).',
