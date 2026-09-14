@@ -115,8 +115,8 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
   if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
   if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
-  if (a['data-shared-session-row']) return `#app/${slug}/dev/shared/${a['data-shared-session-row']}`;
-  if (a['data-session-chip']) return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
+  if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
+  if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
   return null;
 }
 
@@ -157,7 +157,12 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
   const s = card.pill?.state || null;
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
-  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  // `meta` chips (the status tags) ride the row's META line, which is
+  // metaLineNodes' — the same seam as the card. The band is the bar, the
+  // remaining state chips and the vote.
+  const chips = (card.badges || [])
+    .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
+    .slice(0, ROW_BADGE_MAX);
   if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
@@ -249,18 +254,32 @@ export function FoldedRow({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
       }}
     >
-      {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
-      <span className="dev-ws-row-main">
+      {/* The card's anatomy, line for line, as three SIBLINGS — which is how
+          the card arranges them: a head (glyph + title), the meta line, then
+          the bar row. The head holds the glyph and the title and nothing
+          else, so the two lines below it start where the card's start: the
+          meta line tabbed 30px in under the title (app.css mirrors the
+          card's own `.dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
+          rule), and the bar row full-width on the padding edge.
+
+          Both of those used to live in a text column beside the glyph, which
+          started the bar row 30px in — so the one line that carries the
+          state drew at two different lengths and two different left edges
+          depending on which size you were looking at, and in a kanban column
+          it ran out of room and ellipsised to a letter or two. The two sizes
+          now differ only by the button row the card adds underneath. */}
+      <span className="dev-ws-row-head">
+        {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
           {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
-        {/* The card's own meta line, node for node: number · author · when,
-            the tags, the linked-issue chips. */}
-        <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
-        <RowBand card={c} trailing={trailing} />
       </span>
+      {/* The card's own meta line, node for node: number · author · when,
+          the tags, the linked-issue chips. */}
+      <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
+      <RowBand card={c} trailing={trailing} />
       {/* The fold mark, not a chevron: a chevron promises a destination, and
           this row has none — the whole surface is a toggle that unfolds the
           card in place. A theme header still wears one, because that is

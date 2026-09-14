@@ -553,11 +553,12 @@ test('every credential exchange refuses to submit while offline', () => {
 });
 
 test('home says "offline", not "failed", when the feed cannot load', () => {
-  const cat = HOME.slice(HOME.indexOf('Failed to load apps') - 1500);
+  const cat = HOME.slice(HOME.indexOf("Couldn't load your apps") - 1500);
   assert.match(cat, /Offline\.isOffline\(\)/);
   assert.match(cat, /You're offline/);
-  // The generic red failure copy is still there for real failures.
-  assert.match(HOME, /Failed to load apps/);
+  // The failure state is still there for real failures (#1899: the grid
+  // draws it as the shared error card with a Retry).
+  assert.match(HOME, /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────

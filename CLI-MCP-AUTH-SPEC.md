@@ -1498,7 +1498,11 @@ workflow for work authored in a local Codex or Claude session:
    history.
 2. The agent inspects that checkout, writes a complete markdown spec before
    implementation, and calls `proposal_start` with the app, exact base SHA,
-   stable request ID, spec, and durable history. Usernode creates a native
+   stable request ID, spec, and durable history. Supply `external_agent` as
+   `codex` or `claude-code` to identify the authoring tool (`external` when
+   unknown). The HTTP body calls this optional field `externalAgent`; it is
+   persisted in `external_agent` without changing the execution backend. Older
+   clients remain compatible and display as External agent. Usernode creates a native
    `source='cli_handoff'` Dev session and a platform-managed branch at that
    exact base. History contains exact user-visible requests and concise agent
    summaries, each with a stable event ID. It never contains hidden reasoning,

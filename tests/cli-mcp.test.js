@@ -477,6 +477,7 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
         spec: '# Spec',
         history: [{ id: 'u1', kind: 'user', content: 'Build it.' }],
         linked_issues: [12],
+        external_agent: 'codex',
       },
     });
     assert.equal(start.structuredContent.status, 201);
@@ -574,6 +575,7 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       spec: '# Spec',
       history: [{ id: 'u1', kind: 'user', content: 'Build it.' }],
       linkedIssues: [12],
+      externalAgent: 'codex',
     });
     assert.deepEqual(requests[1].body, {
       schemaVersion: 1,

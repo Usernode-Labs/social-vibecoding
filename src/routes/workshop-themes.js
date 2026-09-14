@@ -71,7 +71,15 @@ function workshopThemesRoutes(config) {
       const themes = result.themes.slice();
       const demo = IS_STAGING && req.query.demo === '1';
       if (demo) themes.push(...stagingDemoThemes());
-      const digestCards = result.digestCards || (demo ? stagingDemoCards() : null);
+      // Demo mode wins OUTRIGHT, exactly as the themes line above does.
+      // `result.digestCards || demo` read as the careful version and was the
+      // wrong way round: app_workshop_themes is not `staging:private`, so a
+      // staging database is a COPY of production's rows — and the moment
+      // production had a real digest, the clone had one too, the demo cards
+      // stopped being substituted, and the declared check that asserts their
+      // text failed. A preview is a demo or it is not; it cannot depend on
+      // what production happens to be holding that day.
+      const digestCards = demo ? stagingDemoCards() : (result.digestCards || null);
       res.json({
         themes,
         source: result.source,

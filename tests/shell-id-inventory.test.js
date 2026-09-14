@@ -274,6 +274,14 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'dev-ws-rail-host': 'Empty anchor outside the frosted .dc-lift-strip wrapper, so the Workshop\'s phone tab bar can be `position: fixed` to the real viewport. That wrapper\'s backdrop-filter establishes a containing block for fixed descendants — walking the rail\'s real ancestor chain it is the only one — and it is shared with the chat/topic frames and three panels, so the bar moves out rather than the blur coming off.',
+  'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
+  // ── OpenRouter catalog controls ──────────────────────────────────
+  'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
+  'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
+  'settings-openrouter-refresh-models': 'Forces a fresh key-visible catalog from OpenRouter and reports when it was refreshed.',
+  'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
+  'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
   // ── #1538: check my status ────────────────────────────────────────
   // The waitlist confirm step doubles as "read where I stand", so the panel
   // that used to print one fixed sentence now prints what the row actually
@@ -558,15 +566,13 @@ const ADDED_IDS = {
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — eligible users may claim one company-funded OpenRouter key.
-  // These are static settings controls; settings.js owns their state and the
-  // one-time plaintext reveal lifecycle.
+  // These are static settings controls; settings.js owns their state. The
+  // four plaintext reveal controls originally added here were removed when
+  // company-funded credentials became internal-only; like other post-baseline
+  // ids, they leave this map rather than entering RETIRED_IDS.
   'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
   'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
   'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
-  'settings-openrouter-reveal': 'One-time plaintext child-key reveal container (#1344).',
-  'settings-openrouter-revealed-key': 'Read-only one-time child-key value shown only after creation (#1344).',
-  'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
-  'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
   // #1383 — the #apps directory's Sort control. It rides INSIDE
   // #browse-search-bar rather than in a strip of its own: both narrow the

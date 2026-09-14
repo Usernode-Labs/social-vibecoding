@@ -649,6 +649,7 @@ async function recordChecksSkipped({
 // only on the first failure of a streak (check_error_notified_at gate), which
 // setChecksPending clears when a new commit is pushed.
 async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
+  if (require('./preview-lifecycle').isCancelled(err) || err?.previewFailureHandled) return;
   const visuals = require('./visuals');
   const { bootFailureIsInfrastructure } = require('./deploy-failure');
   const detail = visuals.summarizeBootFailure(err);

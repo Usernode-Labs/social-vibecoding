@@ -16,6 +16,9 @@ release:
 
 platform:
   enabled: true
+  # Activation/rollback requires draining all flag-off/on platform Pods;
+  # see docs/kubernetes-operations.md. Mixed coordination modes are unsafe.
+  previewLifecycleEnabled: false
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -137,6 +140,9 @@ secrets:
   # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
   githubLinkClientId: ""
   githubLinkClientSecret: ""
+  # Optional X account-linking OAuth credentials. Set both in encrypted external values.
+  xLinkClientId: ""
+  xLinkClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
   # Optional OpenRouter management credential, supplied through encrypted external values.

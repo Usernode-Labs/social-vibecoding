@@ -243,8 +243,6 @@ async function provision({ pool, userId, config }) {
       userId, managedKeyId: reservation.id, remoteHash: remote.hash,
     });
     return {
-      apiKey: remote.key,
-      last4: remote.key.slice(-4),
       revision: saved.credential.revision,
       defaultModel: saved.modelId,
       keyInfo: {

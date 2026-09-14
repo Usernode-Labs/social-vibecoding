@@ -31,9 +31,15 @@ const path = require('node:path');
 const prompts = require('../src/services/prompts');
 const tools = require('../src/services/mcp-tools');
 
-const CONVENTIONS = fs.readFileSync(
+// The document AS SERVED, not the raw file: app-conventions.md carries a
+// {{PLATFORM_ORIGIN}} token that services/prompts.js resolves at load, and
+// a section sliced from the served text can only be compared against the
+// served text. Reading raw here would assert the sections match a document
+// nobody actually receives.
+const CONVENTIONS_RAW = fs.readFileSync(
   path.join(__dirname, '../src/prompts/app-conventions.md'), 'utf8'
 );
+const CONVENTIONS = require('../src/services/prompts').getAppConventions();
 const TOOLS_SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
 );
@@ -86,6 +92,17 @@ test('the slugs an agent is most likely to ask for are the obvious ones', () => 
   ]) {
     assert.ok(slugs.includes(expected), `${expected} is a slug`);
   }
+});
+
+test('the served document resolves the platform-origin token', () => {
+  // The file is written once and served to every deployment, so it names
+  // the platform's origin with a token rather than a literal hostname —
+  // a literal is what left this document telling agents to load three
+  // files from a host that had stopped answering.
+  assert.ok(CONVENTIONS_RAW.includes('{{PLATFORM_ORIGIN}}'),
+    'the source document parameterises the platform origin');
+  assert.ok(!CONVENTIONS.includes('{{PLATFORM_ORIGIN}}'),
+    'and nobody is ever served the raw token');
 });
 
 test('a section is a verbatim slice of the document, heading included', () => {

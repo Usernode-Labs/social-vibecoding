@@ -12,7 +12,7 @@
  *
  * What did need handlers are the two controls whose only job is to call a
  * named function: the chat-model picker's `change` and the OpenRouter row's
- * "Change model". Both were `addEventListener` calls at the bottom of
+ * "Browse models". Both were `addEventListener` calls at the bottom of
  * `renderChatView`, re-bound on every render because the element was new.
  */
 
@@ -237,7 +237,10 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
               type="button" id="dc-openrouter-model-change" className="dc-openrouter-model-change"
               disabled={s.openRouter.changeDisabled}
               onClick={() => controller()?._onOpenRouterModelChange?.()}
-            >Change model</button>
+              aria-haspopup="dialog"
+              aria-label="Browse and filter OpenRouter models"
+              title="Search models and manage favorites"
+            >Browse models</button>
             <div
               id="dc-agent-note"
               className="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"

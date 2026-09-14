@@ -47,7 +47,7 @@ function headerHtml(state, preview) {
   // The mode switch reads these three off the improve store. Reset every
   // time so one test's preview cannot leak into the next one's rest state.
   m.improveStore.set({
-    previewSessionId: null, previewUrl: null, previewActive: false, ...(preview || {}),
+    previewSessionId: null, previewUrl: null, previewBuildable: false, previewActive: false, ...(preview || {}),
   });
   return renderToHtml(createElement(m.SessionHeader, {}));
 }
@@ -111,7 +111,7 @@ const SESSION = {
 
 // ── 1. The venue button ────────────────────────────────────────────────
 
-test('the desktop venue remains a direct child with the attributes the check reads', () => {
+test('the venue remains a direct child with the attributes the check reads, at every width', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, agent_backend: 'codex_openrouter' }));
 
@@ -123,8 +123,8 @@ test('the desktop venue remains a direct child with the attributes the check rea
   assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
   assert.doesNotMatch(html, /data-venue-busy|Thinking…|dc-venue-busy/,
     'idle keeps the ordinary dropdown affordance');
-  // #1617 adds mobile Details after the inline desktop controls. Retain
-  // the direct-child contract, not the obsolete last-child assumption.
+  // The venue is a direct child — the contract the declared checks read.
+  // (#1617 hid it below sm behind a Details dialog; #1940 reverted that.)
   const { tokenize } = require('./helpers/html-tokens');
   let depth = 0;
   const children = [];
@@ -136,8 +136,8 @@ test('the desktop venue remains a direct child with the attributes the check rea
   }
   const venue = children.filter(c => c.id === 'dc-venue-select');
   assert.equal(venue.length, 1);
-  assert.match(venue[0].class, /max-sm:hidden/);
-  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 1);
+  assert.doesNotMatch(venue[0].class, /max-sm:hidden/, 'shown at every width');
+  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 0, 'no Details trigger');
   assert.equal(html.indexOf('dc-venue-select') > html.indexOf('New change'), true);
 });
 
@@ -349,6 +349,46 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
 });
 
+test('a preview that can be BUILT draws the switch too (#2069)', () => {
+  // The control that rebuilds a missing preview used to hide whenever the
+  // preview was missing. ensure-staging rebuilds from the branch's latest
+  // commit and has authorized this since #439 — only this gate had not caught
+  // up, so a shared draft whose preview went to sleep offered no route back.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: null, previewBuildable: true });
+
+  assert.match(html, /id="dc-mode-switch"/, 'the switch is drawn with no live URL');
+  assert.match(html, /id="app-eye-btn"/);
+  // And it says what the click DOES, which is not the same as opening one.
+  assert.match(html, /aria-label="Build a preview of this change"/);
+  assert.match(html, /title="Build a staging preview of this change[^"]*"/);
+});
+
+test('a live preview still says "preview", not "build"', () => {
+  // The new wording must not leak onto the case that already worked.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+  assert.match(html, /aria-label="Preview this change"/);
+  assert.doesNotMatch(html, /aria-label="Build a preview/);
+});
+
+test('with nothing to build the strip still falls back to the status chip', () => {
+  // #1594's rule survives, narrowed: it applies to a session with no commit
+  // to preview, rather than to every session without a live URL.
+  const { view } = makeDevChat();
+  const busy = headerHtml({ ...view(SESSION), busy: true },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(busy, /id="dc-mode-switch"/, 'no switch with nothing to switch to');
+  assert.match(busy, /id="dc-mode-chip"[\s\S]{0,400}?Building/, 'status, not an action');
+
+  const idle = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(idle, /id="dc-mode-switch"/);
+  assert.doesNotMatch(idle, /id="dc-mode-chip"/, 'and idle with nothing to build draws nothing');
+});
+
 test('the label belongs to the THUMB, so both sides carry one', () => {
   // It used to say `Building` only while a turn ran, which left the thumb
   // wordless half the time and made the two sides look like different
@@ -431,7 +471,7 @@ test('BuildVenues.selectorHtml is retired, and nothing still calls it', () => {
   assert.doesNotMatch(VENUES_SRC, /selectorHtml: selectorHtml/);
   assert.doesNotMatch(DEV_CHAT_SRC, /BuildVenues\.selectorHtml/);
   // The venue LOOKUP it did is what the model reads instead.
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/);
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/);
   // noteHtml and chipHtml stay strings — their callers still are.
   assert.match(VENUES_SRC, /function noteHtml/);
   assert.match(VENUES_SRC, /function chipHtml/);

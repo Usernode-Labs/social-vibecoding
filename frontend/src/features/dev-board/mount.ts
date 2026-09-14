@@ -49,6 +49,8 @@ import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
+import { publishDevActions } from './actions-store';
+import { publishWorkshopGroup } from './workshop/group-mode-store';
 import {
   aiEnabledStore,
   cardNowStore,
@@ -92,7 +94,7 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
-  publishLockedNotice(locked: boolean): void;
+  publishLockedNotice(locked: boolean, inviteOnly?: boolean): void;
   publishDiscussion(state: DiscussionState): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
@@ -105,6 +107,7 @@ export interface DevBoardBridge {
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
+  mountChangePage(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
@@ -113,6 +116,7 @@ export interface DevBoardBridge {
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
+  publishWorkshopGroup(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
   /** Live portal count — the leak assertion in tests reads this. */
@@ -179,6 +183,17 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
+    // The toolbar's six flags, for the Workshop's separate root — see
+    // ./actions-store.ts. Published BEFORE the frame renders, so whichever
+    // surface draws the row has them on its first paint.
+    publishDevActions({
+      illustrationApp: options.illustrationApp,
+      canManageIllustration: options.canManageIllustration,
+      selfHosted: options.selfHosted,
+      readOnly: options.readOnly,
+      canCollaborate: options.canCollaborate,
+      showsMembers: options.showsMembers,
+    });
     // `viewMode` seeds the store and is not a frame prop — the frame draws no
     // Kanban|Feed control any more (the choice lives under the Improve panel's
     // Board row), so it is dropped here rather than forwarded.
@@ -223,8 +238,8 @@ export const devBoardBridge: DevBoardBridge = {
     cardMenuStore.set({ rows });
   },
 
-  publishLockedNotice(locked) {
-    lockedNoticeStore.set({ locked });
+  publishLockedNotice(locked, inviteOnly = false) {
+    lockedNoticeStore.set({ locked, inviteOnly: !!inviteOnly });
   },
 
   // Where the app's general chat is, and the last thing said in it — see
@@ -293,6 +308,11 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(TopicHead));
   },
 
+  mountChangePage(host) {
+    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' },
+      createElement('div', { id: 'gc-thread-head' }, createElement(TopicHead, { conversation: true }))));
+  },
+
   publishTopicHead(state) {
     topicHeadStore.set(state);
   },
@@ -332,6 +352,7 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishViewMode,
+  publishWorkshopGroup,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,
   rootCount: legacyPortalCount,

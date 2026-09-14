@@ -60,9 +60,31 @@ const mergedRowHtml = (AppView, row) => {
   return m ? cardHtml(m) : '';
 };
 
-/** Render the whole Workshop from `AppView._workshopView()`. */
-function workshopHtml(AppView) {
+/**
+ * Render the whole Workshop from `AppView._workshopView()`.
+ *
+ * `tab` picks which of the lander's three tabs is drawn — 'status' (the
+ * default, as a cold visit gets), 'needs' or 'all'. Only one is in the DOM
+ * at a time, which is the point of the tabs, so a test that asserts the
+ * themes or the vote deck has to say which screen it means. It is passed the
+ * way the product passes it: `?ws=` is what `_workshopTabParam` reads, and
+ * the view model carries the answer as `tab`.
+ */
+function workshopHtml(AppView, tab) {
   const m = mod();
+  if (tab) {
+    const prev = AppView._workshopTabParam;
+    AppView._workshopTabParam = () => tab;
+    try { return workshopHtml(AppView); } finally { AppView._workshopTabParam = prev; }
+  }
+  // Mirrors `AppView._rerenderWorkshop()`, including its ORDER: the grouping
+  // is seeded from the stored preference, and the board's view model is
+  // published only for the stage pane and only BEFORE the Workshop's own
+  // publish. So a test that seeds localStorage `devWorkshopGroup` gets the
+  // pane a viewer with that preference would see, built the same way.
+  const group = AppView._getWorkshopGroup();
+  m.publishWorkshopGroup(group);
+  if (group === 'stage') m.devKanbanStore.set(AppView._kanbanView());
   m.devWorkshopStore.set(AppView._workshopView());
   return renderToHtml(createElement(m.DevWorkshop));
 }

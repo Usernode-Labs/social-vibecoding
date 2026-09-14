@@ -36,6 +36,10 @@ export interface ModelOption {
   note: string;
   /** That caption's tooltip; empty on the OpenRouter branch. */
   noteTitle: string;
+  /** Lower-cased by the picker when filtering; includes name, id and provider. */
+  searchText?: string;
+  isFavorite?: boolean;
+  isRecommended?: boolean;
 }
 
 export interface AutoSessionModalView {
@@ -48,6 +52,15 @@ export interface AutoSessionModalView {
   pickerLabel: string;
   options: ModelOption[];
   preselect: string;
+  openRouter?: boolean;
+  catalogRefreshedAt?: string | null;
+  catalogTotalModels?: number;
+  onFavorite?: (modelId: string, favorite: boolean) => Promise<void>;
+  onRefresh?: () => Promise<{
+    options: ModelOption[];
+    refreshedAt: string | null;
+    totalModels: number;
+  }>;
 }
 
 export interface CreditOptionsModalView {

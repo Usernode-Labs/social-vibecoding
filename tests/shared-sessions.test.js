@@ -172,7 +172,7 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // only set once a real commit on this branch has been BUILT, and
     // teardownStaging does not clear it the way it clears staging_url.
     assert.match(q.sql,
-      /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\)\s*AS can_preview/);
+      /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\s*OR cs\.shared_at IS NOT NULL\)\s*AS can_preview/);
     // …but nothing that opens the owner's dev chat — pr_number itself is
     // never selected bare, only inside the boolean above.
     assert.doesNotMatch(q.sql, /pr_url/);
@@ -276,7 +276,7 @@ test('shared imported Underway rows gain full proposal details without widening 
 
     const detail = capturedQueries.find(
       (q) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(q.sql));
-    assert.deepStrictEqual(detail.params, [[88]],
+    assert.deepStrictEqual(detail.params, [[88], false],
       'only the imported row selected by the privacy query is enriched');
     assert.match(detail.sql, /cs\.source = 'imported'/);
     assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);

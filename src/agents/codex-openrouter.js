@@ -3,8 +3,8 @@
 // Codex CLI (codex_openrouter) adapter (plan.md §9, §10). Owns:
 //   - Codex config generation (codex config.toml pointing DIRECTLY at
 //     OpenRouter; the user's key is injected per-turn as OPENROUTER_API_KEY
-//     and is visible to the worker's code by design — see the Settings UI
-//     disclosure).
+//     for provider authentication. Company-funded key material stays off the
+//     user-facing API and Settings UI).
 //   - The JSONL event parser that normalizes codex exec --json output to
 //     the backend-neutral progress vocabulary (services/agent-events.js)
 //     the worker.js consumer already understands.

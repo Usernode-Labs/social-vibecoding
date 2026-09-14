@@ -79,7 +79,7 @@ export const stagingBridge = {
 
   /** #816: an EXPLICIT '' clears a line; `undefined` leaves it alone. */
   setLoader(visible, patch = {}) {
-    const next = { loaderVisible: !!visible };
+    const next = { loaderVisible: !!visible, loaderRetry: !!visible && !!patch.retry };
     if (patch.title !== undefined) next.loaderTitle = patch.title;
     if (patch.sub !== undefined) next.loaderSub = patch.sub;
     stagingStore.set(next);

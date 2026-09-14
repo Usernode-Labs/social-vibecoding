@@ -2085,7 +2085,7 @@ async function runMcp(args, launcherPath) {
   const sessionIdSchema = z.number().int().positive().max(2147483647);
 
   server.registerTool('social_vibecoding.proposal_start', {
-    description: 'Start a native Usernode Dev proposal from a completed local spec. request_id is this work\'s permanent idempotency key: retries, rebases, pushes, and stuck checks continue the returned session, never a new request ID. If the same linked work already has a pre-vote handoff, the server returns proposal_already_started with that session. Pass supersedes_session_id only after the user explicitly asks to replace it; replacement archives the named session. Include stable IDs for user-visible history and no hidden reasoning, credentials, or raw logs. Use proposal_push_commit after testing.',
+    description: 'Start a native Usernode Dev proposal from a completed local spec. request_id is this work\'s permanent idempotency key: retries, rebases, pushes, and stuck checks continue the returned session, never a new request ID. If the same linked work already has a pre-vote handoff, the server returns proposal_already_started with that session. Pass supersedes_session_id only after the user explicitly asks to replace it; replacement archives the named session. Include stable IDs for user-visible history and no hidden reasoning, credentials, or raw logs. For issue-originated work, supply linked_issues and verify session.linked_issues via api_read GET /api/sessions/:id before implementation. Use proposal_push_commit after testing.',
     inputSchema: {
       app_slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,254}$/),
       request_id: z.string().regex(/^[a-z0-9][a-z0-9-]{7,63}$/),
@@ -2093,19 +2093,23 @@ async function runMcp(args, launcherPath) {
       title: z.string().min(1).max(256),
       spec: z.string().min(1).max(32768),
       history: proposalHistorySchema.min(1),
-      linked_issues: z.array(z.number().int().positive()).max(50).optional(),
+      external_agent: z.enum(['codex', 'claude-code', 'external']).optional()
+        .describe('The agent authoring this local proposal. Pass codex for Codex, claude-code for Claude Code, or external when unknown. This is provenance, not the platform execution backend.'),
+      linked_issues: z.array(z.number().int().positive()).max(50).optional()
+        .describe('Issues on this app that the work addresses. Required for issue-originated work; otherwise omit or use []. Prose references do not create links.'),
       supersedes_session_id: sessionIdSchema.optional(),
       profile: apiProfileSchema,
     },
     outputSchema: apiOutputSchema,
     annotations: proposalAnnotations,
   }, async ({ app_slug: appSlug, request_id: requestId, base_sha: baseSha,
-    title, spec, history, linked_issues: linkedIssues,
+    title, spec, history, external_agent: externalAgent, linked_issues: linkedIssues,
     supersedes_session_id: supersedesSessionId, profile }) => mcpApiRequest({
     method: 'POST',
     target: `/api/apps/${encodeURIComponent(appSlug)}/proposal-handoffs`,
     body: {
       schemaVersion: 1, requestId, baseSha, title, spec, history,
+      ...(externalAgent === undefined ? {} : { externalAgent }),
       ...(linkedIssues === undefined ? {} : { linkedIssues }),
       ...(supersedesSessionId === undefined ? {} : { supersedesSessionId }),
     },

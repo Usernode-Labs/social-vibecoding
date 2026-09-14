@@ -76,7 +76,7 @@ test('an ambiguous create failure is surfaced after exactly one attempt', async 
   assert.equal(calls, 1, 'POST /keys must never be blindly retried');
 });
 
-test('default-open managed provisioning does not require an identity and returns plaintext once', async (t) => {
+test('default-open managed provisioning stores the key internally and returns only safe metadata', async (t) => {
   const originals = {
     withTransaction: credentialStore.withTransaction,
     readMetadata: credentialStore.readMetadata,
@@ -157,8 +157,12 @@ test('default-open managed provisioning does not require an identity and returns
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
   assert.equal(defaultModel, 'z-ai/glm-5.3-flash');
-  assert.equal(result.apiKey, 'sk-or-v1-issued-once');
-  assert.equal(result.shownOnce, undefined, 'route, not persistence, adds the one-time response marker');
+  assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
+  assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
+  assert.equal(JSON.stringify(result).includes('sk-or-v1-issued-once'), false);
+  assert.deepEqual(Object.keys(result).sort(), [
+    'defaultModel', 'keyInfo', 'managed', 'revision',
+  ]);
   assert.equal(result.managed.status, 'active');
   assert.equal(notificationsSent, 1);
 });
@@ -233,11 +237,11 @@ test('identity-loss review notifications follow the same opt-in policy', async (
   assert.equal(notificationsSent, 1);
 });
 
-function loadManagedVerificationConfig(value) {
+function loadManagedVerificationConfig(value, recommendedModels) {
   const keys = [
     'DATABASE_URL', 'SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD',
     'USERNODE_ENV', 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
-    'OPENROUTER_DEFAULT_CODEX_MODEL',
+    'OPENROUTER_DEFAULT_CODEX_MODEL', 'OPENROUTER_RECOMMENDED_MODELS',
   ];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
@@ -250,6 +254,8 @@ function loadManagedVerificationConfig(value) {
   if (value === undefined) delete process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY;
   else process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY = value;
   delete process.env.OPENROUTER_DEFAULT_CODEX_MODEL;
+  if (recommendedModels === undefined) delete process.env.OPENROUTER_RECOMMENDED_MODELS;
+  else process.env.OPENROUTER_RECOMMENDED_MODELS = recommendedModels;
 
   const realLog = console.log;
   console.log = () => {};
@@ -268,6 +274,18 @@ test('managed-key verification defaults off and can be enabled explicitly', () =
   const defaults = loadManagedVerificationConfig(undefined);
   assert.equal(defaults.openrouterManagedRequireVerifiedIdentity, false);
   assert.equal(defaults.openrouterDefaultCodexModel, 'z-ai/glm-5.3-flash');
+  assert.deepEqual(defaults.openrouterRecommendedModels, [
+    'deepseek/deepseek-v4.1-flash',
+    'z-ai/glm-5.3-flash',
+    'openai/gpt-6-astra',
+    'moonshotai/kimi-k3',
+    'anthropic/claude-opus-5',
+  ]);
+  assert.deepEqual(loadManagedVerificationConfig(undefined, 'none').openrouterRecommendedModels, []);
+  assert.deepEqual(
+    loadManagedVerificationConfig(undefined, ' vendor/one, vendor/two ').openrouterRecommendedModels,
+    ['vendor/one', 'vendor/two'],
+  );
   assert.equal(loadManagedVerificationConfig('false').openrouterManagedRequireVerifiedIdentity, false);
   assert.equal(loadManagedVerificationConfig('true').openrouterManagedRequireVerifiedIdentity, true);
   assert.equal(managed.requiresVerifiedIdentity({}), false);
@@ -286,12 +304,18 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const appManifest = require('../src/services/app-manifest');
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS user_agent_model_favorites/);
   assert.match(schema, /user_id\s+BIGINT NOT NULL UNIQUE/);
   assert.match(routes, /post\('\/api\/me\/credentials\/openrouter\/managed'/);
+  assert.match(routes, /patch\('\/api\/me\/coding-agent\/models\/favorite'/);
   assert.match(routes, /Cache-Control', 'no-store'/);
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
-  assert.match(settingsSection, /Save this key now/);
+  assert.doesNotMatch(routes, /\.\.\.claimed|shownOnce/);
+  assert.doesNotMatch(settingsSection, /settings-openrouter-(?:reveal|revealed-key|copy|dismiss-reveal)/);
+  assert.doesNotMatch(settingsSection, /Save this key now|Copy it if you also want your own backup/);
+  assert.doesNotMatch(settings, /j\.apiKey|_copyManagedOpenRouterKey|_dismissManagedOpenRouterReveal/);
+  assert.match(settings, /Created and selected OpenRouter/);
   assert.match(settingsSection, /GLM 5\.3 Flash/);
   assert.match(settings, /GLM 5\.3 Flash/);
   assert.ok(
@@ -303,6 +327,8 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(envExample, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=false/);
   assert.match(deploy, /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
   assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
+  assert.match(deploy, /OPENROUTER_RECOMMENDED_MODELS=/);
+  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=deepseek\/deepseek-v4\.1-flash/);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
@@ -314,6 +340,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_DEFAULT_CODEX_MODEL',
   );
   assert.equal(modelDeclaration.default, 'z-ai/glm-5.3-flash');
+  const recommendedDeclaration = manifest.platform_env.find(
+    (item) => item.key === 'OPENROUTER_RECOMMENDED_MODELS',
+  );
+  assert.match(recommendedDeclaration.default, /deepseek\/deepseek-v4\.1-flash/);
   assert.match(routes, /verificationRequired/);
   assert.match(settings, /provisioning\.verificationRequired && !provisioning\.verified/);
 });

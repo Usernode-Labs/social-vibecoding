@@ -599,9 +599,15 @@ const Browse = {
       // Republished on every list render so the <select> and the
       // #browse-list[data-sort] anchor can never lag the rows they describe.
       sort: Browse._sort,
-      // Search and explicit numeric sorts always include every matching app.
+      // #1912: EVERY sort tucks the demos and apps needing fixes behind
+      // Show more — the disclosure used to exist on Recommended only, so
+      // switching to a metric sort suddenly showed everything. Only
+      // Recommended GROUPS the rest under tier headings; a metric sort keeps
+      // one list in its own order (headings would break the order it
+      // promises). A search still shows every match, expanded.
       // Returning from a detail page keeps the user's disclosure choice.
-      curated: Browse._sort === 'recommended' && !query,
+      curated: !query,
+      grouped: Browse._sort === 'recommended' && !query,
       moreExpanded: Browse._moreExpanded,
       error: false,
       empty: rows.length

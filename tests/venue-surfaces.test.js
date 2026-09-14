@@ -110,7 +110,7 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   assert.ok(title < select && select < sw,
     'name, then venue, then the switch on the right edge');
   assert.match(HEADER_TSX, /id="dc-mode-chip"/, 'the state word survives, on the switch');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/,
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/,
     'resolved through the shared module, not retyped');
 });
 
@@ -222,7 +222,7 @@ test('an imported proposal gets no chip, because it has no venue to be in', () =
   assert.ok(fnStart !== -1, '_sessionVenueChipSpec must exist');
   const fn = APP_VIEW_SRC.slice(fnStart, APP_VIEW_SRC.indexOf('\n  },', fnStart));
   assert.match(fn, /s\.source === 'imported'/, 'imported rows are excluded');
-  assert.match(fn, /\bBV\.currentVenue\(/, 'and the rest resolve through the shared chain');
+  assert.match(fn, /\bBV\.sessionVenue\(/, 'and the rest resolve through the shared chain');
   assert.match(fn, /externalAgent: s\.external_agent/,
     'external_agent travels, or a handed-off session reads as a Usernode one');
 });
@@ -328,5 +328,38 @@ test('every class these surfaces render has a rule', () => {
   ]) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),
       `.${cls} has no rule in app.css`);
+  }
+});
+
+
+test('session card and header display the same native provider after reload', () => {
+  const extract = (source, signature) => {
+    const start = source.indexOf(signature);
+    const end = source.indexOf('\n  },', start);
+    return source.slice(start + signature.length, end);
+  };
+  const card = new Function('s', 'window', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+  const header = new Function('session', 'window', 'BuildVenues', 'DevChat',
+    extract(DEV_CHAT_SRC, '_headerVenue(session) {'));
+  for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], [null, 'External agent']]) {
+    const session = { source: 'cli_handoff', external_agent: agent, agent_backend: 'claude_code' };
+    const window = { BuildVenues: BV };
+    assert.equal(card(session, window).label, label);
+    assert.equal(header(session, window, BV, {
+      _currentVenueId: () => 'local', _chatBusyForPaint: () => false, _localAgent: null,
+    }).label, label);
+  }
+});
+
+
+test('all session lists serialize the identity needed by provider badges', () => {
+  for (const route of ['/api/me/active-sessions', '/api/apps/:slug/sessions', '/api/apps/:slug/shared-sessions']) {
+    const start = SESSIONS_SRC.indexOf("router.get('" + route + "'");
+    assert.ok(start >= 0, route);
+    const select = SESSIONS_SRC.indexOf('`SELECT', start);
+    const query = SESSIONS_SRC.slice(select, SESSIONS_SRC.indexOf('FROM chat_sessions', select));
+    for (const field of ['source', 'external_agent', 'build_venue', 'agent_backend']) {
+      assert.ok(query.includes(field), route + ' includes ' + field);
+    }
   }
 });

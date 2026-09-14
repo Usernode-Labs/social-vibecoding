@@ -77,41 +77,47 @@ const baseProposal = (over) => ({
 
 // ── Proposal card badge ────────────────────────────────────────────────
 
-test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge failed' badge", () => {
+test("card: a 'conflict' snapshot (merge attempt failed) shows a red 'GitHub refused the merge' tag", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js', 'public/index.html'],
     behind_main: 2,
   }));
-  assert.match(html, /Merge conflict/, 'the pill names the conflict after a real attempt');
-  assert.match(html, /gc-vote-count-blocked/, 'blocked tone');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>GitHub refused the merge<\/span>/,
+    'the tag names the conflict after a real attempt');
   assert.match(html, /creator needs to finish the merge/, 'tooltip names the way out');
-  assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind badge');
-  assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
+  assert.doesNotMatch(html, /gc-vote-count-blocked/, 'the bar is the vote');
+  // "Outranks" was a rule the BAR needed, because it had one slot. Tags have
+  // no such scarcity: both facts are true, so both are drawn, worst first.
+  assert.match(html, /Behind main · 2/, 'the softer fact is no longer suppressed');
+  assert.ok(html.indexOf('GitHub refused the merge') < html.indexOf('Behind main'), 'worst first');
+  assert.doesNotMatch(html, /Needs manual resolution/, "the 'failed' affordance stays distinct");
 });
 
-test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving conflicts…' instead", () => {
+test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving conflicts automatically…' instead", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     behind_main: 2,
     resolving: true,
   }));
-  assert.match(html, /Resolving conflicts…/, 'in-flight resolve outranks the failure badge');
+  assert.match(html, /Resolving conflicts automatically…/, 'in-flight resolve outranks the failure badge');
   assert.doesNotMatch(html, /Merge failed — conflict/, 'no stale failure while progress is being made');
 });
 
-test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affordance", () => {
+test("card: a 'failed' snapshot shows a red 'Needs manual resolution' tag", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'failed',
     conflict_files: ['src/server.js'],
     behind_main: 1,
   }));
-  assert.match(html, /Conflict resolution failed/, 'the pill names the failed auto-resolve');
-  assert.match(html, /gc-vote-count-blocked/, 'blocked tone');
-  assert.doesNotMatch(html, /Behind main/, 'failed outranks the behind badge');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Needs manual resolution<\/span>/,
+    'the tag names the failed auto-resolve');
+  assert.doesNotMatch(html, /gc-vote-count-blocked/, 'the bar is the vote');
+  assert.match(html, /Behind main · 1/, 'and the behind fact is drawn too, after it');
+  assert.ok(html.indexOf('Needs manual resolution') < html.indexOf('Behind main'));
 });
 
 test("card: a plain 'behind' snapshot still shows the amber Behind badge", () => {
@@ -348,12 +354,14 @@ test('detail: flat columns are read when the nested block is absent', () => {
   assert.match(html, /src\/db\/schema\.sql/);
 });
 
-test('card: a predicted conflict is a blocked pill, not a green tally', () => {
+test('card: a predicted conflict is a red tag, and the tally is untouched', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ freshness: FRESH() }));
-  assert.match(html, /Conflicts with main · 2/, 'the pill names it and counts the files');
-  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, because it cannot merge');
-  assert.doesNotMatch(html, /Behind main/, 'the conflict outranks the behind badge');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/,
+    'the tag names it and counts the files');
+  assert.doesNotMatch(html, /gc-vote-count-blocked/, 'the bar is the vote, not the conflict');
+  // The predicted conflict brings a "behind main" with it; both are drawn.
+  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Behind main · \d+<\/span>/);
 });
 
 test('card: the attempted-merge pill still wins over the predicted one', () => {
@@ -361,6 +369,6 @@ test('card: the attempted-merge pill still wins over the predicted one', () => {
   const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict', freshness: FRESH(),
   }));
-  assert.match(html, /Merge conflict/);
+  assert.match(html, /GitHub refused the merge/);
   assert.doesNotMatch(html, /Conflicts with main/, 'one conflict pill, and it is the real one');
 });

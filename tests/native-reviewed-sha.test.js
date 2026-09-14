@@ -1,840 +1,321 @@
-// Native-proposal revision safety. Covers the security invariants independently
-// of the imported-PR suites:
-//   - a live head change advances reviewed_head_sha and invalidates only stale
-//     votes/checks;
-//   - a passing check for another commit cannot merge;
-//   - native merges pass the expected SHA and a head-moved refusal returns the
-//     proposal to review on the newly fetched revision.
+// What a head move costs a native proposal's approvals (#2038).
+//
+// This suite used to drive a provenance ledger: session_platform_pushes, a
+// five-hop first-parent walk, a "platform sync in flight, defer" race state,
+// and a fail-closed branch for an unreadable parent list. All of that existed
+// because a commit's SHAPE can be forged — a merge whose first parent is the
+// reviewed sha proves nothing — so the platform had to remember every commit
+// it pushed in order to recognise its own work later.
+//
+// The reconciler redoes the merge and compares trees instead. So does this
+// suite: only the CLONE is stubbed, and every question the reconciler asks is
+// answered by real git against a real repository. Mocking git here would test
+// the mock, and the whole argument for the change is that git's answer is the
+// one that cannot be forged.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const Module = require('module');
+const { execFileSync } = require('child_process');
 
-const _origLoad = Module._load;
-Module._load = function (request, ...rest) {
-  if (request === 'express') return { Router: () => ({}) };
-  return _origLoad.call(this, request, ...rest);
-};
-
-const OLD = 'a'.repeat(40);
-const NEW = 'b'.repeat(40);
-
-function stub(id, exports) {
-  require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
+function git(dir, ...args) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
 }
 
-function recordingPool(handlers = []) {
-  const queries = [];
+function stub(rel, exports) {
+  const id = require.resolve(path.join(__dirname, '..', rel));
+  const prev = require.cache[id];
+  require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
+  return () => { if (prev) require.cache[id] = prev; else delete require.cache[id]; };
+}
+
+// A repository with `main`, a proposal branch, and helpers to move either.
+function repo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-reconcile-'));
+  execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  git(dir, 'config', 'user.email', 'test@usernode.invalid');
+  git(dir, 'config', 'user.name', 'Usernode Test');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'l1\nl2\nl3\n');
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
+  git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
+
+  git(dir, 'checkout', '-qb', 'feature');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'PROPOSAL\nl2\nl3\n');
+  git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'the proposal');
+  const approved = git(dir, 'rev-parse', 'HEAD');
+  git(dir, 'checkout', '-q', 'main');
+
   return {
-    queries,
+    dir, approved,
+    moveMain(file, body) {
+      git(dir, 'checkout', '-q', 'main');
+      fs.writeFileSync(path.join(dir, file), body);
+      git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'main moves');
+      return this;
+    },
+    // Returns with `main` checked out on a clean merge. On a CONFLICT it
+    // leaves `feature` checked out with the index unresolved, because that is
+    // the state the caller has to resolve from — and because `git checkout`
+    // refuses to move off an unresolved index, which is what makes the
+    // cleanest-looking version of this helper fail.
+    syncIntoFeature() {
+      git(dir, 'checkout', '-q', 'feature');
+      try {
+        execFileSync('git', ['-C', dir, 'merge', '--no-edit', 'main'], { stdio: 'ignore' });
+      } catch {
+        return { ...this, conflicted: true };
+      }
+      git(dir, 'checkout', '-q', 'main');
+      return this;
+    },
+    writeOnFeature(file, body, message = 'author push') {
+      git(dir, 'checkout', '-q', 'feature');
+      fs.writeFileSync(path.join(dir, file), body);
+      git(dir, 'add', '-A'); git(dir, 'commit', '-qm', message);
+      git(dir, 'checkout', '-q', 'main');
+      return this;
+    },
+    featureHead: () => git(dir, 'rev-parse', 'feature'),
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+// A pool that records what the reconciler writes, and answers the one
+// conditional UPDATE it depends on.
+function makePool({ epoch = 0 }) {
+  const writes = [];
+  let currentEpoch = epoch;
+  return {
+    writes,
+    get epoch() { return currentEpoch; },
     async query(sql, params) {
       const text = String(sql);
-      queries.push({ sql: text, params });
-      for (const [re, result] of handlers) {
-        if (!re.test(text)) continue;
-        const value = typeof result === 'function' ? result(params) : result;
-        return Array.isArray(value) ? { rows: value, rowCount: value.length } : value;
+      writes.push({ sql: text, params });
+      if (/UPDATE chat_sessions[\s\S]*approval_epoch = approval_epoch \+/.test(text)) {
+        const keeps = params[2];
+        if (!keeps) currentEpoch += 1;
+        return { rows: [{ approval_epoch: currentEpoch }], rowCount: 1 };
+      }
+      if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
+        return { rows: [{ reviewed_head_sha: null, approval_epoch: currentEpoch }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     },
+    kickedChecks() {
+      return this.writes.some((w) => /checks_commit_sha/.test(w.sql));
+    },
   };
 }
 
-function loadVotes({
-  liveHead = NEW,
-  mergeImpl = async () => ({ sha: 'merge-sha' }),
-  getPRImpl = null,
-  // #955: platform-push provenance rows the classifier reads, keyed by SHA,
-  // plus whether a platform sync is currently in flight for the session.
-  platformPushes = {},
-  syncing = false,
-  commitParents = {},
-} = {}) {
-  const ids = {
-    logger: require.resolve('../src/services/logger'),
-    pool: require.resolve('../src/db/pool'),
-    github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
-    docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
-    ws: require.resolve('../src/services/ws'),
-    activeUsers: require.resolve('../src/services/active-users'),
-    notifications: require.resolve('../src/services/notifications'),
-    adminApproval: require.resolve('../src/services/admin-approval'),
-    appAdmins: require.resolve('../src/services/app-admins'),
-    events: require.resolve('../src/services/events'),
-    appAccess: require.resolve('../src/services/app-access'),
-    governance: require.resolve('../src/services/governance'),
-    mergeDebug: require.resolve('../src/services/merge-debug'),
-    worker: require.resolve('../src/services/worker'),
-    visuals: require.resolve('../src/services/visuals'),
-    prImportSync: require.resolve('../src/services/pr-import-sync'),
-    syncMain: require.resolve('../src/services/sync-main'),
-    subject: require.resolve('../src/routes/votes'),
-  };
-  const original = {};
-  for (const [key, id] of Object.entries(ids)) original[key] = require.cache[id];
-
-  const mergeCalls = [];
-  const pendingCalls = [];
-  const rerunCalls = [];
-  const voteUpdates = [];
-  const messages = [];
-  const rebuilds = [];
-  const backfills = [];
-  const resolveKicks = [];
-
-  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
-  stub(ids.pool, { getPool: () => recordingPool() });
-  stub(ids.github, {
-    isEnabled: () => true,
-    getPR: async (...args) => (getPRImpl
-      ? getPRImpl(...args)
-      : { state: 'open', merged: false, head: { sha: liveHead } }),
-    mergePR: async (owner, repo, prNumber, sha) => {
-      mergeCalls.push({ owner, repo, prNumber, sha });
-      return mergeImpl({ owner, repo, prNumber, sha });
-    },
-    getCommitParents: async (_owner, _repo, sha) => commitParents[String(sha).toLowerCase()] || [],
-    invalidateIssuesCache() {},
-    noteIssuesClosed() {},
-  });
-  stub(ids.staging, {
-    rebuildProduction: async () => { rebuilds.push(true); return { sha: 'deployed' }; },
-    teardownStaging: async () => {},
-  });
-  stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async (_config, trigger) => { resolveKicks.push(trigger); },
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
-  stub(ids.ws, {
-    sendSystemMessage: async (_pool, _appId, content) => { messages.push(content); },
-    pushNotificationToUser() {},
-    pushVoteUpdate(data) { voteUpdates.push(data); },
-    pushSessionUpdate() {},
-    broadcastGlobalScoped() {},
-    pushIssueUpdate() {},
-  });
-  stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: 1, majority: 1 }),
-    isUserActive: async () => true,
-  });
-  stub(ids.notifications, {});
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
-  stub(ids.appAdmins, {
-    detectAdminsChange: async () => ({ determinate: false }),
-    stampExplicitApproval: async () => {},
-  });
-  stub(ids.events, {
-    record() {},
-    EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' },
-  });
-  stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.governance, {
-    governedGate: async () => ({
-      mergeable: true,
-      thresholdMet: true,
-      lazyArmed: false,
-      windowElapsed: true,
-      qualifiedYes: 1,
-      qualifiedNo: 0,
-      activeCount: 1,
-      required: 1,
-      mode: 'default',
-      policy: 'anyone',
-      windowEndsAt: null,
+function load(r) {
+  const restores = [
+    stub('src/services/github.js', { isEnabled: () => true }),
+    stub('src/services/ws.js', {
+      pushVoteUpdate() {}, pushSessionUpdate() {}, async sendSystemMessage() {},
     }),
-  });
-  stub(ids.mergeDebug, { startRun: async () => 1, step: async () => {}, endRun: async () => {} });
-  stub(ids.worker, { isInFlight: () => false, destroyCcVolume: async () => {} });
-  stub(ids.visuals, {
-    setChecksPending: async (_pool, sessionId, sha) => { pendingCalls.push({ sessionId, sha }); },
-    notifyChecksPending() {},
-  });
-  stub(ids.prImportSync, {
-    rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
-  });
-  stub(ids.syncMain, {
-    getSyncState: () => (syncing ? { phase: 'pushing', startedAt: Date.now() } : null),
-    findPlatformPush: async (_pool, _sessionId, sha) => platformPushes[String(sha).toLowerCase()] || null,
-    backfillPlatformPushParent: async () => { backfills.push(true); },
-  });
+    stub('src/services/visuals.js', {
+      async setChecksPending() {}, notifyChecksPending() {},
+    }),
+    stub('src/services/pr-import-sync.js', { async rerunChecksForNewHead() {} }),
+  ];
+  // Only the clone is stubbed: every plumbing call underneath runs for real.
+  const mirror = require('../src/services/repo-mirror');
+  const realEnsure = mirror.ensureMirror;
+  mirror.ensureMirror = async () => r.dir;
+  restores.push(() => { mirror.ensureMirror = realEnsure; });
 
-  delete require.cache[ids.subject];
-  const subject = require(ids.subject);
-  const restore = () => {
-    for (const [key, id] of Object.entries(ids)) {
-      if (original[key]) require.cache[id] = original[key];
-      else delete require.cache[id];
-    }
-  };
+  delete require.cache[require.resolve('../src/routes/votes')];
+  // eslint-disable-next-line global-require
+  const votes = require('../src/routes/votes');
   return {
-    subject, mergeCalls, pendingCalls, rerunCalls, voteUpdates, messages,
-    rebuilds, backfills, resolveKicks, restore,
-  };
-}
-
-function nativeSession(extra = {}) {
-  return {
-    id: 41,
-    app_id: 7,
-    app_slug: 'demo',
-    app_name: 'Demo',
-    app_self_hosted: false,
-    repo_url: 'https://github.com/acme/demo',
-    pr_number: 19,
-    pr_title: 'Native proposal',
-    branch_name: 'codex/change',
-    user_id: 3,
-    behind_main: 0,
-    source: 'native',
-    reviewed_head_sha: OLD,
-    checks_commit_sha: OLD,
-    ...extra,
-  };
-}
-
-test('schema adds a generalized native reviewed-head stamp', () => {
-  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
-  assert.match(schema,
-    /ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha\s+VARCHAR\(40\)/);
-});
-
-test('native head reconciliation clears stale votes and re-runs checks at the new SHA', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_deleted: 2,
-    }]],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session, fresh: true,
-    });
-    assert.equal(result.changed, true);
-    assert.equal(result.headSha, NEW);
-    assert.equal(result.votesDropped, 2);
-    assert.equal(session.reviewed_head_sha, NEW);
-
-    const update = pool.queries.find((q) => /UPDATE chat_sessions/.test(q.sql));
-    assert.deepEqual(update.params, [NEW, session.id, OLD],
-      'optimistic update cannot overwrite a newer concurrent head');
-    assert.match(update.sql, /DELETE FROM pr_votes/,
-      'the head move and stale-vote cleanup share one atomic statement');
-    assert.match(update.sql, /head_sha IS DISTINCT FROM \$1/,
-      'only approvals for another revision are deleted');
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
-    assert.equal(ctx.rerunCalls[0].newHead, NEW);
-    assert.ok(ctx.messages.some((m) => /earlier votes were cleared/i.test(m)));
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('managed upload reconciliation clears votes now and defers only the check run', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_deleted: 3,
-    }]],
-  ]);
-  const session = nativeSession({ source: 'cli_handoff' });
-  try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session, fresh: true, deferChecks: true,
-    });
-    assert.equal(result.headSha, NEW);
-    assert.equal(result.votesDropped, 3);
-    assert.equal(result.checksDeferred, true);
-    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
-    assert.match(update.sql, /DELETE FROM pr_votes/,
-      'the stale tally is still deleted atomically with the reviewed-head move');
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }],
-      'the previous passing verdict is invalidated before upload returns');
-    assert.equal(ctx.rerunCalls.length, 0,
-      'proposal_submit_build owns the one final staging/check run');
-    assert.ok(ctx.messages.some((m) => /earlier votes were cleared/i.test(m)));
-  } finally {
-    ctx.restore();
-  }
-});
-
-// #955 --------------------------------------------------------------------
-// The platform resolves conflicts on a proposal branch by merging main into
-// it and pushing. That commit changes the branch without changing the patch
-// under review, so the approvals it already earned must survive it — only an
-// AUTHOR push may clear them.
-
-const PLATFORM_PUSH = { sha: NEW, first_parent_sha: OLD, kind: 'sync_main', sync_result: 'resolved' };
-
-test('the platform\'s own conflict-resolution commit carries votes instead of clearing them', async () => {
-  const ctx = loadVotes({
-    liveHead: NEW,
-    platformPushes: { [NEW]: PLATFORM_PUSH },
-  });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 2, votes_deleted: 0,
-    }]],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session, fresh: true,
-    });
-    assert.equal(result.headSha, NEW);
-    assert.equal(result.platformAdvance, true);
-    assert.equal(result.votesKept, true);
-    assert.equal(result.votesCarried, 2);
-    assert.equal(result.votesDropped, 0);
-
-    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
-    assert.match(update.sql, /UPDATE pr_votes SET head_sha = \$1/,
-      'approvals for the previous revision move onto the platform commit');
-    assert.match(update.sql, /head_sha IS DISTINCT FROM \$3::varchar/,
-      'the delete is disjoint from the carried set — two data-modifying CTEs '
-      + 'touching one row in a single statement is undefined behaviour');
-    assert.ok(!ctx.messages.some((m) => /votes were cleared/i.test(m)),
-      'nobody is asked to re-review code they already approved');
-    assert.ok(ctx.messages.some((m) => /votes were kept/i.test(m)));
-    assert.ok(ctx.voteUpdates.some((u) => u.votesKept === true),
-      'open cards re-read the advanced pin so their next click is not rejected');
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a Claude-resolved platform tree re-runs checks; a clean git merge carries its verdict', async () => {
-  const resolved = loadVotes({ liveHead: NEW, platformPushes: { [NEW]: PLATFORM_PUSH } });
-  const resolvedPool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
-    }]],
-  ]);
-  try {
-    await resolved.subject.reconcileNativeReviewedHead({
-      config: {}, pool: resolvedPool, session: nativeSession(), fresh: true,
-    });
-    assert.deepEqual(resolved.pendingCalls, [{ sessionId: 41, sha: NEW }],
-      'a tree Claude edited is unverified — the old verdict cannot stand');
-    assert.equal(resolved.rerunCalls[0].newHead, NEW);
-  } finally {
-    resolved.restore();
-  }
-
-  const clean = loadVotes({
-    liveHead: NEW,
-    platformPushes: { [NEW]: { ...PLATFORM_PUSH, sync_result: 'clean' } },
-  });
-  const cleanPool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
-    }]],
-  ]);
-  const cleanSession = nativeSession();
-  try {
-    await clean.subject.reconcileNativeReviewedHead({
-      config: {}, pool: cleanPool, session: cleanSession, fresh: true,
-    });
-    assert.equal(clean.pendingCalls.length, 0,
-      'a pure git merge of tested main into a tested branch keeps its verdict');
-    assert.equal(clean.rerunCalls.length, 0);
-    assert.ok(cleanPool.queries.some((q) => /SET checks_commit_sha = \$1/.test(q.sql)),
-      'the carried verdict is re-stamped onto the new commit so the gate sees it');
-    assert.equal(cleanSession.checks_commit_sha, NEW);
-  } finally {
-    clean.restore();
-  }
-});
-
-test('a head move the platform never pushed still clears the tally', async () => {
-  const ctx = loadVotes({ liveHead: NEW, platformPushes: {} });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 2,
-    }]],
-  ]);
-  try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
-    });
-    assert.equal(result.platformAdvance, false);
-    assert.equal(result.votesDropped, 2);
-    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
-    assert.match(update.sql, /DELETE FROM pr_votes/);
-    assert.ok(!/UPDATE pr_votes SET head_sha/.test(update.sql),
-      'an author push must never inherit approvals');
-    assert.ok(ctx.messages.some((m) => /votes were cleared/i.test(m)));
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a merge commit shaped like ours but never pushed by us is an author push', async () => {
-  // The first-parent shape is trivially forgeable — an author can merge main
-  // locally and push. Only recorded provenance may preserve votes.
-  const ctx = loadVotes({
-    liveHead: NEW,
-    platformPushes: {},
-    commitParents: { [NEW]: [OLD, 'c'.repeat(40)] },
-  });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 1,
-    }]],
-  ]);
-  try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
-    });
-    assert.equal(result.platformAdvance, false);
-    assert.equal(result.votesDropped, 1);
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('stacked platform syncs are followed back to the reviewed revision', async () => {
-  // Prod shape (session 3015 / PR #952): the drain resolved, failed to merge,
-  // and resolved again before anything reconciled the row.
-  const MID = 'c'.repeat(40);
-  const ctx = loadVotes({
-    liveHead: NEW,
-    platformPushes: {
-      [NEW]: { sha: NEW, first_parent_sha: MID, sync_result: 'resolved' },
-      [MID]: { sha: MID, first_parent_sha: OLD, sync_result: 'resolved' },
+    votes,
+    restore() {
+      restores.reverse().forEach((f) => f());
+      delete require.cache[require.resolve('../src/routes/votes')];
     },
-  });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
-    }]],
-  ]);
+  };
+}
+
+function session(r, overrides = {}) {
+  return {
+    id: 42, app_id: 7, app_slug: 'demo', source: null, status: 'promoted',
+    repo_url: 'https://github.com/acme/demo', branch_name: 'feature',
+    pr_number: 99, pr_title: 'A proposal',
+    reviewed_head_sha: r.approved, checks_commit_sha: r.approved,
+    approval_epoch: 0,
+    ...overrides,
+  };
+}
+
+test('a clean merge of main keeps the approvals and carries the checks', async () => {
+  const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
     });
-    assert.equal(result.platformAdvance, true);
-    assert.equal(result.votesCarried, 1);
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.kind, 'mechanical');
+    assert.equal(out.votesKept, true);
+    assert.equal(out.epoch, 0, 'a merge nobody edited must not move the epoch');
+    assert.equal(out.headSha, r.featureHead());
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a chain hop with an unrecorded parent falls back to the author-push reset', async () => {
-  const MID = 'c'.repeat(40);
-  const ctx = loadVotes({
-    liveHead: NEW,
-    // MID sits between the review and our commit but nobody recorded pushing
-    // it — it is author work being swept into a merge, so votes cannot ride it.
-    platformPushes: { [NEW]: { sha: NEW, first_parent_sha: MID, sync_result: 'clean' } },
-  });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 1,
-    }]],
-  ]);
+test('an author push clears the approvals and re-runs the checks', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
     });
-    assert.equal(result.platformAdvance, false);
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.kind, 'authored');
+    assert.equal(out.votesKept, false);
+    assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a head move mid-sync defers instead of guessing, and writes nothing', async () => {
-  const ctx = loadVotes({ liveHead: NEW, platformPushes: {}, syncing: true });
-  const pool = recordingPool();
+test('a resolved conflict keeps the approvals but re-checks the merged tree', async () => {
+  const r = repo().moveMain('a.txt', 'MAIN\nl2\nl3\n');
+  const merged = r.syncIntoFeature();
+  assert.equal(merged.conflicted, true, 'precondition: the merge really does conflict');
+  // Resolve it the way the worker's conflict turn does: write bytes, inside
+  // the conflicted file only. `feature` is already checked out.
+  fs.writeFileSync(path.join(r.dir, 'a.txt'), 'PROPOSAL AND MAIN\nl2\nl3\n');
+  git(r.dir, 'add', '-A'); git(r.dir, 'commit', '-qm', 'resolved');
+  git(r.dir, 'checkout', '-q', 'main');
+
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
     });
-    assert.equal(result.blocked, true);
-    assert.equal(result.transient, true);
-    assert.match(result.reason, /synced with main/i);
-    assert.ok(!pool.queries.some((q) => /UPDATE|DELETE/.test(q.sql)),
-      'a vote that races our own push must not destroy the tally');
-    assert.equal(ctx.messages.length, 0);
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.kind, 'resolved');
+    assert.equal(out.votesKept, true, 'the resolution is bounded by the conflict');
+    assert.equal(out.epoch, 0);
+    assert.equal(pool.kickedChecks(), false,
+      'a Claude-edited tree is unverified, so its verdict must NOT be carried');
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a live head differing only in letter case is the same revision', async () => {
-  const ctx = loadVotes({ liveHead: NEW.toUpperCase() });
-  const pool = recordingPool();
-  const session = nativeSession({ reviewed_head_sha: NEW });
+test('a merge commit shaped like ours but carrying an edit is an author push', async () => {
+  // The forgery the provenance ledger existed to stop. The commit really is a
+  // merge, and its first parent really is the approved head.
+  const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  git(r.dir, 'checkout', '-q', 'feature');
+  fs.writeFileSync(path.join(r.dir, 'a.txt'), 'PROPOSAL\nl2\nSMUGGLED\n');
+  git(r.dir, 'add', '-A'); git(r.dir, 'commit', '-q', '--amend', '--no-edit');
+  const forged = git(r.dir, 'rev-parse', 'HEAD');
+  git(r.dir, 'checkout', '-q', 'main');
+  assert.equal(git(r.dir, 'rev-parse', `${forged}^1`), r.approved,
+    'precondition: it really does sit on the approved head');
+
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session, fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
     });
-    assert.equal(result.unchanged, true);
-    assert.equal(pool.queries.length, 0, 'an identical commit clears nothing');
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.kind, 'authored', 'commit shape must buy nothing');
+    assert.equal(out.epoch, 1);
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a lazily-backfilled first parent proves provenance without a second GitHub read', async () => {
-  const ctx = loadVotes({
-    liveHead: NEW,
-    // Recorded, but its parents read failed at push time.
-    platformPushes: { [NEW]: { sha: NEW, first_parent_sha: null, sync_result: 'clean' } },
-    commitParents: { [NEW]: [OLD, 'd'.repeat(40)] },
-  });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 3, votes_deleted: 0,
-    }]],
-  ]);
+test('an unmoved head writes nothing at all', async () => {
+  const r = repo();
+  git(r.dir, 'checkout', '-q', 'feature');
+  git(r.dir, 'checkout', '-q', 'main');
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 4 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {}, pool, session: nativeSession(), fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r, { approval_epoch: 4 }), notify: false,
     });
-    assert.equal(result.platformAdvance, true);
-    assert.equal(result.votesCarried, 3);
-    assert.equal(ctx.backfills.length, 1, 'the parent is cached for later passes');
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.unchanged, true);
+    assert.equal(out.epoch, 4);
+    assert.equal(pool.writes.length, 0, 'nothing to reconcile means nothing to write');
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a merge whose pin was superseded by our own sync re-pins, keeps votes, and re-queues', async () => {
-  // The exact prod failure: the drain synced the branch, then pinned the merge
-  // to the pre-sync commit, GitHub 409'd, and the recovery wiped the tally.
-  const moved = new Error('head changed');
-  moved.headMoved = true;
-  const ctx = loadVotes({
-    liveHead: NEW,
-    mergeImpl: async () => { throw moved; },
-    platformPushes: { [NEW]: PLATFORM_PUSH },
-  });
-  const pool = recordingPool([
-    [/SET status = 'merging'/, [{ id: 41 }]],
-    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
-    }]],
-  ]);
+test('a row with no pin yet is bound without clearing its unbound votes', async () => {
+  const r = repo();
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.checkAndMerge({}, pool, nativeSession(), {
-      force: true,
-      forceBy: { id: 1, username: 'admin' },
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r, { reviewed_head_sha: null }), notify: false,
     });
-    assert.equal(result.merged, false);
-    assert.equal(result.votesKept, true);
-    assert.equal(result.reviewedHeadSha, NEW);
-    const reconcile = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
-    assert.match(reconcile.sql, /UPDATE pr_votes SET head_sha = \$1/,
-      'approvals are carried onto our own sync commit, never dropped');
-    assert.ok(ctx.messages.some((m) => /votes were kept/i.test(m)));
-    assert.ok(ctx.resolveKicks.some((t) => t && t.app_id === 7),
-      'the drain is re-driven immediately so the merge retries against the '
-      + 'corrected pin instead of waiting out the hourly sweeper');
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.initialized, true);
+    assert.equal(out.epoch, 0, 'binding a legacy row must not cost it its votes');
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a native PR without repository identity fails closed', async () => {
-  const ctx = loadVotes();
-  const pool = recordingPool();
+test('an unreadable mirror leaves the revision alone rather than blocking', async () => {
+  // Fail OPEN, deliberately: the mirror is a cache, and the authority is the
+  // exact-sha merge, which pins to the recorded revision and is refused by
+  // GitHub if the head moved. Failing closed would wedge every vote and merge
+  // on every app behind one unreachable git host.
+  const r = repo();
+  const { votes, restore } = load(r);
+  const mirror = require('../src/services/repo-mirror');
+  mirror.ensureMirror = async () => { throw new Error('network down'); };
+  const pool = makePool({ epoch: 2 });
   try {
-    const result = await ctx.subject.reconcileNativeReviewedHead({
-      config: {},
-      pool,
-      session: nativeSession({ repo_url: null }),
-      fresh: true,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r, { approval_epoch: 2 }), notify: false,
     });
-    assert.equal(result.blocked, true);
-    assert.match(result.reason, /no GitHub repository/i);
-    assert.equal(pool.queries.length, 0);
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.blocked, undefined, 'a cache miss must never block a merge');
+    assert.equal(out.measurementUnavailable, true);
+    assert.equal(out.epoch, 2, 'and must never cost anybody their vote');
+  } finally { restore(); r.cleanup(); }
 });
 
-test('background governance sweep refreshes native head before it can count or reject votes', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool([
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_deleted: 3,
-    }]],
-  ]);
-  const session = nativeSession();
+test('a proposal with no recorded branch is left alone, not blocked', async () => {
+  // Legacy rows, and imported proposals whose head is on the author's fork
+  // where the mirror cannot see it.
+  const r = repo();
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 1 });
   try {
-    const prepared = await ctx.subject.reconcilePromotedSweepHead({
-      config: {}, pool, session,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r, { branch_name: null, approval_epoch: 1 }),
+      notify: false,
     });
-    assert.equal(prepared.blocked, undefined);
-    assert.equal(prepared.changed, true);
-    assert.equal(prepared.headSha, NEW,
-      'the governance gate must be scoped to the newly fetched revision');
-    assert.equal(prepared.votesDropped, 3,
-      'old-revision No votes are removed before the caller evaluates rejection');
-
-    const server = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-    const sweepStart = server.indexOf('const sweepRevision = await reconcilePromotedSweepHead');
-    const gateStart = server.indexOf('const gate = await governance.governedGate', sweepStart);
-    assert.ok(sweepStart >= 0 && gateStart > sweepStart,
-      'the sweeper awaits live revision reconciliation before governance');
-    assert.match(server.slice(gateStart, gateStart + 500),
-      /headSha: sweepRevision\.headSha/);
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.blocked, undefined);
+    assert.equal(out.measurementUnavailable, true);
+  } finally { restore(); r.cleanup(); }
 });
 
-test('background governance sweep preserves imported PR head semantics', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool();
-  const session = nativeSession({
-    source: 'imported',
-    imported_pr_head_sha: OLD,
-    reviewed_head_sha: null,
-  });
+test('a row with no repository at all still fails closed', async () => {
+  // The one case with nothing to fail open TO: a proposal claiming a pull
+  // request but carrying no repository identity cannot be verified by any
+  // means, and must not merge on an unverified head.
+  const r = repo();
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const prepared = await ctx.subject.reconcilePromotedSweepHead({
-      config: {}, pool, session,
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r, { repo_url: null }), notify: false,
     });
-    assert.equal(prepared.imported, true);
-    assert.equal(prepared.headSha, OLD);
-    assert.equal(pool.queries.length, 0, 'the native reconciler never mutates imported rows');
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.blocked, true);
+  } finally { restore(); r.cleanup(); }
 });
 
-test('a passing check for an older native commit is merge-blocked and re-run exactly', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool([
-    [/SELECT check_state, test_results/, [{
-      check_state: 'passing',
-      test_results: [],
-      checks_checked_at: new Date().toISOString(),
-      checks_commit_sha: OLD,
-    }]],
-    [/SET status = 'merging'/, [{ id: 41 }]],
-  ]);
-  const session = nativeSession({ reviewed_head_sha: NEW, checks_commit_sha: OLD });
+test('imported proposals are not reconciled here at all', async () => {
+  const r = repo();
+  const { votes, restore } = load(r);
+  const pool = makePool({ epoch: 0 });
   try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session);
-    assert.equal(result.merged, false);
-    assert.equal(result.checksBlocked, true);
-    assert.equal(result.checksRevisionMismatch, true);
-    assert.ok(!pool.queries.some((q) => /SET status = 'merging'/.test(q.sql)),
-      'an old green check never reaches the merge claim');
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
-    assert.equal(ctx.rerunCalls[0].newHead, NEW);
-    assert.equal(ctx.mergeCalls.length, 0);
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a passing check for an older imported commit cannot authorize the promoted head', async () => {
-  const ctx = loadVotes();
-  const pool = recordingPool([
-    [/SELECT check_state, test_results/, [{
-      check_state: 'passing',
-      test_results: [],
-      checks_checked_at: new Date().toISOString(),
-      checks_commit_sha: OLD,
-    }]],
-    [/SET status = 'merging'/, [{ id: 41 }]],
-  ]);
-  const session = nativeSession({
-    source: 'imported',
-    reviewed_head_sha: null,
-    imported_pr_head_sha: NEW,
-    checks_commit_sha: OLD,
-  });
-  try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session);
-    assert.equal(result.merged, false);
-    assert.equal(result.checksBlocked, true);
-    assert.equal(result.checksRevisionMismatch, true);
-    assert.ok(!pool.queries.some((q) => /SET status = 'merging'/.test(q.sql)),
-      'an old green check never reaches the merge claim');
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
-    assert.equal(ctx.rerunCalls[0].newHead, NEW,
-      'the imported SHA-pinned rebuild targets the promoted head');
-    assert.equal(ctx.mergeCalls.length, 0);
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('native head-moved merge returns to review and resets against the new live SHA', async () => {
-  const moved = new Error('head changed');
-  moved.headMoved = true;
-  const ctx = loadVotes({ liveHead: NEW, mergeImpl: async () => { throw moved; } });
-  const pool = recordingPool([
-    [/SET status = 'merging'/, [{ id: 41 }]],
-    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
-      reviewed_head_sha: NEW, votes_deleted: 1,
-    }]],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session, {
-      force: true,
-      forceBy: { id: 1, username: 'admin' },
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool,
+      session: session(r, { source: 'imported', imported_pr_head_sha: 'c'.repeat(40) }),
+      notify: false,
     });
-    assert.equal(result.merged, false);
-    assert.equal(result.headMoved, true);
-    assert.equal(result.reviewedHeadSha, NEW);
-    assert.equal(ctx.mergeCalls.length, 1);
-    assert.equal(ctx.mergeCalls[0].sha, OLD, 'GitHub merge expected the reviewed SHA');
-    assert.equal(ctx.rebuilds.length, 0, 'nothing deploys after GitHub rejects the stale head');
-    assert.ok(pool.queries.some((q) => /SET status = 'promoted'/.test(q.sql)),
-      'merge claim is released back to review');
-    assert.ok(pool.queries.some((q) => /DELETE FROM pr_votes/.test(q.sql)),
-      'old-revision approvals are cleared immediately');
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
-    assert.equal(ctx.rerunCalls[0].newHead, NEW);
-    assert.ok(ctx.voteUpdates.some((u) => u.headMoved === true
-      && u.merging === false && u.merged === false),
-      'the un-latch broadcast carries the terminal merging:false + '
-      + 'merged:false shape, so every client surface that advanced to '
-      + '"Merging…" falls back when the merge aborts');
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a pinned native 409 with an unchanged head follows conflict recovery', async () => {
-  const refused = new Error('Pull Request is not mergeable');
-  refused.headMoved = true;
-  const ctx = loadVotes({ liveHead: OLD, mergeImpl: async () => { throw refused; } });
-  const pool = recordingPool([
-    [/SET status = 'merging'/, [{ id: 41 }]],
-    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session, {
-      force: true,
-      forceBy: { id: 1, username: 'admin' },
-    });
-    assert.equal(result.merged, false);
-    assert.equal(result.conflict, true,
-      'an unchanged reviewed head means GitHub reported a merge conflict, not new code');
-    assert.equal(result.headMoved, undefined);
-    assert.ok(!pool.queries.some((q) => /DELETE FROM pr_votes/.test(q.sql)),
-      'valid approvals are not cleared for an unchanged commit');
-    assert.equal(ctx.pendingCalls.length, 0);
-    assert.ok(ctx.voteUpdates.some((u) => u.mergeFailed && u.resolving),
-      'the ordinary conflict resolver path is engaged');
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('an ambiguous native 409 defers when GitHub cannot verify the live head', async () => {
-  const refused = new Error('conflict');
-  refused.headMoved = true;
-  const ctx = loadVotes({
-    mergeImpl: async () => { throw refused; },
-    getPRImpl: async () => { throw new Error('GitHub unavailable'); },
-  });
-  const pool = recordingPool([
-    [/SET status = 'merging'/, [{ id: 41 }]],
-    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session, {
-      force: true,
-      forceBy: { id: 1, username: 'admin' },
-    });
-    assert.equal(result.merged, false);
-    assert.equal(result.revisionBlocked, true);
-    assert.equal(result.transient, true);
-    assert.equal(result.conflict, undefined,
-      'the platform does not guess whether an ambiguous 409 was a head move or conflict');
-    assert.equal(ctx.rebuilds.length, 0);
-    assert.ok(pool.queries.some((q) => /SET status = 'promoted'/.test(q.sql)),
-      'the merge claim is released for a safe retry');
-    assert.ok(ctx.voteUpdates.some((u) => u.merging === false && u.merged === false),
-      'the deferred outcome still broadcasts the terminal un-latch shape, '
-      + 'so no client is left showing "Merging…"');
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a vote is accepted only for the native revision rendered by the browser', () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  try {
-    assert.equal(ctx.subject.voteMatchesReviewedRevision(NEW, {
-      enforced: true, headSha: NEW,
-    }), true);
-    assert.equal(ctx.subject.voteMatchesReviewedRevision(OLD, {
-      enforced: true, headSha: NEW,
-    }), false, 'a click rendered for the old commit cannot approve the new one');
-    assert.equal(ctx.subject.voteMatchesReviewedRevision(null, {
-      enforced: true, headSha: NEW,
-    }), false, 'cached clients without a revision stamp fail closed');
-    assert.equal(ctx.subject.voteMatchesReviewedRevision(null, {
-      enforced: false, headSha: null,
-    }), true, 'GitHub-disabled/local rows retain their existing behavior');
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('native vote write locks and verifies the stored reviewed head atomically', async () => {
-  const ctx = loadVotes({ liveHead: NEW });
-  const pool = recordingPool([
-    [/WITH current_session AS/, [{ id: 99 }]],
-  ]);
-  const session = nativeSession({ reviewed_head_sha: NEW });
-  try {
-    const result = await ctx.subject.recordVote({
-      pool, session, userId: 8, vote: 'yes', headSha: NEW, revisionEnforced: true,
-    });
-    assert.equal(result.rowCount, 1);
-    const write = pool.queries[0];
-    assert.match(write.sql, /reviewed_head_sha = \$4::varchar/);
-    assert.match(write.sql, /FOR UPDATE/,
-      'a concurrent head transition cannot slip between verification and insert');
-    assert.match(write.sql, /INSERT INTO pr_votes/);
-    assert.deepEqual(write.params, [session.id, 8, 'yes', NEW]);
-  } finally {
-    ctx.restore();
-  }
-});
-
-test('a 409 recognizes a new head already installed by a concurrent verifier', async () => {
-  const refused = new Error('head changed');
-  refused.headMoved = true;
-  const ctx = loadVotes({ liveHead: NEW, mergeImpl: async () => { throw refused; } });
-  const pool = recordingPool([
-    [/SET status = 'merging'/, [{ id: 41 }]],
-    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, []],
-    [/SELECT reviewed_head_sha FROM chat_sessions/, [{ reviewed_head_sha: NEW }]],
-    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-  ]);
-  const session = nativeSession();
-  try {
-    const result = await ctx.subject.checkAndMerge({}, pool, session, {
-      force: true,
-      forceBy: { id: 1, username: 'admin' },
-    });
-    assert.equal(result.headMoved, true);
-    assert.equal(result.reviewedHeadSha, NEW);
-    assert.equal(result.revisionBlocked, undefined,
-      'a verified different head is not reported as an unverifiable revision');
-  } finally {
-    ctx.restore();
-  }
+    assert.equal(out.enforced, false, 'the import sweeper owns that head');
+    assert.equal(pool.writes.length, 0);
+  } finally { restore(); r.cleanup(); }
 });

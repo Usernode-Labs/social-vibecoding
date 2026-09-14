@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const state = require('../src/cli/state');
 const main = require('../src/cli/main');
@@ -22,6 +23,32 @@ const {
   makeAccessToken,
   makeDeviceCode,
 } = require('../src/services/cli-auth');
+
+test('production defaults to Homeroom without an environment override', () => {
+  const env = { ...process.env };
+  delete env.USERNODE_DOMAIN;
+  const script = `
+    const state = require('./src/cli/state');
+    const config = state.defaultConfig();
+    process.stdout.write(JSON.stringify({
+      production: state.resolveProfile(config, 'production'),
+      local: state.resolveProfile(config, 'local'),
+    }));
+  `;
+  const resolve = (environment) => JSON.parse(execFileSync(process.execPath, ['-e', script], {
+    cwd: path.resolve(__dirname, '..'),
+    env: environment,
+    encoding: 'utf8',
+  }));
+  assert.deepEqual(resolve(env), {
+    production: { name: 'production', origin: 'https://my.onhomeroom.com' },
+    local: { name: 'local', origin: 'http://localhost:3000' },
+  });
+  assert.deepEqual(resolve({ ...env, USERNODE_DOMAIN: 'self-hosted.example.com' }), {
+    production: { name: 'production', origin: 'https://self-hosted.example.com' },
+    local: { name: 'local', origin: 'http://localhost:3000' },
+  });
+});
 
 test('profile origin normalization and profile grammar are fail closed', () => {
   assert.equal(state.canonicalOrigin('HTTPS://EXAMPLE.COM:443/'), 'https://example.com');
@@ -261,6 +288,54 @@ test('state and origin locks serialize live owners and recover only stale dead o
       'the attempt-specific tombstone remains to stop delayed recovery'
     );
     await winners[0].value.release();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an abandoned lock directory is taken over, not reported as corrupt', async () => {
+  // The race behind an intermittent CI failure. A lock directory with no
+  // owner file inside is never a lock somebody holds: a valid one is built
+  // complete and renamed into place, so it is non-empty the instant it
+  // becomes visible. An empty one is two contenders racing, or a process that
+  // died mid-teardown.
+  //
+  // It used to throw "Malformed lock file" — an error with NO `code`, out of
+  // a function whose contract is that contention carries one. Callers that
+  // switch on err.code saw `undefined` and fell through their handling.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-empty-')));
+  await fs.chmod(directory, 0o700);
+  const filename = path.join(directory, 'operation.lock');
+  try {
+    await fs.mkdir(filename, { mode: 0o700 });
+
+    // Absence reads as "no lock", and the retry is also the repair: POSIX
+    // rename() moves a directory onto an empty one, so the attempt takes the
+    // abandoned directory over rather than spinning until it times out.
+    const lock = await state.acquireLock(filename, {
+      operation: 'login', timeoutMs: 500, recoverAfterMs: 1000,
+    });
+    assert.ok(lock, 'the abandoned directory must not block a fresh acquisition');
+    assert.equal((await fs.lstat(filename)).isDirectory(), true);
+    await lock.release();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a genuinely corrupt owner file is still refused', async () => {
+  // The other half of the rule above: ABSENCE is not corruption, but
+  // corruption still is. Loosening the first must not swallow the second.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-corrupt-')));
+  await fs.chmod(directory, 0o700);
+  const filename = path.join(directory, 'operation.lock');
+  try {
+    await fs.mkdir(filename, { mode: 0o700 });
+    await fs.writeFile(path.join(filename, 'owner.json'), '{ not json', { mode: 0o600 });
+    await assert.rejects(
+      state.acquireLock(filename, { operation: 'login', timeoutMs: 100, recoverAfterMs: 1000 }),
+      /Malformed lock file/
+    );
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

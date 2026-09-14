@@ -317,6 +317,22 @@ function load() {
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // Curated badges in the model picker. Exact ids keep the recommendation
+    // deliberate: adding a provider prefix here would label dozens of old,
+    // batch, and specialist variants and make the badge meaningless.
+    openrouterRecommendedModels: (() => {
+      const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
+        ? [
+          'deepseek/deepseek-v4.1-flash',
+          'z-ai/glm-5.3-flash',
+          'openai/gpt-6-astra',
+          'moonshotai/kimi-k3',
+          'anthropic/claude-opus-5',
+        ].join(',')
+        : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
+      if (configured.trim().toLowerCase() === 'none') return [];
+      return configured.split(',').map((s) => s.trim()).filter(Boolean);
+    })(),
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
@@ -712,6 +728,7 @@ function load() {
   console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
+  console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);
