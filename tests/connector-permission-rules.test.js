@@ -534,12 +534,17 @@ test('each allow-rules block names the file it is for, above the block', () => {
   }
 });
 
-test('the three copy buttons are distinguishable to a screen reader', () => {
+test('every copy button is distinguishable to a screen reader', () => {
   // All three said only "Copy", on a screen where two of them act on
-  // byte-identical JSON (#1290).
+  // byte-identical JSON (#1290). #1892 added two more for the Codex CLI
+  // blocks, so the count is read off the markup rather than assumed: one
+  // `<id>-copy` button, one distinct label, each.
+  const buttons = (CONNECTORS_TSX.match(/id="[a-z-]+-copy"/g) || []);
   const labels = (CONNECTORS_TSX.match(/aria-label="Copy[^"]*"/g) || []);
-  assert.equal(new Set(labels).size, 3,
-    'the connector URL and both allow-rule blocks each have their own name');
+  assert.ok(buttons.length >= 3, 'the connector URL and both allow-rule blocks are still here');
+  assert.equal(labels.length, buttons.length, 'every copy button carries an aria-label');
+  assert.equal(new Set(labels).size, buttons.length,
+    'the connector URL, both allow-rule blocks and both Codex blocks each have their own name');
 });
 
 test('copying reports the destination, and reports failure honestly', () => {

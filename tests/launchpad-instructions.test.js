@@ -106,3 +106,34 @@ test('a continuation still names the proposal it updates, and a new change does 
     fresh().slice(0, fresh().indexOf(ASK)),
   );
 });
+
+// #1892: the closing "no Homeroom tools" paragraph names the remedy per
+// product rather than pointing at the settings page alone, and derives its
+// two URLs from USERNODE_DOMAIN the way getAppConventions() does.
+test('the no-connector paragraph names the remedy per product, from the platform origin', () => {
+  const saved = process.env.USERNODE_DOMAIN;
+  try {
+    process.env.USERNODE_DOMAIN = 'homeroom.example';
+    const text = getLaunchpadInstructions({ appName: 'Recipe Box', slug: SLUG });
+    const tail = text.slice(text.indexOf('If you have no Homeroom tools at all'));
+    assert.ok(tail.length > 0, 'the paragraph is there');
+    // Claude: the connector is added on claude.ai with the derived URL, and
+    // a NEW session picks it up.
+    assert.match(tail, /adds it on claude\.ai as a custom connector named `homeroom` with\nthe URL https:\/\/homeroom\.example\/mcp, and a NEW Claude Code session picks it up/);
+    // Codex: nothing can be added today, so the branch comes back by hand.
+    assert.match(tail, /Codex\ncannot add it today \(Codex on the web has no custom MCP setting, and the\nCodex CLI sign-in uses a localhost callback the hosted connector refuses\),\nso push and hand the branch back/);
+    // The settings page stays the click-by-click source, on the same origin.
+    assert.match(tail, /https:\/\/homeroom\.example\/#settings\/connectors\.$/m);
+    assert.doesNotMatch(tail, /my\.onhomeroom\.com/, 'a configured domain replaces the hosted fallback');
+    assert.doesNotMatch(tail, /—/, 'no em dash in user-facing copy');
+
+    // Unset (local dev, tests): the hosted platform, as before.
+    delete process.env.USERNODE_DOMAIN;
+    const fallback = getLaunchpadInstructions({ appName: 'Recipe Box', slug: SLUG });
+    assert.match(fallback, /https:\/\/my\.onhomeroom\.com\/mcp/);
+    assert.match(fallback, /https:\/\/my\.onhomeroom\.com\/#settings\/connectors\./);
+  } finally {
+    if (saved === undefined) delete process.env.USERNODE_DOMAIN;
+    else process.env.USERNODE_DOMAIN = saved;
+  }
+});

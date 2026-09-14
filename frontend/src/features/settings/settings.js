@@ -405,6 +405,39 @@
         });
       }
 
+      // #1892: the two Codex CLI blocks. Read at click time for the same
+      // reason as above: _renderConnectors() swaps the URL placeholder for
+      // the live connector URL after this wiring runs.
+      const CODEX_BLOCKS = {
+        'connector-codex-add': {
+          success: 'Copied. Run it in a terminal where Codex is installed',
+          failure: 'Could not copy the Codex command',
+        },
+        'connector-codex-config': {
+          success: 'Copied. Paste it into ~/.codex/config.toml',
+          failure: 'Could not copy the Codex config entry',
+        },
+      };
+      for (const id of Object.keys(CODEX_BLOCKS)) {
+        this._wireCopyControl(`${id}-copy`, {
+          read: () => {
+            const block = document.getElementById(id);
+            return block ? block.textContent : null;
+          },
+          successMessage: CODEX_BLOCKS[id].success,
+          failureMessage: CODEX_BLOCKS[id].failure,
+          selectOnFail: () => {
+            const block = document.getElementById(id);
+            if (!block || !window.getSelection || !document.createRange) return;
+            const range = document.createRange();
+            range.selectNodeContents(block);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          },
+        });
+      }
+
       this._wireConnectorNameSpelling();
 
       // Change password (issue #282) → POST /api/me/password.
@@ -1757,6 +1790,19 @@
       for (const [id, base] of chatLinks) {
         const link = document.getElementById(id);
         if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
+
+      // #1892: the Codex CLI blocks ship with a placeholder where the URL
+      // goes, for the same reason the steps point at #connector-url instead
+      // of naming a host. Swap it for the derived value here, by textContent
+      // and never innerHTML. Idempotent: once swapped, the placeholder is
+      // gone and a re-render finds nothing to replace.
+      const CODEX_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
+      for (const id of ['connector-codex-add', 'connector-codex-config']) {
+        const block = document.getElementById(id);
+        if (block && block.textContent.includes(CODEX_URL_PLACEHOLDER)) {
+          block.textContent = block.textContent.split(CODEX_URL_PLACEHOLDER).join(connectorUrl);
+        }
       }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;

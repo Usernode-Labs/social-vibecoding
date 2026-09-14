@@ -3315,6 +3315,18 @@
       "expectText": "Turn on Developer mode."
     },
     {
+      "name": "Connector setup covers the Codex CLI with a copyable config.toml entry (#1892)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-codex pre#connector-codex-config",
+      "expectText": "[mcp_servers.homeroom]"
+    },
+    {
+      "name": "Connector setup has a generic walkthrough for any other MCP client (#1892)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-generic ol",
+      "expectText": "Any other MCP client or agent"
+    },
+    {
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",

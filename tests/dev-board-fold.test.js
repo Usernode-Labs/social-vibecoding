@@ -474,7 +474,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // a terminal status that beats the detail response removes the spinner.
   // 617 → 618: the #2113 check on the demo group thread, for the attached
   // screenshot whose macOS-style name used to make its download 500.
-  assert.equal(DAPP.tests.length, 618);
+  // 618 → 620: the two #1892 checks on Settings → Connectors, one for the
+  // Codex CLI block's config.toml entry and one for the generic MCP-client
+  // walkthrough.
+  assert.equal(DAPP.tests.length, 620);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
