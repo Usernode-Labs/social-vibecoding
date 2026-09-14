@@ -48,7 +48,7 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
-test('Kubernetes workflow publishes all three SHA-addressable images', () => {
+test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   for (const component of ['platform', 'worker', 'capture']) {
     assert.match(workflow, new RegExp(`component: ${component}`));
@@ -59,6 +59,11 @@ test('Kubernetes workflow publishes all three SHA-addressable images', () => {
   assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /steps\.build\.outputs\.digest/);
+  assert.match(workflow, /if: steps\.reuse\.outputs\.digest == ''/);
+  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
+  assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
+  assert.match(workflow, /pull: true/);
+  assert.match(workflow, /needs: build/);
 });
 
 test('migration command validates the target database identifier', () => {

@@ -5,10 +5,54 @@ PostgreSQL StatefulSet or an externally managed PostgreSQL cluster into
 `social-platform`. Generated applications, warm workers and capture Jobs are
 created later by the platform through the scoped runtime service account.
 
-The `Build Kubernetes images` workflow first publishes three immutable images,
-then packages their exact digests into `values.release.yaml` and publishes this
-chart to `oci://ghcr.io/adonagy-corp/charts`. The chart is the atomic release
-marker: no chart version exists unless all three image builds succeeded.
+The `Build Kubernetes images` workflow resolves platform, worker, and capture
+images, then packages their exact digests into `values.release.yaml` and
+publishes this chart to `oci://ghcr.io/<repository-owner>/charts`. The chart is
+the atomic release marker: no chart version exists unless all three components
+have resolved successfully, either through a build or reuse of a published image.
+
+The platform image still builds at every release revision. Worker and capture
+images reuse a published digest when their complete tracked build directory and
+the build recipe are unchanged. The reuse key hashes the component's Git tree
+(including Dockerfile, ignore files, file modes, and dependency files), the
+release workflow, the resolver script, the target architecture, and the branch
+ref. An unrelated platform change therefore does not rebuild worker/capture;
+a workflow or resolver change conservatively rebuilds both. Each component's
+Docker build context must remain its own directory; additional inputs or build
+arguments must also be represented in the reuse key if the workflow is extended.
+
+The registry stores these lookup tags as `inputs-<hash>`, separately for each
+component and branch. The release always records the resolved `sha256` digest,
+never the lookup tag. Main cannot reuse candidate-branch lookup tags. Missing
+images (including the first run after this change) build normally; authentication,
+transport, and invalid-manifest errors stop the job. Reuse does not depend on
+the previous push's SHA or the retention period of GitHub Actions artifacts.
+An image from a successful component build can be reused even if another
+component or chart publication failed in that earlier run.
+
+New builds publish `sha-<build-commit>` tags and retain their build provenance
+and SBOM. Reused images retain their original source labels/attestations; no new
+commit tag is created for them. The chart's release revision identifies the
+platform source and chart, while the three digests identify the actual artifacts.
+Workflow summaries show each component's resolution reason and selected digest.
+
+To refresh dependencies or base images without changing source, manually run
+`Build Kubernetes images` with `force_rebuild` set to `worker`, `capture`, or
+`all` (default: `none`). For example:
+
+```bash
+gh workflow run build-kubernetes-images.yml --ref main -f force_rebuild=worker
+```
+
+Selected components bypass reuse and Docker layer caching, and pull their base
+images again. This refreshes floating apt/npm/tool dependencies; explicitly
+pinned versions still require source changes. The refreshed digest replaces the
+lookup tag for subsequent releases with the same inputs; previously published
+charts retain their original digests. Registry retention must preserve images
+referenced by releases for rollback. There is no scheduled refresh: operators
+choose when to update dependencies. A manual run on `main` publishes a normal
+stable release for Argo CD, including a new platform build and the selected
+component refreshes.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and
