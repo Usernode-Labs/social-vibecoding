@@ -288,6 +288,9 @@ const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constan
 // to get at the handlers. `platform` answers the loopback calls.
 function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } = {}) {
   const handlers = new Map();
+  // The registered spec too, so a test can validate a response against the
+  // tool's own outputSchema the way the SDK does.
+  const specs = new Map();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     const method = (init && init.method) || 'GET';
@@ -305,7 +308,7 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
     };
   };
   tools.registerTools({
-    registerTool(name, _spec, handler) { handlers.set(name, handler); },
+    registerTool(name, spec, handler) { handlers.set(name, handler); specs.set(name, spec); },
   }, {
     accessToken: 'svmcp_test',
     scopes,
@@ -314,7 +317,7 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
     origin: ORIGIN, baseUrl: 'http://platform.internal',
     pool, config: {}, tokenId: null, grantId: null,
   });
-  return { handlers, calls, restore: () => { globalThis.fetch = realFetch; } };
+  return { handlers, specs, calls, restore: () => { globalThis.fetch = realFetch; } };
 }
 
 test('update_proposal_issues sends bounded deltas through the platform route', async () => {
@@ -1090,6 +1093,63 @@ test('a proposal update keeps its own wording', async () => {
     assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+// #2138. The connector half of the fix for a connector-opened proposal that
+// could never take its own title or description back. The rule lives in
+// services/proposal-update.js (a pull request the platform opened for the
+// caller is the caller's own) and is tested there; this is what the answer
+// reads once the platform stops refusing. Until then every such revision
+// read "opened by another GitHub account ... belongs to that author" — about
+// a pull request the platform's own bot had opened for the very caller.
+
+test('a revision whose title and description landed is told so, not that another account owns them', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const answer = (over) => ({
+    updated: true, proposalId: 4208, appSlug: 'recipe-box', prNumber: 91, votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: true, ...over,
+  });
+  const revise = async (platformAnswer) => {
+    const { handlers, restore } = connector(() => platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+    try {
+      return await handlers.get('submit_work')({
+        proposalId: 4208, branch: 'my-fix',
+        title: 'Snap cards to the grid, and remember the toggle',
+        description: 'The toggle now survives a reload.',
+      });
+    } finally {
+      restore();
+    }
+  };
+  try {
+    const own = await revise(answer({ titleUpdated: true, descriptionUpdated: true }));
+    assert.equal(own.structuredContent.titleUpdated, true);
+    assert.equal(own.structuredContent.titleRejected, null);
+    assert.equal(own.structuredContent.descriptionUpdated, true);
+    assert.equal(own.structuredContent.descriptionRejected, null);
+    const step = own.structuredContent.nextStep;
+    assert.match(step, /\(PR #91\) now carries your title/);
+    assert.match(step, /description now reads as you submitted it/);
+    assert.doesNotMatch(step, /another GitHub account|belongs to that author|NOT applied/,
+      'the sentence every connector-opened revision used to read back');
+
+    // The refusal is not gone — it is reserved for a pull request a DIFFERENT
+    // person authored, and it still says so in the same words.
+    const theirs = await revise(answer({
+      titleUpdated: false, titleRejected: 'imported_pr',
+      descriptionUpdated: false, descriptionRejected: 'imported_pr',
+    }));
+    assert.equal(theirs.structuredContent.titleRejected, 'imported_pr');
+    assert.equal(theirs.structuredContent.descriptionRejected, 'imported_pr');
+    assert.match(theirs.structuredContent.nextStep, /Your title was NOT applied: .*another GitHub account/);
+    assert.match(theirs.structuredContent.nextStep, /Your description was NOT applied: .*another GitHub account/);
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
   }
 });
 
@@ -2560,7 +2620,10 @@ test('list_my_proposals asks for imported proposals, which is what it opens', ()
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
-  assert.match(route.slice(0, 3000), /cs\.source IS DISTINCT FROM 'imported'/);
+  // The window is "the route's own query", not a fixed distance: the filter
+  // sat 15 characters inside 3000 until #1959 put a second LATERAL and two
+  // columns ahead of the WHERE clause.
+  assert.match(route.slice(0, 4000), /cs\.source IS DISTINCT FROM 'imported'/);
   assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
 
   // And the connector allowlist matches on the PATH, so the query string
@@ -2982,4 +3045,156 @@ test('#1442 — get_app still answers when the promoted route is unavailable', a
     assert.equal(out.openProposalCount, 0, 'degraded to 0 rather than failing the lookup');
     assert.equal(out.slug, 'recipe-box');
   } finally { restore(); }
+});
+
+// ── #2137: a deferred verdict on the connector surface ───────────────────
+//
+// check_phase 'deferred' (services/check-admission.js) is the platform
+// declining to run the verdict on a promoted head that conflicts with main:
+// the preview is built, nothing is running, and nothing will until the head
+// merges cleanly. The row has carried that value since the direct-merge lanes
+// landed; the connector's output schema still named only the two halves of a
+// run, so the SDK's structured-output validation threw "Invalid enum value.
+// Expected 'building' | 'testing', received 'deferred'" and the WHOLE
+// response was lost — `mergeability: 'conflict'`, the file list and nextStep
+// with it — on exactly the proposal an agent most needed to read (proposals
+// 4208 and 4212).
+
+const { z } = require('zod');
+const visuals = require('../src/services/visuals');
+
+// Validated the way the server validates it: the SDK builds
+// z.object(outputSchema) from the registered raw shape and safeParses
+// structuredContent against it (validateToolOutput in
+// @modelcontextprotocol/sdk server/mcp.js).
+function validateOutput(spec, result) {
+  return z.object(spec.outputSchema).safeParse(result.structuredContent);
+}
+
+// A bot-owned head (a connector submission mirrored into the app repository)
+// whose verdict was deferred, as the session route returns it.
+const DEFERRED_ROW = {
+  id: 4208, app_slug: 'recipe-box', status: 'promoted', source: 'cli_handoff',
+  branch_name: 'usernode/from-fork-4208',
+  reviewed_head_sha: 'a'.repeat(40), checks_commit_sha: 'a'.repeat(40),
+  check_state: 'pending', check_phase: 'deferred', check_trigger: 'proposal-open',
+  checks_checked_at: '2026-09-14T09:00:00.000Z',
+  test_results: [],
+  mergeability: 'conflict',
+  mergeability_files: ['src/services/mcp-tools.js', 'tests/mcp-tools.test.js'],
+  mergeability_files_complete: true,
+  freshness_behind_by: 3, freshness_ahead_by: 1,
+  freshness_checked_at: '2026-09-14T09:05:00.000Z',
+};
+
+test('#2137 — get_proposal admits a deferred verdict through its own output schema', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'GET');
+    assert.equal(pathname, '/api/sessions/4208');
+    return { session: DEFERRED_ROW };
+  });
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 4208 });
+    assert.ok(!result.isError, 'the tool answered');
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success,
+      `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.equal(out.checks.state, 'pending');
+    assert.equal(out.checks.phase, 'deferred', 'the phase arrives as itself, not as null');
+    // The fields the validation error used to take down with it.
+    assert.equal(out.mergeability, 'conflict');
+    assert.deepEqual(out.freshness.mergeabilityFiles,
+      ['src/services/mcp-tools.js', 'tests/mcp-tools.test.js']);
+    assert.match(out.nextStep, /DEFERRED/);
+  } finally { c.restore(); }
+});
+
+test('#2137 — the phases the connector admits are the phases the platform stores', () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const phase = z.object(c.specs.get('get_proposal').outputSchema).shape.checks.shape.phase;
+    // `.nullable()` wraps the enum; the closed list itself is underneath.
+    assert.deepEqual(new Set(phase.unwrap().options), visuals.CHECK_PHASES,
+      'a phase the row can carry that the schema does not name fails the whole response');
+    assert.ok(visuals.CHECK_PHASES.has('deferred'), 'the value proposals 4208 and 4212 carried');
+    // The charter's prose mirror of the same vocabulary names the third
+    // phase too, so the connector's own guidance does not tell an agent to
+    // wait on it.
+    const revising = require('../src/services/mcp-charter').CHARTER_SECTIONS
+      .find((s) => s.id === 'revising-a-proposal');
+    assert.match(revising.text, /`checks\.phase` of `deferred`/);
+  } finally { c.restore(); }
+});
+
+test('#2137 — nextStep says the verdict is waiting on a sync with main, and where to look', () => {
+  const step = tools.shapeProposal(DEFERRED_ROW, ORIGIN).nextStep;
+  assert.match(step, /DEFERRED, not running/, 'a decision, not a run in flight');
+  assert.match(step, /conflicts with main/);
+  assert.match(step, /until the head merges cleanly/);
+  // The files both sides changed, in the same envelope as every other
+  // borrowed string — and labelled as the place to look, not as the conflict.
+  assert.match(step,
+    /<untrusted-content>src\/services\/mcp-tools\.js, tests\/mcp-tools\.test\.js<\/untrusted-content>/);
+  assert.match(step, /upper bound on the conflict/);
+  assert.match(step, /The verdict was deferred at 2026-09-14T09:00:00\.000Z/);
+  assert.match(step, /merge main into .* \(or rebase onto it\)/);
+  assert.match(step, /submit_work with proposalId 4208/);
+  assert.match(step, /Do not open a second proposal/);
+  // The in-flight advice would be wrong here: a synced head is the way out.
+  assert.ok(!/rather than pushing again/.test(step));
+  assert.ok(!/Checks have not reported a verdict yet/.test(step));
+
+  // A long list is pointed at, not pasted: the first ten inline, the rest by
+  // field name, and a capped compare says so.
+  const many = Array.from({ length: 300 }, (_, i) => `src/file-${i}.js`);
+  const long = tools.shapeProposal({
+    ...DEFERRED_ROW, mergeability_files: many, mergeability_files_complete: false,
+  }, ORIGIN).nextStep;
+  assert.match(long, /src\/file-9\.js<\/untrusted-content> and 40 more in freshness\.mergeabilityFiles/);
+  assert.ok(!long.includes('src/file-10.js'));
+  assert.match(long, /only a sample/);
+
+  // No list yet: say so, and say how old the freshness block is, rather than
+  // inventing a place to look.
+  const unlisted = tools.shapeProposal({ ...DEFERRED_ROW, mergeability_files: [] }, ORIGIN).nextStep;
+  assert.match(unlisted, /No conflicting paths are recorded in freshness\.mergeabilityFiles yet/);
+  assert.ok(!unlisted.includes('<untrusted-content>'));
+
+  // The deferral stamp clears no results, so a lingering failing list is the
+  // previous commit's — and is labelled so, as the in-flight step already does.
+  const lingering = tools.shapeProposal({
+    ...DEFERRED_ROW, test_results: [{ name: 'home loads', status: 'fail' }],
+  }, ORIGIN).nextStep;
+  assert.match(lingering, /from a PREVIOUS run and may not reflect this commit/);
+  assert.ok(!/PREVIOUS run/.test(step), 'no lingering list, no caveat');
+});
+
+test('#2137 — who makes the sync follows the branch home', () => {
+  // A bot-owned head: the conflict lane can push a resolution itself, and the
+  // author's route goes through their own fork and submit_work.
+  const botOwned = tools.shapeProposal(DEFERRED_ROW, ORIGIN);
+  assert.equal(botOwned.branch.home, 'app_repo');
+  assert.match(botOwned.nextStep, /merge queue resolves a conflict like this itself/);
+  assert.match(botOwned.nextStep, /branch in your OWN fork/);
+  assert.match(botOwned.nextStep, /only Homeroom can write/);
+
+  // A fork-hosted head the platform cannot write: the sync is the author's,
+  // on the branch they already own.
+  const forkHosted = tools.shapeProposal({
+    ...DEFERRED_ROW, id: 4212, source: 'imported', branch_name: 'feature/snap-toggle',
+    imported_pr_head_sha: 'a'.repeat(40),
+  }, ORIGIN);
+  assert.equal(forkHosted.branch.home, 'user_fork');
+  assert.equal(forkHosted.branch.youCanPush, true);
+  assert.match(forkHosted.nextStep, /Homeroom cannot push to this head/);
+  assert.match(forkHosted.nextStep, /merge main into feature\/snap-toggle in your own fork/);
+  assert.match(forkHosted.nextStep, /submit_work with proposalId 4212/);
+  assert.ok(!/merge queue resolves/.test(forkHosted.nextStep));
+
+  // The two halves of a run keep their own advice: only 'deferred' is routed
+  // to the sync wording.
+  const building = tools.shapeProposal({ ...DEFERRED_ROW, check_phase: 'building' }, ORIGIN).nextStep;
+  assert.match(building, /Checks have not reported a verdict yet/);
+  assert.ok(!/DEFERRED/.test(building));
 });

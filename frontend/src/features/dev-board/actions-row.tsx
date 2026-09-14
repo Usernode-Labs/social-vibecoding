@@ -303,6 +303,12 @@ export function DevActionsRow({
               groupKey="settings"
               divider={true}
             />
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_delete ? <PlusRow
+              data-plus="app-settings"
+              icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="App settings"
+              sub="Manage app deletion in the Danger zone"
+            /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

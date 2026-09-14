@@ -21,6 +21,7 @@ const mod = () => (api || (api = loadTsx(
 
 function composerHtml(draft, posting = false) {
   return renderToHtml(createElement(mod().FeedReplyComposer, {
+    slug: 'usernode-2d5619',
     draft,
     posting,
     onDraftChange: () => {},
@@ -36,7 +37,13 @@ test('the reply is a one-row textarea that grows with its controlled value', () 
     SOURCE.indexOf('export function FeedReplyComposer'),
     SOURCE.indexOf('\nexport function FeedThread')
   );
-  assert.doesNotMatch(component, /onKeyDown/,
+  // #2145 gave the field a keydown handler — for ⌘/Ctrl+Enter and for the
+  // `@` list's keys while it is open — but plain Enter is still the
+  // textarea's own, so it still adds a line (tests/feed-reply-mentions.test.js
+  // covers the chord itself).
+  assert.match(component, /if \(!isSendChord\(e\)\) return;/,
+    'only the modifier chord submits from the keyboard');
+  assert.doesNotMatch(component, /key === 'Enter' && !e\.shiftKey/,
     'plain Enter keeps the textarea default: insert a newline');
 
   const html = composerHtml('First line\nSecond line');

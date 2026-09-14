@@ -698,7 +698,7 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
-      "fingerprint": "50a9704e4772e0a48975",
+      "fingerprint": "aff8d6e5f16e400828ea",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.goal, c.task, c.reward, c.description, c.requirements, c.schedule_start, c.s"
     },

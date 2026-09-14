@@ -575,25 +575,26 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
   }
 });
 
-test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
+test('menu: full admin on a running repo app gets check-updates, lock and safe app settings', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
+    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'app-settings']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
-  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+  assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
 
-test('menu: a sole contributor gets Delete app without admin-only controls (#1897)', () => {
+test('menu: a sole contributor gets App settings without a destructive menu action (#1897)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({
     created_by: ME,
     contributor_count: 1,
     can_delete: true,
   }));
-  assert.ok(keys(items).includes('delete'));
+  assert.ok(keys(items).includes('app-settings'));
+  assert.ok(!keys(items).includes('delete'));
   assert.ok(!keys(items).includes('lock'), 'sole contributor is not made an admin');
-  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+  assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
 
 test('menu: an ineligible creator or app admin gets no Delete app action (#1897)', () => {
@@ -2313,4 +2314,15 @@ test('the anchor snapshot survives the kit dismissing on pointerdown (#1838)', a
   assert.equal(Home._menuAnchor, null);
   env.doc('pointerdown');
   assert.equal(Home._menuAnchorAtPress, null);
+});
+
+test('App settings opens the named app without making a deletion request (#2158)', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME, canAdminWrite: true });
+  let opened;
+  sandbox.UsernodeReact = { dialogs: { appSettings: { open(payload) { opened = payload.slug; } } } };
+  sandbox.fetch = () => { throw new Error('Opening settings must not mutate the app'); };
+  const app = baseApp();
+  Home.menuItemsFor(app).find((item) => item.key === 'app-settings').run();
+  assert.equal(opened, app.slug);
+  assert.ok(!Home.menuItemsFor(app).some((item) => item.key === 'delete'));
 });

@@ -85,6 +85,10 @@ export function boardHref(slug, boardView) {
  * @property {string} href        Where the row goes when clicked.
  * @property {string|null} status Display label ("Working…", "Paused"), or null.
  * @property {boolean} busy       An AI turn is in flight right now.
+ * @property {boolean} awaitingInput
+ *   The session is waiting on the user (#1959): answer chips still up, or a
+ *   finished spec with open Questions. Never true while busy; never true
+ *   for a task. The pill reads "Ready for your input" from it.
  * @property {number} sortAt      Recency, ms since epoch. Mixed-kind ordering.
  */
 

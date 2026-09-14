@@ -469,9 +469,56 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and one for proposal cards, both exercising the Share to Messages row.
   // 613 → 615: the two #2118 checks on the OpenRouter spend shot, one for
   // what is left on the key and one for what the turn cost.
-  // 615 → 616: the #2113 check on the demo group thread, for the attached
+  // 615 → 616: #2154 adds the settled half of the app-launch fixture, proving
+  // a terminal status that beats the detail response removes the spinner.
+  // 616 → 617: the #2113 check on the demo group thread, for the attached
   // screenshot whose macOS-style name used to make its download 500.
-  assert.equal(DAPP.tests.length, 616);
+  assert.equal(DAPP.tests.length, 617);
+});
+
+test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
+  // The checklist (#2061, dev-card.tsx RequirementsRow) is a <details> on
+  // the open proposal card, and its summary line — "Nothing needs you",
+  // "Waiting on an admin" — is what a reader taps to see the steps. The
+  // wrapper's click guard did not know it: the same tap that opened the
+  // list bubbled to the wrapper, which folded the card and unmounted the
+  // list just opened. The guard excludes `details` now — the whole element,
+  // because once open it is a list to read, like the three regions under
+  // the card — and nothing else about the tap changes: the disclosure is
+  // native, its open state the reader's, and no handler swallows the click.
+  const AppView = makeAppView({ search: '?cards=open&demo=1' });
+  AppView._proposals[0].mergeRequirements = { gates: [
+    { key: 'approvals', label: 'Approvals', actor: 'group', state: 'done', detail: { note: '3 of 3' } },
+    { key: 'integration', label: 'Up to date with main', actor: 'auto', state: 'active',
+      detail: { note: '2 commits behind, so the platform is merging main in' } },
+  ] };
+  const html = kanbanHtml(AppView);
+  // The checklist sits INSIDE the open card, inside the wrapper whose click
+  // folds it — so the guard is the only thing between the tap and the fold.
+  assert.match(html,
+    /class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet"[^>]*><div class="gc-vote-item [^"]*dev-card-dense"[^>]*data-proposal-row="34"(?:(?!class="dev-ws-rowwrap)[\s\S])*?<details [^>]*data-merge-requirements="1"><summary [^>]*><span [^>]*data-req-headline[^>]*>Nothing needs you<\/span>/,
+    'the checklist, its summary line first, on the open card');
+  // The guard: `details` among the native controls, so a tap anywhere on the
+  // checklist — the summary, a step, its note — is the checklist's, and a
+  // tap on the rest of the card still folds it.
+  const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
+  assert.match(view,
+    /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-ws-detail, \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
+    'the open card\u2019s guard excludes the disclosure, and folds on everything else');
+  // The checklist itself is untouched: the native disclosure, its open state
+  // seeded from the model and then the reader's, and neither a
+  // stopPropagation (the guard is the seam, as for every other control) nor
+  // a preventDefault (the tap must still open the list).
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  const req = CARD.slice(CARD.indexOf('function RequirementsRow'), CARD.indexOf('function ExtraRow'));
+  assert.match(req, /<details\s[^>]*onToggle=\{\(e\) => setOpen\(\(e\.currentTarget as HTMLDetailsElement\)\.open\)\}/);
+  assert.ok(!/stopPropagation|preventDefault/.test(req), 'the row neither swallows the click nor blocks the native toggle');
+  // The folded row draws no checklist, and its own guard is unchanged: a tap
+  // on the row — its state chip included — still unfolds it.
+  const folded = kanbanHtml(makeAppView());
+  assert.ok(!folded.includes('data-merge-requirements'), 'no checklist on a folded row');
+  const rowView = FOLD.slice(FOLD.indexOf('function FoldedRow'), FOLD.indexOf('function UnfoldedRow'));
+  assert.match(rowView, /if \(\(e\.target as HTMLElement \| null\)\?\.closest\('a, button'\)\) return;\s*onToggle\(\);/);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
