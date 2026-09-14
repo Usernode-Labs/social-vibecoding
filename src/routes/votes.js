@@ -3181,6 +3181,13 @@ function voteRoutes(config) {
            -- dev-side controls for externally-authored proposals.
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- Where the imported head lives. The card decides from it (against
+           -- the app's repo_url it already has) whether the platform syncs
+           -- this branch itself or only the author can — without it the
+           -- browser fell back to a branch-name guess and told the group
+           -- "the author must update this branch in their fork" about a
+           -- branch in the app's own repository (#2100).
+           cs.imported_pr_head_repo,
            -- #967: which external coding agent wrote it, when the proposal
            -- came in through the hosted MCP connector ('claude-code' |
            -- 'codex' | 'external'). NULL for everything else. Drives the
