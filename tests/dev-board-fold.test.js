@@ -422,7 +422,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Workshop already answers for with a row of its own (there is a check for
   // that row, and another pinning that the Workshop does not draw the card
   // too). Nothing was declared to replace it.
-  assert.equal(DAPP.tests.length, 604);
+  // 604 → 605: #1912 puts Show more on every sort, so one check pins the case
+  // that had none — a metric sort, where the demo and broken samples are the
+  // top two by users and used to lead the directory. It asserts the absence of
+  // the tier headings too, because "one list in its own order" is the half of
+  // the change that a Show-more selector alone would not catch.
+  assert.equal(DAPP.tests.length, 605);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

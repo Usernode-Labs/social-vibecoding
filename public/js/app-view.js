@@ -6181,17 +6181,29 @@ const AppView = {
     // and a reference, and NOTHING else. The server looks the item up from
     // that pair (services/workshop-ask.js) rather than trusting anything
     // the client says about it, so this carries an address, never content.
-    const voteRow = (card, item, kind) => ({
-      t: 'card',
-      key: `vote:${card.key}`,
-      card,
-      summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
-        ? item.pr_summary_md.trim()
-        : null,
-      askAbout: (item && item.id != null)
-        ? { kind: kind === 'proposal' ? 'proposal' : 'gov', ref: item.id }
-        : null,
-    });
+    //
+    // #1902: it also carries the item's THREAD, exactly as the "mine" lane
+    // does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
+    // opened from the Needs-you deck had no reply box — the one place a
+    // reader most wants to ask a question before voting. `kind` is passed
+    // because the ref is per-kind (session / governance).
+    const voteRow = (card, item, kind) => {
+      if (!card) return null;
+      const row = {
+        t: 'card',
+        key: `vote:${card.key}`,
+        card,
+        summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
+          ? item.pr_summary_md.trim()
+          : null,
+        askAbout: (item && item.id != null)
+          ? { kind: kind === 'proposal' ? 'proposal' : 'gov', ref: item.id }
+          : null,
+      };
+      const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
+      if (th) row.thread = th;
+      return row;
+    };
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
     // changed the view mode, and Back was the only way home, all to read a
@@ -6213,7 +6225,7 @@ const AppView = {
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item),
         x.item,
         x.kind
-      )),
+      )).filter(Boolean),
     };
 
     // ── Themes ──
@@ -6387,7 +6399,7 @@ const AppView = {
       const yes = pair.find((b) => b.key === 'yes') || null;
       const no = pair.find((b) => b.key === 'no') || null;
       queue.push({
-        ...voteRow(card, x.item, x.kind),
+        ...(voteRow(card, x.item, x.kind) || {}),
         kind: 'vote',
         ask: 'Should this change go in?',
         yes: yes ? { label: yes.label, act: yes.act } : null,
