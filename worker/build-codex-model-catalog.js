@@ -11,8 +11,9 @@ const fs = require('node:fs');
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const MAX_CONTEXT_WINDOW = 10_000_000;
+const NEUTRAL_IDENTITY_INSTRUCTION = "You are Homeroom's repository coding agent.";
 const DEFAULT_BASE_INSTRUCTIONS = [
-  "You are Homeroom's repository coding agent.",
+  NEUTRAL_IDENTITY_INSTRUCTION,
   'Work directly in the current workspace and follow the developer and user instructions.',
   'Inspect the relevant code before editing, use the available tools, run proportionate tests,',
   'and do not claim success without verification. Never expose credentials or other secrets.',
@@ -45,6 +46,19 @@ function safeReasoningEfforts(value) {
     .filter((effort) => REASONING_EFFORTS.includes(effort)))];
 }
 
+function neutralizeBundledBaseInstructions(value) {
+  const instructions = String(value || '').trim();
+  if (!instructions) return DEFAULT_BASE_INSTRUCTIONS;
+
+  // The bundled Codex prompt starts with an OpenAI-model identity. Reusing
+  // that sentence for an OpenRouter model makes models such as GLM report
+  // that they are GPT even though the request is routed to the selected GLM
+  // slug. Preserve every operational/tool instruction after that sentence.
+  const codexIdentity = /^You are Codex,\s+an agent based on GPT[\w.-]*\.\s*/i;
+  if (!codexIdentity.test(instructions)) return instructions;
+  return `${NEUTRAL_IDENTITY_INSTRUCTION} ${instructions.replace(codexIdentity, '')}`.trim();
+}
+
 function loadBundledBaseInstructions(catalogPath) {
   if (!catalogPath) return DEFAULT_BASE_INSTRUCTIONS;
   try {
@@ -53,7 +67,7 @@ function loadBundledBaseInstructions(catalogPath) {
       ? parsed.models.find((model) => typeof model?.base_instructions === 'string'
         && model.base_instructions.trim())
       : null;
-    return source?.base_instructions || DEFAULT_BASE_INSTRUCTIONS;
+    return neutralizeBundledBaseInstructions(source?.base_instructions);
   } catch {
     return DEFAULT_BASE_INSTRUCTIONS;
   }
@@ -91,8 +105,7 @@ function buildCodexModelCatalog({
   const resolvedContextWindow = optionalPositiveInteger(contextWindow)
     || DEFAULT_CONTEXT_WINDOW;
   const resolvedName = String(displayName || slug).trim().slice(0, 300) || slug;
-  const instructions = String(baseInstructions || DEFAULT_BASE_INSTRUCTIONS).trim()
-    || DEFAULT_BASE_INSTRUCTIONS;
+  const instructions = neutralizeBundledBaseInstructions(baseInstructions);
   const defaultReasoningLevel = supportedEfforts.length
     ? (selectedEffort || (supportedEfforts.includes('medium') ? 'medium' : supportedEfforts[0]))
     : null;
@@ -170,7 +183,9 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_BASE_INSTRUCTIONS,
   DEFAULT_CONTEXT_WINDOW,
+  NEUTRAL_IDENTITY_INSTRUCTION,
   buildCodexModelCatalog,
   buildCatalogFromEnvironment,
   loadBundledBaseInstructions,
+  neutralizeBundledBaseInstructions,
 };
