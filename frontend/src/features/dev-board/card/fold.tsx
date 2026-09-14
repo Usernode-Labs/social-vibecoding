@@ -481,8 +481,16 @@ export function CardRowView({
         // lot of prose to land on, and collapsing the whole item because
         // somebody selected a word in it is not a fold, it is losing their
         // place.
+        //
+        // `details` is the merge-requirements checklist (#2061, dev-card.tsx
+        // RequirementsRow). Its summary line — "Nothing needs you", "Waiting
+        // on an admin" — is the disclosure a reader taps to see the steps,
+        // and the same tap used to fold the card, which unmounted the list
+        // they had just opened (#2128). The whole element is excluded, not
+        // the summary alone: once open it is a list to read, like the three
+        // regions below.
         if (el && el.closest(
-          'a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip],'
+          'a, button, input, textarea, select, form, details, [data-attr-chip], [data-issue-chip],'
           + ' .dev-ws-detail, .dev-feed-thread, .dev-feed-comments',
         )) return;
         onToggle();
