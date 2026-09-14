@@ -8,7 +8,9 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
   const dockerfile = read('Dockerfile.kubernetes');
   assert.match(dockerfile, /postgresql-client/);
   assert.doesNotMatch(dockerfile, /docker-cli|docker\.sock/);
-  assert.match(dockerfile, /USER node/);
+  assert.match(dockerfile, /USER 1000:1000/);
+  assert.doesNotMatch(dockerfile, /USER node/,
+    'runAsNonRoot cannot verify a symbolic image user before startup');
 });
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
