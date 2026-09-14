@@ -463,7 +463,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // search-bar check rather than adding one (same box, the pane now opened
   // already narrowed by `?q=` to a search nothing matches, with the note
   // under it proving the search applied), so the count is unchanged.
-  assert.equal(DAPP.tests.length, 609);
+  // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
+  // count the trash left behind and one for which draft is still standing.
+  assert.equal(DAPP.tests.length, 611);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
