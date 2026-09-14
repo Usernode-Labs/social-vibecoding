@@ -24,9 +24,8 @@
  *
  * THE DEADLINE IS ON EVERY OPEN CARD, on the line under its title beside the
  * reward ("5d left · 500 pts"): the challenge's own end, else its event's,
- * else the season's. The ring says the season's only when no card on screen
- * shows one. It stays on the cards until deadline bands group the challenges
- * by when they end; then the band heading says it.
+ * else the season's. It stays on the cards until deadline bands group the
+ * challenges by when they end; then the band heading says it.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
@@ -39,48 +38,10 @@
  * on the screen's Challenges tab, one tab from the standings.
  */
 
-import { ProgressRing } from '@/components/ui/progress-ring';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
-import type { ChallengesView, SeasonView } from '../panels-store';
+import { SeasonProgress } from '../../leaderboard/season-progress';
+import type { ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
-
-/**
- * The ring and the season's two numbers, at the top of the plate.
- *
- * It replaces the "· 1 of 6 · 3,900 pts left" that rode the section heading,
- * where at 12px after the area's name and its link it pushed the label into
- * an ellipsis on a phone. As a ring it is content: the first thing on the
- * plate, stating the one fact the block exists to state.
- *
- * The ring itself is `@/components/ui/progress-ring` — the geometry, the
- * twelve-o'clock start and the zero case all live there, because it is a
- * shape of the language rather than of this block, and because a raw SVG
- * element under `features/**` is a glyph that escaped icons.tsx as far as
- * tests/shell-icon-set.test.js is concerned; that scanner is a plain search
- * for the opening tag, comments included, so this sentence spells the tag out
- * in words rather than tripping the rule it is describing.
- *
- * NO PLATE OF ITS OWN. It sits directly on the block's plate rather than in a
- * card, so the four tinted cards below are the only card-shaped things here
- * and the summary reads as their caption.
- */
-function SeasonRing({ view }: { view: SeasonView }) {
-  return (
-    <div className="home-panel-season flex items-center gap-2.5 px-1 pb-2.5 pt-0.5">
-      <ProgressRing pct={view.pct} label={view.fraction} title={view.label} />
-      <div className="min-w-0">
-        <div className="truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
-          {view.lead}
-        </div>
-        {view.sub ? (
-          <div className="truncate whitespace-nowrap text-[12.5px] leading-tight text-zinc-500 dark:text-zinc-400">
-            {view.sub}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
   if (!view.rows.length) {
@@ -114,9 +75,9 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
         />
       )}
     >
-      {view.season ? <SeasonRing view={view.season} /> : null}
+      {view.season ? <SeasonProgress view={view.season} className="home-panel-season px-1 pb-3 pt-0.5" /> : null}
       {/* #1915: padded on BOTH sides. With `pb-3` alone the line sat flush
-          against the season ring's bottom hairline above it. */}
+          against the season progress's bottom hairline above it. */}
       {view.onboardingNote ? (
         <p className="px-1 py-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}

@@ -222,8 +222,8 @@ const TopochainChallenges = {
         if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) {
           // The same event — most often the bar's own notification once its
           // event list lands. Nothing to reload and nothing to close, but a
-          // card's deadline line falls back to that list's `ends_at`
-          // (_deadlineOf), so a grid drawn before the list arrived is redrawn
+          // card's deadline line (_deadlineOf) and the season line over the
+          // grid (_progressView) read that list, so a grid drawn before the list arrived is redrawn
           // in place. Only the descriptor: _renderGrid would re-run the
           // screenshot and deep-link hooks.
           const store = TopochainChallenges._store;
@@ -444,10 +444,14 @@ const TopochainChallenges = {
       if (other.length) groups.push({ key: 'other', heading: 'Season challenges', cards: other });
       return {
         kind: 'cards',
-        summary: `${onboarding.completed} of ${onboarding.total} onboarding challenges completed`,
+        // Setup is its own scope while it gates the rest; once unlocked the
+        // grid is the whole event again, and so is the progress.
+        progress: onboarding.unlocked
+          ? TopochainChallenges._progressView(doneCount, ordered.length)
+          : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
         notice: onboarding.unlocked
           ? 'Persistent and weekly challenges are unlocked.'
-          : 'Complete these introductory challenges to unlock persistent and weekly challenges.',
+          : 'Finish these to unlock persistent and weekly challenges.',
         onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'ONBOARDING')
           ? onboarding.event_id : null,
         groups,
@@ -466,11 +470,10 @@ const TopochainChallenges = {
 
     return {
       kind: 'cards',
-      // Always present when the grid has rows (including "0 of 8" and
-      // "8 of 8"), so the declared dapp.json check can anchor on
-      // #tc-se-challenge-summary whatever the selected event's data happens
-      // to be.
-      summary: `${doneCount} of ${ordered.length} challenges completed`,
+      // Always present when the grid has rows (including "0/8" and "8/8"),
+      // so the declared dapp.json check can anchor on #tc-se-challenge-summary
+      // whatever the selected event's data happens to be.
+      progress: TopochainChallenges._progressView(doneCount, ordered.length),
       groups,
     };
   },
@@ -543,6 +546,22 @@ const TopochainChallenges = {
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
     return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+  },
+
+  // The progress over the grid, as the board's quiet season summary draws it
+  // ("3/9 done in Season 2", one segment per challenge, in
+  // ./season-progress.tsx, which Home's block shares). `scope` names a scope
+  // of its own ("Get started"); otherwise it is the selected event, whose name
+  // can land after the grid does. The onChange redraw in open() fills it in
+  // then, and until it has, the caption is plain "done".
+  _progressView(done, total, scope) {
+    let name = scope || '';
+    if (!name) {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+    }
+    return { done, total, caption: name ? `done in ${name}` : 'done' };
   },
 
   // The card's rail: which of the three states a challenge is in, the one

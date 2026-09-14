@@ -49,6 +49,7 @@ import type { ReactNode } from 'react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 
@@ -100,7 +101,7 @@ type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; summary: string; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
+  | { kind: 'cards'; progress: SeasonProgressView; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -224,12 +225,12 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   }
   return (
     <>
-      <p
-        id="tc-se-challenge-summary"
-        className="text-sm text-zinc-500 dark:text-zinc-400 mb-3"
-      >
-        {view.summary}
-      </p>
+      {/*
+          The progress Home's block shares ("3/9 done in Season 2" over one
+          segment per challenge). The id rides its text line, where the
+          declared dapp.json check anchors.
+      */}
+      <SeasonProgress id="tc-se-challenge-summary" view={view.progress} className="mb-4" />
       {view.notice ? (
         <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
       ) : null}

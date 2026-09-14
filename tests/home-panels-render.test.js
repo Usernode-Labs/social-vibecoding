@@ -212,7 +212,7 @@ const challenge = (over = {}) => ({
 });
 
 // The first challenge card and everything after it, up to the footer — the
-// card markup without the ring above it or the controls below it.
+// card markup without the season progress above it or the controls below it.
 const cardOf = (html) => {
   const from = html.indexOf('home-challenge-card');
   const to = html.indexOf('home-panel-footer', from);
@@ -499,7 +499,7 @@ test('the retired pill, capsule and category well leave nothing behind', () => {
     'the script that measured the capsule went with it');
 });
 
-test('every open card says how long it has left; the ring does not repeat it', () => {
+test('every open card says how long it has left; the season progress does not repeat it', () => {
   // Until deadline bands group the cards by when they end, the line under
   // each title carries it: the challenge's own end when it has one, else the
   // season's. A finished challenge has nothing to count down to.
@@ -516,8 +516,8 @@ test('every open card says how long it has left; the ring does not repeat it', (
       ],
     })],
   });
-  const ring = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-challenge-card'));
-  assert.doesNotMatch(ring, /\d+[dh] left/, 'the ring no longer carries the deadline');
+  const progress = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-challenge-card'));
+  assert.doesNotMatch(progress, /\d+[dh] left/, 'the season progress carries no deadline');
   const cardById = (id) => {
     const at = html.indexOf(`data-challenge-id="${id}"`);
     assert.ok(at > 0, `card ${id} renders`);
@@ -561,7 +561,7 @@ test('a challenge the expanded list carries while not open shows no countdown', 
     'organiser-closed or outside its window: no "3d left" on a challenge nobody can do');
 });
 
-test('when no card on screen shows a deadline, the ring says how long the season has left', () => {
+test('the season progress names its scope, and leaves deadlines to the cards', () => {
   const ends = new Date(Date.now() + 71 * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });
   const allDone = HP.challengesView(panel({
@@ -569,10 +569,13 @@ test('when no card on screen shows a deadline, the ring says how long the season
     total: 1, done: 1,
     challenges: [challenge({ progress: { done: true, current: null, target: null } })],
   }));
-  assert.equal(allDone.season.sub, '3d left', 'every card finished: the fact moves back to the ring');
+  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, caption: 'done in Season 1' },
+    'every card finished: still just the tally, no "3d left" moved onto it');
   const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
-  assert.equal(open.season.sub, null, 'an open card says it, so the ring does not repeat it');
-  assert.equal(open.rows[0].deadline, '3d left');
+  assert.equal(open.season.caption, 'done in Season 1');
+  assert.equal(open.rows[0].deadline, '3d left', 'the card says the deadline');
+  const unnamed = HP.challengesView(panel({ season: { id: 1, name: '' } }));
+  assert.equal(unnamed.season.caption, 'done', 'no name, no scope words');
 });
 
 test('the lane is gone, and a row carries the rail instead of a meter', () => {
@@ -833,7 +836,7 @@ test('expanding stops the rows list clipping, and there is no cap left to lift',
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-test('render: the heading names its area — the counter is the ring', () => {
+test('render: the heading names its area — the counter is the season progress', () => {
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
   });
@@ -851,40 +854,39 @@ test('render: the heading names its area — the counter is the ring', () => {
   // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
   // shrunk from the label's own size because at 15px it ellipsised
   // "Challenges" on a phone, in a heading that also carries a link and the ⋮.
-  // It is the season ring inside the card now: the same three fields, drawn
-  // as the first thing in the block rather than a footnote above it.
+  // It is the season progress inside the card now ("1/6 done in Season 1"
+  // over six segments), the first thing in the block rather than a footnote
+  // above it, and the same component the Challenges tab opens on.
   const heading = html.match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
   assert.doesNotMatch(heading, /1 of 6/, 'no counter left in the heading');
   assert.doesNotMatch(heading, /3,900/);
-  assert.match(html, /home-panel-season/);
-  assert.match(html, /3,900 pts left/, 'the points lead the ring');
-  assert.match(html, /1 of 6 challenges done/, 'and the count sits under them');
-  assert.match(html, /aria-label="1 of 6 challenges done, 3,900 points left"/);
-  // The ring's arc, from twelve o'clock. `pct` is the same rounded integer the
-  // bars use (progressPercent), so a sixth is 17% of the 94.25 circumference —
-  // the ring and a row's fill can never disagree about what a fraction means.
-  assert.match(html, /stroke-dasharray="16\.0225 94\.25"/);
-  assert.match(html, /transform="rotate\(-90 19 19\)"/);
+  const progress = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-panel-body'));
+  assert.match(progress, />1\/6<\/span><span[^>]*>done in Season 1</, 'the figure and its scope');
+  assert.match(progress, /role="meter"[^>]*aria-label="1 of 6 done in Season 1"/);
+  assert.equal((progress.match(/h-\[5px\]/g) || []).length, 6, 'one segment per challenge');
+  assert.equal((progress.match(/bg-violet-700/g) || []).length, 1, 'one of them filled');
+  // The ring and its two lines went with it: no points lead, no arc.
+  assert.doesNotMatch(progress, /pts left|stroke-dasharray/);
 });
 
-test('the ring omits its arc at zero, and drops the second line with no points', () => {
-  // A round-capped stroke of length 0 still paints its two caps, which is a
-  // violet dot at twelve o'clock on a season nobody has started.
+test('the season progress: nothing filled at zero, and setup is its own scope', () => {
   const zero = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 0, points_remaining: 3900 })],
   }).html;
   assert.match(zero, /home-panel-season/);
-  assert.doesNotMatch(zero, /stroke-dasharray/, 'no arc at all rather than a zero-length one');
   assert.match(zero, />0\/6</);
+  const zeroBar = zero.slice(zero.indexOf('home-panel-season'), zero.indexOf('home-panel-body'));
+  assert.doesNotMatch(zeroBar, /bg-violet-700/, 'a season nobody has started draws no fill');
 
-  // With no points to name, the count leads and there is no second line to
-  // repeat it — the same rule summaryLine follows for its own clause.
-  const nopoints = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 6, done: 2, points_remaining: null })],
+  // While setup gates the rest, the block holds only setup's challenges, so
+  // the progress counts those and the gate line under it stays short.
+  const gated = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 3, done: 0, onboarding: { total: 3, completed: 1, unlocked: false, event_id: 1 } })],
   }).html;
-  assert.match(nopoints, /2 of 6 challenges done/);
-  assert.doesNotMatch(nopoints, /pts left/);
-  assert.match(nopoints, /aria-label="2 of 6 challenges done"/);
+  assert.match(gated, />1\/3<\/span><span[^>]*>done in Get started</);
+  assert.match(gated, />Finish these to unlock persistent and weekly challenges\.</);
+  assert.doesNotMatch(gated, /onboarding challenges completed/, 'the count is not said twice');
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in
@@ -1078,14 +1080,14 @@ test('the title bar and the footer controls are single-line too', () => {
   // after a separator, shrunk to 12px because at the label's own size a
   // "· 2 of 9 · 24,300 pts left" ellipsised "Challenges" on a phone — and the
   // heading still had a link and the ⋮ after that. The counter is the season
-  // ring inside the card now, so the label has the row to itself and needs no
+  // progress inside the card now, so the label has the row to itself and needs no
   // caption slot to keep off its own name.
   assert.match(html, /min-w-0 flex-1 truncate[^>]*>Challenges<\/span>/);
   assert.doesNotMatch(html, /whitespace-nowrap text-\[12px\]"> · /,
     'no counter appended to the area label');
-  // The ring says it instead, and its two lines do not wrap either.
-  assert.match(html, /home-panel-season[\s\S]*?truncate whitespace-nowrap[^>]*>24,300 pts left</);
-  assert.match(html, /truncate whitespace-nowrap[^>]*>2 of 9 challenges done</);
+  // The season progress says it instead, on one line that truncates rather
+  // than wraps.
+  assert.match(html, /home-panel-season[\s\S]*?>2\/9<\/span><span class="min-w-0 truncate[^"]*">done in Season 1</);
   // The bar carries the way out (#968, now the leaderboard link of #980).
   // Nothing competes with it for the row any more — the summary that used to
   // is one level up — but it stays shrink-0 and nowrap: the label used to
@@ -1409,7 +1411,7 @@ test('the block sizes to its content — no height cap to clip it', () => {
   assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
     /height:\s*var\(--home-panel-row-h\)/);
   assert.match(css, /--home-panel-row-h:\s*3\.5rem/);
-  // The collapsed block a viewer actually gets — the season ring, four
+  // The collapsed block a viewer actually gets — the season progress, four
   // challenge rows and the footer — is what a re-introduced 16rem cap would
   // start cutting into. Two lines per row made it taller, not shorter, so the
   // cap is further out of the question than it was.

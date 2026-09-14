@@ -413,7 +413,14 @@ test('the challenges grid summarises and groups the completed set', () => {
   // declared dapp.json check lose its anchor.
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
-  assert.match(chJs, /challenges completed/, 'and states the tally in words');
+  // ITERATION 03 moved the tally into the shared season progress
+  // ("3/9 done in Season 2" over one segment per challenge) rather than
+  // "3 of 9 challenges completed". This pin moved with it, deliberately.
+  assert.match(chJs, /caption: name \? `done in \$\{name\}` : 'done'/, 'and states the tally in words');
+  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+    'which is what the summary line carries');
+  assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
+    'drawn by the component Home shares');
   assert.match(chTsx, /\{g\.heading\}/,
     'the grouping subheading renders');
   assert.match(chJs, /heading: 'Completed'/,

@@ -2499,13 +2499,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    tab's shared progress rail now (features/leaderboard/challenge-card.tsx),
    and the declared checks select on its `[role=progressbar]`. */
 
-/* THE SEASON RING's own hairline, inset like the row rules above it — the
-   ring is the card's first band and the rows follow it, so the seam between
-   them has to read as the same kind of seam as the ones between rows. It is a
-   ::after (the band's own bottom) rather than a ::before on the first row,
-   because the rows list draws no leading rule by design: with no ring above
-   it — the between-seasons block — a rule at the top of row one would be a
-   line against the card's own edge. */
+/* THE SEASON PROGRESS's own hairline, inset like the row rules above it —
+   the progress is the card's first band and the rows follow it, so the seam
+   between them has to read as the same kind of seam as the ones between rows.
+   It is a ::after (the band's own bottom) rather than a ::before on the first
+   row, because the rows list draws no leading rule by design: with no
+   progress above it — the between-seasons block — a rule at the top of row
+   one would be a line against the card's own edge. */
 .home-panel-season {
   position: relative;
 }
