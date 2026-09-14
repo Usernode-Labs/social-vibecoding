@@ -217,10 +217,34 @@ function buildkitRuntime() {
 // engine setting admits it. Both return the same `{ buildRef, imageRef,
 // requestedTag, phases, reused }` and fail with the same buildFailed/buildLog
 // contract, so nothing downstream tells them apart.
+//
+// Under `auto`, a lane the cluster cannot run — no namespace or RBAC for it
+// yet, or a node without user namespaces for the rootless daemon — is a
+// reason to build with kpack, not to fail the app's preview: the lane is
+// an optimisation, and the fleet turns it on one piece at a time (the
+// foundation chart, then the node sysctl). The verdict is remembered for a
+// while so a cluster without the lane does not pay for a doomed Job per
+// build. Under `buildkit` the failure surfaces, because that setting is the
+// way to find out the lane is not actually being used.
 async function createBuild(config, params) {
   const { engine } = buildkit.selectEngine(config, params.sourceDir);
-  if (engine === buildkit.ENGINE) return buildkit.createBuild(config, params, buildkitRuntime());
-  return createKpackBuild(config, params);
+  if (engine !== buildkit.ENGINE) return createKpackBuild(config, params);
+  const strict = config.kubernetes.buildEngine === buildkit.ENGINE;
+  const remembered = strict ? null : buildkit.unavailableReason();
+  if (remembered) {
+    log.debug('kubernetes', 'BuildKit lane recently unavailable; building with kpack', { appId: params.app?.id, reason: remembered });
+    return createKpackBuild(config, params);
+  }
+  try {
+    return await buildkit.createBuild(config, params, buildkitRuntime());
+  } catch (err) {
+    if (strict || !err?.engineUnavailable) throw err;
+    buildkit.noteUnavailable(err);
+    log.warn('kubernetes', 'BuildKit lane unavailable; building with kpack', {
+      appId: params.app?.id, revision: params.revision, reason: err.message,
+    });
+    return createKpackBuild(config, params);
+  }
 }
 
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
