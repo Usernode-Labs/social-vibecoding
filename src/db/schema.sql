@@ -7372,6 +7372,24 @@ BEGIN
   END IF;
 END $$;
 
+-- ── What a proposal still needs before it merges ───────────────────────
+--
+-- A recording of what checkAndMerge actually did on its last run: an ordered
+-- list of the gates it cleared and the one that refused, written from the same
+-- call sites that already narrate into merge_debug_runs.
+--
+-- It is a DESCRIPTION, never an input. Nothing reads it to decide whether a
+-- proposal may merge — checkAndMerge re-evaluates everything from scratch
+-- every time — so a stale or missing record costs a card its checklist and
+-- costs the merge nothing. services/merge-gate.js turns it, plus that file's
+-- static gate order, into the list the card renders.
+--
+-- Why a recording rather than a second evaluator: re-deriving the gate's
+-- conditions anywhere else means two implementations of "can this merge",
+-- drifting, with the describing one eventually lying about the deciding one.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements_at TIMESTAMPTZ;
+
 -- The measurement sweep's candidate ordering: promoted rows, least recently
 -- measured first, never-measured ahead of everything. Mirrors the freshness
 -- index above, which it replaces once that pass is retired.
