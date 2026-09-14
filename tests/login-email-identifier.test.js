@@ -60,11 +60,6 @@ for (const level of ['info', 'warn', 'error', 'debug']) {
   logger[level] = (...args) => { logCalls.push([level, ...args]); };
 }
 
-// ── Pass-through auth limiter (same rationale as password-reset.test.js:
-// one shared 10/15min/IP bucket would 429 this file's later tests) ──
-const rateLimits = require('../src/middleware/rate-limits');
-rateLimits.authLimiter = (_req, _res, next) => next();
-
 const { authRoutes } = require('../src/routes/auth');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -125,6 +120,10 @@ test('every spelling and flow enforces logout before another session mint', asyn
       '/api/auth/login/',
       '/API/AUTH/LOGIN',
       '/api/auth/wallet-reset-verify',
+      // Verifying an email code signs an established account straight in
+      // (#1586), so it mints a session and joins the boundary. The guard runs
+      // ahead of the route, so the credentials in the body are irrelevant.
+      '/api/auth/otp/verify',
     ]) {
       const r = await login(
         server,

@@ -117,7 +117,7 @@ test('a permanently-refused message is handed back with the words intact', () =>
   assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
   assert.match(openModal, /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.disabled \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
 });
 
 test('a captured screenshot survives a failed upload', () => {
@@ -223,7 +223,9 @@ test('the dot travels through the visibility store, not a classList write', () =
 });
 
 test('the queue module loads before app.js and is precached', () => {
-  assert.match(shellTsx, /<script src="\/js\/feedback-queue\.js" \/>/);
+  // Through assetUrl(): the src is build-scoped in a deployed document
+  // (frontend/src/lib/asset-url.ts).
+  assert.match(shellTsx, /<script src=\{assetUrl\('\/js\/feedback-queue\.js'\)\} \/>/);
   const order = [
     indexHtml.indexOf('/js/feedback-queue.js'),
     indexHtml.lastIndexOf('/js/app.js'),
@@ -263,8 +265,9 @@ test('the two screenshot deep links exist and are display-only', () => {
   for (const check of dapp.tests.filter((t) => String(t.path).startsWith('/?shot=feedback-'))) {
     if (!check.expectText) continue;
     assert.ok(
-      feedbackJs.includes(check.expectText),
-      `dapp.json expects "${check.expectText}" but no such string is in feedback-controller.js`,
+      feedbackJs.includes(check.expectText)
+        || read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx').includes(check.expectText),
+      `dapp.json expects "${check.expectText}" but it is absent from the feedback controller and markup`,
     );
   }
 });

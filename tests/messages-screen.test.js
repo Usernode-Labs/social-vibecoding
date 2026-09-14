@@ -43,7 +43,18 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
       + ' ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin'),
   'a declared check pins the menu order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
-  assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
+  // Membership INSIDE the array literal. The previous form,
+  // /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/, matched the id anywhere
+  // later in the file — SCREEN_IDS, getElementById('messages-screen'), the
+  // route table — and so passed for the whole time the id was missing from
+  // this list (#1431 took it out when Messages became a sheet; #1444 made
+  // Messages a screen again and put it back everywhere except here). Two
+  // owners of one `hidden` class was the result, and six declared checks
+  // failed by the timing of whichever visibility publish came last.
+  const reactOwned = /REACT_SCREEN_IDS:\s*\[([\s\S]*?)\]/.exec(app);
+  assert.ok(reactOwned, 'REACT_SCREEN_IDS is an array literal');
+  assert.match(reactOwned[1], /'messages-screen'/,
+    'the island owns #messages-screen\'s hidden class, so app.js must publish, not toggle');
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
 });
 

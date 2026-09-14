@@ -34,7 +34,7 @@ import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-s
 import { ChallengesPanel } from './challenges';
 import { CreatePanel } from './create';
 import { DiscoverPanel } from './discover';
-import { BrowseLink, LeaderboardLink, PanelMenuButton, SectionHeading, stampProps } from './ui';
+import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
 
 /**
  * One host. `slot` names WHICH block it is for — it rides along from the grid
@@ -99,7 +99,7 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
       // the first client render, so neither can disagree with the document
       // the shell ships. Nothing here reads the view model — the ⋮ names its
       // block by key and the link goes to a fixed hash.
-      action={<><BrowseLink /><PanelMenuButton panelKey="discover" /></>}
+      action={<BrowseLink />}
       painted={painted}
       stamps={discover
         ? { featured: discover.featured.length, popular: discover.popular.length }
@@ -131,7 +131,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       // state becomes the first thing inside the block rather than a footnote
       // above it. Nothing data-derived is left in this heading, which also
       // means there is nothing here that could disagree with the prerender.
-      action={<><LeaderboardLink /><PanelMenuButton panelKey="challenges" /></>}
+      action={<LeaderboardLink />}
       painted={painted}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}

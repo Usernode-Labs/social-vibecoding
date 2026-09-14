@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const { Router } = require('express');
 const path = require('path');
 const { getPool } = require('../db/pool');
@@ -72,7 +73,7 @@ function statusRoutes(config) {
       const { rows } = await pool.query(
         `SELECT s.expires_at, u.is_admin, u.username, u.id AS user_id
          FROM sessions s JOIN users u ON s.user_id = u.id
-         WHERE s.token = $1`,
+         WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`,
         [token]
       );
       if (!rows.length || new Date(rows[0].expires_at) < new Date()) return null;

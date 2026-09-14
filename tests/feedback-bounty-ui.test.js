@@ -45,7 +45,11 @@ test('the feedback modal carries the bounty row, checkbox and note', () => {
   assert.match(html, /id="feedback-bounty-checkbox"/);
   assert.match(html, /id="feedback-bounty-note"/);
   assert.match(html, /Put a kudos bounty on this/);
-  assert.match(html, /pledges 1 of your weekly kudos/);
+  // #1582: the row's own line says what a bounty DOES and nothing else. The
+  // price of ticking the box moved to the note below, which is where the
+  // live figure already was — it did not go away, and the next test pins it.
+  assert.match(html, /encourages someone to take it up and solve it/);
+  assert.doesNotMatch(html, /pledges 1 of your weekly kudos/);
 });
 
 test('the bounty row sits after the app-state row and before the status line', () => {
@@ -75,9 +79,17 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
   assert.match(feedbackJs, /const resetBountyRow = \(\) => \{/);
   assert.match(feedbackJs, /window\.Kudos\?\.Budget\?\.state/);
   // Both copy variants interpolate the server's numbers.
-  assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} kudos left this week/);
+  assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} left this week/);
   assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
   assert.match(feedbackJs, /Resets Monday 00:00 UTC/);
+  // #1582: and the cost is stated in every state the box can be ticked in —
+  // including the one where the budget fetch failed and there is no figure.
+  const note = feedbackJs.slice(
+    feedbackJs.indexOf('if (remaining === null) bountyNote'),
+    feedbackJs.indexOf("bountyRow.classList.remove('hidden')"),
+  );
+  assert.match(note, /remaining === null\) bountyNote\.textContent = 'Costs 1 kudos'/);
+  assert.match(note, /`Costs 1 kudos\. \$\{remaining\} of \$\{limit\} left this week`/);
 });
 
 test('resetBountyRow unchecks the box and disables it at zero remaining', () => {

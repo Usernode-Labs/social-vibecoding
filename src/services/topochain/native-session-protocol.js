@@ -1,7 +1,8 @@
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../web-session-auth');
+
 const crypto = require('crypto');
-const { iso } = require('../../routes/topochain/helpers');
 const {
   PROTOCOL,
   AUDIENCE,
@@ -34,6 +35,13 @@ class NativeSessionProtocolError extends Error {
 
 function protocolError(status, code, message) {
   throw new NativeSessionProtocolError(status, code, message);
+}
+
+// Android's desugared Instant parser accepts canonical UTC `Z`, but not the
+// platform v4 API's equivalent `+00:00` spelling. Keep the native wire format
+// explicit at this boundary.
+function nativeInstant(date) {
+  return date.toISOString();
 }
 
 async function withTransaction(pool, fn) {
@@ -99,7 +107,7 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
     ? await client.query(
       `SELECT a.attempt_id, a.protocol, a.user_id, a.web_session_incarnation_id,
               a.desired_runtime, a.network_id, a.chain_id, a.request_digest,
-              a.state AS attempt_state,
+              a.state AS attempt_state, a.walletless_supported,
               t.id AS ticket_id, t.ticket_hash, t.exchange_challenge,
               t.state AS ticket_state, t.issued_at, t.expires_at
          FROM native_session_tickets t
@@ -111,7 +119,7 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
     : await client.query(
       `SELECT a.attempt_id, a.protocol, a.user_id, a.web_session_incarnation_id,
               a.desired_runtime, a.network_id, a.chain_id, a.request_digest,
-              a.state AS attempt_state,
+              a.state AS attempt_state, a.walletless_supported,
               t.id AS ticket_id, t.ticket_hash, t.exchange_challenge,
               t.state AS ticket_state, t.issued_at, t.expires_at
          FROM native_session_tickets t
@@ -123,10 +131,34 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
   return rows[0] || null;
 }
 
+// The already-built Android/iOS 0.4.0+1252 release accepts account:null.
+// Public build metadata selects a response shape, never authentication authority.
+// Older releases and missing/malformed metadata retain the wallet-required fallback.
+// TODO(remove-build-1250-compat): Once the minimum supported app accepts
+// walletless credentials, remove this release gate, handoff headers, attempt
+// column and wallet-required issuance/replay branches together.
+function supportsWalletlessCredentials({ appVersion, buildNumber }) {
+  if (typeof appVersion !== 'string' || appVersion.trim() !== appVersion
+      || appVersion.length > 32
+      || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(appVersion)
+      || typeof buildNumber !== 'string' || buildNumber.trim() !== buildNumber
+      || !/^[1-9][0-9]{0,9}$/.test(buildNumber)) return false;
+
+  // Compare semantic version first, then build within that version. A normal
+  // version bump remains compatible even if its build counter starts over.
+  const release = [...appVersion.split('.').map(Number), Number(buildNumber)];
+  if (!release.every(Number.isSafeInteger)) return false;
+  const minimum = [0, 4, 0, 1252];
+  for (let i = 0; i < minimum.length; i += 1) {
+    if (release[i] !== minimum[i]) return release[i] > minimum[i];
+  }
+  return true;
+}
+
 async function replayExchange(client, { row, request, keys, exchangeDigest, config }) {
   const { rows } = await client.query(
     `SELECT c.credential_reference, c.credential_generation,
-            c.exchange_request_digest, c.state,
+            c.exchange_request_digest, c.state, c.account_id,
             c.installation_id, c.installation_key_generation, c.expires_at,
             e.encrypted_response, e.response_digest
        FROM native_session_credentials c
@@ -161,6 +193,14 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
     protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
   }
 
+  // Use the latest authenticated handoff, including after an app upgrade or
+  // downgrade. Refreshing a handoff also refreshes its decoder compatibility.
+  // TODO(remove-build-1250-compat): Remove only this shape refusal once all
+  // supported mobile builds accept walletless credentials; retain replay checks.
+  if (credential.account_id == null && row.walletless_supported !== true) {
+    protocolError(409, 'native_session_wallet_required', 'This native session needs a wallet. Web access is still available.');
+  }
+
   return openReplay({
     kind: 'exchange',
     key: credential.credential_reference,
@@ -170,14 +210,18 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
   });
 }
 
-async function provisionWallet(client, userId) {
+async function provisionWallet(client, userId, { allowWalletless = false } = {}) {
   const { rows: seasonRows } = await client.query(
     `SELECT id FROM seasons
       WHERE internal = FALSE AND is_active = TRUE
         AND starts_at <= NOW() AND ends_at >= NOW()
       ORDER BY starts_at DESC, id DESC LIMIT 1`
   );
+  // An HTTP exchange failure is recoverable on build 1250; account:null is not.
+  // TODO(remove-build-1250-compat): Once 1250-era decoders are unsupported,
+  // return null unconditionally in both unavailable-wallet branches below.
   if (!seasonRows.length) {
+    if (allowWalletless === true) return null;
     protocolError(422, 'native_session_no_active_season', 'No active season is available.');
   }
   const seasonId = Number(seasonRows[0].id);
@@ -204,6 +248,7 @@ async function provisionWallet(client, userId) {
       [seasonId]
     );
     if (!availableRows.length) {
+      if (allowWalletless === true) return null;
       protocolError(409, 'native_session_wallet_pool_exhausted', 'No on-chain accounts are available for the current season.');
     }
     account = availableRows[0];
@@ -254,9 +299,9 @@ function buildCredentialPlaintext({
       reference: credentialReference,
       generation: 1,
       bearerToken,
-      bearerExpiresAt: iso(bearerExpiresAt),
+      bearerExpiresAt: nativeInstant(bearerExpiresAt),
     },
-    account: {
+    account: account ? {
       accountId: String(account.id),
       address: account.address,
       publicKey: account.public_key,
@@ -265,7 +310,7 @@ function buildCredentialPlaintext({
       seasonEventId: account.season_event_id == null ? null : Number(account.season_event_id),
       newlyAllocated: account.newlyAllocated,
       blockProductionReleased: bpReleased,
-    },
+    } : null,
   };
 }
 
@@ -284,7 +329,7 @@ class NativeSessionProtocol {
     return network;
   }
 
-  async createHandoff({ sessionToken, body }) {
+  async createHandoff({ sessionToken, body, appVersion, buildNumber }) {
     const parsed = ticketRequestSchema.safeParse(body);
     if (!parsed.success) {
       protocolError(422, 'invalid_native_session_handoff_request', 'The native session handoff request is invalid.');
@@ -296,14 +341,23 @@ class NativeSessionProtocol {
     return withTransaction(this.pool, async (client) => {
       const now = this.now();
       const { rows: sessionRows } = await client.query(
-        `SELECT token, user_id, native_session_incarnation_id
+        `SELECT token, user_id, native_session_incarnation_id,
+                native_session_credential_reference,
+                (SELECT c.attempt_id FROM native_session_credentials c
+                  WHERE c.credential_reference = sessions.native_session_credential_reference) AS native_attempt_id
            FROM sessions
           WHERE token = $1 AND expires_at >= $2
+            AND ${nativeWebSessionIsLive('sessions')}
           FOR UPDATE`,
         [sessionToken, now]
       );
       const session = sessionRows[0];
       if (!session) protocolError(401, 'unauthenticated', 'Unauthenticated.');
+      // Recovery grants continuation of the exact native session, never a
+      // fresh native credential that could survive revocation of its source.
+      if (session.native_session_credential_reference && session.native_attempt_id !== request.attemptId) {
+        protocolError(409, 'native_session_attempt_conflict', 'The restored web session must resume its original native attempt.');
+      }
 
       let incarnationId = session.native_session_incarnation_id;
       if (!incarnationId) {
@@ -356,6 +410,13 @@ class NativeSessionProtocol {
         protocolError(409, 'native_session_attempt_revoked', 'The native session attempt is no longer valid.');
       }
 
+      // The attempt lock also serializes decoder changes with issuance/replay.
+      // Refresh this even for an exchanged attempt when the app build changes.
+      await client.query(
+        `UPDATE native_session_attempts SET walletless_supported = $2
+          WHERE attempt_id = $1`,
+        [request.attemptId, supportsWalletlessCredentials({ appVersion, buildNumber })]
+      );
       const handoffToken = makeOpaque('nsh_');
       const expiresAt = new Date(now.getTime() + HANDOFF_TTL_MS);
       await client.query(
@@ -472,8 +533,8 @@ class NativeSessionProtocol {
           requestDigest: attempt.request_digest,
           exchangeChallenge,
           network,
-          issuedAt: iso(now),
-          expiresAt: iso(expiresAt),
+          issuedAt: nativeInstant(now),
+          expiresAt: nativeInstant(expiresAt),
         },
       });
       const sealed = sealReplay({
@@ -540,6 +601,7 @@ class NativeSessionProtocol {
         `SELECT token FROM sessions
           WHERE native_session_incarnation_id = $1
             AND user_id = $2 AND expires_at >= $3
+            AND ${nativeWebSessionIsLive('sessions')}
           FOR KEY SHARE`,
         [row.web_session_incarnation_id, row.user_id, now]
       );
@@ -597,7 +659,9 @@ class NativeSessionProtocol {
         protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
       }
 
-      const account = await provisionWallet(client, row.user_id);
+      const account = await provisionWallet(client, row.user_id, {
+        allowWalletless: row.walletless_supported === true,
+      });
       const bearerToken = crypto.randomBytes(40).toString('hex');
       const bearerHash = sha256Hex(bearerToken);
       const bearerExpiresAt = new Date(now.getTime() + CREDENTIAL_TTL_MS);
@@ -651,7 +715,7 @@ class NativeSessionProtocol {
                  $9, $10, $11, 'valid', $12, $13)`,
         [credentialReference, request.attemptId, row.user_id,
           row.web_session_incarnation_id, request.installation.id,
-          request.installation.keyGeneration, mobileTokenId, account.id,
+          request.installation.keyGeneration, mobileTokenId, account?.id ?? null,
           row.network_id, row.chain_id, exchangeDigest, now, bearerExpiresAt]
       );
       await client.query(
@@ -685,5 +749,6 @@ module.exports = {
   exactAttempt,
   exactInstallation,
   provisionWallet,
+  supportsWalletlessCredentials,
   buildCredentialPlaintext,
 };

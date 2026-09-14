@@ -166,25 +166,32 @@ test('a PRIVATE own session carries the muted shell; a visible one does not', ()
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
 
-test('shared card: single-row shell; noNav drops nav, chevron and the actions row', () => {
+test('shared card: single-row shell; noNav drops nav and chevron, and its band holds only the menu', () => {
   const AppView = makeAppView();
   const s = sharedSess({ busy: true, staging_url: 'https://example.invalid' });
   const nav = sharedSessionCardHtml(AppView, s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  // The preview eye is no longer a pill in the action band: it is the bottom
-  // of the card's right-edge rail, so it comes AFTER the chevron it is stacked
-  // under (the chevron's auto margins centre it in the space above the eye).
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', CHEVRON, 'gc-vote-btn-preview']);
-  assert.match(nav, /dev-card-rail/, 'and the pair share the rail column');
+  // The preview is a labelled pill closing the action band, so it comes
+  // BEFORE the chevron on the card's right edge — where the chevron now
+  // stands alone: the rail column that once held the ⋯ and the eye is gone.
+  // The count rides the meta line now, so it comes BEFORE the badge row's
+  // spinner; the preview still precedes the chevron.
+  assertOrder(nav, ['dev-card-title', 'dev-chat-badge', SPINNER, 'gc-vote-btn-preview', CHEVRON]);
+  assert.doesNotMatch(nav, /dev-card-rail/, 'no right-edge column');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
   assert.ok(!noNav.includes(CHEVRON), 'noNav variant has no chevron');
-  assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
+  // The topic head's menu (View checks, …) used to sit in the rail's
+  // corner; the band is the trigger's one seat now, so the head keeps an
+  // action band with the hamburger alone in it, and nothing else.
+  assert.match(noNav, /<div class="gc-card-actions"><button [^>]*dev-card-menu-btn" data-card-menu="session:71"[^>]*>[\s\S]*?<\/button><\/div>/,
+    'noNav variant\'s band holds only its menu trigger');
+  assert.doesNotMatch(noNav, /gc-card-actions"><button[^>]*data-act=/, 'and no pills');
 });
 
-test('an owned imported PR is an In-progress discussion card with one promotion action', () => {
+test('an owned imported PR shows proposal metadata with one promotion action', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
   const model = AppView._mySessionCardModel(mySess({
@@ -192,6 +199,10 @@ test('an owned imported PR is an In-progress discussion card with one promotion 
     source: 'imported',
     imported_pr_author: 'octo-contributor',
     pr_number: 1165,
+    pr_url: 'https://github.example/pull/1165',
+    priority: { top: 'high', count: 2, myValue: 'high' },
+    assignee: { top: 'tester', count: 1, myValue: 'tester' },
+    category: { top: 'bug', count: 1, myValue: 'bug' },
     shared_at: '2026-06-01T03:00:00Z',
   }));
   const html = cardHtml(model);
@@ -199,23 +210,46 @@ test('an owned imported PR is an In-progress discussion card with one promotion 
     'the card opens its public discussion, never a dev chat');
   assert.doesNotMatch(html, /data-session-chip=/);
   assert.match(html, /Imported PR/);
+  assert.match(html, /High/);
+  assert.match(html, /@tester/);
+  assert.match(html, />Bug</);
   assert.match(html, /Imported pull request by octo-contributor · not up for vote yet/);
   // `passNode` appends the clicked button, which the model cannot hold.
   assert.ok(hasAction(model, 'promoteImportedSession', 88), 'the promote pill is wired');
   assert.ok(model.actions.find((a) => a.key === 'promote').passNode);
   assert.match(html, />Put up for vote</);
+  assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
-  assert.equal(menuKeyOf(html), null, 'no archive or dev-session menu is exposed');
+  assert.equal(menuLabels(AppView, html).join('|'),
+    'Change priority…|Change category…|Change assignee…|View PR on GitHub|View checks',
+    'the menu edits proposal attributes without exposing dev-session actions');
+  assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
 });
 
-test('another user’s imported PR names author and importer without owner controls', () => {
+test('another user’s imported PR names its people and exposes proposal attributes', () => {
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
+    pr_url: 'https://github.example/pull/1165',
+    assignee: { top: 'sam', count: 1, myValue: null },
   }));
   assert.match(html, /Imported PR/);
+  assert.match(html, /@sam/);
   assert.match(html, /Imported pull request by octo-contributor · imported by maya/);
   assert.doesNotMatch(html, /Put up for vote|is working on this/);
+  assert.ok(menuHas(AppView, html, /Change assignee/));
+  assert.ok(menuHas(AppView, html, /View PR on GitHub/));
+});
+
+test('an imported PR detail header shows all three editable attribute slots', () => {
+  const AppView = makeAppView();
+  const html = sharedSessionCardHtml(AppView, sharedSess({
+    source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
+  }), { noNav: true });
+  assert.match(html, /Set priority/);
+  assert.match(html, /Unassigned/);
+  assert.match(html, /Set category/);
+  assert.doesNotMatch(html, />Yes \(|>No \(/);
 });
 
 // ── Preview pill gating (#689) ──────────────────────────────────────────────
@@ -331,7 +365,7 @@ test('chat-shared own card flips to the revoke row and says so in the subtitle',
   assert.match(html, /Visible to everyone · chat readable/);
 });
 
-test('the ⋯ rows come in chat-sharing → discussion → Archive order', () => {
+test('the ⋯ rows come in chat-sharing → discussion → checks → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
@@ -339,7 +373,7 @@ test('the ⋯ rows come in chat-sharing → discussion → Archive order', () =>
   // Visibility used to lead this list; it is the promoted pill now, so the
   // menu starts at the narrower second opt-in. Archive stays last — it is the
   // destructive row.
-  assert.match(labels, /^Share chat\|Open public discussion\|Archive$/);
+  assert.match(labels, /^Share chat\|Open public discussion\|View checks\|Archive$/);
   assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'visibility leads the ACTION band');
 });
 
@@ -355,10 +389,10 @@ test('the "Read chat" PILL is gone — the transcript lives on the detail page',
     /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
-test('a shared card carries no ⋯ at all (nothing left to demote)', () => {
+test('a shared card offers View checks from its menu', () => {
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
-  assert.equal(menuKeyOf(html), null, 'no dead ⋯ button');
+  assert.equal(menuLabels(AppView, html).join('|'), 'View checks');
 });
 
 test('read-only viewers still reach a published transcript (via the detail page)', () => {
@@ -580,10 +614,10 @@ test('Underway: nothing to show → empty string', () => {
   assert.equal(rowsHtml(AppView._inProgressRows([])), '');
 });
 
-test('the feed pins no own-sessions block above its stream', () => {
-  // The removal itself, so it cannot quietly come back: Activity shows what
-  // happened on the app, and the Improve panel and the Underway column are
-  // where the viewer's own changes are reached from.
+test('the Workshop pins no own-sessions block above its themes', () => {
+  // The removal itself, so it cannot quietly come back: the Workshop shows
+  // what the app's work is about, and the Improve panel and the Underway
+  // lane are where the viewer's own changes are reached from.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
@@ -591,9 +625,9 @@ test('the feed pins no own-sessions block above its stream', () => {
   // and why, and that history is the useful half of them.
   const strip = (t) => t.replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!/_mySessionsRows\s*\(/.test(strip(src)), '_mySessionsRows is gone');
-  const at = src.indexOf('  _feedView()');
+  const at = src.indexOf('  _workshopView()');
   const feedView = strip(src.slice(at, src.indexOf('\n  },', at)));
-  assert.ok(!/\bblock\b/.test(feedView), 'and the feed view model publishes no block');
+  assert.ok(!/\bblock\b/.test(feedView), 'and the Workshop view model publishes no block');
 });
 
 // ── #1038: the "working…" tag is driven by live state, not by the row ────

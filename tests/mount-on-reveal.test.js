@@ -110,15 +110,19 @@ test('AuthScreens.show() asks for the screen before wiring or revealing it', () 
 test('the settings chassis mounts its panes on reveal and keeps refresh() at boot', () => {
   const tsx = read('frontend/src/features/settings/index.tsx');
   assert.match(tsx, /const mounted = useMountedOnReveal\('settings-screen'\);/);
-  assert.match(tsx, /\{mounted \? <SettingsSections \/> : null\}/,
+  // The panes are gated on the reveal AND on their chunk having arrived
+  // (tests/settings-lazy.test.js covers the chunk half).
+  assert.match(tsx, /\{mounted && Sections \? <Sections \/> : null\}/,
     '#settings-section-content ships empty, like #admin-section-content');
   // refresh() populates Settings.state.hasApiKey, which dev-chat and app-view
   // read before the screen is ever opened — so it cannot wait for the mount.
-  assert.match(tsx, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.refresh\?\.\(\);\n\s*\}, \[\]\);/);
-  // init() binds controls by id ONCE, so it waits for them and never re-runs.
-  assert.match(tsx, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*if \(mounted\) window\.Settings\?\.init\(\);\n\s*\}, \[mounted\]\);/);
-  assert.doesNotMatch(tsx, /window\.Settings\?\.init\(\);\n\s*\}, \[\]\);/,
-    'init() must not run at hydration any more — the ids it binds are not there');
+  assert.match(tsx, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.refresh\?\.\(\);\n\s*prefetchSettings\(\);\n\s*\}, \[\]\);/);
+  // init() binds controls by id ONCE, so it waits for them and never re-runs:
+  // it is a layout effect of the panes component itself now.
+  const sections = read('frontend/src/features/settings/sections/index.tsx');
+  assert.match(sections, /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/);
+  assert.doesNotMatch(tsx, /window\.Settings\?\.init/,
+    'init() must not run from the chassis — the ids it binds are not there until the panes are');
 });
 
 test('every auth screen gates its interior on the same hook', () => {

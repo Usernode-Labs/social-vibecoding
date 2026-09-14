@@ -38,20 +38,86 @@ function credentialRoutes(config) {
     return beta.includes(String(userId));
   }
 
+  async function openRouterCatalogForUser(userId, { forceRefresh = false } = {}) {
+    const meta = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
+    if (!meta || meta.status !== 'valid') {
+      return {
+        catalog: {
+          backend: 'codex_openrouter',
+          credentialRevision: meta?.revision || null,
+          recommendedModelId: null,
+          models: [],
+        },
+        hasCredential: false,
+      };
+    }
+    const apiKey = await credentialStore.readSecret({
+      pool, userId, ...OPENROUTER, dataKey: config.dataEncryptionKey,
+    });
+    if (!apiKey) {
+      return {
+        catalog: {
+          backend: 'codex_openrouter',
+          credentialRevision: meta.revision,
+          recommendedModelId: null,
+          models: [],
+        },
+        hasCredential: false,
+      };
+    }
+    const catalog = await agentModels.listOpenRouterModels({
+      pool, userId, credentialRevision: meta.revision,
+      apiKey, config, forceRefresh,
+    });
+    return { catalog, hasCredential: true };
+  }
+
+  async function openRouterFavoriteOverrides(userId) {
+    const { rows } = await pool.query(
+      `SELECT model_id, is_favorite FROM user_agent_model_favorites
+        WHERE user_id = $1 AND backend = 'codex_openrouter'`,
+      [userId],
+    );
+    return new Map(rows.map((row) => [row.model_id, row.is_favorite === true]));
+  }
+
+  function decorateCatalogFavorites(catalog, overrides) {
+    const models = (catalog.models || []).map((model) => ({
+      ...model,
+      // Recommendations are the useful first-run shortlist. A stored TRUE or
+      // FALSE always wins, so starring and unstarring are both durable.
+      isFavorite: overrides.has(model.id)
+        ? overrides.get(model.id)
+        : model.isRecommended === true,
+      isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
+    }));
+    return { ...catalog, totalModels: models.length, models };
+  }
+
   // ── OpenRouter key status ──────────────────────────────────────────
   router.get('/api/me/credentials/openrouter', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     try {
-      const [meta, managedRow] = await Promise.all([
-        credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER }),
-        managedOpenRouter.stateForUser(pool, req.user.id),
-      ]);
+      // #2119: the included key carries the platform's weekly allowance for
+      // this user. It is resolved once here, for the claim card and for the
+      // sync, and the managed state is synced before the credential's
+      // key-info is read, because that merged key-info is what the settings
+      // limit line renders.
+      const allowance = config.openrouterManagementApiKey
+        ? await managedOpenRouter.resolveAllowance(pool, req.user.id)
+        : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET, identityGated: false };
+      const managedRow = await managedOpenRouter.syncAllowance({
+        pool, userId: req.user.id, config, allowance,
+        state: await managedOpenRouter.stateForUser(pool, req.user.id),
+      });
+      const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
       const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
       const verificationRequired = managedOpenRouter.requiresVerifiedIdentity(config);
       const identityEligible = !verificationRequired || !!managedRow.verified;
+      const hasAllowance = allowance.cents > 0;
       res.json({
         configured,
         status: meta?.status || null,
@@ -66,17 +132,66 @@ function credentialRoutes(config) {
           verified: !!managedRow.verified,
           verificationRequired,
           alreadyIssued: !!managed,
-          canClaim: available && identityEligible && !managed && !configured,
-          dailyLimitUsd: config.openrouterManagedDailyLimitUsd,
+          canClaim: available && identityEligible && hasAllowance && !managed && !configured,
+          limitUsd: allowance.limitUsd,
+          limitReset: allowance.limitReset,
+          identityGated: !!allowance.identityGated,
           reason: !betaAllowed(req.user.id) ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
               : (!identityEligible ? 'verification_required'
-                : (managed ? 'already_issued' : (configured ? 'personal_key_configured' : null)))),
+                : (managed ? 'already_issued'
+                  : (!hasAllowance ? 'no_allowance'
+                    : (configured ? 'personal_key_configured' : null))))),
         },
       });
     } catch (err) {
       log.error('credentials', 'openrouter status read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── OpenRouter allowance, read live ────────────────────────────────
+  // What the dev-chat composer's meter shows for an OpenRouter session
+  // (#2118): how much of the key's limit OpenRouter says is left right now.
+  // `keyInfo` on the status route above is the snapshot taken when the key
+  // was saved or issued, and a managed key's remaining figure moves with
+  // every turn, so this asks OpenRouter each time. The response is
+  // allowlisted like the status route's: figures and the last4, never key
+  // material. A key OpenRouter reports no limit for comes back with null
+  // figures, which the meter draws as nothing rather than a guess.
+  router.get('/api/me/credentials/openrouter/allowance', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.setHeader('Cache-Control', 'no-store');
+    let meta;
+    let apiKey;
+    try {
+      meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
+      if (!meta || meta.status !== 'valid') return res.json({ configured: false });
+      apiKey = await credentialStore.readSecret({
+        pool, userId: req.user.id, ...OPENROUTER, dataKey: config.dataEncryptionKey,
+      });
+      if (!apiKey) return res.json({ configured: false });
+    } catch (err) {
+      log.error('credentials', 'openrouter allowance credential read failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const info = await openrouterClient.validateKey(apiKey, {
+        baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin,
+      });
+      res.json({
+        configured: true,
+        source: meta.metadata?.source || 'personal',
+        last4: meta.secret_last4 || null,
+        limit: info.limit,
+        limitRemaining: info.limitRemaining,
+        limitReset: info.limitReset,
+      });
+    } catch (err) {
+      // A transient provider failure leaves the meter blank for this read;
+      // the next usage event or session open asks again.
+      log.warn('credentials', 'openrouter allowance read failed', { userId: req.user.id, err: err.message });
+      res.status(502).json({ error: 'OpenRouter did not report the key\u2019s allowance.' });
     }
   });
 
@@ -92,9 +207,16 @@ function credentialRoutes(config) {
       const claimed = await managedOpenRouter.provision({
         pool, userId: req.user.id, config,
       });
-      // This is the one and only plaintext response. The browser presents a
-      // copy/save affordance; subsequent GETs return only last4 + metadata.
-      return res.status(201).json({ ok: true, ...claimed, shownOnce: true });
+      // Company-funded credentials stay inside Homeroom. Keep this response
+      // allowlisted so a future provisioning detail cannot accidentally
+      // expose credential material to the claimant's browser.
+      return res.status(201).json({
+        ok: true,
+        revision: claimed.revision,
+        defaultModel: claimed.defaultModel,
+        keyInfo: claimed.keyInfo,
+        managed: claimed.managed,
+      });
     } catch (err) {
       if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
         return res.status(err.statusCode).json({ error: err.message, code: err.code });
@@ -122,7 +244,7 @@ function credentialRoutes(config) {
     try {
       const managedState = await managedOpenRouter.stateForUser(pool, req.user.id);
       if (managedState.managed_key_id && managedState.managed_status !== 'deleted') {
-        return res.status(409).json({ error: 'This OpenRouter key is managed by Usernode. Ask an admin to block or remove it.' });
+        return res.status(409).json({ error: 'This OpenRouter key is managed by Homeroom. Ask an admin to block or remove it.' });
       }
     } catch (err) {
       log.error('credentials', 'managed key ownership check failed', { userId: req.user.id, err: err.message });
@@ -166,7 +288,7 @@ function credentialRoutes(config) {
           throw new managedOpenRouter.ManagedOpenRouterError(
             409,
             'managed_key_exists',
-            'This OpenRouter key is managed by Usernode. Ask an admin to block or remove it.',
+            'This OpenRouter key is managed by Homeroom. Ask an admin to block or remove it.',
           );
         }
         const credential = await credentialStore.writeOpenRouterCodingAgentOnClient({
@@ -350,27 +472,87 @@ function credentialRoutes(config) {
   // ── User-filtered model catalog ────────────────────────────────────
   router.get('/api/me/coding-agent/models', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // This is live, private account state. In particular, do not let the PWA
+    // API cache outlive OpenRouter's own key-filtered answer.
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
     const backend = (req.query.backend || 'codex_openrouter');
     if (backend !== 'codex_openrouter') return res.json({ backend, models: [] });
     if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
     try {
-      const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
-      if (!meta || meta.status !== 'valid') {
-        return res.json({ backend, credentialRevision: meta?.revision || null, models: [] });
-      }
-      const apiKey = await credentialStore.readSecret({
-        pool, userId: req.user.id, ...OPENROUTER, dataKey: config.dataEncryptionKey,
-      });
-      if (!apiKey) return res.json({ backend, models: [] });
-      const catalog = await agentModels.listOpenRouterModels({
-        pool, userId: req.user.id, credentialRevision: meta.revision,
-        apiKey, config, forceRefresh: req.query.refresh === '1',
-      });
-      res.json(catalog);
+      const [{ catalog }, favoriteOverrides] = await Promise.all([
+        openRouterCatalogForUser(req.user.id, { forceRefresh: req.query.refresh === '1' }),
+        openRouterFavoriteOverrides(req.user.id),
+      ]);
+      res.json(decorateCatalogFavorites(catalog, favoriteOverrides));
     } catch (err) {
       const msg = err.code === 'invalid_key' ? 'OpenRouter rejected the key.' : 'Failed to load models.';
       log.warn('credentials', 'model catalog failed', { userId: req.user.id, err: err.message });
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // Persist one star independently of the selected/default model. TRUE is
+  // validated against the same key-filtered catalog as selection; FALSE is
+  // also stored, rather than deleting the row, so a platform-recommended
+  // model a user unstarred does not reappear as a favorite on the next read.
+  router.patch('/api/me/coding-agent/models/favorite', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
+    const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId.trim() : '';
+    const favorite = req.body?.favorite;
+    if (!modelId || modelId.length > 255 || /[\u0000-\u001f\u007f]/.test(modelId)) {
+      return res.status(400).json({ error: 'Valid model id required' });
+    }
+    if (typeof favorite !== 'boolean') {
+      return res.status(400).json({ error: 'favorite must be true or false' });
+    }
+    try {
+      if (favorite) {
+        const { catalog, hasCredential } = await openRouterCatalogForUser(req.user.id);
+        if (!hasCredential) {
+          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+        }
+        if (!(catalog.models || []).some((model) => model.id === modelId)) {
+          return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+        }
+      }
+      if (favorite) {
+        await pool.query(
+          `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+           VALUES ($1, 'codex_openrouter', $2, TRUE)
+           ON CONFLICT (user_id, backend, model_id)
+           DO UPDATE SET is_favorite = TRUE`,
+          [req.user.id, modelId],
+        );
+      } else {
+        const updated = await pool.query(
+          `UPDATE user_agent_model_favorites SET is_favorite = FALSE
+            WHERE user_id = $1 AND backend = 'codex_openrouter' AND model_id = $2`,
+          [req.user.id, modelId],
+        );
+        // A default favorite has no row yet. Persist the negative override;
+        // arbitrary non-recommended ids cannot manufacture unbounded rows.
+        const recommended = Array.isArray(config.openrouterRecommendedModels)
+          && config.openrouterRecommendedModels.includes(modelId);
+        if (!updated.rowCount && recommended) {
+          await pool.query(
+            `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+             VALUES ($1, 'codex_openrouter', $2, FALSE)
+             ON CONFLICT (user_id, backend, model_id)
+             DO UPDATE SET is_favorite = FALSE`,
+            [req.user.id, modelId],
+          );
+        }
+      }
+      res.json({ ok: true, modelId, favorite });
+    } catch (err) {
+      log.warn('credentials', 'model favorite update failed', {
+        userId: req.user.id, modelId, err: err.message,
+      });
+      res.status(400).json({ error: 'Could not update that favorite right now.' });
     }
   });
 

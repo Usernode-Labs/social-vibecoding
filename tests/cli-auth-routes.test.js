@@ -21,6 +21,7 @@ poolModule.getPool = () => pool;
 delete require.cache[require.resolve('../src/routes/cli-auth')];
 const {
   cliAuthGate,
+  cliBrowserRoutes,
   cliPreAuthRoutes,
   isCliSurfaceEnabled,
 } = require('../src/routes/cli-auth');
@@ -39,6 +40,21 @@ function startApp() {
   app.set('trust proxy', false);
   app.use(cliAuthGate(config));
   app.use(cliPreAuthRoutes(config));
+  app.use((_req, res) => res.status(418).json({ error: 'fallback' }));
+  return new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+function startBrowserApp() {
+  const app = express();
+  app.set('trust proxy', false);
+  app.use(cliAuthGate(config));
+  // cliBrowserRoutes is mounted after the ordinary cookie-auth middleware in
+  // the app. This harness supplies that already-authenticated browser user so
+  // it can prove the fixture's own route behavior.
+  app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
+  app.use(cliBrowserRoutes(config));
   app.use((_req, res) => res.status(418).json({ error: 'fallback' }));
   return new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => resolve(server));
@@ -132,6 +148,10 @@ test('staging permits only the read-only CLI token demo through the early gate',
     assert.equal(demo.status, 418,
       'the exact demo GET reaches cookie auth/browser routes instead of the early gate');
 
+    const empty = await fetch(`${base(server)}/api/me/cli-tokens?limit=50&demo=cli-empty`);
+    assert.equal(empty.status, 418,
+      'the exact empty-state GET reaches cookie auth/browser routes too');
+
     const real = await fetch(`${base(server)}/api/me/cli-tokens?limit=50`);
     assert.equal(real.status, 404, 'a real credential-list request stays disabled');
 
@@ -140,6 +160,37 @@ test('staging permits only the read-only CLI token demo through the early gate',
 
     const write = await fetch(`${base(server)}/api/me/cli-tokens?demo=1`, { method: 'DELETE' });
     assert.equal(write.status, 404, 'demo cannot bypass a mutating method');
+
+    const emptyWrite = await fetch(`${base(server)}/api/me/cli-tokens?demo=cli-empty`, {
+      method: 'DELETE',
+    });
+    assert.equal(emptyWrite.status, 404, 'the empty fixture cannot bypass a mutating method');
+  } finally {
+    if (previous == null) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+    server.close();
+  }
+});
+
+test('the staging CLI empty-state fixture is authenticated, static, and database-free', async () => {
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  queries.length = 0;
+  const server = await startBrowserApp();
+  try {
+    const response = await fetch(`${base(server)}/api/me/cli-tokens?limit=50&demo=cli-empty`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { tokens: [], next_cursor: null, demo: true });
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(queries.length, 0,
+      'the review fixture returns before rate-limit or credential-table queries');
+
+    const malformed = await fetch(`${base(server)}/api/me/cli-tokens?limit=0&demo=cli-empty`);
+    assert.equal(malformed.status, 400,
+      'the fixture does not turn an invalid real-route limit into a successful response');
+
+    const subpath = await fetch(`${base(server)}/api/me/cli-tokens/42?demo=cli-empty`);
+    assert.equal(subpath.status, 404, 'the fixture admits no credential sub-path');
   } finally {
     if (previous == null) delete process.env.USERNODE_ENV;
     else process.env.USERNODE_ENV = previous;

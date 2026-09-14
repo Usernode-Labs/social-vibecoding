@@ -454,15 +454,26 @@ test('no admin- or API-supplied URL is ever rendered as a clickable anchor', () 
     'the submitted URL is selectable text so an admin can still copy it out');
   assert.ok(fs.existsSync(path.join(root, 'tests/topochain-waitlist-survey.test.js')),
     'and the executed test for it exists');
-  // The Signals column reports what a signup DID and carries no score:
+  // The Answers column reports what a signup DID and carries no score:
   // weighting those facts decides who gets in first, which is still an open
   // product decision. If a score ever appears it must be a deliberate change
   // to services/waitlist-signals.js, not something that leaks in through a
   // column that started computing its own total.
-  assert.match(waitlist, /label: 'Signals'/,
-    'the waitlist list surfaces the per-signup signals');
+  //
+  // The label was "Signals" until #1544, which is a word about our data
+  // model rather than about the person in the row. `s.signals` is still what
+  // the server sends; only what an admin reads changed.
+  assert.match(waitlist, /label: 'Answers'/,
+    'the waitlist list surfaces what the signup actually answered');
   assert.doesNotMatch(waitlist, /s\.score|signals\.score|\.total\b/,
-    'the Signals column must not compute or render a score');
+    'the Answers column must not compute or render a score');
+  // The denominator comes off the server payload, not out of a literal. It
+  // was typed in here once and went stale by a whole section, so the column
+  // claimed "6/6 answered" for a row that had answered six of seven (#1544).
+  assert.match(waitlist, /s\.sections_total/,
+    'the answered fraction counts against the live section total');
+  assert.doesNotMatch(stripAllComments(waitlist), /of 6 answered|\/6 answered|\/\{?6\b/,
+    'and never against a number written into the screen');
   // Comments stripped first: that module's comments explain at length WHY it
   // computes no score, so a naive search for the word matches the very
   // documentation of the rule.
@@ -765,6 +776,44 @@ test('deleting a user requires typing the exact identifier before the button ena
   assert.match(src, /const \[typed, setTyped\] = useState\(''\)/,
     'the typed value is the block\'s own state, so both copies work');
   assert.ok(!/querySelectorAll/.test(src), 'and no cross-copy wiring pass is needed');
+});
+
+// ─── The ranking control says what it does (#1558) ────────────────────────
+
+test('the ranking control names the leaderboard, not the database flag', () => {
+  const src = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');
+  // "Toggle podium" named the column in the users table and told the reader
+  // nothing about what pressing it does. Both directions are spelled out
+  // now, and the label states the resulting action rather than a toggle.
+  // Comments are stripped: the rename's own commentary quotes the old label.
+  assert.ok(!/Toggle podium/i.test(stripAllComments(src)), 'the old label is gone');
+  assert.match(src, /'Include in ranking'/, 'the excluded row offers to put the user back on the board');
+  assert.match(src, /'Exclude from ranking'/, '...and a ranked row offers to take them off it');
+  // The hook is NOT renamed: it is the row identifier the console's own
+  // tests and any external automation select on, and it tracks the
+  // exclude_podium column, which this change deliberately leaves alone.
+  assert.match(src, /data-toggle-podium=\{u\.id\}/, 'the row hook is unchanged');
+  assert.match(src, /toggle-exclude-podium/, '...and so is the route it PATCHes');
+
+  // A hover title on each direction, plus a helper line that is visible
+  // without hovering anything — the tooltip is unreachable on a phone.
+  assert.match(src, /const RANKING_TITLE = \{/, 'both tooltips are defined together');
+  assert.match(src, /title=\{u\.exclude_podium \? RANKING_TITLE\.include : RANKING_TITLE\.exclude\}/,
+    'and the row picks the one describing what the press will do');
+  assert.match(src, /id="admin-topo-u-ranking-help"/, 'the always-visible helper line is rendered');
+  assert.match(src, /const RANKING_HELP = /, 'and its copy is a named constant');
+  // Every surface the flag touches is named in one place or another: the
+  // points and listing it does NOT remove, and the three things it does.
+  for (const claim of ['non-podium', 'top three', 'dash']) {
+    assert.ok(RegExp(claim, 'i').test(src), `the copy states the "${claim}" consequence`);
+  }
+
+  // The column header stopped naming the flag too, and both of its values
+  // read as states of the leaderboard.
+  assert.match(src, /label: 'Ranking'/, 'the column is headed Ranking');
+  assert.match(src, /\? <span className="text-amber-800 dark:text-amber-400">Excluded<\/span>/,
+    'an excluded row still stands out down a long column');
+  assert.match(src, /: 'Ranked'\)/, '...and the ordinary state is spelled out instead of a dash');
 });
 
 // ─── Challenges live inside the season-event detail view ──────────────────

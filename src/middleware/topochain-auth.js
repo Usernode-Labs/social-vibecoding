@@ -26,6 +26,8 @@
 
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -53,13 +55,15 @@ function optionalSessionAuth(config) {
       if (!cookieToken) return next();
 
       const { rows } = await pool.query(
-        `SELECT s.user_id, s.expires_at, u.username, u.is_admin
+        `SELECT s.user_id, s.expires_at, u.username, u.is_admin,
+            ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
           WHERE s.token = $1`,
         [cookieToken]
       );
 
-      if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+      if (rows.length > 0 && rows[0].native_session_valid !== false
+          && new Date(rows[0].expires_at) >= new Date()) {
         req.user = {
           id: rows[0].user_id,
           username: rows[0].username,

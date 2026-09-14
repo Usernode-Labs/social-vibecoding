@@ -63,6 +63,27 @@ async function loadContributors(pool, appIds) {
   return byApp;
 }
 
+// The same set, counted rather than listed — for surfaces that show "N
+// contributors" beside an app and never name them (the launcher's Discover
+// cards). It joins `users` for the same reason loadContributors does: an id
+// whose row is gone is not a contributor, and counting the union directly
+// would keep it. One round trip for any number of apps, and it shares
+// CONTRIBUTOR_IDS_CTE so the number can never mean something different from
+// the list behind it.
+async function loadContributorCounts(pool, appIds) {
+  if (!appIds.length) return new Map();
+  const { rows } = await pool.query(
+    `WITH contributor_ids AS (${CONTRIBUTOR_IDS_CTE}
+     )
+     SELECT c.app_id, COUNT(*)::int AS cnt
+       FROM contributor_ids c
+       JOIN users u ON u.id = c.user_id
+      GROUP BY c.app_id`,
+    [appIds]
+  );
+  return new Map(rows.map((r) => [r.app_id, r.cnt]));
+}
+
 // Clamp a caller-supplied `limit` into [1, MAX_RANKED_LIMIT]; anything
 // unparseable falls back to the default rather than erroring — a garbage
 // query string shouldn't 400 a read-only list.
@@ -197,6 +218,7 @@ function demoRankedContributors(req) {
 
 module.exports = {
   loadContributors,
+  loadContributorCounts,
   loadRankedContributors,
   shapeContributor,
   shapeRankedContributor,

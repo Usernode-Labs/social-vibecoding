@@ -403,9 +403,14 @@ test('fork: takes its source from the open payload, POSTs to /fork', () => {
   assert.match(src, /useDialog<ForkSource>\('fork'/);
   assert.match(src, /\(fork\)`/, 'the "<name> (fork)" default is still suggested');
   assert.match(src, /\/fork`/);
-  // #1418: a fork lands in the same 'creating' tile state, so it raises the
-  // same creation toast as the create dialog.
-  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'success path raises the creation toast');
+  // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
+  // on the same progress report as create/import so a real failure reason is
+  // visible and a successful fork can be opened directly.
+  assert.match(src, /watchCreation\(slug\)/, 'the fork starts following its own slug');
+  assert.match(src, /setForked\(\{ slug/, 'the form swaps to the progress view');
+  assert.match(src, /mode="fork"/, 'the shared view uses fork-specific wording');
+  assert.match(src, /fetchCreationProgress\(creatingSlug/, 'a dropped websocket is recovered by polling');
+  assert.match(src, /if \(!slug\) \{/, 'only a malformed 201 falls back to close+toast');
   // _forkSource was a field on AppView; the payload replaces it. (The name
   // survives in app-view.js only in the comment that records the move.)
   assert.ok(!/^\s*_forkSource:/m.test(APP_VIEW),

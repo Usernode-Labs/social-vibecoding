@@ -113,17 +113,18 @@ test('my own rename PR proposal renders Withdraw', () => {
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'rename PR shows Withdraw in ⋯');
 });
 
-// #313/#827: the card-level "Explore in dev chat" button renders on
-// proposals the viewer does NOT own (where there's no "Open session"), and is
-// omitted on the viewer's own cards.
-test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
+// #313/#827: "Explore in dev chat" is offered on proposals the viewer does
+// NOT own (where there's no "Open session"), and omitted on their own cards.
+// #1787 round four moved it back off the face and into ⋯: it is a door to a
+// side conversation ABOUT the proposal rather than one of the things you do
+// to it, and at ~170px it was the widest pill on the card, pushing Vote or
+// Withdraw into the fold it should have been in itself.
+test("someone else's proposal offers Explore-in-dev-chat from ⋯", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ user_id: 999 }));
-  // On the FACE now, not in ⋯: the four-band card reserves an action band, and
-  // on a live foreign proposal Explore is what fills it beside Yes/No.
-  assert.match(html, /gc-card-actions[\s\S]*?gc-explore-chat-btn/,
-    'Explore offered as a pill on a foreign proposal');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'so not also a ⋯ row');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on a foreign proposal');
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'and not as a pill on the face, so never both');
   assert.equal(html.match(/data-card-menu="([^"]+)"/)[1], 'proposal:7', 'menu keyed by the proposal id');
 });
 
@@ -145,8 +146,8 @@ test("someone else's merged proposal renders the Explore-in-dev-chat button", ()
 test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045)', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ source: 'imported' }));
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on my imported proposal');
-  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on my imported proposal');
   assert.doesNotMatch(html, /openProposalSession/,
     'still no Open session — an imported PR has no dev session (#687)');
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is unaffected — a ⋯ row like any own live PR');
@@ -234,8 +235,8 @@ function explorePillId(state) {
   return pill ? pill.explore : null;
 }
 
-test("topic head for another user's proposal wires the pill to the dev chat", () => {
-  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+test("topic head for another user's proposal wires Explore in More to the dev chat", () => {
+  const { AppView, els, published, headHtml, opened } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: 999 });
@@ -243,7 +244,12 @@ test("topic head for another user's proposal wires the pill to the dev chat", ()
   AppView._renderTopicHead();
 
   const html = headHtml();
-  assert.match(html, /gc-explore-chat-btn/, 'the pill is present');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'Explore is not repeated on the card face');
+  const menu = AppView._cardMenus[published.at(-1).card.rail.menuKey];
+  const explore = menu.filter((a) => a.icon === 'explore');
+  assert.equal(explore.length, 1);
+  explore[0].act();
+  assert.deepEqual(opened, [[7, null]]);
   assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
   assert.equal(explorePillId(published[published.length - 1]), 7,
     'the pill carries the session it opens — a painted-but-inert pill is a '
@@ -267,11 +273,11 @@ test("topic head for the viewer's OWN proposal shows no AI button", () => {
   assert.equal(explorePillId(published[published.length - 1]), null);
 });
 
-test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)", () => {
+test("topic head for the viewer's OWN IMPORTED proposal wires Explore in More (#1045)", () => {
   // The head has no delegated handler, so it must both PAINT the pill and
   // bind it — a head whose gate disagrees with the card leaves an inert
   // button. This is the case that regressed: mine && imported.
-  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+  const { AppView, els, published, headHtml, opened } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME, source: 'imported' });
@@ -279,7 +285,11 @@ test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)",
   AppView._renderTopicHead();
 
   const last = published[published.length - 1];
-  assert.match(headHtml(), /gc-explore-chat-btn/, 'the pill is present on my imported proposal');
+  assert.doesNotMatch(headHtml(), /gc-explore-chat-btn/, 'Explore is not repeated on the card face');
+  const explore = AppView._cardMenus[last.card.rail.menuKey].filter((a) => a.icon === 'explore');
+  assert.equal(explore.length, 1);
+  explore[0].act();
+  assert.deepEqual(opened, [[7, null]]);
   assert.ok(!last.body.actions.pills.some((p) => p.key === 'session'),
     'still no Open session (#687)');
   assert.equal(explorePillId(last), 7, 'and the pill knows which session to open');

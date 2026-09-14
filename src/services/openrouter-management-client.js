@@ -22,7 +22,7 @@ function headers(apiKey, origin) {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': origin || 'https://usernode.dev',
-    'X-OpenRouter-Title': 'Usernode',
+    'X-OpenRouter-Title': 'Homeroom',
   };
 }
 
@@ -61,8 +61,10 @@ async function request(path, { apiKey, baseUrl, origin, method, body }) {
   }
 }
 
-async function createKey({ apiKey, baseUrl, origin, name, limit, workspaceId }) {
-  const body = { name, limit, limit_reset: 'daily' };
+// `limitReset` is the cadence OpenRouter restores `limit` on ('daily',
+// 'weekly' or 'monthly'). The caller owns that policy; this module relays it.
+async function createKey({ apiKey, baseUrl, origin, name, limit, limitReset, workspaceId }) {
+  const body = { name, limit, limit_reset: limitReset };
   if (workspaceId) body.workspace_id = workspaceId;
   const result = await request('/keys', {
     apiKey, baseUrl, origin, method: 'POST', body,
@@ -82,7 +84,7 @@ async function createKey({ apiKey, baseUrl, origin, name, limit, workspaceId }) 
     label: data.label || data.name || name,
     limit: typeof data.limit === 'number' ? data.limit : limit,
     limitRemaining: typeof data.limit_remaining === 'number' ? data.limit_remaining : limit,
-    limitReset: data.limit_reset || 'daily',
+    limitReset: data.limit_reset || limitReset,
   };
 }
 
@@ -90,6 +92,22 @@ async function setDisabled({ apiKey, baseUrl, origin, hash, disabled }) {
   return request(`/keys/${encodeURIComponent(hash)}`, {
     apiKey, baseUrl, origin, method: 'PATCH', body: { disabled: !!disabled },
   });
+}
+
+// Change an issued key's allowance in place. PATCH is idempotent, so unlike
+// createKey a caller may safely retry it. Returns the provider's view of the
+// new allowance; limit_remaining is null rather than guessed when the
+// response does not carry it.
+async function setLimit({ apiKey, baseUrl, origin, hash, limit, limitReset }) {
+  const result = await request(`/keys/${encodeURIComponent(hash)}`, {
+    apiKey, baseUrl, origin, method: 'PATCH', body: { limit, limit_reset: limitReset },
+  });
+  const data = result.data || {};
+  return {
+    limit: typeof data.limit === 'number' ? data.limit : limit,
+    limitRemaining: typeof data.limit_remaining === 'number' ? data.limit_remaining : null,
+    limitReset: data.limit_reset || limitReset,
+  };
 }
 
 async function deleteKey({ apiKey, baseUrl, origin, hash }) {
@@ -108,5 +126,6 @@ module.exports = {
   OpenRouterManagementError,
   createKey,
   setDisabled,
+  setLimit,
   deleteKey,
 };

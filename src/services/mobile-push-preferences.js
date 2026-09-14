@@ -42,7 +42,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // connector user who wants session pushes wants these; one who turned them
     // off does not, and should not have to find a second switch.
     kinds: Object.freeze([
-      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input',
+      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input', 'test_alert',
     ]),
   }),
   Object.freeze({

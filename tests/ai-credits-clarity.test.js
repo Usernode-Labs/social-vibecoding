@@ -166,7 +166,11 @@ test('both budget reads carry the remainder, the reset and the threshold', () =>
   const snapshot = LIMITS_SRC.slice(
     LIMITS_SRC.indexOf('async function getBudgetSnapshot'),
     LIMITS_SRC.indexOf('// Shared BYOK key lookup'));
-  assert.match(snapshot, /resetsAt: dailyResetAt\(\)/);
+  // #1788: still one helper per boundary, chosen by which cap is binding —
+  // so the instant the payload promises is the instant that cap resets on.
+  assert.match(snapshot, /resetsAt: weeklyBinds \? weeklyResetAt\(\) : dailyResetAt\(\)/);
+  assert.match(snapshot, /resetLabel: weeklyBinds \? WEEKLY_RESET_LABEL : DAILY_RESET_LABEL/,
+    'and the words match the instant, from the same choice');
   assert.match(snapshot, /lowBalancePct: LOW_BALANCE_PCT/);
 });
 

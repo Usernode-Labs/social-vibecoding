@@ -25,7 +25,7 @@ const CURRENT_KINDS = [
   // #1405: a connector session put work somewhere, and a connector session is
   // holding for an answer. Both are "a coding session did something while you
   // were away", so both join developer_sessions rather than adding a category.
-  'connector_submitted', 'agent_awaiting_input',
+  'connector_submitted', 'agent_awaiting_input', 'test_alert',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

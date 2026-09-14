@@ -16,6 +16,7 @@ const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
 const branchNames = require('./branch-names');
+const externalAgentTasks = require('./external-agent-tasks');
 
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
@@ -174,7 +175,7 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
     [sessionId]
   );
   const session = rows[0];
-  if (!session || !session.staging_container_id) return { torn: false };
+  if (!session || !(session.staging_runtime_name || session.staging_container_id)) return { torn: false };
 
   // #851: teardownStaging owns the nulling and now reports whether the
   // container actually went away. On a leak the row deliberately still names
@@ -230,6 +231,41 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   );
   if (!rows.length) return { archived: false };
 
+  return finalizeArchivedSession({ pool, sessionId, userId, reason, purgeCc });
+}
+
+// Finish the reversible-archive side effects after the status transition.
+// proposal_start uses this after atomically archiving a predecessor and
+// inserting its successor in one transaction; ordinary archiveSession calls
+// it immediately after its own guarded UPDATE. These operations are
+// best-effort, so a process restart can leave only resources the existing
+// staging/worker reapers already know how to collect.
+async function finalizeArchivedSession({
+  pool,
+  sessionId,
+  userId = null,
+  reason = 'manual',
+  purgeCc = false,
+}) {
+
+  // A work order is one ATTEMPT at an issue, and this is where the attempt
+  // ends. It had a beginning (prepare) and two endings (submit, "Start over")
+  // but none for "the session it belonged to is over", so dead attempts
+  // leaked: each held one of the owner's ten open-work-order slots for the
+  // full 14-day expiry, and they piled up into a backlog the launchpad then
+  // tried to hand back out, one per new change. Best-effort like every side
+  // effect here — an archive must not fail because a reservation could not be
+  // closed, and the expiry still collects anything this misses.
+  await externalAgentTasks.abandonTasksForSession(pool, sessionId)
+    .then((closed) => {
+      if (closed) {
+        log.info('session-lifecycle', 'Work orders closed with the session', { sessionId, closed });
+      }
+    })
+    .catch((err) => {
+      log.warn('session-lifecycle', 'Failed to close work orders on archive', { sessionId, err: err.message });
+    });
+
   // owner_username feeds the PR-withdrawn group-chat line (#200). The
   // manual archive endpoint is owner-scoped, so when userId is present
   // the session owner IS the actor. LEFT JOIN: a missing user row must
@@ -245,7 +281,7 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   const session = sessionRows[0];
   const appSlug = session?.app_slug;
 
-  if (session?.staging_container_id) {
+  if (session?.staging_runtime_name || session?.staging_container_id) {
     // Same contract as teardownStagingForSession above (#851): the chokepoint
     // nulls the columns itself once removal is CONFIRMED, and a leak keeps
     // them so the sweeper can retry. The archive itself proceeds regardless —
@@ -280,10 +316,12 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
     // correctly: the group voted it down rather than it just going quiet.
     const content = reason === 'auto-rejected'
-      ? `${label} was closed by the group (more No than Yes, not enough support)`
+      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it)`
+      : reason === 'proposal-replaced' && userId != null && session.owner_username
+        ? `${session.owner_username} replaced ${label} with a new proposal`
       : userId != null && session.owner_username
         ? `${session.owner_username} withdrew ${label}`
-        : `${label} was withdrawn (no vote activity)`;
+        : `${label} went quiet and was set aside. It can always come back as a new proposal`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(pool, session.app_id, content, 'system');
@@ -503,7 +541,7 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
         });
         const wrapped = new Error(`Could not create branch ${branchName}: ${err.message}`);
         wrapped.code = 'branch_create_failed';
-        wrapped.userMessage = 'Usernode could not create this session\'s branch on GitHub. '
+        wrapped.userMessage = 'Homeroom could not create this session\'s branch on GitHub. '
           + 'Send your message again in a moment. If it keeps failing, ask an admin to check '
           + 'the GitHub connection for this app.';
         throw wrapped;
@@ -529,6 +567,7 @@ module.exports = {
   freeGlobalSlot,
   teardownStagingForSession,
   archiveSession,
+  finalizeArchivedSession,
   unarchiveSession,
   purgeArchivedCc,
 };

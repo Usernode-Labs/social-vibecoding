@@ -100,7 +100,7 @@ test('closed database kind registry matches the reviewed service mapping and def
     kind, category: category.key, defaultEnabled: category.defaultEnabled,
   })));
   assert.deepEqual(rows, expected);
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 21);
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 22);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

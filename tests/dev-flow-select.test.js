@@ -42,7 +42,10 @@ function fullStatus(over) {
     available: true,
     repo: { owner: 'usernode-apps', repo: 'demo' },
     github: { linked: true, login: 'octo-contributor', available: true },
-    connectors: { count: 0 },
+    // Connected by default now: the connector is a REQUIREMENT, not the
+    // advisory note it used to be, so without one the hand-off step is not the
+    // hand-off step at all — it is "Connect Homeroom".
+    connectors: { count: 2 },
     fork: {
       state: 'ready',
       owner: 'octo-contributor',
@@ -50,14 +53,10 @@ function fullStatus(over) {
       url: 'https://api.github.com/repos/octo-contributor/demo',
       pageUrl: 'https://github.com/octo-contributor/demo',
     },
-    task: {
-      id: 4242,
-      agent: 'claude-code',
-      branch: 'usernode/add-a-button',
-      baseSha: '0123456789abcdef0123456789abcdef01234567',
-      workOrder: '# Work order\n\nAdd a button.',
-    },
-    branch: { state: 'pushed', pushed: true, unpushed: false, missing: false },
+    // No `task`. Homeroom does not mint the work order any more: it hands over
+    // instructions, and the agent asks what to build and mints its own.
+    instructions: 'Ask the user what to build, then call prepare_work.',
+    targetKind: null,
   }, over || {});
 }
 
@@ -162,36 +161,6 @@ test('every reason code the status route can send becomes real copy', () => {
   }
 });
 
-test('exactly one step is current, and it is the first unfinished one', () => {
-  const cases = [
-    // Nothing done at all — the very first visit.
-    [{ github: { linked: false }, fork: null, task: null, branch: null }, 'github'],
-    // Linked, but no fork yet.
-    [{ fork: null, task: null, branch: null }, 'fork'],
-    // Fork found, no work order yet.
-    [{ task: null, branch: null }, 'prepare'],
-    // Work order written, branch not pushed.
-    [{ branch: { state: 'missing', pushed: false, missing: true } }, 'handoff'],
-    // Branch pushed — all that is left is submitting.
-    [{}, 'submit'],
-  ];
-  for (const [over, expected] of cases) {
-    const list = DevFlowSelect.steps(fullStatus(over), 'claude-code');
-    assert.equal(list.length, 5, 'always the same five steps');
-    const current = list.filter((s) => s.state === 'current');
-    assert.equal(current.length, 1,
-      `exactly one current step for ${JSON.stringify(over)}, got ${current.length}`);
-    assert.equal(current[0].key, expected,
-      `expected '${expected}' to be current for ${JSON.stringify(over)}`);
-    // Everything before the current step is done; everything after is todo.
-    const at = list.indexOf(current[0]);
-    list.forEach((step, index) => {
-      if (index < at) assert.equal(step.state, 'done', `${step.key} precedes the current step`);
-      if (index > at) assert.equal(step.state, 'todo', `${step.key} follows the current step`);
-    });
-  }
-});
-
 test('only the current step offers buttons', () => {
   const list = DevFlowSelect.steps(
     fullStatus({ fork: null, task: null, branch: null }), 'codex'
@@ -235,111 +204,8 @@ test('an unavailable flow offers the way back to the platform', () => {
     'a dead end must offer "build here instead", not trap the user');
 });
 
-test('the walkthrough card renders each step and the work order', () => {
-  const html = DevFlowSelect.wizardHtml({ status: fullStatus() });
-  for (const key of ['github', 'fork', 'prepare', 'handoff', 'submit']) {
-    assert.ok(html.includes(`data-flow-step="${key}"`), `renders the '${key}' step`);
-  }
-  assert.match(html, /data-flow-step-state="done"/);
-  assert.match(html, /data-flow-step-state="current"/);
-  assert.match(html, /data-flow-order="1"/, 'the work order is available to copy');
-  assert.match(html, /data-flow-action="submit"/, 'a pushed branch can be submitted');
-  // The footer escape hatch is always there.
-  assert.match(html, /dc-flow-actions-footer/);
-});
-
-// ── Continuing something that already exists (#1054 + #1071) ────────
-
-// The same full status, with a target on the prepared task. `targetKind`
-// 'proposal' is the #1054 shape (a promoted proposal, votes to clear);
-// 'session' is the #1071 one (work in progress, nobody has voted).
-function continuingStatus(targetKind, over) {
-  const base = fullStatus(over);
-  base.task = Object.assign({}, base.task, {
-    targetProposal: {
-      id: targetKind === 'session' ? 990405 : 990406,
-      title: targetKind === 'session' ? 'Session and billing options' : 'Add a dark-mode toggle',
-      targetKind,
-      branchHome: targetKind === 'session' ? 'app_repo' : 'user_fork',
-      webPath: '/#app/demo/dev/sessions/990406',
-    },
-  });
-  return base;
-}
-
-const stepsOf = (status) => Object.fromEntries(
-  DevFlowSelect.steps(status, 'claude-code').map((s) => [s.key, s])
-);
-
-test('a continuation ends in submitting an update, not a new proposal', () => {
-  for (const kind of ['session', 'proposal']) {
-    const submit = stepsOf(continuingStatus(kind)).submit;
-    assert.equal(submit.title, 'Submit the update', `${kind}: the step is renamed`);
-    assert.deepEqual(submit.actions, [
-      { action: 'submit-update', label: 'Submit the update', primary: true },
-    ], `${kind}: a distinct action id, so the client cannot post the new-proposal body`);
-  }
-  // Without a target it is still the ordinary new-proposal submission.
-  const plain = stepsOf(fullStatus()).submit;
-  assert.equal(plain.title, 'Submit for review');
-  assert.deepEqual(plain.actions, [
-    { action: 'submit', label: 'Submit for review', primary: true },
-  ]);
-});
-
-test('the update step says what submitting costs, and only where it costs it', () => {
-  const session = stepsOf(continuingStatus('session')).submit;
-  const proposal = stepsOf(continuingStatus('proposal')).submit;
-  // The vote clearing is the warning people most need — and it is false for
-  // a session nobody has voted on, so it must not appear there.
-  assert.match(proposal.detail, /votes are cleared/i);
-  assert.doesNotMatch(session.detail, /vote/i);
-  assert.match(session.detail, /same session further along/i);
-  assert.match(session.detail, /No new proposal/i);
-});
-
-test('step 3 names what is being continued, and step 4 where the agent talks', () => {
-  const session = stepsOf(continuingStatus('session', {
-    branch: { state: 'missing', pushed: false, missing: true },
-  }));
-  assert.match(session.prepare.detail, /^Continuing "Session and billing options"\. /);
-  assert.match(session.prepare.detail, /Branch usernode\/add-a-button/);
-  assert.match(session.handoff.detail, /This transcript stays where it is/);
-
-  const proposal = stepsOf(continuingStatus('proposal', {
-    branch: { state: 'missing', pushed: false, missing: true },
-  }));
-  assert.match(proposal.prepare.detail, /^Updating "Add a dark-mode toggle"\. /);
-  assert.match(proposal.handoff.detail, /This transcript stays where it is/);
-
-  // New work has no "over there" to explain, so it says nothing about it.
-  const plain = stepsOf(fullStatus({
-    branch: { state: 'missing', pushed: false, missing: true },
-  }));
-  assert.doesNotMatch(plain.prepare.detail, /Continuing|Updating/);
-  assert.doesNotMatch(plain.handoff.detail, /transcript/);
-});
-
-test('a target with no targetKind is treated as a proposal', () => {
-  // Older payloads (#1054 shipped before the field existed) carried a
-  // promoted proposal and nothing else. Defaulting the other way would tell
-  // somebody their votes are safe when submitting clears them.
-  const status = continuingStatus('proposal');
-  delete status.task.targetProposal.targetKind;
-  const submit = stepsOf(status).submit;
-  assert.equal(submit.title, 'Submit the update');
-  assert.match(submit.detail, /votes are cleared/i);
-});
-
-test('the update button is rendered with its own action id', () => {
-  const html = DevFlowSelect.wizardHtml({ status: continuingStatus('session') });
-  assert.match(html, /data-flow-action="submit-update"/);
-  assert.ok(!/data-flow-action="submit"/.test(html),
-    'the new-proposal submit must not also be offered');
-});
-
 test('busy disables the buttons rather than reordering the card', () => {
-  const status = fullStatus({ task: null, branch: null });
+  const status = fullStatus();
   const idle = DevFlowSelect.wizardHtml({ status });
   const busy = DevFlowSelect.wizardHtml({ status, busy: true });
   // #1281: scoped to the STEP actions. The vendor toggle above them always
@@ -354,7 +220,7 @@ test('busy disables the buttons rather than reordering the card', () => {
     !stepButtons(idle).some((b) => /disabled/.test(b)),
     'no step action is disabled while idle',
   );
-  assert.match(busy, /data-flow-action="prepare"[^>]*disabled/,
+  assert.match(busy, /data-flow-action="copy"[^>]*disabled/,
     'the in-flight action is disabled, so it cannot be fired twice');
   // Same steps, same order — only the buttons change.
   assert.equal(
@@ -376,16 +242,17 @@ test('errors and notices are shown in the card, not thrown away in a toast', () 
 });
 
 test('the handoff step links the agent the user actually picked', () => {
-  const pushedNot = { state: 'missing', pushed: false, missing: true };
   const claude = DevFlowSelect.wizardHtml({
-    agent: 'claude-code', status: fullStatus({ branch: pushedNot }),
+    agent: 'claude-code', status: fullStatus(),
   });
   assert.match(claude, /https:\/\/claude\.ai\/code/);
   assert.match(claude, /Open Claude Code/);
 
+  // The vendor comes from the picker alone now. It used to be read back off
+  // the minted task's client_id, which no longer exists to read.
   const codex = DevFlowSelect.wizardHtml({
     agent: 'codex',
-    status: fullStatus({ branch: pushedNot, task: Object.assign(fullStatus().task, { agent: 'codex' }) }),
+    status: fullStatus(),
   });
   assert.match(codex, /https:\/\/chatgpt\.com\/codex/);
   assert.match(codex, /Open Codex/);
@@ -407,18 +274,6 @@ test('a failed fork read is reported honestly, not as "no fork"', () => {
   assert.match(html, /could not read GitHub/);
   assert.match(html, /data-flow-action="refresh"/);
   assert.ok(!html.includes('No fork yet'));
-});
-
-test('a branch pushed with no commits is called out specifically', () => {
-  // 'unpushed' means the branch exists on the fork but still points at the
-  // base commit — almost always "the agent committed locally and never
-  // pushed", which the generic copy would leave the user guessing at.
-  const html = DevFlowSelect.wizardHtml({
-    status: fullStatus({ branch: { state: 'unpushed', pushed: false, unpushed: true } }),
-  });
-  assert.match(html, /still on the base commit/);
-  assert.ok(!html.includes('data-flow-action="submit"'),
-    'submitting an empty branch would only produce an error');
 });
 
 test('GitHub-supplied names are escaped, never injected', () => {
@@ -443,27 +298,21 @@ test('GitHub-supplied names are escaped, never injected', () => {
   assert.ok(html.includes('&lt;img'), 'it renders as escaped text instead');
 });
 
-test('the base commit is shown short, because that is what people compare', () => {
-  const html = DevFlowSelect.wizardHtml({ status: fullStatus({ branch: null }) });
-  assert.match(html, /0123456/);
-  assert.ok(!html.includes('0123456789abcdef0123456789abcdef01234567'));
-});
-
-test('an existing connector is mentioned but never required', () => {
-  // The whole point of #1049 is that the MCP connector stopped being the
-  // only door. Someone who has one should hear that it also works; someone
-  // who has none must see no mention of it at all.
-  const withOne = DevFlowSelect.wizardHtml({
-    status: fullStatus({ connectors: { count: 1 } }),
-  });
-  assert.match(withOne, /1 Claude \/ ChatGPT connector /, 'singular, not "1 connectors"');
-  const withTwo = DevFlowSelect.wizardHtml({
-    status: fullStatus({ connectors: { count: 2 } }),
-  });
-  assert.match(withTwo, /2 Claude \/ ChatGPT connectors/);
-  const withNone = DevFlowSelect.wizardHtml({ status: fullStatus() });
-  assert.ok(!withNone.includes('connector'),
-    'no connector, no mention — it is not a prerequisite');
+test('a plain anchor is left to the browser', () => {
+  // wire() acts on [data-flow-action] only: a click on an anchor carrying none
+  // reaches no handler, so the browser's own hash navigation is what runs.
+  const calls = [];
+  const anchor = { tagName: 'A', getAttribute: (n) => (n === 'href' ? '#settings/connectors' : null), closest: () => null };
+  const root = {
+    listeners: {},
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    contains: () => true,
+  };
+  DevFlowSelect.wire(root, { onAction: (a) => calls.push(a) });
+  let prevented = false;
+  root.listeners.click({ target: anchor, preventDefault: () => { prevented = true; } });
+  assert.deepEqual(calls, []);
+  assert.equal(prevented, false);
 });
 
 // ── wire() ─────────────────────────────────────────────────────────────
@@ -540,7 +389,7 @@ test('a non-anchor node with a data-flow-href still opens it (fallback)', () => 
 
 test('an href action renders as a real anchor, never a scripted button (#1312)', () => {
   // A button that window.open()s never leaves the page on mobile: popup
-  // heuristics eat the scripted open in mobile browsers, and the Usernode
+  // heuristics eat the scripted open in mobile browsers, and the Homeroom
   // app's webview is bound to the platform's own domains, so github.com and
   // claude.ai can only leave for the system browser the way a plain
   // target="_blank" anchor does. "Fork on GitHub" was the report (#1312);
@@ -560,20 +409,19 @@ test('an href action renders as a real anchor, never a scripted button (#1312)',
   assert.ok(!forkHtml.includes('data-flow-href'),
     'no scripted-open attribute remains for the browser-owned navigation');
 
-  const handoffHtml = DevFlowSelect.wizardHtml({ status: fullStatus({ branch: null }) });
+  const handoffHtml = DevFlowSelect.wizardHtml({ status: fullStatus() });
   const agent = handoffHtml.match(/<a [^>]*data-flow-action="open-agent"[^>]*>/);
   assert.ok(agent, '"Open Claude Code" is an anchor too');
   assert.match(agent[0], /href="https:\/\/claude\.ai\/code"/);
   assert.match(handoffHtml, /<button [^>]*data-flow-action="copy"/,
     'actions with no destination stay buttons');
-  assert.match(handoffHtml, /<button [^>]*data-flow-action="refresh"/);
 });
 
 test('busy keeps the disabled-button rendering for href actions', () => {
   // An anchor cannot be disabled, and while a request is running the trip
   // out is supposed to be unavailable like every other action — so busy
   // falls back to the button form, exactly as before.
-  const html = DevFlowSelect.wizardHtml({ status: fullStatus({ branch: null }), busy: true });
+  const html = DevFlowSelect.wizardHtml({ status: fullStatus(), busy: true });
   assert.ok(!/<a [^>]*data-flow-action="open-agent"/.test(html));
   const btn = html.match(/<button [^>]*data-flow-action="open-agent"[^>]*>/);
   assert.ok(btn, 'the busy form is a button again');
@@ -659,4 +507,145 @@ test('the dev chat is the module\'s only consumer, and owns the fetching', () =>
   assert.match(DEV_CHAT_SRC, /DevFlowSelect\.wire\(/);
   assert.match(DEV_CHAT_SRC, /dev-flow\/status/,
     'dev-chat.js reads the status the walkthrough is derived from');
+});
+
+
+// ── "Start over" (the stale-work-order fix) ─────────────────────────────
+//
+// It has to live on the HAND-OFF step. Step 3 is `done` for as long as a task
+// exists — and the mapper gives buttons only to the step that is current — so
+// a button placed there would never render. Step 4 is also where the user is
+// actually standing when a stale work order is in front of them.
+
+
+// ── Three steps, and the agent does the rest ────────────────────────────
+//
+// Homeroom used to mint the work order: the user typed a brief into step 3,
+// two more steps walked them through copying it and coming back to press
+// Submit, and a task sat in this tab tracking all of it. That tracking is what
+// a stale work order got stuck in. The agent has the connector, so it asks
+// what to build and mints its own.
+
+test('the walkthrough is three steps and ends at the hand-off', () => {
+  const list = DevFlowSelect.steps(fullStatus(), 'claude-code');
+  assert.deepEqual(list.map((s) => s.key), ['github', 'fork', 'handoff']);
+  // Terminal: nothing after it for this tab to know about, so it is never
+  // `done` and always the step you land on once GitHub and the fork are.
+  assert.equal(list[2].state, 'current');
+  assert.ok(!list.some((s) => s.key === 'prepare' || s.key === 'submit'),
+    'no brief to type and no Submit to come back for');
+});
+
+test('exactly one step is current, and it is the first unfinished one', () => {
+  const cases = [
+    // The fork has to be unset alongside: a later step that is genuinely
+    // `done` stays `done`, and the mapper is right to say so.
+    [{ github: { linked: false }, fork: null }, 'github'],
+    [{ fork: null }, 'fork'],
+    [{}, 'handoff'],
+  ];
+  for (const [over, expected] of cases) {
+    const list = DevFlowSelect.steps(fullStatus(over), 'claude-code');
+    const current = list.filter((s) => s.state === 'current');
+    assert.equal(current.length, 1, `one current step for ${JSON.stringify(over)}`);
+    assert.equal(current[0].key, expected);
+    const at = list.indexOf(current[0]);
+    list.forEach((step, i) => {
+      if (i < at) assert.equal(step.state, 'done');
+      if (i > at) assert.equal(step.state, 'todo');
+    });
+  }
+});
+
+test('the connector is a requirement, not a note beside the step', () => {
+  // It used to be advisory copy under the hand-off step: paste anyway, come
+  // back here to Submit. That is no longer possible — without the connector
+  // the agent cannot call prepare_work, so it has no base commit and no task
+  // id, and there is nothing useful to hand it.
+  const none = DevFlowSelect.steps(fullStatus({ connectors: { count: 0 } }), 'claude-code')[2];
+  assert.equal(none.title, 'Connect Homeroom');
+  assert.deepEqual(none.actions.map((a) => a.action), ['link-connector', 'refresh']);
+  assert.ok(!none.actions.some((a) => a.action === 'copy'),
+    'nothing to copy until the agent can act on it');
+
+  const some = DevFlowSelect.steps(fullStatus({ connectors: { count: 1 } }), 'claude-code')[2];
+  assert.match(some.title, /^Hand it to /);
+  assert.deepEqual(some.actions.map((a) => a.action), ['copy', 'open-agent']);
+  assert.equal(some.actions[0].label, 'Copy instructions');
+});
+
+test('the hand-off says the agent asks, and that you do not come back', () => {
+  const step = DevFlowSelect.steps(fullStatus(), 'claude-code')[2];
+  assert.match(step.detail, /ask/i, 'it says the agent asks what to build');
+  assert.match(step.detail, /do not come back here to finish/,
+    'and that there is no Submit waiting in this tab');
+
+  // A continuation names what it continues, so the agent updates that work
+  // rather than opening a second copy beside it.
+  for (const kind of ['session', 'proposal']) {
+    const cont = DevFlowSelect.steps(fullStatus({ targetKind: kind }), 'claude-code')[2];
+    assert.match(cont.detail, new RegExp(`the ${kind} this continues`));
+    assert.match(cont.detail, /update to it rather than as a second copy/);
+  }
+  assert.doesNotMatch(step.detail, /this continues/, 'and an ordinary run says none of that');
+});
+
+test('the card renders the instructions, not a work order', () => {
+  const html = DevFlowSelect.wizardHtml({
+    agent: 'claude-code',
+    status: fullStatus({ instructions: 'Ask the user what to build, then call prepare_work.' }),
+  });
+  assert.match(html, /Copy instructions/);
+  assert.match(html, /Ask the user what to build, then call prepare_work\./,
+    'the instructions are on the card, so a failed clipboard can be copied by hand');
+  assert.ok(!/data-flow-brief/.test(html), 'no brief field: the agent asks instead');
+  for (const gone of ['prepare', 'submit', 'submit-update', 'discard']) {
+    assert.ok(!new RegExp(`data-flow-action="${gone}"`).test(html),
+      `${gone} is not an action any more`);
+  }
+});
+
+// #2088. The disclosure opened by default from #2041 on: the text seemed
+// short enough to just read. In use the open box took over the card, on a
+// phone the whole screen, and the button people press is Copy, which never
+// reads the node. So it starts collapsed, and three things have to hold for
+// that to be safe: the text is still on the card for a clipboard that
+// refuses; the copy action carries it from the status payload rather than
+// from the collapsed DOM; and the declared check asserts on the summary,
+// because a collapsed body is not there to be seen, which is how dapp.json's
+// other details-based checks are written too.
+test('the instructions start collapsed, and the copy action does not need them open (#2088)', () => {
+  const text = 'Ask the user what to build, then call prepare_work.';
+  const html = DevFlowSelect.wizardHtml({
+    agent: 'claude-code',
+    status: fullStatus({ instructions: text }),
+  });
+  const details = html.match(/<details class="dc-flow-order"[^>]*>/);
+  assert.ok(details, 'the instructions sit in a disclosure');
+  assert.doesNotMatch(details[0], /\bopen\b/, 'and it starts collapsed');
+  assert.match(html,
+    /<details class="dc-flow-order"><summary>Instructions<\/summary><pre class="dc-flow-order-text" data-flow-order="1">/,
+    'the summary is what shows; the text is one tap behind it');
+  assert.ok(html.includes(`data-flow-order="1">${text}</pre></details>`),
+    'the full text is still on the card, for a clipboard that refuses');
+
+  // The copy action reads the status payload, never the node it renders
+  // into: a collapsed <pre> has no rendered text to copy from.
+  const from = DEV_CHAT_SRC.indexOf("if (action === 'copy')");
+  const to = DEV_CHAT_SRC.indexOf("if (action === 'prepare')", from);
+  assert.ok(from > 0 && to > from, 'the dev chat still answers the copy action');
+  const copy = DEV_CHAT_SRC.slice(from, to);
+  assert.match(copy, /flow\.status\.instructions/, 'copied from state');
+  assert.doesNotMatch(copy, /data-flow-order|dc-flow-order|querySelector/,
+    'never read back out of the DOM');
+
+  // dapp.json's check on the disclosure: on the summary of a closed details,
+  // not on the body text.
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../dapp.json'), 'utf8'));
+  const checks = manifest.tests.filter((t) => /dc-flow-order/.test(t.expectSelector || ''));
+  assert.equal(checks.length, 1, 'one declared check pins the disclosure');
+  assert.match(checks[0].expectSelector, /details\.dc-flow-order:not\(\[open\]\) > summary/,
+    'it selects the summary of a collapsed disclosure');
+  assert.equal(checks[0].expectText, 'Instructions',
+    'and asserts the text that is visible with the body collapsed');
 });

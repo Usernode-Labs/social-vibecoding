@@ -856,9 +856,13 @@ function usersAdminRoutes(config) {
           onchainAccounts: accountsByUser.get(id) || [],
         }),
       }, {
+        // #1558: the console never surfaces this string (the screen refetches
+        // instead), but the API tester does, and "internal tester" described
+        // the same action in a third vocabulary — neither the column's nor
+        // the button's. It says what changed now.
         message: user.exclude_podium
-          ? 'User marked as internal tester.'
-          : 'User unmarked as internal tester.',
+          ? 'User excluded from leaderboard ranking.'
+          : 'User included in leaderboard ranking.',
       });
     } catch (err) {
       log.error('topochain-admin', 'PATCH /admin/users/:id/toggle-exclude-podium failed', { message: err.message });

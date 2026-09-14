@@ -154,6 +154,15 @@ export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0
 
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
+/**
+ * The dev composer's send mark (Streamlined Concept). Its button is a 44px
+ * circle now rather than a rectangle carrying the word "Send", so the arrow
+ * IS the label — drawn on the full 24 grid, like PlusWideIcon and for the
+ * same reason: it is the content of a round control, not a glyph beside a
+ * word.
+ */
+export const ArrowUpIcon = stroked('ArrowUpIcon', 'M12 19V5M5 12l7-7 7 7');
+
 export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
 
 export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
@@ -323,6 +332,55 @@ export const ChatBubbleTailIcon = stroked(
   'ChatBubbleTailIcon',
   'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
 );
+
+/**
+ * A speech bubble with a tick inside — the Workshop's "Needs you" tab.
+ *
+ * THE ONE GLYPH IN THIS FILE THAT IS NOT TRANSCRIBED WHOLE. The outline is:
+ * it is the bubble half of `ChatIcon`'s path, character for character, with
+ * that glyph's three dot subpaths dropped — so the shape sits on the same
+ * grid and carries the same stroke rhythm as everything around it, and the
+ * two are not the same `d` string. The tick inside is drawn here, because no
+ * Heroicon pairs the two and the pairing is the whole point: the tab is where
+ * you answer, and neither half says that alone. A bubble says "messages",
+ * which is one tab over; a bare tick says "done", which is the state AFTER
+ * the tab has been used.
+ *
+ * The tick is NOT `CheckIcon`'s or `CheckLongIcon`'s path: both are drawn to
+ * fill their own 24 box, and neither fits inside a bubble that occupies most
+ * of one. If this glyph ever looks wrong, correct the tick — the bubble half
+ * must keep tracking `ChatIcon`.
+ */
+export const SpeechCheckIcon = stroked('SpeechCheckIcon', [
+  'M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+  'M8.6 11.8l2.4 2.4 4.4-4.9',
+]);
+
+/**
+ * The Needs-you feed's rail. A ballot going into its box for Vote —
+ * a bare tick reads as "done" and a thumb reads as "like", and this control
+ * opens the question rather than answering it. A raised hand for taking an
+ * unclaimed issue, sparkles for asking the model, and play for trying the
+ * staging build, which is the closest thing a proposal has to a clip.
+ */
+export const BallotIcon = stroked('BallotIcon', [
+  'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
+  'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
+  'M12 3v8.25m0 0l-3-3m3 3l3-3',
+]);
+export const HandRaisedIcon = stroked(
+  'HandRaisedIcon',
+  'M10.05 4.575a1.575 1.575 0 10-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 013.15 0v1.5m-3.15 0l.075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 013.15 0V15M6.9 7.575a1.575 1.575 0 10-3.15 0v8.175a6.75 6.75 0 006.75 6.75h2.018a5.25 5.25 0 003.712-1.537l1.732-1.732a5.25 5.25 0 001.538-3.712l.003-2.024a.668.668 0 01.198-.471 1.575 1.575 0 10-2.228-2.228 3.818 3.818 0 00-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0116.35 15m.002 0h-.002',
+);
+export const SparklesIcon = stroked(
+  'SparklesIcon',
+  'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
+);
+export const PlayIcon = stroked(
+  'PlayIcon',
+  'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
+);
+export const ChevronUpIcon = stroked('ChevronUpIcon', 'M5 15l7-7 7 7');
 
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
@@ -504,10 +562,22 @@ export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) =>
 );
 EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
 
-/** "Open the staging preview" — the eye, and the same eye struck through. */
+/**
+ * "Open the staging preview" — the eye, and the same eye struck through.
+ *
+ * The two `d` strings are named constants rather than inline attributes for
+ * one reason: tests/shell-icon-set.test.js reads this module's path data as
+ * the QUOTED literals in it, and compares the prerendered document against
+ * that set. Inline `d="…"` on the element is invisible to it, which read as
+ * a re-inlined glyph the moment the eye started shipping in the document
+ * (#1606 put it on every password field). The rendered output is unchanged.
+ */
+const EYE_OUTLINE = 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z';
+const EYE_SLASH = 'M4 20 20 4';
+
 export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
   <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
     <circle cx="12" cy="12" r="2.75" />
   </svg>
 );
@@ -515,9 +585,9 @@ EyeIcon.displayName = 'EyeIcon';
 
 export const EyeOffIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
   <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
     <circle cx="12" cy="12" r="2.75" />
-    <path strokeLinecap="round" d="M4 20 20 4" />
+    <path strokeLinecap="round" d={EYE_SLASH} />
   </svg>
 );
 EyeOffIcon.displayName = 'EyeOffIcon';
@@ -532,6 +602,29 @@ export const GitHubIcon = filled(
   'GitHubIcon',
   'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
 );
+
+/**
+ * The dev card's fold mark: which SIZE the item is at (card/fold.tsx
+ * FoldMark). Two chevrons pointing apart, and a bar between them that the
+ * closed state scales away — one glyph, three paths, each classed so app.css
+ * can move them apart on the open card (`.dev-fold-mark`), which is why it
+ * is written out rather than built: a factory's single path could not be
+ * stretched in parts. The `d` strings are named literals for the same
+ * reason the eye's are — tests/shell-icon-set.test.js reads this module's
+ * path data as its quoted literals.
+ */
+const FOLD_TOP = 'M8.25 9L12 5.25 15.75 9';
+const FOLD_BAR = 'M12 5.5v13';
+const FOLD_BOTTOM = 'M8.25 15L12 18.75 15.75 15';
+
+export const FoldMarkIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+    <path className="dev-fold-top" d={FOLD_TOP} />
+    <path className="dev-fold-bar" d={FOLD_BAR} />
+    <path className="dev-fold-bottom" d={FOLD_BOTTOM} />
+  </svg>
+);
+FoldMarkIcon.displayName = 'FoldMarkIcon';
 
 /**
  * The escape hatch, for the two call sites that pick their `d` out of a table

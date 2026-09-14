@@ -1,12 +1,12 @@
 {
-  "name": "Usernode Social Vibecoding",
-  "short_name": "Usernode",
+  "name": "Homeroom",
+  "short_name": "Homeroom",
   "description": "A place where users own and build apps together",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#eaeaea",
-  "theme_color": "#eaeaea",
+  "background_color": "#f4f2e4",
+  "theme_color": "#f4f2e4",
   "icons": [
     {
       "src": "/icons/icon-192.png",

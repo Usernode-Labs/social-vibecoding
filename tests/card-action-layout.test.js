@@ -6,11 +6,13 @@
 // The card-as-pointer revision REVERSES that decision, so this file now pins
 // the opposite contract:
 //
-//   • at most ACTION_PRIMARY_MAX (3) text pills on the card face,
-//   • one icon-only Preview affordance (kept as an icon so a read-only
+//   • every text pill the card has, in one band that shows as many as fit
+//     its line and folds the rest into the menu (there is no count cap),
+//   • one labelled Preview affordance closing that band (a read-only
 //     viewer, who gets no vote buttons, still has a visible affordance),
-//   • one ⋯ trigger carrying every demoted action as a descriptor,
-//   • and NO ⋯ at all when a card has nothing to demote.
+//   • one menu trigger — the hamburger at the band's right edge — carrying
+//     every demoted action as a descriptor,
+//   • and NO trigger at all when a card has nothing to demote.
 //
 // assertNoOverflowMachinery is gone; assertCardActionContract replaces it.
 // Permission rules are unchanged — an action only ever MOVED between the card
@@ -32,11 +34,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  budgets, cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
+  cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
 } = require('./lib/dev-card-html');
-
-// The two budgets moved to the component with the markup they govern.
-const { ACTION_PRIMARY_MAX } = budgets();
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -82,15 +81,19 @@ function makeAppView(userId, opts) {
 const ME = 42;
 
 // How many text pills the card face actually rendered. The overflow trigger
-// and the preview icon both carry .gc-vote-btn-icon, so they don't count.
-// The kudos slot DOES: it is a promoted pill like any other, it is just a
-// controller host that `_fillKudosHosts` writes the button into.
+// carries .gc-vote-btn-icon and the Preview pill .gc-vote-btn-preview, so
+// neither counts: one is a corner affordance, the other is not an action on
+// the change. The kudos slot DOES: it is a promoted pill like any other, it
+// is just a controller host that `_fillKudosHosts` writes the button into.
+// The vote pair is NOT in the band any more — it is `.dev-vote-btn`, one
+// button in the status band beside the bar (round three) — so it is not a
+// primary either.
 function primaryCount(html) {
   const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
   if (!row) return 0;
   const buttons = row[1].match(/<button[^>]*>/g) || [];
   const kudos = row[1].match(/data-kudos-host=/g) || [];
-  return buttons.filter((b) => !/gc-vote-btn-icon/.test(b)).length + kudos.length;
+  return buttons.filter((b) => !/gc-vote-btn-icon|gc-vote-btn-preview/.test(b)).length + kudos.length;
 }
 
 // The ⋯ trigger's registry key, or null when the card rendered no menu.
@@ -117,13 +120,11 @@ function menuHas(AppView, html, re, opts) {
   return !!it.act;
 }
 
-// The card-as-pointer budget: at most 2 text pills, and a ⋯ trigger exactly
-// when there is something behind it.
+// The card-as-pointer contract: the pills the card has, and a menu trigger
+// exactly when there is something behind it.
 function assertCardActionContract(AppView, html, expect) {
   const e = expect || {};
   const n = primaryCount(html);
-  assert.ok(n <= ACTION_PRIMARY_MAX,
-    `at most ${ACTION_PRIMARY_MAX} text pills on the card face, saw ${n}`);
   if (e.primary !== undefined) {
     assert.equal(n, e.primary, `expected ${e.primary} primary pill(s), saw ${n}`);
   }
@@ -135,26 +136,28 @@ function assertCardActionContract(AppView, html, expect) {
     assert.ok(labels.length > 0, '⋯ menu carries at least one descriptor');
   }
   if (e.previewIcon !== undefined) {
-    const hasIcon = /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/.test(html);
-    assert.equal(hasIcon, e.previewIcon,
-      e.previewIcon ? 'icon-only Preview affordance present' : 'no Preview affordance');
-    // On a dense card the eye is NOT in the action band at all: it is the
-    // LAST child of the right-edge rail, i.e. the card's bottom-right corner,
-    // under the ⋯ and the chevron. That is what lines every card's preview up
-    // down a column — the band's trailing pill would slide left and right with
-    // the width of the vote pills before it, and could be clipped by the
-    // band's `max-height: 24px`. (`e.previewInBand` opts into the detail
-    // head's variant, which keeps it in its uncapped action list.)
-    if (hasIcon && !e.previewInBand) {
+    // Round three: the board card's preview is a LABELLED pill — the eye and
+    // the word — because the 24px eye in the corner was the hardest thing on
+    // the card to hit. It never wears `gc-vote-btn-icon` now.
+    const hasPreview = /gc-vote-btn-preview/.test(html);
+    assert.equal(hasPreview, e.previewIcon,
+      e.previewIcon ? 'labelled Preview affordance present' : 'no Preview affordance');
+    if (hasPreview) {
+      assert.doesNotMatch(html, /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/,
+        'the board preview is the labelled pill, not the icon variant');
+      // It sits at the band's right end, just before the hamburger that
+      // closes the band: the band is where the card's controls are, and the
+      // pair sits flush at its right edge. (It closed the facts line for a
+      // round; that seat is empty now.)
       const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
-      assert.ok(!band || !/gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/.test(band[1]),
-        'the preview eye is not in the dense action band');
-      assert.match(html, /dev-card-rail/, 'the card has a rail to pin it in');
-      const rail = html.slice(html.indexOf('dev-card-rail'));
-      const pills = (rail.match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || []);
-      assert.match(pills[pills.length - 1],
-        /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/,
-        'the preview eye is the rail\'s last child — the card\'s bottom-right corner');
+      assert.ok(band && /gc-vote-btn-preview/.test(band[1]), 'the labelled Preview pill is in the action band');
+      if (menuKeyOf(html)) {
+        assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=[^>]*>[\s\S]*?<\/button>$/,
+          'Preview, then the hamburger closing the band');
+      } else {
+        assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button>$/, 'with no menu, Preview closes the band');
+      }
+      assert.doesNotMatch(html, /dev-card-status-end[^>]*>[\s\S]*?gc-vote-btn-preview/, 'not on the facts line');
     }
   }
   // The demoted actions must NOT also sit on the card face.
@@ -180,43 +183,40 @@ test('the action band wraps the primary pills in the shared container', () => {
   assert.match(html, />B</);
 });
 
-// The cap is THREE now, not two: the four-band card reserves an action row
-// on every card, so one action per thin card type was promoted out of ⋯ to
-// fill it and has to fit beside Yes/No. The cap itself is what matters here —
-// that a fourth primary is still dropped rather than wrapping the band onto a
-// second (clipped) row.
-test('the action band caps primaries and appends the preview icon', () => {
-  assert.equal(ACTION_PRIMARY_MAX, 3);
+// There is no count cap any more. The cap was three text pills, then the
+// band's fourth was dropped at render time; now every pill renders, each
+// marked foldable, and the band's own measurement (useFoldedActions) hides
+// the ones its line cannot hold and lists them in the menu instead. So the
+// markup carries all of them, and the preview after them.
+test('the action band renders every pill, each foldable, and the preview after them', () => {
   const html = cardHtml(MODEL({
     actions: [pill('A'), pill('B'), pill('C'), pill('D')],
     actionPreview: { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true },
   }));
-  assert.match(html, />A</);
-  assert.match(html, />B</);
-  assert.match(html, />C</);
-  assert.doesNotMatch(html, />D</, 'the fourth primary is dropped — it belongs in ⋯');
-  assert.equal(primaryCount(html), ACTION_PRIMARY_MAX);
-  assert.match(html, /gc-vote-btn-preview gc-vote-btn-icon/, 'and the eye follows them');
-  // The ⋯ is NOT in the action row — it is pinned in the card's rail.
+  for (const [i, l] of ['A', 'B', 'C', 'D'].entries()) {
+    assert.match(html, new RegExp(`<button class="gc-vote-btn" data-fold="${i + 1}">${l}<`),
+      `${l} renders, foldable — the first included`);
+  }
+  assert.equal(primaryCount(html), 4);
+  assert.match(html, />D<\/button><button [^>]*gc-vote-btn-preview/, 'and the preview follows them');
+  // No trigger: nothing is registered behind this bare model's band.
   assert.equal(menuKeyOf(html), null);
 });
 
-test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () => {
+test('the hamburger sits at the right end of the action band; the card has no rail', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal());
   const html = cardHtml(model);
-  // The rail is the card's last child: a right-edge column holding the ⋯ at
-  // the top and the tap-through chevron centred below it. Sharing one column
-  // rather than taking two is what keeps the badge row's width — a separate
-  // flex slot for the ⋯ cost 30px of a ~175px row.
-  assert.match(html, /dev-card-rail/);
-  const rail = html.slice(html.indexOf('dev-card-rail'));
-  assert.match(rail, /dev-card-menu-btn/, 'the trigger is inside the rail');
-  assert.match(rail, /M9 5l7 7-7 7/, 'and the chevron below it');
-  // Never in the action row.
-  const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
-  assert.ok(actions && !/data-card-menu/.test(actions[0]),
-    'the action row carries only the primary pills');
+  // The trigger was a ⋯ in a right-edge column (.dev-card-rail) with the
+  // chevron centred below it. It is the band's own "more" now — the menu is
+  // where the pills that do not fit the band go — so it sits at the end of
+  // that row, and the column is gone: the chevron is the card's only
+  // right-edge child.
+  assert.doesNotMatch(html, /dev-card-rail/);
+  const actions = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+  assert.ok(actions && /data-card-menu/.test(actions[1]), 'the trigger is inside the action band');
+  assert.match(actions[1], /dev-card-menu-btn"[^>]*>[\s\S]*?<\/button>$/, 'as its last child when there is no preview');
+  assert.ok(html.indexOf('data-card-menu') < html.indexOf('M9 5l7 7-7 7'), 'and the chevron after the content column');
   assert.match(html, /aria-haspopup="true"/);
   assert.match(html, /aria-label="More actions"/);
 });
@@ -279,8 +279,8 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   const html = cardHtml(model);
   assert.match(html, /gc-card-actions/, 'shared action row present');
   // The state-driven primary for a never-started issue.
-  assert.ok(hasAction(model, 'createPrForIssue', 5), 'the primary is wired');
-  assert.match(html, />Create proposal</);
+  assert.ok(hasAction(model, 'chooseIssueWork', 5), 'the primary is wired');
+  assert.match(html, />Start work</);
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
@@ -290,7 +290,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
   // Generating a headless proposal spends the viewer's credits, so it is a
   // chosen ⋯ action rather than the card's most prominent button.
-  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 'Generate proposal in ⋯');
+  assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'AI building is in the Start work chooser');
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'Pledge kudos in ⋯');
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
@@ -332,7 +332,7 @@ test('issue card (read-only): no claim pill at all', () => {
   AppView.appData = null;
 });
 
-test('issue card: a ready headless run IS the primary, replacing Create proposal', () => {
+test('issue card: a ready headless run IS the primary, replacing Start work', () => {
   const AppView = makeAppView(ME);
   const model = AppView._issueCardModel(baseIssue({
     headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
@@ -340,7 +340,7 @@ test('issue card: a ready headless run IS the primary, replacing Create proposal
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'startFromAutoSession', 90), 'contextual ready run is the primary');
   assert.match(html, />Review spec/, 'and it wears the contextual label');
-  assert.ok(!hasAction(model, 'createPrForIssue'), 'Create proposal is superseded, not stacked beside it');
+  assert.ok(!hasAction(model, 'chooseIssueWork'), 'Start work is superseded, not stacked beside it');
   // Two primaries: the state-driven one, plus the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'kudos still reachable, from ⋯');
@@ -359,7 +359,7 @@ test('issue card: a question outcome folds TWO competing pills into one primary'
   // Two pills in the band, but only ONE of them is about the headless run: the
   // fold is still a fold. The second is the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });
-  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 're-run reachable from ⋯');
+  assert.ok(menuHas(AppView, html, /^Start more work$/), 're-run reachable from ⋯');
 });
 
 test('issue card: a run the viewer already cloned offers no competing re-run', () => {
@@ -405,19 +405,42 @@ const baseProposal = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('proposal card: Yes/No lead the band, with Explore promoted beside them', () => {
+test('proposal card: the vote is ONE button beside the bar, and the band is empty', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal());
   const html = cardHtml(model);
-  assert.match(html, /gc-vote-btn-yes/);
+  // The model still carries the pair — same calls, same reviewed revision —
+  // and the card draws them as one `.dev-vote-btn` in the STATUS band, beside
+  // the state bar, whose picker lists the two (card/dev-card.tsx VoteButton).
   assert.ok(hasAction(model, 'castVote', 7, 'yes'));
-  assert.match(html, /gc-vote-btn-no/);
   assert.ok(hasAction(model, 'castVote', 7, 'no'));
-  // Three primaries — the whole reason ACTION_PRIMARY_MAX went 2 → 3. Yes/No
-  // stay first so the vote is still what the eye lands on; Explore fills the
-  // reserved band's remaining width instead of hiding behind ⋯.
-  assert.match(html, /gc-explore-chat-btn/, 'Explore promoted onto the face');
-  assertCardActionContract(AppView, html, { primary: 3, menu: true });
+  assert.doesNotMatch(html, /gc-vote-btn-yes|gc-vote-btn-no/, 'no Yes/No pills on the face');
+  const band = html.match(/<div class="dev-card-badges dev-card-status">([\s\S]*?)<\/div><div class="gc-card-actions"/);
+  assert.ok(band, 'the status band precedes the action band');
+  assert.match(band[1], /dev-status-pill-block[\s\S]*<button [^>]*class="dev-vote-btn" data-vote-btn="open"[^>]*aria-haspopup="menu"/,
+    'the bar, then the vote button, in the status band');
+  assert.match(band[1], /data-vote-btn="open"[^>]*>Vote</, '"Vote" until the viewer has voted');
+  assert.match(band[1], /dev-vote-caret/, 'and a caret, so it reads as changeable');
+  // The viewer's cast vote is the button's face, and still changeable.
+  const voted = cardHtml(AppView._proposalCardModel(baseProposal({ my_vote: 'yes' })));
+  assert.match(voted, /class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes"[^>]*>[\s\S]*?Yes</,
+    'a Yes vote fills the button');
+  assert.match(voted, /data-vote-btn="yes"[^>]*title="You voted Yes\. Press to change your vote\."/);
+  const votedNo = cardHtml(AppView._proposalCardModel(baseProposal({ my_vote: 'no' })));
+  assert.match(votedNo, /class="dev-vote-btn dev-vote-btn-no" data-vote-btn="no"/);
+  // And Explore is back in ⋯ (#1787 round four), so the band on a live
+  // foreign proposal is the vote and nothing else.
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'Explore is not a face pill');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'it is a ⋯ row');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+});
+
+test('the detail head takes the same one vote button (topic page, round three)', () => {
+  const AppView = makeAppView(ME);
+  const html = cardHtml(AppView._proposalCardModel(baseProposal(), { noNav: true }));
+  assert.doesNotMatch(html, /gc-vote-btn-yes|gc-vote-btn-no/);
+  assert.match(html, /class="dev-vote-btn" data-vote-btn="open"/);
+  assert.match(html, /dev-card-topic/, 'and wears the topic card class the shared rules dress');
 });
 
 test('proposal card: read-only viewer keeps the icon Preview and loses Yes/No', () => {
@@ -426,10 +449,11 @@ test('proposal card: read-only viewer keeps the icon Preview and loses Yes/No', 
   const model = AppView._proposalCardModel(baseProposal({ staging_url: 'https://stg.example' }));
   const html = cardHtml(model);
   assert.ok(!hasAction(model, 'castVote'), 'no vote buttons for a read-only viewer');
-  // The whole reason Preview is an icon: without it this card would carry no
-  // visible affordance at all for someone who cannot vote.
+  assert.doesNotMatch(html, /dev-vote-btn/, 'and no vote button either');
+  // Without the preview this card would carry no visible affordance at all
+  // for someone who cannot vote.
   assertCardActionContract(AppView, html, { primary: 0, previewIcon: true });
-  assert.match(html, /aria-label="Open preview"/, 'the icon has a real accessible name');
+  assert.match(html, /aria-label="Open preview"/, 'the pill has a real accessible name');
   AppView.appData = null;
 });
 
@@ -437,14 +461,16 @@ test('proposal card (admin, not author): Admin merge / kudos stay in ⋯, Explor
   const AppView = makeAppView(ME, { admin: true });
   const model = AppView._proposalCardModel(baseProposal({ staging_url: 'https://stg.example' }));
   const html = cardHtml(model);
-  assert.ok(hasAction(model, 'swapToStagingForSession', 7), 'Preview present, as the icon');
-  assertCardActionContract(AppView, html, { primary: 3, menu: true, previewIcon: true });
+  assert.ok(hasAction(model, 'swapToStagingForSession', 7), 'Preview present, as the pill');
+  // primary: 0 — the vote is a status-band button, Explore is a ⋯ row and
+  // the preview closes the facts line, so a proposal card's action band is
+  // empty and `.gc-card-actions:empty` collapses it.
+  assertCardActionContract(AppView, html, { primary: 0, menu: true, previewIcon: true });
   assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
   assert.ok(menuHas(AppView, html, /kudos/i), 'kudos in ⋯');
-  // One action, one place: Explore is on the face now, so its ⋯ row is gone.
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill on the card face');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
-    'and therefore NOT also a ⋯ row');
+  // One action, one place, and since #1787 round four that place is ⋯.
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'no Explore pill on the card face');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore in ⋯');
 });
 
 test('proposal card (author): Open session + Withdraw move to ⋯', () => {
@@ -455,28 +481,28 @@ test('proposal card (author): Open session + Withdraw move to ⋯', () => {
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
     'owners reach the Mayor via Open session, so no Explore row on their own PR');
-  assertCardActionContract(AppView, html, { primary: 2, menu: true });
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
 });
 
 // #1045 was about the owner of an IMPORTED proposal: there is no in-app
 // session behind it, so "Open session" must not render — and precisely
-// because of that, Explore's promotion DOES reach this card. "An owner
-// reaches the Mayor from their own session" (#313/#827) has no session to
-// point at here, so without the pill the owner of a PR they imported gets
-// no AI affordance at all. _showExplorePill is the shared predicate:
-// not-mine OR mine-but-imported gets the pill, live cards on the face.
-test('proposal card (author of an imported PR): Withdraw in ⋯, no session, Explore on the face', () => {
+// because of that, Explore DOES reach this card. "An owner reaches the Mayor
+// from their own session" (#313/#827) has no session to point at here, so
+// without it the owner of a PR they imported gets no AI affordance at all.
+// _showExplorePill is the shared predicate: not-mine OR mine-but-imported.
+// WHERE it is offered is a separate question, and since #1787 round four the
+// answer on a card is ⋯ rather than the face.
+test('proposal card (author of an imported PR): Withdraw and Explore in ⋯, no session', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal({ user_id: ME, source: 'imported' }));
   const html = cardHtml(model);
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Open session/), 'no dev session behind an imported PR');
-  assert.match(html, /gc-explore-chat-btn/,
-    'Explore promoted onto the face — the owner\'s only AI affordance (#1045)');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
-    'one action, one place: on the face means no ⋯ row');
-  assert.match(html, /gc-card-actions/, 'shared action row present');
-  assertCardActionContract(AppView, html, { primary: 3, menu: true });
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore in ⋯ — the owner\'s only AI affordance (#1045)');
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'one action, one place: not also a face pill');
+  assert.match(html, /gc-card-actions/, 'the reserved band is still emitted, and empty');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
 });
 
 // ── Governance card ──────────────────────────────────────────────────────
@@ -492,7 +518,8 @@ test('gov card: Yes/No are the primaries, Admin merge + Withdraw go to ⋯', () 
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'castIssueVote', 11, 'up'), 'castIssueVote');
   assert.ok(hasAction(model, 'castIssueVote', 11, 'down'), 'castIssueVote');
-  assertCardActionContract(AppView, html, { primary: 2, menu: true });
+  assert.match(html, /class="dev-vote-btn" data-vote-btn="open"/, 'the same one-button vote as a code proposal');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
   assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
 });
@@ -516,7 +543,7 @@ test('gov card: non-admin non-creator sees only yes/no, and no ⋯ at all', () =
   assert.ok(!menuHas(AppView, html, /Admin merge/), 'no admin merge for non-admin');
   assert.ok(!menuHas(AppView, html, /Withdraw/), 'no withdraw for non-creator');
   // Nothing to demote → no dead ⋯ button.
-  assertCardActionContract(AppView, html, { primary: 2, menu: false });
+  assertCardActionContract(AppView, html, { primary: 0, menu: false });
 });
 
 // ── Merged card ────────────────────────────────────────────────────────────
@@ -593,26 +620,111 @@ test('voteButtonsHtml: full set concatenates Preview/Yes/No/Admin (group-chat ro
   assert.match(html, /castAdminMerge\(7\)/, 'Admin merge');
 });
 
-test('native vote controls and request carry the exact rendered revision', async () => {
+test('native vote controls and request carry the approval epoch', async () => {
+  // #2038: the vote is pinned to the epoch the card was rendered at, not to
+  // the commit. A commit changes every time the platform brings a proposal up
+  // to date with main, and a guard that compared commits rejected the next
+  // voter's click on every one of those merges — for code the platform had
+  // just certified was unchanged.
   const AppView = makeAppView(ME);
-  const head = 'a'.repeat(40);
-  const html = AppView.voteButtonsHtml(baseProposal({ reviewed_head_sha: head }));
-  assert.match(html, new RegExp(`castVote\\(7, 'yes', '${head}'\\)`));
-  assert.match(html, new RegExp(`castVote\\(7, 'no', '${head}'\\)`));
+  const html = AppView.voteButtonsHtml(baseProposal({ approval_epoch: 3 }));
+  assert.match(html, /castVote\(7, 'yes', 3\)/);
+  assert.match(html, /castVote\(7, 'no', 3\)/);
+
+  // Imported proposals carry an epoch too: an imported head moving is always
+  // an author push, so the epoch is exactly the right thing to compare.
   const importedHtml = AppView.voteButtonsHtml(baseProposal({
-    source: 'imported', reviewed_head_sha: head, imported_pr_head_sha: 'b'.repeat(40),
+    source: 'imported', approval_epoch: 5, imported_pr_head_sha: 'b'.repeat(40),
   }));
-  assert.doesNotMatch(importedHtml, new RegExp(head),
-    'imported proposals keep their established imported-head vote flow');
+  assert.match(importedHtml, /castVote\(7, 'yes', 5\)/);
 
   let request = null;
   AppView.__sandbox.fetch = async (url, options) => {
     request = { url, options };
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
-  await AppView.castVote(7, 'yes', head);
+  await AppView.castVote(7, 'yes', 3);
   assert.equal(request.url, '/api/sessions/7/vote');
   assert.deepEqual(JSON.parse(request.options.body), {
-    vote: 'yes', expectedHeadSha: head,
+    vote: 'yes', expectedEpoch: 3,
   });
 });
+
+// ── #1924: a vote leaves "Needs your vote" on the click ───────────────
+
+test('#1924: castVote sets my_vote and repaints before the request, and keeps it on success', async () => {
+  const AppView = makeAppView(ME);
+  const pr = { id: 7, status: 'promoted', my_vote: null };
+  AppView._proposals = [pr];
+  const seen = [];
+  AppView._repaintDevBody = () => { seen.push(`repaint:${pr.my_vote}`); };
+  AppView.refreshDevData = () => { seen.push('refresh'); };
+  AppView.__sandbox.PlatformUI = { toast: () => {} };
+  AppView.__sandbox.fetch = async () => {
+    seen.push(`fetch:${pr.my_vote}`);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  await AppView.castVote(7, 'yes');
+  assert.equal(seen.join(' '), 'repaint:yes fetch:yes refresh',
+    'the card is repainted as voted before the network round-trip');
+  assert.equal(pr.my_vote, 'yes');
+});
+
+test('#1924: a refused vote puts the old value back and repaints', async () => {
+  const AppView = makeAppView(ME);
+  const pr = { id: 7, status: 'promoted', my_vote: null };
+  AppView._proposals = [pr];
+  const repaints = [];
+  let toast = null;
+  AppView._repaintDevBody = () => { repaints.push(pr.my_vote); };
+  AppView.refreshDevData = () => {};
+  AppView.__sandbox.PlatformUI = { toast: (m) => { toast = m; } };
+  AppView.__sandbox.fetch = async () => ({ ok: false, status: 409, json: async () => ({ error: 'Voting has closed' }) });
+  await AppView.castVote(7, 'yes');
+  assert.equal(pr.my_vote, null, 'rolled back');
+  assert.equal(repaints.join(','), 'yes,', 'optimistic repaint, then the rollback repaint');
+  assert.equal(toast, 'Voting has closed');
+
+  // A network failure rolls back the same way.
+  AppView.__sandbox.fetch = async () => { throw new Error('offline'); };
+  await AppView.castVote(7, 'no');
+  assert.equal(pr.my_vote, null);
+});
+
+test('#1924: re-casting the same vote does not repaint optimistically', async () => {
+  const AppView = makeAppView(ME);
+  const pr = { id: 7, status: 'promoted', my_vote: 'yes' };
+  AppView._proposals = [pr];
+  let repaints = 0;
+  AppView._repaintDevBody = () => { repaints += 1; };
+  AppView.refreshDevData = () => {};
+  AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  await AppView.castVote(7, 'yes');
+  assert.equal(repaints, 0);
+  assert.equal(pr.my_vote, 'yes');
+});
+
+test('a rejected vote re-arms from the epoch the server named', async () => {
+  // One head move used to produce TWO identical rejections: the refresh was
+  // fired without being awaited and the click lock was released first, so an
+  // impatient second click re-sent the same stale stamp (#2038 F8).
+  const AppView = makeAppView(ME);
+  const sent = [];
+  let call = 0;
+  AppView.__sandbox.fetch = async (url, options) => {
+    sent.push(JSON.parse(options.body));
+    call += 1;
+    if (call === 1) {
+      return {
+        ok: false, status: 409,
+        json: async () => ({ error: 'changed', approvalEpoch: 9 }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  await AppView.castVote(7, 'yes', 3);
+  await AppView.castVote(7, 'yes', 3);
+  assert.deepEqual(sent.map((b) => b.expectedEpoch), [3, 9],
+    'the second click must carry the epoch the rejection named, not the stale one');
+});
+

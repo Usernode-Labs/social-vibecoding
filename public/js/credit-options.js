@@ -111,12 +111,15 @@
   function resetSentence(state, nowMs) {
     var s = state || {};
     if (s.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10.00/day of Usernode credits.';
+      return 'Connect GitHub or X to unlock $10.00/day of Homeroom credits.';
     }
     if (s.level === 'unavailable') {
       return 'Credit eligibility is temporarily unavailable.';
     }
-    var parts = 'Free credits reset at midnight UTC';
+    var resetLabel = s.resetLabel || 'midnight UTC';
+    var parts = s.capWindow === 'weekly'
+      ? 'Free credits reset ' + resetLabel
+      : 'Free credits reset at ' + resetLabel;
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
     if (at && Number.isFinite(at.getTime())) {
       var local = null;
@@ -124,7 +127,7 @@
         // Only worth translating for a reader who is not already on UTC —
         // otherwise it prints "midnight UTC — 12:00 AM your time", which
         // is the same fact twice.
-        if (at.getTimezoneOffset() !== 0) {
+        if (at.getTimezoneOffset() !== 0 && s.capWindow !== 'weekly') {
           local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         }
       } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
@@ -162,6 +165,9 @@
         byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
         globalOut: false, resetsAt: (s && s.resetsAt) || null,
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
+        capWindow: (s && s.capWindow) || 'daily',
+        windowLabel: (s && s.windowLabel) || 'Today',
+        resetLabel: (s && s.resetLabel) || 'midnight UTC',
       };
     }
     var verificationRequired = !!s.verificationRequired;
@@ -198,6 +204,13 @@
       hasByokKey: !!s.hasByokKey,
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
+      // #1788: the allowance is two windows now, and the server reports
+      // whichever one is BINDING in the legacy limit/spent/remaining
+      // fields. These three say which window that was, so every sentence
+      // below names the right boundary instead of assuming "daily".
+      capWindow: s.capWindow || 'daily',
+      windowLabel: s.windowLabel || 'Today',
+      resetLabel: s.resetLabel || 'midnight UTC',
       lowPct: lowPct,
       verificationRequired: verificationRequired,
       entitlementAvailable: entitlementAvailable,
@@ -255,8 +268,9 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
+    var when = s.capWindow === 'weekly' ? 'this week' : 'today';
     return 'Running low on free AI credits: ' + money(s.remainingCents)
-      + ' of ' + money(s.limitCents) + ' left today.';
+      + ' of ' + money(s.limitCents) + ' left ' + when + '.';
   }
 
   // ── Who each route is for (#1281) ──────────────────────────────────
@@ -264,7 +278,7 @@
   // Running out of credits is the moment the venue question finally has to
   // be asked, and #1281's answer is to route by WHO YOU ARE rather than to
   // list every mechanism at once. Two of the ways out need a terminal: the
-  // CLI lease (`local`) wants the Usernode CLI installed, and importing a
+  // CLI lease (`local`) wants the Homeroom CLI installed, and importing a
   // pull request (`own-tools-pr`) wants a fork, a branch and git. Shown
   // flat next to "use your Claude plan", they read as the price of
   // continuing rather than as the specialist routes they are — which is
@@ -279,7 +293,7 @@
   // seventh venue in public/js/build-venues.js lands on the correct side
   // of the expander by declaring what it is, not by being remembered here.
   //
-  //   lease  → session_agent_leases: the Usernode CLI on your machine
+  //   lease  → session_agent_leases: the Homeroom CLI on your machine
   //   import → POST /api/apps/:slug/pr-import: your own tools, your own PR
   var DEVELOPER_MECHANISMS = { lease: true, import: true };
 
@@ -322,8 +336,8 @@
         ? "Your saved key couldn't be used"
         : 'Use your own Anthropic API key',
       blurb: hasApiKey
-        ? 'Usernode has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. The daily allowance is bypassed entirely while a working key is on file.'
-        : 'Paste a key in Settings → API key and Usernode keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
+        ? 'Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. The daily allowance is bypassed entirely while a working key is on file.'
+        : 'Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,
       developer: false,
@@ -334,7 +348,7 @@
     return {
       id: 'social-identity',
       title: 'Unlock $10/day with a social account',
-      blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
+      blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Homeroom keeps no provider token.',
       cta: 'Connect GitHub or X',
       hash: SETTINGS_HASHES.connector,
       developer: false,
@@ -348,10 +362,10 @@
     // list comes from public/js/build-venues.js in `blocked` mode rather
     // than being retyped here. That is what stopped "use a coding tool on
     // your computer" from covering two different products: the CLI lease
-    // keeps THIS session (Usernode drives, your machine executes, same
+    // keeps THIS session (Homeroom drives, your machine executes, same
     // transcript and proposal), while your own tools mean you working
     // alone and bringing the result back as a pull request with no
-    // Usernode chat at all. They are two rows now because they are two
+    // Homeroom chat at all. They are two rows now because they are two
     // answers.
     //
     // `usernode-claude` comes back marked unavailable in this mode — it is
@@ -402,7 +416,7 @@
       out.push({
         id: 'connector',
         title: 'Use your Claude.ai or ChatGPT subscription',
-        blurb: 'Connect Usernode to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
+        blurb: 'Connect Homeroom to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
         cta: 'Connect Claude or ChatGPT',
         hash: SETTINGS_HASHES.connector,
         developer: false,
@@ -433,7 +447,7 @@
   function lead(state) {
     var s = state || {};
     if (s.verificationRequired) {
-      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
     }
     return s.globalOut
       ? "The platform's shared daily AI budget is used up."

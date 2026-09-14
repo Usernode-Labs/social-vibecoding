@@ -155,6 +155,13 @@ const buttonVariants = cva('', {
       // page, Copy public link, Reveal and Browse challenges, all of which
       // were `border border-zinc-300` or `border border-violet-500` boxes.
       neutral: 'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      // The widget language's filled pills (settings, sign-in, the bell):
+      // the accent one for the primary act, the neutral one beside it, and
+      // the danger tint for the one destructive control on a page — a tint,
+      // not an outline, because the language fills its controls.
+      pillAccent: 'rounded-full bg-violet-600 hover:bg-violet-500',
+      pillNeutral: 'rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      pillDanger: 'rounded-full bg-red-500/10 hover:bg-red-500/15',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
       // Buttons that carry no box of their own (header icon buttons, text
@@ -208,6 +215,10 @@ const buttonVariants = cva('', {
       xsText: 'px-3 py-1 text-xs font-medium',
       // The landing page and waitlist call to action.
       lg: 'px-5 py-2 text-sm font-medium',
+      // The pills' two heights: 40px beside a field, 48px as a screen's
+      // primary button.
+      pill: 'px-5 py-2.5 text-[15px] font-semibold',
+      pillLg: 'px-5 py-3 text-[17px] font-semibold',
       // #more-submit.
       xl: 'px-6 py-2 text-sm font-medium',
       // Icon buttons carry their own sizing from the surrounding layout.
@@ -250,6 +261,8 @@ const buttonVariants = cva('', {
       // #settings-remove.
       danger:
         'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+      // Danger ink on the danger-tint pill, whose hover is the pill's own.
+      dangerTint: 'text-red-700 dark:text-red-400 transition-colors',
     },
   },
   defaultVariants: {

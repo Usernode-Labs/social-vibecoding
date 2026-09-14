@@ -38,6 +38,90 @@
 (function () {
   'use strict';
 
+  // ── Status lines ──────────────────────────────────────────────────────
+  //
+  // Seven sections report the result of the user's last action in a status
+  // line, and all seven paint it identically: reveal the node, write the
+  // text, swap in one of three colour pairs. This is that paint, and the
+  // palette below is the only place those classes are named.
+  //
+  // The pairs are TOKEN ARRAYS and they are SPREAD into classList, because a
+  // DOMTokenList token may not contain whitespace: `classList.add('a b')`
+  // throws InvalidCharacterError. Each of these was a SINGLE class when it
+  // was written (#1380); #1400's widget-library migration rewrote all seven
+  // into `dark:` pairs and left the single-argument `add(cls)` in place, so
+  // every status write in this file threw. It read as cosmetic because the
+  // text is written FIRST and still landed — what actually broke was the
+  // code AFTER the call. changeUsername() is the case that was reported: it
+  // painted "Saving…", threw before its fetch was ever issued, and left the
+  // button disabled under a message that could never resolve. Keep these
+  // arrays, and add a colour by adding a pair here rather than a string at a
+  // call site. _wireConnectorNameSpelling's link-status write already spread
+  // its pair, which is why that one line kept working.
+  const STATUS_PALETTE = {
+    error: ['text-red-700', 'dark:text-red-400'],
+    ok: ['text-emerald-700', 'dark:text-emerald-400'],
+    info: ['text-zinc-500', 'dark:text-zinc-400'],
+  };
+  const STATUS_PALETTE_CLASSES = [
+    'hidden',
+    ...STATUS_PALETTE.error, ...STATUS_PALETTE.ok, ...STATUS_PALETTE.info,
+  ];
+
+  /** Reveal `el`, write `text`, colour it for `kind` (anything else: info). */
+  function paintStatus(el, text, kind) {
+    el.textContent = text;
+    el.classList.remove(...STATUS_PALETTE_CLASSES);
+    el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
+  }
+
+  // #2119: an OpenRouter key's allowance is named from the reset cadence the
+  // server reports for it ('weekly' for company keys carrying the platform
+  // allowance, 'daily' for older ones until they are re-limited, whatever
+  // OpenRouter says for a personal key, which may be nothing), never from a
+  // hard-coded word, so the copy stays truthful for every key it describes.
+  function limitNoun(reset, noun = 'limit') {
+    const cadence = typeof reset === 'string' ? reset.trim().toLowerCase() : '';
+    return cadence ? `${cadence} ${noun}` : noun;
+  }
+
+  // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
+  //
+  // The set stores the EXPANDED names, which is the opposite of the admin
+  // console's NAV_COLLAPSED_KEY, and the inversion is deliberate on both
+  // sides. There, every group ships open and "absent means expanded" is what
+  // keeps a newly added section visible to someone whose store predates it.
+  // Here, exactly one group exists to ship SHUT — the whole point of moving
+  // the rarely used panes into it — so "absent means collapsed" is what makes
+  // an empty store, a cleared store and a first visit all agree with the
+  // declared check that says Advanced starts closed.
+  const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
+
+  // ── Post-logout landing (#1524) ───────────────────────────────────────
+  //
+  // Signing out always ends on the PUBLIC LANDING page, on every surface.
+  // `/` with no fragment is the only address that boots the anonymous shell
+  // there: App.restoreFromHash treats any other hash (or any `/app/<slug>`
+  // path) as a remembered deep link and answers with the bare sign-in form.
+  // A bare '/' rather than App._rootUrl() so a leftover `?shot=` / `?signup=`
+  // query cannot survive the sign-out either.
+  const LANDING_URL = '/';
+
+  // A native sign-out whose terminal step fails leaves this document alive
+  // with server authority already revoked, so it navigates to the landing
+  // page like every other surface. The advisory that used to be toasted here
+  // would be destroyed by that navigation, so it is handed to the anonymous
+  // boot instead: App.enterAnonymous reads this key once and toasts it.
+  const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
+  const NATIVE_SHUTDOWN_NOTICE =
+    'Signed out. Close and reopen the app to finish shutting down Homeroom.';
+
+  // A successful native logout replaces the WebView, so nothing below it in
+  // this document normally runs. This bounded net covers the case where the
+  // replacement does not arrive: rather than leave a signed-out user looking
+  // at the Settings screen forever, land them on the landing page.
+  const NATIVE_LOGOUT_SAFETY_MS = 5000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -68,6 +152,11 @@
     _connectorLoadId: 0,
     _githubLink: null,
     _openRouterModels: [],
+    _openRouterSelectedModelId: '',
+    _openRouterRecommendedModelId: '',
+    _openRouterCatalogRefreshedAt: null,
+    _openRouterCatalogTotal: 0,
+    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -121,8 +210,8 @@
     // order, and the first VISIBLE entry is the default section.
     //
     // `gate` names the INNER node whose own `hidden` decides whether the
-    // section is offered at all — Usernode Wallet (wallet linking enabled),
-    // Usernode app (the native bridge's getSettingsState capability) and
+    // section is offered at all — Homeroom Wallet (wallet linking enabled),
+    // Homeroom app (the native bridge's getSettingsState capability) and
     // Admin preview (a real platform admin). Those gates live in
     // _renderWalletSection / _renderUsernodeSection / _renderAdminSection
     // and are read here, never duplicated. Sections with no `gate` are
@@ -133,6 +222,26 @@
       // DEFAULT_SECTION below — because it is the setting most people arrive
       // looking for and the only one that needs no explanation.
       { key: 'theme', label: 'Theme', group: 'Preferences' },
+      // #1556: GATED, and the gate is "this user already picked a language".
+      // The value is app-facing only (the iframe JWT `locale` claim and
+      // usernode.getUserLocale) and the platform shell is English-only, so a
+      // "Language" row in Preferences reads as a UI language switch that does
+      // nothing — which is exactly what the feedback reported. Hiding it from
+      // everyone who never set one, while keeping it for anyone who did, is
+      // what stops a stored preference becoming unreachable. The read paths
+      // are untouched; to re-launch the picker, drop this `gate` and the two
+      // gate lines in _renderLanguageSection.
+      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
+      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
+      // Challenges and Create app FIXED SECTIONS of the home screen rather
+      // than draggable, hideable widgets, so there is nothing left for the
+      // section to configure.
+
+      { key: 'username', label: 'Username', group: 'Account' },
+      { key: 'email', label: 'Email & recovery', group: 'Account' },
+      { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
@@ -140,39 +249,39 @@
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-      { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
-      { key: 'username', label: 'Username', group: 'Account' },
-      { key: 'password', label: 'Password', group: 'Account' },
-      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
-
-      { key: 'language', label: 'Language', group: 'Preferences' },
-      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
-      // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
-      // Challenges and Create app FIXED SECTIONS of the home screen rather
-      // than draggable, hideable widgets, so there is nothing left for the
-      // section to configure.
-
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
-      { key: 'dev-console', label: 'Developer console', group: 'Developer' },
-      { key: 'experimental', label: 'Experimental', group: 'Developer' },
-
-      { key: 'usernode', label: 'Usernode app', group: 'Usernode app', gate: 'settings-usernode-section' },
-
-      // Reference, not configuration: which build of the app, the platform
-      // and the mobile shell you are on. Ungated and last — it is the pane you
-      // come to Settings to READ, and the Improve panel is where the same
-      // facts turn into something to act on (a build in flight, a reload
-      // waiting). See sections/about.tsx.
-      { key: 'about', label: 'About', group: 'About' },
-
-      { key: 'admin-preview', label: 'Admin preview', group: 'Admin', gate: 'settings-admin-section' },
+      // ── Advanced ──────────────────────────────────────────────────────
+      //
+      // #1554: the four groups above were seven, and the tail of them were
+      // panes most people never open — per-app AI grants, agent instruction
+      // files, the CLI, the developer console, experimental toggles, the
+      // native-app diagnostics, the admin preview and the build readout.
+      // They are all still here and still deep-linkable; the group they sit
+      // in just ships COLLAPSED (see ADVANCED_GROUP below), so the menu opens
+      // at three short sections instead of seventeen rows.
+      //
+      // The order inside it runs configuration first, then reference: the
+      // two AI-adjacent panes that are rarely touched, the three developer
+      // ones, the two gated ones, and About last — it is the pane you come to
+      // Settings to READ, and the Improve panel is where the same facts turn
+      // into something to act on (a build in flight, a reload waiting). See
+      // sections/about.tsx.
+      { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
+      { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
+      { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
+      { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
+      { key: 'experimental', label: 'Experimental', group: 'Advanced' },
+      { key: 'usernode', label: 'Homeroom app', group: 'Advanced', gate: 'settings-usernode-section' },
+      { key: 'admin-preview', label: 'Admin preview', group: 'Advanced', gate: 'settings-admin-section' },
+      { key: 'about', label: 'About', group: 'Advanced' },
     ],
 
-    // The section a bare #settings resolves to on desktop (and the one
-    // _writeHash collapses back onto bare #settings). Must be an ungated
-    // key, so it is always reachable.
+    // The one group that collapses (#1554). Every other group is short and
+    // always open, so this is a NAME rather than a per-entry flag: adding a
+    // rarely-used section means giving it `group: 'Advanced'` and nothing
+    // else. _isCollapsibleGroup is the single reader.
+    ADVANCED_GROUP: 'Advanced',
+
     DEFAULT_SECTION: 'theme',
 
     init() {
@@ -181,6 +290,14 @@
       // Every control below is bound ONCE, here, by id: the section markup
       // is static in index.html and only ever hidden/shown, never rebuilt
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
+
+      // The Homeroom app → connection panel offers wallet recovery only while
+      // native admission is refused for want of a seeded wallet
+      // (_walletRecoveryAvailable). Admission flipping either way — the
+      // recovery dialog succeeding, a sign-out — must repaint that panel
+      // without a navigation, and this event is how NativeChrome says so.
+      window.addEventListener('usernode:native-session-admission',
+        () => this._publishUsernode());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
 
@@ -195,19 +312,29 @@
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
       const orClaim = document.getElementById('settings-openrouter-claim');
-      const orCopy = document.getElementById('settings-openrouter-copy');
-      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
+      const orModelSearch = document.getElementById('settings-openrouter-model-search');
+      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
+      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
+      const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
-      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
-      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (orModel) orModel.addEventListener('change', () => {
+        this._openRouterSelectedModelId = orModel.value;
+        this._syncOpenRouterModelDetails();
+      });
+      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
+      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
+        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
+        this._renderOpenRouterModelOptions();
+      });
+      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
+      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
       if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
@@ -364,36 +491,48 @@
         });
       }
 
-      // #138 "Send a test alert" — exercises the user's own setup. Fires a
-      // demo completion after a short delay so they can stay (hear the
-      // chime) or switch away (see the background notification).
+      // The server owns delayed push delivery; this countdown only explains
+      // when the optional live-page chime will run.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
-        alertsTest.addEventListener('click', () => {
-          if (!window.DevAlerts) return;
+        alertsTest.addEventListener('click', async () => {
+          if (!window.DevAlerts || alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
-          const ms = DevAlerts.testAlert();
-          if (!status) return;
-          // Visible countdown that ticks down each second (the previous
-          // version set the text once and it looked frozen). Guard against
-          // rapid re-clicks by clearing any in-flight countdown first; the
-          // same id is cleared on close().
           this._clearAlertsTestCountdown();
-          status.classList.remove('hidden');
-          let remaining = Math.ceil(ms / 1000);
-          const render = () => {
-            status.textContent = `Alert in ${remaining}s. Stay here for the chime, or switch away / background the app for a notification.`;
-          };
-          render();
-          this._alertsTestTimer = setInterval(() => {
-            remaining -= 1;
-            if (remaining > 0) {
-              render();
-              return;
-            }
-            this._clearAlertsTestCountdown();
-            status.textContent = 'Sent. You should hear a chime now (or get a notification if you switched away).';
-          }, 1000);
+          alertsTest.disabled = true;
+          if (status) {
+            status.classList.remove('hidden');
+            status.textContent = 'Queueing test alert…';
+          }
+          try {
+            const result = await DevAlerts.testAlert();
+            if (!status) return;
+            const pushStatus = result.queued
+              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
+              : result.reason === 'preference_disabled'
+                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
+                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+            let remaining = Math.ceil(result.delayMs / 1000);
+            const render = () => {
+              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+            };
+            render();
+            this._alertsTestTimer = setInterval(() => {
+              remaining -= 1;
+              if (remaining > 0) {
+                render();
+                return;
+              }
+              this._clearAlertsTestCountdown();
+              status.textContent = result.queued
+                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
+                : pushStatus;
+            }, 1000);
+          } catch (err) {
+            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+          } finally {
+            alertsTest.disabled = false;
+          }
         });
       }
 
@@ -470,7 +609,7 @@
         // resolve to the same deployment-constant answer.)
         this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
         this._renderIndicator();
-        // `walletLinkEnabled` decides whether the Usernode Wallet row is in
+        // `walletLinkEnabled` decides whether the Homeroom Wallet row is in
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
@@ -478,6 +617,10 @@
         // painted (a cold-boot deep link to #settings/connectors renders
         // before this resolves). Same reasoning as the wallet row above.
         this._renderDevFlowSection();
+        // #1556: `locale` decides whether the Language row is in the menu at
+        // all, and it lands here too — a cold-boot deep link paints before
+        // this resolves. Same reasoning as the two rows above.
+        this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -587,7 +730,7 @@
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
       Settings._chromeSuspended = !!(opts && opts.chrome === false);
-      // Per-mount state: the Usernode-app auto-retry is offered once per
+      // Per-mount state: the Homeroom-app auto-retry is offered once per
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
@@ -605,13 +748,16 @@
       if (Settings._isMobile() && !valid) {
         Settings._level = 1;
         Settings._section = fallback;
+        Settings._ensureActiveGroupExpanded();
         Settings._renderNav();
         Settings._renderContent();
         Settings._syncChrome();
         return;
       }
       Settings._level = 2;
-      Settings.setSection(valid ? section : fallback, { writeHash: false });
+      Settings._section = valid ? section : fallback;
+      Settings._ensureActiveGroupExpanded();
+      Settings.setSection(Settings._section, { writeHash: false });
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
       // header ends up showing the section's name rather than "Settings".
       Settings._syncChrome();
@@ -654,6 +800,8 @@
       }
       Settings._markRoute('applied');
       if (!mobile) {
+        Settings._section = targetSection;
+        Settings._ensureActiveGroupExpanded();
         Settings.setSection(targetSection, { writeHash: false });
         Settings._level = 2;
         Settings._syncChrome();
@@ -673,6 +821,7 @@
         Settings._pushedFromMenu = false;
       }
       Settings._level = targetLevel;
+      Settings._ensureActiveGroupExpanded();
       Settings._transition(() => {
         Settings._renderNav();
         Settings._renderContent();
@@ -688,17 +837,28 @@
     handleBack() {
       if (!Settings._open) return false;
       if (!Settings._isMobile() || Settings._level !== 2) return false;
-      if (Settings._pushedFromMenu) {
-        // We pushed that entry ourselves, so the one below it IS our menu:
-        // popping routes back through popstate → restoreFromHash → route(),
-        // the same path the device back gesture takes.
+      if (Settings._pushedFromMenu || Settings._entryBelow()) {
+        // Something of ours is below this entry, so popping lands on it —
+        // routing back through popstate → restoreFromHash → route(), the
+        // same path the device back gesture takes.
+        //
+        // `_pushedFromMenu` is the case where we know exactly what that is:
+        // our own menu. It is not the only one (#1565). A link from
+        // ELSEWHERE in the app — the profile editor's "Settings → Username",
+        // which is where a viewer who wants to rename themselves is sent —
+        // pushes an entry too, and what sits below it is the screen the
+        // viewer actually came from.
+        // Replacing it with the menu stranded them a level deeper than they
+        // started: two presses to get back to Profile, the first of which
+        // went somewhere they had never been.
         history.back();
         return true;
       }
-      // Deep link (bookmark, a prose "Settings → Change password" link):
-      // nothing of ours below. REPLACE the entry with the menu rather than
-      // pushing one, so back can't bounce the viewer between the section
-      // and the menu forever.
+      // A COLD deep link — a bookmark, a push notification, a reload on the
+      // section — really does have nothing of ours below, and back would
+      // leave the app. REPLACE the entry with the menu rather than pushing
+      // one, so back can't bounce the viewer between the section and the
+      // menu forever.
       try { history.replaceState(null, '', '#settings'); } catch { /* non-fatal */ }
       Settings._level = 1;
       Settings._transition(() => {
@@ -708,6 +868,27 @@
         Settings._restoreScroll();
       }, 'pop');
       return true;
+    },
+
+    // Did this DOCUMENT put an address below the one on screen? The router
+    // is the only thing that can say (see App.previousRoute), and a shell
+    // that never answers — the vm harnesses, the prerender pass — is treated
+    // as a cold deep link, which is the conservative half: it keeps the
+    // viewer inside Settings rather than sending back somewhere that may not
+    // exist.
+    _entryBelow() {
+      try { return window.App?.previousRoute?.() != null; }
+      catch { return false; }
+    },
+
+    // Where the level-2 chevron POINTS. It has to name the same place
+    // handleBack goes, or a native/middle click lands somewhere the plain
+    // click does not — and the arrow's href is the platform's fallback
+    // answer for "back to where?" (app.js's back-btn handler follows it).
+    _upHref() {
+      if (Settings._pushedFromMenu || !Settings._entryBelow()) return '#settings';
+      // `''` is home; undefined lets setBackIcon fall back to the home href.
+      return window.App.previousRoute() || undefined;
     },
 
     // Below the sidebar breakpoint — i.e. the two-level layout is live.
@@ -769,8 +950,143 @@
       return groups;
     },
 
+    // ── Collapsible groups (#1554) ────────────────────────────────────────
+    //
+    // One group collapses, and it ships collapsed. The set below holds the
+    // groups the viewer has OPENED (see NAV_EXPANDED_KEY), never derives
+    // anything from the DOM, and is read by both surfaces through
+    // _navView/_menuView — so a toggle survives a section switch, a viewport
+    // crossing and a reload identically.
+    _expandedGroups: null,
+
+    // The group the ACTIVE section lives in, revealed for exactly as long as
+    // that section is active and never written to storage — see
+    // _ensureActiveGroupExpanded for why the arrival reveal is transient.
+    _revealedGroup: null,
+
+    _isCollapsibleGroup(name) {
+      return String(name) === Settings.ADVANCED_GROUP;
+    },
+
+    _expanded() {
+      if (!Settings._expandedGroups) Settings._loadExpandedGroups();
+      return Settings._expandedGroups;
+    },
+
+    // Corrupt, foreign or unavailable storage all resolve to "nothing
+    // expanded": this runs inside a render path, so it must never throw.
+    _loadExpandedGroups() {
+      Settings._expandedGroups = new Set();
+      // Only render/toggle paths reach here, but the guard sits next to the
+      // storage read regardless — the prerender pass and the vm harnesses
+      // evaluate this module in Node, where there is no localStorage.
+      if (typeof window === 'undefined') return;
+      try {
+        const raw = localStorage.getItem(NAV_EXPANDED_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(arr)) return;
+        // Prune names that are no longer a collapsible group, so a renamed or
+        // un-collapsed group can't leave a stale entry behind. Pruning is the
+        // safe direction here: the worst a dropped name does is close a group
+        // the viewer had opened.
+        let changed = false;
+        for (const name of arr) {
+          const key = String(name);
+          if (Settings._isCollapsibleGroup(key)) Settings._expandedGroups.add(key);
+          else changed = true;
+        }
+        if (changed) Settings._saveExpandedGroups();
+      } catch {
+        Settings._expandedGroups = new Set();
+      }
+    },
+
+    _saveExpandedGroups() {
+      try {
+        localStorage.setItem(
+          NAV_EXPANDED_KEY,
+          JSON.stringify([...Settings._expanded()])
+        );
+      } catch { /* storage may be unavailable; non-fatal, in-memory for the session */ }
+    },
+
+    _isGroupExpanded(name) {
+      if (!Settings._isCollapsibleGroup(name)) return true;
+      const key = String(name);
+      return Settings._expanded().has(key) || Settings._revealedGroup === key;
+    },
+
+    _setGroupExpanded(name, expanded) {
+      const set = Settings._expanded();
+      const key = String(name);
+      if (expanded) set.add(key);
+      else set.delete(key);
+      Settings._saveExpandedGroups();
+    },
+
+    // A press is a MENU-ONLY action: it mutates the persisted set and
+    // repaints the nav, and never setSection, _renderContent, _writeHash or
+    // location.hash. The section on screen keeps rendering untouched, and a
+    // phone repaint of the CONTENT would tear the menu down mid-gesture.
+    _toggleGroup(name) {
+      if (!Settings._isCollapsibleGroup(name)) return;
+      const open = !Settings._isGroupExpanded(name);
+      // Closing has to drop the arrival reveal as well, or pressing the
+      // heading of the group you are standing in is a button that visibly
+      // does nothing.
+      if (!open) Settings._revealedGroup = null;
+      Settings._setGroupExpanded(name, open);
+      Settings._renderNav();
+    },
+
+    // "Never hide where I am": arriving at a section reveals its group, so a
+    // deep link into Advanced (#settings/cli from the out-of-credits card,
+    // #settings/api-key from the consent modal, a bookmark) can't leave the
+    // highlighted row invisible.
+    //
+    // The reveal is TRANSIENT — it sets _revealedGroup, and does not touch
+    // the persisted set. Persisting it would make one deep link into About
+    // or CLI the last time that viewer ever sees Advanced shut, which is the
+    // whole feature; it would also make "Advanced ships collapsed" depend on
+    // where the browser had been before, and the capture container walks the
+    // declared #settings routes as hash cohorts of ONE document, in
+    // declaration order (#settings/about lands before #settings). Deriving
+    // the reveal from the active section instead makes both surfaces answer
+    // the same way whatever route came first.
+    //
+    // Called on ARRIVAL only, and it CLEARS as readily as it sets: leaving
+    // Advanced for a Preferences pane closes it again, and the viewer's own
+    // toggle is the only thing that outlives the visit.
+    _ensureActiveGroupExpanded() {
+      const s = Settings._visibleSections().find((x) => x.key === Settings._section);
+      const name = s ? String(s.group || 'Other') : '';
+      Settings._revealedGroup =
+        name && Settings._isCollapsibleGroup(name) ? name : null;
+    },
+
     str(s) {
       return String(s == null ? '' : s);
+    },
+
+    // aria-controls targets have to be unique, and at phone width the hidden
+    // desktop sidebar and the level-1 menu are BOTH in the document — hence
+    // one id prefix per surface ('settings-nav-group', 'settings-menu-group'),
+    // exactly like AdminConsole._groupDomId.
+    _groupDomId(prefix, name) {
+      return `${prefix}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+    },
+
+    // The three disclosure fields both descriptors carry. A group that does
+    // not collapse gets `collapsible: false` and renders exactly the markup
+    // it always did — plain heading, no button, no wrapper id — so the only
+    // group that changes shape is Advanced.
+    _groupDisclosure(prefix, name) {
+      const collapsible = Settings._isCollapsibleGroup(name);
+      return {
+        collapsible,
+        expanded: collapsible ? Settings._isGroupExpanded(name) : true,
+        domId: collapsible ? Settings._groupDomId(prefix, name) : null,
+      };
     },
 
     // Desktop sidebar rows, grouped under headings.
@@ -800,6 +1116,7 @@
       return Settings._groupedSections().map((g, i) => ({
         name: Settings.str(g.name),
         first: i === 0,
+        ...Settings._groupDisclosure('settings-nav-group', g.name),
         items: g.items.map(item),
       }));
     },
@@ -814,6 +1131,7 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: Settings.str(g.name),
+        ...Settings._groupDisclosure('settings-menu-group', g.name),
         items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
       }));
     },
@@ -974,13 +1292,15 @@
     },
 
     _scrollTop() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       return el ? el.scrollTop : 0;
     },
 
     // A pushed screen starts at the top; a pop restores where the menu was.
     _restoreScroll() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       if (!el) return;
       el.scrollTop = (Settings._isMobile() && Settings._level === 1)
         ? Settings._menuScrollTop
@@ -1003,8 +1323,10 @@
     _syncChrome() {
       if (!window.App || Settings._chromeSuspended) return;
       const inSection = Settings._isMobile() && Settings._level === 2;
-      // #1036: the header control is a real anchor — inside a section
-      // the chevron pops to the settings menu, so that is its href.
+      // #1036: the header control is a real anchor — inside a section the
+      // chevron pops to whatever is below it, which is the settings menu
+      // unless the viewer arrived from elsewhere in the app (#1565, see
+      // _upHref), so that is its href.
       //
       // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
       // not a way BACK to another screen, it is the only way up a level
@@ -1015,7 +1337,7 @@
       // through it, with the header's own title saying where you are. A
       // second affordance pointing at the row you just came from was chrome.
       // `'home'` means "hidden" to setBackIcon.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
@@ -1026,12 +1348,13 @@
     },
 
     // Re-resolve the menu after late-arriving state: `walletLinkEnabled`
-    // lands with refresh()'s /api/auth/me response and the Usernode-app
+    // lands with refresh()'s /api/auth/me response and the Homeroom-app
     // capability with the bridge's async probe, both of which can resolve
     // AFTER a cold-boot deep link has already painted. Without this the
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
       if (!Settings._visibleSections().some((s) => s.key === Settings._section)) {
@@ -1112,14 +1435,22 @@
     // lease to release at all.
     _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
-        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
       return {
         leaseId: agent.leaseId || null,
         label: agent.label || null,
         title: agent.label || 'Unnamed machine',
         where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
-        detail: `${agent.runtime || 'claude-code'} · last seen ${seen}`,
+        runtime: agent.runtime || 'claude-code',
+        // #1808: the raw instant, NOT a formatted time. This was
+        // `toLocaleTimeString()`, so a machine last seen in March read
+        // "last seen 10:00" — the same words as one seen this morning, on a
+        // row whose entire job is to say whether the machine is still there.
+        // ./local-agents-list.tsx stamps it with the shared helper, which
+        // this module cannot import: four test harnesses run its real source
+        // through `vm.runInContext` as a classic script, where a top-level
+        // `import` is a syntax error. Formatting in the renderer is the
+        // arrangement that needs no second copy of the helper.
+        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
         // Demo rows (staging ?demo=1) are fabricated per request and own no
         // lease, so there is nothing for a button to release.
         detachable: !agent.demo && !!agent.leaseId,
@@ -1131,7 +1462,7 @@
     // point is to get the session's turns back without waiting out the lease.
     async _detachLocalAgent(agent, button) {
       const label = agent.label || 'this machine';
-      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Usernode. Anything it already committed stays on the branch.`)) return;
+      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.`)) return;
       const status = document.getElementById('settings-local-agents-status');
       button.disabled = true;
       try {
@@ -1153,20 +1484,20 @@
       }
     },
 
-    // `_renderHomePanelsSection()`, `_toggleHomePanel()` and
-    // `_saveHomePanelVisibility()` lived here: #911's one-checkbox-per-widget
-    // list, built from GET /api/home-panels's `registry` + `hidden`, and the
-    // POST that wrote a toggle back. THE UI OVERHAUL made Discover,
-    // Challenges and Create app FIXED sections of the home screen rather than
-    // draggable, hideable widgets, so there is nothing left to show or hide
-    // from a settings page. The visibility endpoint is untouched and the ⋮
-    // menu on a block still writes it (HomePanels.setHidden) — what went is
-    // the second, list-shaped way in.
+    // Home sections are permanent (#1801); the old widget visibility
+    // settings, menu and endpoint are retired together.
 
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
+      // #1556 capability gate, read back by _visibleSections(). Offered only
+      // to a user who already has a preference saved — see the SECTIONS note.
+      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
+      if (section) {
+        if (!value) { section.classList.add('hidden'); return; }
+        section.classList.remove('hidden');
+      }
       // A saved value outside the curated list (set via the API, or a
       // future wider picker) still needs to render truthfully — inject
       // an option for it so the select doesn't silently show "Auto".
@@ -1199,7 +1530,7 @@
         select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
       }
       // A deployment without the external flows can still express "always
-      // build on Usernode" vs "ask me" — just not the two hand-offs.
+      // build on Homeroom" vs "ask me" — just not the two hand-offs.
       select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
         opt.disabled = !this.state.externalFlowsAvailable;
       });
@@ -1239,12 +1570,19 @@
       return this._cliAuthPromise;
     },
 
-    // True when the page carries ?demo=1. The server only honours it in
-    // staging (see routes/cli-auth.js), so this is safe to send always.
-    _cliTokensDemo() {
+    // The two read-only CLI credential fixtures the staging server knows:
+    // rows for the everyday review route, or #1609's instruction-rich empty
+    // state. All boolean callers use _cliTokensDemo(); the credential fetch
+    // also needs the exact value so it can select the right fixture.
+    _cliTokensDemoValue() {
       try {
-        return new URLSearchParams(window.location.search).get('demo') === '1';
-      } catch { return false; }
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        return flag === '1' || flag === 'cli-empty' ? flag : null;
+      } catch { return null; }
+    },
+
+    _cliTokensDemo() {
+      return this._cliTokensDemoValue() !== null;
     },
 
     // ── Claude & ChatGPT connectors ──────────────────────────────────────
@@ -1269,8 +1607,8 @@
 
     // ── Rewriting the allow rules for a different connector name ─────────
     //
-    // The two blocks ship covering `usernode` and `Usernode`, the two
-    // spellings Usernode can guess. Anything else — a typo like the `Uesrnode`
+    // The two blocks ship covering `homeroom` and `Homeroom` plus the
+    // pre-rename `usernode` and `Usernode`. Anything else — a typo like the `Uesrnode`
     // from #1218, or a name someone simply chose — needs the same rules with
     // that segment, and asking a user to hand-edit six JSON strings is asking
     // for a seventh mistake. So the page does the edit.
@@ -1350,11 +1688,19 @@
       // and the fallback for an empty or unusable field.
       const canonical = blocks[0].textContent;
       let suffixes = [];
+      let covered = new Set();
       try {
         const allow = JSON.parse(canonical)?.permissions?.allow || [];
         suffixes = [...new Set(allow.map((rule) => rule.slice(rule.indexOf('__', 5) + 2)))];
+        // The spellings the shipped block ALREADY covers, read out of the
+        // block itself for the same reason the suffixes are: a second copy
+        // of the list here would be the thing that drifts. Typing any of
+        // them means there is nothing to rewrite — including the spellings
+        // that predate the rename, which a long-connected user is still on.
+        covered = new Set(allow.map((rule) => rule.split('__')[1].toLowerCase()));
       } catch {
         suffixes = [];
+        covered = new Set();
       }
 
       const render = () => {
@@ -1363,7 +1709,7 @@
         // rule for a different tool — those characters are dropped, not
         // escaped, and the result is shown so the user can see what happened.
         const name = String(field.value || '').trim().replace(/[^A-Za-z0-9.-]/g, '');
-        const custom = name && name.toLowerCase() !== 'usernode' && suffixes.length;
+        const custom = name && !covered.has(name.toLowerCase()) && suffixes.length;
         const text = custom
           ? JSON.stringify(
             { permissions: { allow: suffixes.map((s) => `mcp__${name}__${s}`) } }, null, 2
@@ -1382,7 +1728,36 @@
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
       const urlField = document.getElementById('connector-url');
-      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+      const connectorUrl = `${window.location.origin}/mcp`;
+      if (urlField) urlField.value = connectorUrl;
+
+      // #1607: the "set it up in <product>" links open a new chat pre-loaded
+      // with the job. Built HERE, from the same derived origin the field
+      // shows, so a fork or a config change cannot leave a hardcoded URL
+      // behind — the rule the written steps already follow by pointing back
+      // at #connector-url rather than naming a host.
+      //
+      // The prompt carries the two things people get wrong: that Homeroom
+      // uses dynamic client registration (so there is no client ID or secret
+      // to go looking for), and the exact name `homeroom`, which is what
+      // Claude Code builds its permission rules from (#1218) and which one
+      // account once mistyped, silently missing every rule the platform
+      // ships.
+      //
+      // Deliberately short. It is a query string, and nothing secret is in
+      // it: the connector URL is a public endpoint and the authorisation
+      // happens through OAuth inside the product, not in this link.
+      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
+        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
+        + ' Name it exactly "homeroom". Walk me through it one step at a time and tell me what to click.';
+      const chatLinks = [
+        ['connector-open-claude', 'https://claude.ai/new?q='],
+        ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
+      ];
+      for (const [id, base] of chatLinks) {
+        const link = document.getElementById(id);
+        if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
@@ -1479,13 +1854,13 @@
 
       let text;
       if (!shown) {
-        text = 'Usernode has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+        text = 'Homeroom has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
       } else {
         const when = Number.isFinite(Date.parse(hint.lastShownAt))
           ? new Date(hint.lastShownAt).toLocaleString()
           : 'recently';
         const times = shown === 1 ? 'once' : `${shown} times`;
-        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
+        text = `Homeroom sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
         // Three different answers to "why am I not seeing it", and they are
         // not interchangeable: the budget is spent (comes back next week),
         // the hour since the last one has not passed (comes back shortly), or
@@ -1500,8 +1875,17 @@
         if (cap && shown >= cap) {
           text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
         } else if (quietUntil > Date.now()) {
+          // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
+          // runs from the last tip, so one sent late in the evening puts the
+          // deadline past midnight, and a reader comparing it to the clock
+          // concludes the window has already passed. A day word settles it,
+          // and anything further out gets the whole stamp.
+          const end = new Date(quietUntil);
+          const deadline = end.toDateString() === new Date().toDateString()
+            ? `today at ${end.toLocaleTimeString()}`
+            : end.toLocaleString();
           text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it. One opened after that will.`;
+            + `${deadline} will not carry it. One opened after that will.`;
         } else {
           text += 'Open a new conversation to see it again.';
         }
@@ -1662,7 +2046,7 @@
         return {
           tone: 'plain',
           title: 'Daily credit tier temporarily unavailable',
-          detail: 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+          detail: 'Homeroom could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
         };
       }
       if (e.policy === 'legacy') {
@@ -1728,14 +2112,26 @@
         provider,
         name,
         heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #1557: the durable half of "did that work?". The OAuth round trip
+        // already writes a one-line result into #github-link-status, but that
+        // line is transient, xs, and a sibling of this block — come back to
+        // Settings a minute later and the only thing distinguishing a
+        // connected account from an unconnected one was a sentence about
+        // credit tiers. The badge says the state itself, on the row it is
+        // about. A reconnect-required link is deliberately NOT "Connected":
+        // it is linked for attribution and not yet credit-eligible, which is
+        // the distinction the amber state text spells out.
+        badge: link.reconnectRequired
+          ? { text: 'Reconnect needed', tone: 'amber' }
+          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
           ? `linked ${new Date(link.linkedAt).toLocaleString()}`
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
-            ? 'Usernode holds no GitHub access token for your account.'
-            : 'Usernode stores no X access token for your account.')
+            ? 'Homeroom holds no GitHub access token for your account.'
+            : 'Homeroom stores no X access token for your account.')
           : null,
         connect: offersConnect
           ? {
@@ -1748,9 +2144,8 @@
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
           ? `Your last ${name} connection attempt didn't complete. `
-            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-            + `the platform's callback address isn't registered on the ${name} developer app, `
-            + 'so an administrator needs to update that app’s settings.'
+            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
+            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
@@ -1811,6 +2206,7 @@
         conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
+        account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
@@ -1857,15 +2253,13 @@
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
-      // Hiding the section is the same outcome the 404 branch produces,
-      // so staging and production differ only in whether the request is
-      // made at all.
       // Staging disables the real CLI surface, but ?demo=1 is a read-only
       // fixture endpoint specifically meant to make this section reviewable.
       // Let that mock path through while still suppressing every real token
-      // request when auth/me advertises cliAuthEnabled=false.
+      // request when auth/me advertises cliAuthEnabled=false. The surrounding
+      // section remains visible because its local-agent guide is useful even
+      // when this deployment cannot list or revoke credentials.
       if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
-        section.classList.add('hidden');
         return;
       }
 
@@ -1894,14 +2288,14 @@
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
-        const demoQ = this._cliTokensDemo() ? '&demo=1' : '';
+        const demo = this._cliTokensDemoValue();
+        const demoQ = demo ? `&demo=${encodeURIComponent(demo)}` : '';
         const response = await fetch(`/api/me/cli-tokens${query}${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
         if (loadId !== this._cliTokenLoadId) return;
         if (response.status === 404) {
-          section.classList.add('hidden');
           return;
         }
         if (!response.ok) throw new Error('Could not load CLI credentials.');
@@ -2336,12 +2730,7 @@
 
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400'
-                : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400'
-                : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     _clearStatus() {
@@ -2405,7 +2794,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');
@@ -2438,20 +2827,116 @@
     },
 
     _openRouterModelOptionLabel(model) {
+      const badges = [];
+      if (model?.isFavorite) badges.push('★');
+      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.createdAt) {
+        const age = Date.now() - Date.parse(model.createdAt);
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      }
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+      const needle = String(query || '').trim().toLocaleLowerCase();
+      return (Array.isArray(models) ? models : [])
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          if (favoritesOnly && model?.isFavorite !== true) return false;
+          if (!needle) return true;
+          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+        })
+        .sort((a, b) => {
+          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map(({ model }) => model);
+    },
+
+    _openRouterCatalogAgeText(refreshedAt) {
+      const refreshed = Date.parse(refreshedAt || '');
+      if (!Number.isFinite(refreshed)) return '';
+      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+      if (seconds < 60) return 'Updated just now';
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `Updated ${minutes}m ago`;
+      return `Updated ${Math.round(minutes / 60)}h ago`;
+    },
+
+    _renderOpenRouterModelOptions() {
+      const select = document.getElementById('settings-openrouter-model');
+      if (!select) return;
+      const search = document.getElementById('settings-openrouter-model-search');
+      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
+      const meta = document.getElementById('settings-openrouter-catalog-meta');
+      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
+        query: search?.value || '',
+        favoritesOnly: this._openRouterFavoritesOnly,
+      });
+      select.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        select.appendChild(option);
+      }
+      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
+        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
+          || visibleModels.find((model) => model.isRecommended)
+          || visibleModels[0]
+          || null;
+        if (fallback) this._openRouterSelectedModelId = fallback.id;
+      }
+      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
+        ? this._openRouterSelectedModelId
+        : '';
+      select.disabled = visibleModels.length === 0;
+      if (favoritesOnlyButton) {
+        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+      }
+      if (meta) {
+        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
+        meta.textContent = visibleModels.length
+          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
+          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      }
+      this._syncOpenRouterModelDetails();
     },
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      const star = document.getElementById('settings-openrouter-star-model');
+      const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         if (effort) effort.disabled = true;
+        if (star) {
+          star.disabled = true;
+          star.textContent = '☆';
+          star.setAttribute('aria-pressed', 'false');
+        }
+        if (saveDefault) saveDefault.disabled = true;
         return;
+      }
+      if (saveDefault) saveDefault.disabled = false;
+      if (star) {
+        star.disabled = false;
+        star.textContent = model.isFavorite ? '★' : '☆';
+        star.setAttribute('aria-pressed', String(model.isFavorite === true));
+        const label = model.isFavorite
+          ? 'Remove selected model from favorites'
+          : 'Add selected model to favorites';
+        star.setAttribute('aria-label', label);
+        star.title = label;
       }
       let compatibility = 'Not yet verified for repository coding.';
       if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
@@ -2472,10 +2957,7 @@
     _setOrStatus(text, kind) {
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     async _refreshOpenRouter() {
@@ -2507,21 +2989,31 @@
         if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
         if (managedMessage) {
           if (managed?.status === 'active') {
-            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+            // The key carries the platform's weekly allowance; a key issued
+            // before that policy keeps its own limit until it is re-limited.
+            const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
+            const carries = managed.limitReset === 'weekly'
+              ? `with the platform's ${amount} weekly allowance`
+              : `with a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+            managedMessage.textContent = `Your Homeroom-managed key is active ${carries}. Admins can block or remove it; you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
             managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
             managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
+            managedMessage.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
           } else if (provisioning.verificationRequired && !provisioning.verified) {
             managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
           } else if (!provisioning.available) {
             managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'no_allowance') {
+            managedMessage.textContent = provisioning.identityGated
+              ? 'Connect and verify GitHub or X in Social accounts & connectors to unlock included credits, then claim the company key.'
+              : 'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.';
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+            managedMessage.textContent = `You can create one included key that carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -2536,8 +3028,12 @@
             info.classList.remove('hidden');
             const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
             const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
-            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
+            const owner = managedOwnsCredential ? 'Homeroom-managed' : 'Personal key';
+            // The stored managed-key cadence is authoritative; a personal
+            // key's comes from OpenRouter's own key-info.
+            const noun = limitNoun((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
+            const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
+            info.textContent = lim ? `${owner} · ${label}: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
@@ -2567,12 +3063,8 @@
           await this._refreshOpenRouter();
           return;
         }
-        const reveal = document.getElementById('settings-openrouter-reveal');
-        const key = document.getElementById('settings-openrouter-revealed-key');
-        if (key) key.value = j.apiKey || '';
-        if (reveal) reveal.classList.remove('hidden');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
         await this._refreshOpenRouter();
       } catch (err) {
         this._setOrStatus(`Network error: ${err.message}`, 'error');
@@ -2581,61 +3073,95 @@
       }
     },
 
-    async _copyManagedOpenRouterKey() {
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (!key?.value) return;
-      try {
-        await navigator.clipboard.writeText(key.value);
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      } catch {
-        key.select();
-        document.execCommand('copy');
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      }
-    },
-
-    _dismissManagedOpenRouterReveal() {
-      const reveal = document.getElementById('settings-openrouter-reveal');
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (key) key.value = '';
-      if (reveal) reveal.classList.add('hidden');
-    },
-
-    async _loadOpenRouterModels() {
+    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
       const sel = document.getElementById('settings-openrouter-model');
       const wrap = document.getElementById('settings-openrouter-models-wrap');
       if (!sel) return;
       try {
-        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
-        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const refresh = forceRefresh ? '&refresh=1' : '';
+        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+          credentials: 'same-origin', cache: 'no-store',
+        });
+        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
-        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
-        // Build options with DOM methods, NOT innerHTML (review P2):
-        // OpenRouter model IDs/names are untrusted catalog data and
-        // could inject markup into the authenticated Settings page.
-        sel.innerHTML = '';
-        for (const m of models) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = this._openRouterModelOptionLabel(m);
-          sel.appendChild(opt);
+        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
+        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
+        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
+        if (!models.length) {
+          this._openRouterSelectedModelId = '';
+          this._renderOpenRouterModelOptions();
+          if (wrap) wrap.classList.remove('hidden');
+          return;
         }
         const recommended = models.some((model) => model.id === cat.recommendedModelId)
           ? cat.recommendedModelId
-          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
-        sel.value = recommended;
-        // Restore the previously-saved model/effort if any.
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        const saved = prefs.backends?.codex_openrouter;
-        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
-        const eff = document.getElementById('settings-openrouter-reasoning');
-        if (eff) eff.value = saved?.reasoningEffort || '';
-        this._syncOpenRouterModelDetails();
+          : (models.find((model) => model.isRecommended)?.id
+            || models.find((model) => model.compatibility === 'verified')?.id
+            || models[0].id);
+        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
+          this._openRouterSelectedModelId = recommended;
+        }
+        if (!forceRefresh) {
+          // Restore the previously-saved model/effort on the initial load.
+          const prefs = await (await fetch('/api/me/coding-agent', {
+            credentials: 'same-origin', cache: 'no-store',
+          })).json();
+          const saved = prefs.backends?.codex_openrouter;
+          if (saved?.model && models.some((model) => model.id === saved.model)) {
+            this._openRouterSelectedModelId = saved.model;
+          }
+          const eff = document.getElementById('settings-openrouter-reasoning');
+          if (eff) eff.value = saved?.reasoningEffort || '';
+        }
+        this._renderOpenRouterModelOptions();
         if (wrap) wrap.classList.remove('hidden');
-      } catch {
-        this._openRouterModels = [];
+      } catch (err) {
+        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
+        throw err;
+      }
+    },
+
+    async _refreshOpenRouterModelsNow() {
+      const button = document.getElementById('settings-openrouter-refresh-models');
+      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
+      this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
+      try {
+        await this._loadOpenRouterModels({ forceRefresh: true });
+        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+      } finally {
+        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+      }
+    },
+
+    async _toggleSelectedOpenRouterFavorite() {
+      const button = document.getElementById('settings-openrouter-star-model');
+      const model = this._openRouterModels.find(
+        (item) => item.id === this._openRouterSelectedModelId,
+      );
+      if (!model || button?.disabled) return;
+      const favorite = model.isFavorite !== true;
+      if (button) button.disabled = true;
+      try {
+        const r = await fetch('/api/me/coding-agent/models/favorite', {
+          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: model.id, favorite }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        model.isFavorite = favorite;
+        this._renderOpenRouterModelOptions();
+        this._setOrStatus(favorite
+          ? `${model.name || model.id} added to favorites.`
+          : `${model.name || model.id} removed from favorites.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        if (button) button.disabled = false;
       }
     },
 
@@ -2676,6 +3202,10 @@
         this._setOrStatus('Key removed.' + note, 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
+        this._openRouterSelectedModelId = '';
+        this._openRouterRecommendedModelId = '';
+        this._openRouterCatalogRefreshedAt = null;
+        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -2686,6 +3216,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
+      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
@@ -2725,15 +3256,12 @@
     _setCpStatus(text, kind) {
       const el = document.getElementById('cp-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     // Decide whether the wallet option is even offered, then default to
     // the password form. The "Use your wallet instead" link only appears
-    // in the Usernode native app (signMessage available) AND when the
+    // in the Homeroom native app (signMessage available) AND when the
     // logged-in account has a linked wallet to prove control of.
     _renderChangePasswordSection() {
       const section = document.getElementById('change-password-section');
@@ -2779,7 +3307,7 @@
       if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
       if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
       if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
-        this._setCpStatus('Wallet signing is only available in the Usernode app.', 'error');
+        this._setCpStatus('Wallet signing is only available in the Homeroom app.', 'error');
         return;
       }
 
@@ -2826,10 +3354,7 @@
     _setCuStatus(text, kind) {
       const el = document.getElementById('cu-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     // Paint the current handle. Called from _renderAllSections on every
@@ -2858,9 +3383,14 @@
       if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
       if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
 
+      // Everything that can throw goes INSIDE the try, so `finally` is the
+      // only exit and the button cannot be stranded disabled under a
+      // "Saving…" that never resolves — the shape of the reported bug, when
+      // painting that very line was what threw. `btn.disabled = true` is a
+      // property write and cannot.
       btn.disabled = true;
-      this._setCuStatus('Saving…', 'info');
       try {
+        this._setCuStatus('Saving…', 'info');
         const r = await fetch('/api/me/username', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2949,10 +3479,7 @@
         return false;
       };
 
-      // This call closes the private realm synchronously, before this function
-      // reaches its first await. Native capability probing deliberately waits
-      // until after the server has revoked the HttpOnly session, so a degraded
-      // bridge can never prevent the authoritative logout boundary.
+      // Close native admission before any asynchronous work, including probes.
       let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
@@ -2962,15 +3489,44 @@
         return fail(error);
       }
 
+      // Older apps cannot delete the HttpOnly cookie locally. Only opt into
+      // offline logout when native explicitly guarantees that cleanup.
+      let offlineLogout = false;
+      if (preflight.nativeTerminal) {
+        try {
+          const info = await NativeChrome.getInfo();
+          offlineLogout = info?.degraded !== true &&
+            info?.sessionLifecycleProtocol === 2 &&
+            info?.capabilities?.includes('offlineLogout') === true;
+        } catch (_) {}
+      }
+      let webRevoked = false;
+      let timeout;
+      let controller;
       try {
-        const response = await fetch('/api/auth/logout', {
+        if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
+        controller = offlineLogout ? new AbortController() : null;
+        const request = fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
+          ...(controller ? { signal: controller.signal } : {}),
         });
+        const response = offlineLogout ? await Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Remote sign-out timed out'));
+            }, 2000);
+          }),
+        ]) : await request;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        webRevoked = true;
       } catch (error) {
-        // Do not tear down native while the HttpOnly web-session cookie can
-        // still restore this participant in the replacement WebView.
-        return fail(error);
+        if (!offlineLogout) return fail(error);
+        // Native owns deletion of the cookie and durable credential. Remote
+        // revocation remains best effort when the API cannot be reached.
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
       }
       // Offline mode (#487): the service worker caches GET /api/* responses
       // per-URL, not per-user — wipe them so the next account on this
@@ -2980,24 +3536,66 @@
       // Same reasoning for the offline session snapshot (#1021): it is the
       // record that says "this device is signed in", so leaving it behind
       // would let the next offline boot paint the signed-in shell for an
-      // account that just logged out.
-      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
+      // account that just logged out. _dropCachedSession is the wider sweep
+      // (#1524): it also clears the shell snapshot and the remembered Improve
+      // target, which main.tsx re-applies UNCONDITIONALLY at boot, before the
+      // session is known — so leaving them behind paints the previous
+      // session's header title and Improve button on the landing page.
+      try { window.App?._dropCachedSession?.(); } catch (_) {}
 
-      // This must remain the final statement on the native path: successful
-      // native logout replaces the WebView, so the old document has no
-      // timeout or navigation continuation.
+      // Normalise the address BEFORE the terminal native call (#1524). A
+      // native sign-out replaces the WebView but the platform keeps whatever
+      // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
+      // leaves an address that restoreFromHash reads as a remembered deep
+      // link and answers with the sign-in form on the next restore. This runs
+      // after remote revocation or an offline-capable native hand-off has
+      // been selected.
+      //
+      // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
+      // trust model binds the privileged capability to the executing JS realm,
+      // and a same-document History API change retains it; and replaceState
+      // fires neither popstate nor hashchange, so no router runs off it.
+      try { window.history?.replaceState?.(null, '', LANDING_URL); } catch (_) {}
+
+      // Back into a signed-in document restored whole from the BFCache would
+      // otherwise repaint the signed-in shell from memory (#1524). One-shot:
+      // this document is on its way out either way.
+      try {
+        window.addEventListener('pageshow', (event) => {
+          if (event && event.persisted) window.location.replace(LANDING_URL);
+        }, { once: true });
+      } catch (_) {}
+
+      // This must remain the final call on the native path: successful native
+      // logout replaces the WebView, so the old document normally runs no
+      // continuation work at all. The ONE relaxation (#1524) is navigation to
+      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // App.user is gone, so NativeChrome._webParticipantId() is null and
+      // establishCurrentSession() returns without asking the bridge for
+      // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
-        // A rejection leaves this old document closed and server authority
-        // revoked. Do not navigate or reopen admission; the deliberately
-        // simple rare-failure recovery is an app restart/update.
-        return NativeChrome.commitNativeLogout().catch((error) => {
-          if (window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(
-              'Signed out. Close and reopen the app to finish shutting down Usernode.',
-              { error: true }
-            );
-          }
+        return NativeChrome.commitNativeLogout().then((result) => {
+          // The WebView should already be gone. If it is not, land this
+          // document on the public landing page rather than leave a
+          // signed-out user on the Settings screen.
+          const timer = setTimeout(() => {
+            window.location.replace(LANDING_URL);
+          }, NATIVE_LOGOUT_SAFETY_MS);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+          return result;
+        }, (error) => {
+          // If neither boundary completed, do not reload a possibly live
+          // cookie or claim the user is signed out. Allow cleanup to retry.
+          if (!webRevoked) return fail(error);
+          // A rejection leaves the native realm closed and server authority
+          // revoked, but this document alive and signed out. Carry the
+          // advisory across the navigation (the toast itself would not
+          // survive it) and go to the landing page like every other surface.
+          try {
+            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
+          } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          window.location.replace(LANDING_URL);
           return false;
         });
       }
@@ -3007,8 +3605,9 @@
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
-      // tap away.
-      window.location.href = '/';
+      // tap away. REPLACE, not assign (#1524): a pushed entry lets Back
+      // restore the signed-in document from the BFCache.
+      window.location.replace(LANDING_URL);
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
@@ -3191,10 +3790,7 @@
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3398,10 +3994,7 @@
         el.textContent = '';
         return;
       }
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3522,7 +4115,7 @@
     },
 
     async _unlinkWallet() {
-      if (!await PlatformUI.confirm({ title: 'Unlink your Usernode wallet?', confirmLabel: 'Unlink', danger: true })) return;
+      if (!await PlatformUI.confirm({ title: 'Unlink your Homeroom wallet?', confirmLabel: 'Unlink', danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
@@ -3541,14 +4134,11 @@
     _setWalletStatus(text, kind) {
       const el = document.getElementById('wallet-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
-    // ── "Usernode app" sections (profile-and-settings-to-web migration) ──
+    // ── "Homeroom app" sections (profile-and-settings-to-web migration) ──
     //
     // The mobile app's native App Settings absorbed into this modal,
     // rendered from the bridge's getSettingsState snapshot (bridge v3,
@@ -3593,19 +4183,19 @@
     // handshake alike, which is exactly what made issue #978 impossible to
     // diagnose from the device.
     USERNODE_READ_ERROR_REASONS: {
-      'timeout': 'The Usernode app didn’t respond in time. ' +
+      'timeout': 'The Homeroom app didn’t respond in time. ' +
         'It may still be starting up.',
-      'rejected': 'The Usernode app reported an error.',
-      'probe-inconclusive': 'The Usernode app hasn’t re-established ' +
+      'rejected': 'The Homeroom app reported an error.',
+      'probe-inconclusive': 'The Homeroom app hasn’t re-established ' +
         'its secure connection for settings. Reopening the app usually ' +
         'fixes this.',
-      'no-transport': 'This screen can’t reach the Usernode app from here.',
-      'not-native': 'This screen can’t reach the Usernode app from here.',
+      'no-transport': 'This screen can’t reach the Homeroom app from here.',
+      'not-native': 'This screen can’t reach the Homeroom app from here.',
       'page-changed': 'The request was cancelled because this page changed.',
-      'privileged-unavailable': 'The Usernode app refused this screen’s ' +
-        'secure connection. See “Usernode app: connection” below.',
+      'privileged-unavailable': 'The Homeroom app refused this screen’s ' +
+        'secure connection. See “Homeroom app: connection” below.',
     },
-    USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
+    USERNODE_READ_ERROR_FALLBACK: 'The Homeroom app returned no settings.',
 
     // ── The connection panel ──────────────────────────────────────────
     //
@@ -3629,7 +4219,7 @@
         'usually re-establishes it. If it keeps happening, reinstalling ' +
         'the app clears the stuck state.',
       'unsupported': 'This app build predates the secure connection this ' +
-        'screen uses. Update the Usernode app to manage its settings here.',
+        'screen uses. Update the Homeroom app to manage its settings here.',
       'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
         'tell whether the secure connection is up. It may still be ' +
         'starting, so try again in a moment.',
@@ -3676,6 +4266,45 @@
 
     _bridgeDiagDemo() {
       return this._demoParam('bridgediag') === 'demo';
+    },
+
+    // ── `?bridgediag=wallet` ──────────────────────────────────────────
+    //
+    // Screenshot-state deep link for the connection panel's OTHER refusal:
+    // the secure connection is fine, but native admission reported
+    // `native_session_wallet_pool_exhausted` — no seeded wallet is left for
+    // this account. That state used to announce itself as a pop-up (the
+    // "Connect your existing wallet" dialog opened on every admission
+    // retry); it is a button on this panel now, and this link is how a
+    // browser can reach it. Same rules as `?bridgediag=demo`: a fixed
+    // snapshot, no bridge call, no writes, and the button renders disabled
+    // because there is no real session for it to recover.
+    _walletRecoveryDemo() {
+      return this._demoParam('bridgediag') === 'wallet';
+    },
+
+    DEMO_BRIDGE_DIAGNOSTICS_WALLET: {
+      isNative: true,
+      isTopFrame: true,
+      inIframe: false,
+      usesIframeRelay: false,
+      hasNativeChannel: true,
+      origin: 'https://staging.demo.invalid',
+      bridgeVersion: 5,
+      capabilities: ['getBridgeInfo', 'getSettingsState', 'logout',
+        'establishNativeSession'],
+      appVersion: '0.0.0-demo',
+      buildNumber: '0',
+      privileged: {
+        state: 'ready',
+        code: null,
+        kind: null,
+        message: 'Staging demo: no seeded wallet is available for this account',
+        at: 0,
+        attempts: 1,
+      },
+      lastErrors: {},
+      collectedAt: 0,
     },
 
     // ── `?widgeticons=demo` ───────────────────────────────────────────
@@ -3820,7 +4449,7 @@
       }
     },
 
-    // ── Settings → "Usernode app: widget icons" ──────────────────────
+    // ── Settings → "Homeroom app: widget icons" ──────────────────────
     //
     // Gated on being in the app (or the demo link), NEVER on the
     // capability or the mechanism: this box exists to explain why the
@@ -3829,8 +4458,14 @@
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
 
+    // #1808: the WHOLE instant, not a time of day. This stamps one
+    // diagnostics line ("Last icon check: …") whose only reader is somebody
+    // working out whether the widget's icon verdict is stale — and "02:41 PM"
+    // with no day cannot answer that. It is a plain `toLocaleString()` rather
+    // than the shared helper because a diagnostics line elides nothing and
+    // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -3841,6 +4476,7 @@
 
     _bridgeDiagnostics() {
       if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
+      if (this._walletRecoveryDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS_WALLET;
       const bridge = window.usernode;
       if (!bridge || typeof bridge.getBridgeDiagnostics !== 'function') {
         return null;
@@ -3868,7 +4504,7 @@
         try { return new Date(ms).toISOString(); } catch (_) { return String(ms); }
       };
       const lines = [
-        'Usernode bridge diagnostics',
+        'Homeroom bridge diagnostics',
         `collected: ${at(diag.collectedAt)}`,
         `origin: ${diag.origin || 'unknown'}`,
         `native: ${diag.isNative} topFrame: ${diag.isTopFrame} ` +
@@ -3914,7 +4550,7 @@
       return lines.join('\n');
     },
 
-    // Rendered FIRST inside the Usernode app section and independent of
+    // Rendered FIRST inside the Homeroom app section and independent of
     // the settings snapshot: when the handshake is refused there is no
     // snapshot, and this panel is the only thing that can say why.
 
@@ -3952,9 +4588,10 @@
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
       const demo = this._unDemoMode();
-      const gated = this._bridgeDiagDemo() || this._widgetIconsDemo() || !!demo ||
+      const gated = this._bridgeDiagDemo() || this._walletRecoveryDemo() ||
+        this._widgetIconsDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
-      // The gate resolves asynchronously downstream, so the "Usernode app"
+      // The gate resolves asynchronously downstream, so the "Homeroom app"
       // menu row is only settled here — re-render the nav either way.
       if (!gated) {
         this._usernodeGated = false;
@@ -4130,7 +4767,7 @@
     // public/usernode-bridge.js.
     _nativeActionMessage(err, fallback) {
       if (err && err.usernodePrivileged === true) {
-        return 'The Usernode app isn’t accepting changes from this ' +
+        return 'The Homeroom app isn’t accepting changes from this ' +
           'screen. Force-close and reopen the app, then try again.';
       }
       return fallback;
@@ -4191,7 +4828,7 @@
         this._unNotifNotice = {
           tone: 'info',
           text: 'This is a preview of the in-app row. The notification ' +
-            'permission itself lives in the Usernode app.',
+            'permission itself lives in the Homeroom app.',
         };
         return;
       }
@@ -4200,7 +4837,7 @@
         if (!hasRequest) {
           this._unNotifDeadEnd('no-bridge', {
             text: 'Notification permission is only available inside the ' +
-              'Usernode app.',
+              'Homeroom app.',
             settings: false,
           });
           return;
@@ -4225,7 +4862,7 @@
           // that resolves instantly and shows nothing.
           this._unNotifNotice = {
             tone: 'ok',
-            text: 'Notifications are already allowed for Usernode.',
+            text: 'Notifications are already allowed for Homeroom.',
           };
           return;
         }
@@ -4242,7 +4879,7 @@
       } catch (err) {
         this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
           text: err && err.usernodeNoAnswer
-            ? 'The Usernode app didn’t respond to the permission request. ' +
+            ? 'The Homeroom app didn’t respond to the permission request. ' +
               'Force-close and reopen the app, then try again.'
             : this._nativeActionMessage(err,
                 'The permission request could not be started.'),
@@ -4283,7 +4920,7 @@
           tone: 'ok',
           text: isAndroid
             ? 'Permission granted.'
-            : 'Notifications are now allowed for Usernode.',
+            : 'Notifications are now allowed for Homeroom.',
         };
         this._usernodeLoading = false;
       this._publishUsernode();
@@ -4312,7 +4949,7 @@
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          const err = new Error('the Usernode app did not answer in time');
+          const err = new Error('the Homeroom app did not answer in time');
           err.usernodeNoAnswer = true;
           reject(err);
         }, this._UN_NATIVE_ANSWER_MS);
@@ -4342,23 +4979,23 @@
       switch (plan.verdict) {
         case 'no-bridge':
           return 'Notification permission is only available inside the ' +
-            'Usernode app.';
+            'Homeroom app.';
         case 'unsupported':
-          return 'This version of the Usernode app can’t open the ' +
+          return 'This version of the Homeroom app can’t open the ' +
             'notification prompt. Update the app from the App Store.';
         case 'settings':
           return isAndroid
             ? 'Permission was denied. Allow notifications in the system ' +
-              'settings for Usernode.'
-            : 'Notifications are turned off for Usernode. iOS only shows ' +
+              'settings for Homeroom.'
+            : 'Notifications are turned off for Homeroom. iOS only shows ' +
               'its prompt once, so this has to be changed in Settings › ' +
-              'Notifications › Usernode.';
+              'Notifications › Homeroom.';
         case 'declined':
           return 'Permission was not granted.';
         case 'silent':
-          return 'The Usernode app closed without showing the notification ' +
+          return 'The Homeroom app closed without showing the notification ' +
             'prompt. Reopen the app and try again, or allow notifications ' +
-            'in Settings › Notifications › Usernode.';
+            'in Settings › Notifications › Homeroom.';
         default:
           return 'The notification prompt could not be opened.';
       }
@@ -4479,8 +5116,8 @@
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Your ' +
-          'token allocation stays paused until you accept.'));
+          'Reviewing the terms is part of joining the platform. Please ' +
+          'read the full terms, then choose whether to accept.'));
       }
       const meta = [];
       if (payload.version) meta.push(`Version ${payload.version}`);
@@ -4576,8 +5213,8 @@
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
-                PlatformUI.toast('Your token allocation stays paused. ' +
-                  'You can accept later from your profile');
+                PlatformUI.toast(
+                  'You can accept the terms later from your profile');
               }
             }));
           consentButtons.push(declineBtn);
@@ -4631,7 +5268,7 @@
     // activity notifications, block production, Terms, the FAQ, the native
     // diagnostics screens — still renders. A failed read used to blank the
     // whole section, turning a transient app hiccup into a dead end.
-    // ── Usernode app section: view builders ────────────────────────────
+    // ── Homeroom app section: view builders ────────────────────────────
     //
     // #1079: `_renderUsernodeBody` and eight sibling renderers built ~800
     // lines of `document.createElement` into #settings-usernode-section.
@@ -4721,8 +5358,9 @@
           (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
       }
       bits.push(`Bridge v${diag.bridgeVersion}`);
+      const demo = !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo();
       return {
-        demo: !!this._bridgeDiagDemo(),
+        demo: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
         row: {
           label: 'Secure app connection',
           ok: state === 'ready',
@@ -4736,8 +5374,62 @@
         message: (diag.privileged && diag.privileged.message) || null,
         // Read-only hook: the buttons render so the screenshot shows the real
         // panel, but they must not touch a bridge or a session.
-        retryDisabled: !!this._bridgeDiagDemo(),
+        retryDisabled: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
+        // The pre-merge wallet recovery, offered HERE and nowhere else. It
+        // was a dialog that opened itself whenever admission failed with
+        // `native_session_wallet_pool_exhausted` — several times a session,
+        // since admission retries on every online / pageshow /
+        // visibilitychange — for what is a minor feature. Now the failure is
+        // only recorded (NativeChrome.lastSessionFailure) and this button is
+        // the one way in.
+        walletRecovery: this._walletRecoveryAvailable() ? {
+          id: 'settings-usernode-connect-wallet',
+          label: 'Connect existing wallet',
+          action: '_openWalletRecovery',
+          disabled: demo,
+        } : null,
       };
+    },
+
+    WALLET_POOL_EXHAUSTED: 'native_session_wallet_pool_exhausted',
+
+    // True when the LAST native admission attempt was refused because no
+    // seeded wallet is left for this account and the session is still not
+    // admitted — the one state the recovery dialog can do anything about.
+    // Clears itself: a successful admission nulls _lastSessionFailure, and
+    // `usernode:native-session-admission` (bound in init) republishes the
+    // panel so the button goes away without a navigation.
+    _walletRecoveryAvailable() {
+      if (this._walletRecoveryDemo()) return true;
+      const nc = window.NativeChrome;
+      if (!nc || typeof nc.lastSessionFailure !== 'function' ||
+          typeof nc.isSessionAdmitted !== 'function') return false;
+      if (nc.isSessionAdmitted()) return false;
+      const failure = nc.lastSessionFailure();
+      if (!failure || failure.code !== this.WALLET_POOL_EXHAUSTED) return false;
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      return !!(dialogs && dialogs.walletRecovery &&
+        typeof dialogs.walletRecovery.open === 'function');
+    },
+
+    // The button's action. Opens features/dialogs/wallet-recovery.tsx for the
+    // signed-in user; the dialog replays the same admission attempt once the
+    // wallet is claimed, and the admission event above repaints this panel.
+    _openWalletRecovery() {
+      if (this._walletRecoveryDemo()) {
+        throw new Error('Staging demo: there is no session to recover here.');
+      }
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      const dialog = dialogs && dialogs.walletRecovery;
+      if (!dialog || typeof dialog.open !== 'function') {
+        throw new Error('Wallet recovery is not available on this screen.');
+      }
+      const raw = window.App && App.user ? App.user.id : null;
+      const userId = raw == null ? '' : String(raw);
+      if (!/^[1-9][0-9]*$/.test(userId)) {
+        throw new Error('Sign in before connecting a wallet.');
+      }
+      dialog.open({ userId });
     },
 
     _usernodeBodyView() {
@@ -4766,10 +5458,10 @@
       return {
         kind: 'permissions',
         demo: !!this._unDemoMode(),
-        heading: 'Usernode app: device permissions',
+        heading: 'Homeroom app: device permissions',
         description: isAndroid
           ? 'Block production needs the app to wake your device at exact slot times.'
-          : 'Notifications let Usernode alert you about node and account activity.',
+          : 'Notifications let Homeroom alert you about node and account activity.',
         // The row IS the control. It used to be an inert div whose only
         // affordance was a chip below, rendered only when the (iOS-meaningless)
         // exactAlarmGranted boolean said "not granted" — so on a build
@@ -4828,8 +5520,8 @@
         return {
           kind: 'unavailable',
           reason: stuck
-            ? 'The Usernode app isn’t accepting this screen’s secure ' +
-              'connection, so notifications can’t be set up. See “Usernode ' +
+            ? 'The Homeroom app isn’t accepting this screen’s secure ' +
+              'connection, so notifications can’t be set up. See “Homeroom ' +
               'app: connection” above.'
             : (admissionPending
               ? 'Finishing secure app sign-in before enabling notifications…'
@@ -4977,7 +5669,7 @@
       }));
     },
 
-    // ── Usernode app section: the named actions the components dispatch ──
+    // ── Homeroom app section: the named actions the components dispatch ──
     //
     // Each was an inline closure passed to `_unButton` / `_unToggle` /
     // `_unStatusRow`. They are named methods so the view model stays plain
@@ -5153,7 +5845,20 @@
   // unguarded, and the bundle's entry runs before any of their init()s. The
   // typeof guard is for the SSG prerender pass, which evaluates this whole
   // module graph in Node (#1081 chunk D).
-  if (typeof window !== 'undefined') window.Settings = Settings;
+  //
+  // Since the module became a lazy chunk, ./facade.js has been window.Settings
+  // from the shell's boot: it read /api/auth/me into its `state` and answered
+  // isOpen()/close() while this file was still on its way. Take over SHARING
+  // that state object — a read still in flight lands in it — and its primed
+  // CLI-auth answer, so nothing that consulted the façade observes a reset.
+  if (typeof window !== 'undefined') {
+    const facade = window.Settings;
+    if (facade && facade.__facade) {
+      Settings.state = facade.state;
+      Settings._cliAuthPromise = facade._cliAuthPromise || null;
+    }
+    window.Settings = Settings;
+  }
 
   // The first-entry terms prompt lives in ./terms-first-run.js — the ONE
   // boot trigger that auto-presents showTermsSheet (issue #1361 was two

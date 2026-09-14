@@ -73,6 +73,16 @@ test('starting work counts what is open, not what was recently started', async (
     sql, /expires_at > NOW\(\)/,
     'a work order somebody walked away from stops counting on its own'
   );
+  // The denominator has to be the list the user can SEE. A shared session
+  // (#1347) keeps its work order open on purpose, and the Improve panel
+  // excludes those rows because the share already shows on the Dev board as
+  // a session card — so counting them here charged a second, invisible
+  // budget. The symptom was a user at this cap being told to "submit one"
+  // while the panel listed nothing at all to submit.
+  assert.match(
+    sql, /session_id IS NULL/,
+    'the same clause listOpenWorkOrders selects on, so the count matches the list'
+  );
   assert.equal(pool.asked.length, 1, 'and that is the only bound on starting work');
 });
 
@@ -136,7 +146,7 @@ test('the fallback counts builds running, against the platform session cap', asy
   const caps = effectiveSessionCaps({}, ordinary);
   const refused = await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, ordinary);
   assert.equal(refused.code, 'at_capacity');
-  assert.match(refused.message, new RegExp(`${caps.activeSessions} Usernode builds running`));
+  assert.match(refused.message, new RegExp(`${caps.activeSessions} Homeroom builds running`));
   assert.doesNotMatch(refused.message, /24 hours|daily limit/);
 
   // Same tiering as a dev session in the browser.

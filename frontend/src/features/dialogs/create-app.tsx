@@ -66,6 +66,8 @@ import { Input } from '@/components/ui/input';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { AppAllowance, useAppAllowance } from './app-allowance';
+import { invalidateAppAllowance } from './app-allowance-store.js';
 import { CreateProgress } from './create-progress';
 import {
   creationProgressStore,
@@ -75,6 +77,7 @@ import {
   stopWatchingCreation,
   watchCreation,
 } from './creation-progress-store.js';
+import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
@@ -121,6 +124,7 @@ export function CreateAppDialog() {
   const [collabVis, setCollabVis] = useState<Vis>('public');
   const [viewVis, setViewVis] = useState<Vis>('public');
   const [error, setError] = useState('');
+  const { blocked: quotaBlocksCreation } = useAppAllowance();
   // The app this dialog is now reporting on. Null until a POST succeeds,
   // which is what keeps the FIRST render byte-identical to the
   // prerendered shell — the progress subtree exists only after a user
@@ -131,6 +135,7 @@ export function CreateAppDialog() {
   const dialog = useDialog('create', {
     onOpen: () => {
       applyMode('new');
+      void invalidateAppAllowance();
       setTimeout(() => nameRef.current?.focus(), 0);
     },
     // Verbatim from App.hideCreateModal: reset the form, clear the error, and
@@ -231,8 +236,15 @@ export function CreateAppDialog() {
   // inline error text from the server, vs. a debounced surprise; (2)
   // verifyBotAccess can mutate state by accepting a pending invitation, and we
   // don't want that firing on every keystroke.
+  function normalizeRepositoryUrlInput(): string {
+    const input = urlRef.current;
+    const normalized = normalizeRepositoryUrl(input?.value || '');
+    if (input) input.value = normalized;
+    return normalized;
+  }
+
   async function check() {
-    const url = (urlRef.current?.value || '').trim();
+    const url = normalizeRepositoryUrlInput();
     const fail = (text: string) => {
       setImportState('error');
       setStatus({ tone: 'err', text });
@@ -277,7 +289,7 @@ export function CreateAppDialog() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const name = (nameRef.current?.value || '').trim();
-    const repoUrl = (urlRef.current?.value || '').trim();
+    const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
     if (!name) return;
 
@@ -301,6 +313,7 @@ export function CreateAppDialog() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
+      void invalidateAppAllowance();
       if (!res.ok) return setError(data.error || 'Failed to create app');
       // The POST returns 201 with the row still in 'creating' — the build
       // runs async server-side. #1418 covered that with a one-line toast
@@ -393,6 +406,7 @@ export function CreateAppDialog() {
         <h2 id="create-title" className="text-lg font-bold mb-4">
           {mode === 'import' ? 'Import existing app' : 'Create a new app'}
         </h2>
+        <AppAllowance id="create-app-quota" />
         <div className="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
           <button
             type="button"
@@ -430,7 +444,8 @@ export function CreateAppDialog() {
                 id="import-url"
                 ref={urlRef}
                 name="repoUrl"
-                type="url"
+                type="text"
+                inputMode="url"
                 autoComplete="off"
                 spellCheck="false"
                 width="flex"
@@ -438,7 +453,10 @@ export function CreateAppDialog() {
                 hint="muted"
                 ring="seamless"
                 className="font-mono text-sm"
-                placeholder="https://github.com/owner/repo"
+                placeholder="github.com/owner/repo"
+                onBlur={() => {
+                  normalizeRepositoryUrlInput();
+                }}
                 onInput={() => {
                   // Any edit invalidates the previous check; the user must
                   // click again. Without this they could verify repo A, edit
@@ -573,7 +591,13 @@ export function CreateAppDialog() {
             >
               Cancel
             </button>
-            <Button type="submit" id="create-submit" layout="flex">
+            <Button
+              type="submit"
+              id="create-submit"
+              layout="flex"
+              disabledStyle="block"
+              disabled={quotaBlocksCreation}
+            >
               {mode === 'import' ? 'Import' : 'Create'}
             </Button>
           </div>

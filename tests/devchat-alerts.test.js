@@ -3,7 +3,7 @@
 // Two layers:
 //   1. Behavioral — load public/js/dev-alerts.js in a vm sandbox with faked
 //      browser globals (window/document/localStorage/AudioContext/
-//      Notification/Usernode) and exercise the real DevAlerts API: the
+//      Notification/Homeroom) and exercise the real DevAlerts API: the
 //      visible→tone / hidden→notify decision, the native vs browser
 //      systemNotify branches, the localStorage mute gate, and the tone
 //      dedup guard.
@@ -25,15 +25,24 @@ const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 const DEV_ALERTS_SRC = read('js', 'dev-alerts.js');
 // #1079 chunk B moved this module into the React bundle (it is the same
 // file — see the note at the top of it); only the path changed here.
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const NOTIF_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8');
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8')
+  .replace(/^import \{ agoStamp \}.*$/m, '');
 
-// Minimal fake DOM element tracking class list + text for the badge tests.
+// Minimal fake DOM element tracking class list, text and attributes for the
+// badge tests.
 class FakeEl {
   constructor() {
     this.textContent = '';
     this.disabled = false;
     this.dataset = {};
+    this.attributes = {};
     this._cls = new Set(['hidden']);
     const self = this;
     this.classList = {
@@ -44,27 +53,24 @@ class FakeEl {
     };
   }
   get hidden() { return this._cls.has('hidden'); }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      ? this.attributes[name] : null;
+  }
 }
 
 // Load notifications.js in a sandbox and return its Notifications object plus
-// the fake bell elements, so _renderBadge's two-badge split can be asserted.
+// the fake bell elements, so _renderBadge's single count can be asserted.
 function makeNotifEnv() {
   const elements = {};
   const getEl = (id) => (elements[id] || (elements[id] = new FakeEl()));
   const sandbox = { console, Date, JSON, Math, Set, Map };
   sandbox.window = sandbox;
-  // The GREEN half of the split is published rather than painted since it
-  // moved onto #improve-btn — that button is React-owned, so an id lookup and
-  // a classList write would be a mismatch React patches straight back out.
-  // Record the call; the red half is still a span this env can read.
-  const badge = { unread: null, done: null, calls: 0 };
-  sandbox.Improve = {
-    setSessionBadge(unread, done) {
-      badge.calls += 1;
-      badge.unread = unread;
-      badge.done = done;
-    },
-  };
+  // #1610 retired Improve.setSessionBadge along with the split it fed. The
+  // controller is still exposed so a stray call would be visible rather than
+  // throwing silently past this env; nothing should reach for it.
+  sandbox.Improve = {};
   sandbox.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
   sandbox.document = {
     title: 'My App',
@@ -72,8 +78,9 @@ function makeNotifEnv() {
     addEventListener: () => {},
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
+  sandbox.agoStamp = agoStamp;
   vm.runInNewContext(NOTIF_SRC, sandbox);
-  return { Notifications: sandbox.window.Notifications, elements, badge };
+  return { Notifications: sandbox.window.Notifications, elements };
 }
 
 // Build a fresh sandbox + DevAlerts instance with configurable environment.
@@ -83,11 +90,12 @@ function makeEnv({
   permission = 'granted',
   audioRunning = true,
   enabled = true,
+  fetchResponse = { ok: true, queued: true, delayMs: 10000 },
 } = {}) {
   const store = {};
   if (enabled === false) store.devchat_alerts_enabled = '0';
 
-  const calls = { oscillators: 0, expRamps: 0, notifications: [], bridge: [], permissionRequests: 0 };
+  const calls = { oscillators: 0, expRamps: 0, notifications: [], bridge: [], permissionRequests: 0, timers: [], requests: [] };
 
   class FakeParam {
     setValueAtTime() {} linearRampToValueAtTime() {}
@@ -105,7 +113,13 @@ function makeEnv({
     createGain() { return new FakeNode(); }
   }
 
-  const sandbox = { Promise, Date, JSON, Math, console, setTimeout: () => 0 };
+  const sandbox = { Promise, Date, JSON, Math, console,
+    setTimeout: (fn, delay) => calls.timers.push({ fn, delay }),
+    fetch: async (url, options) => {
+      calls.requests.push({ url, options });
+      return { ok: fetchResponse.ok, json: async () => fetchResponse };
+    },
+  };
   sandbox.window = sandbox;
   sandbox.localStorage = {
     getItem: (k) => (k in store ? store[k] : null),
@@ -312,10 +326,10 @@ test('settings.js wires the toggle and the test-alert button', () => {
   assert.match(src, /DevAlerts\.testAlert\(\)/);
 });
 
-// ── badge split (green AI vs red remainder) ──────────────────────────────
+// ── one bell, one count (#1610) ──────────────────────────────────────────
 
-test('the session count is published green, the remainder painted red', () => {
-  const { Notifications, elements, badge } = makeNotifEnv();
+test('every unread kind lands on the bell, sessions included', () => {
+  const { Notifications, elements } = makeNotifEnv();
   Notifications.items = [
     { id: 1, kind: 'session_done', readAt: null },
     { id: 2, kind: 'auto_solve_done', readAt: null },
@@ -326,35 +340,41 @@ test('the session count is published green, the remainder painted red', () => {
   Notifications.invites = [{ appId: 9 }];
   Notifications._renderBadge();
 
-  const red = elements['notifications-badge'];
-  assert.equal(badge.unread, 2, 'green = unread session_done + auto_solve_done');
-  assert.equal(badge.done, 1, 'and the session_done subset rides along');
-  // red = (unread - aiUnread) + invites = (3 - 2) + 1 = 2
-  assert.equal(red.textContent, '2', 'red = non-AI unread + invites');
-  assert.equal(red.hidden, false);
-  // The SPLIT is the point, and this is what states it: the red count is the
-  // unread total with the green half taken out, plus invites. If the two ever
-  // stopped being disjoint a session would be counted on both controls.
-  assert.equal(Number(red.textContent), Notifications.unread - badge.unread + 1);
+  const bell = elements['notifications-badge'];
+  // 3 unread + 1 pending invite. Nothing is subtracted: the split that used
+  // to take the session kinds out of this number put them on a control that
+  // could not clear them, which is the bug #1610 fixed.
+  assert.equal(bell.textContent, '4', 'bell = every unread + invites');
+  assert.equal(bell.hidden, false);
+  assert.equal(Number(bell.textContent), Notifications.unread + Notifications.invites.length);
+  // The session_done subset rides along as an attribute so a declared check
+  // can prove the badge is up BECAUSE work finished.
+  assert.equal(bell.attributes['data-session-done'], '1');
 });
 
-test('each count falls to zero on its own', () => {
-  const { Notifications, elements, badge } = makeNotifEnv();
+test('nothing is published to the Improve button any more', () => {
+  const { Notifications, elements } = makeNotifEnv();
   Notifications.items = [{ id: 1, kind: 'session_done', readAt: null }];
   Notifications.unread = 1;
   Notifications.invites = [];
   Notifications._renderBadge();
-  assert.equal(badge.unread, 1);
-  // No non-AI unread and no invites → red badge hidden.
-  assert.equal(elements['notifications-badge'].hidden, true);
+  // A finished session raises the BELL, alone.
+  assert.equal(elements['notifications-badge'].textContent, '1');
+  assert.equal(elements['notifications-badge'].hidden, false);
+  assert.ok(!('notifications-badge-ai' in elements),
+    'the retired green badge must not be resolved by id');
+  assert.ok(!/window\.Improve\.setSessionBadge/.test(NOTIF_SRC),
+    'the publish onto #improve-btn is gone from the module');
+});
 
-  // And the green half reports zero rather than going silent: the component
-  // needs the number to decide `hidden`, so "nothing to report" is a publish
-  // of 0, not an absent call.
+test('the bell count falls to zero and hides', () => {
+  const { Notifications, elements } = makeNotifEnv();
   Notifications.items = [{ id: 1, kind: 'session_done', readAt: '2020-01-01T00:00:00Z' }];
   Notifications.unread = 0;
+  Notifications.invites = [];
   Notifications._renderBadge();
-  assert.equal(badge.unread, 0);
+  assert.equal(elements['notifications-badge'].hidden, true);
+  assert.equal(elements['notifications-badge'].attributes['data-session-done'], '0');
 });
 
 test('dev-alerts.js still loads before notifications, and index.html ships the settings UI', () => {
@@ -373,6 +393,81 @@ test('dev-alerts.js still loads before notifications, and index.html ships the s
     'a surviving classic tag would load a second copy of the module');
   assert.match(html, /id="devchat-alerts-toggle"/);
   assert.match(html, /id="devchat-alerts-test"/);
-  // #138: the distinct green AI-completion badge on the bell.
-  assert.match(html, /id="notifications-badge-ai"[^>]*bg-emerald-500/);
+  // #1610: the completed-task count is the bell's, and the Improve button
+  // keeps only a live working pulse.
+  assert.match(html, /id="notifications-badge"[^>]*data-session-done="0"/);
+  assert.ok(!html.includes('id="notifications-badge-ai"'),
+    'the green count on #improve-btn is retired');
+});
+
+test('test alert queues on the server before the optional foreground chime', async () => {
+  const { DevAlerts, calls } = makeEnv();
+  const result = await DevAlerts.testAlert();
+  assert.equal(result.queued, true);
+  assert.equal(calls.requests[0].url, '/api/me/test-alert');
+  assert.equal(calls.requests[0].options.method, 'POST');
+  assert.equal(calls.requests[0].options.credentials, 'same-origin');
+  assert.equal(calls.timers[0].delay, 10000);
+  assert.equal(calls.oscillators, 0);
+  calls.timers[0].fn();
+  assert.ok(calls.oscillators > 0);
+});
+
+test('native background tests never post duplicate local alerts, with remote state on or off', async () => {
+  for (const active of [true, false]) {
+    const { DevAlerts, calls } = makeEnv({ isNative: true, visibility: 'hidden' });
+    DevAlerts.setRemoteDeliveryActive(active);
+    await DevAlerts.testAlert();
+    calls.timers[0].fn();
+    assert.equal(calls.requests.length, 1);
+    assert.equal(calls.bridge.length, 0);
+    assert.equal(calls.oscillators, 0);
+  }
+});
+
+test('a live background browser still previews the alert without an eligible phone', async () => {
+  const { DevAlerts, calls } = makeEnv({ visibility: 'hidden',
+    fetchResponse: { ok: true, queued: false, reason: 'no_eligible_device', delayMs: 10000 } });
+  const result = await DevAlerts.testAlert();
+  assert.equal(result.queued, false);
+  calls.timers[0].fn();
+  assert.equal(calls.notifications[0].title, 'Homeroom test alert');
+  assert.equal(DevAlerts._routeFor({ kind: 'test_alert' }), '#settings/alerts');
+});
+
+test('queue errors reject without scheduling a success preview', async () => {
+  const { DevAlerts, calls } = makeEnv({ fetchResponse: { ok: false, error: 'Please wait a minute' } });
+  await assert.rejects(DevAlerts.testAlert(), /Please wait a minute/);
+  assert.equal(calls.timers.length, 0);
+});
+
+test('settings reports queue outcomes and never turns a countdown into a delivery claim', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
+  const start = src.indexOf("      const alertsTest = document.getElementById('devchat-alerts-test');");
+  const end = src.indexOf('// Account-level remote-push categories', start);
+  for (const [result, expected] of [
+    [{ queued: true, delayMs: 10000 }, /queued for delivery/],
+    [{ queued: false, reason: 'preference_disabled', delayMs: 10000 }, /Enable Developer sessions/],
+    [{ queued: false, reason: 'no_eligible_device', delayMs: 10000 }, /Sign in on your phone/],
+    [new Error('Please wait a minute'), /Please wait a minute/],
+  ]) {
+    const button = new FakeEl();
+    const status = new FakeEl();
+    let handler;
+    let tick;
+    button.addEventListener = (_event, fn) => { handler = fn; };
+    const sandbox = {
+      document: { getElementById: (id) => id === 'devchat-alerts-test' ? button : status },
+      DevAlerts: { testAlert: async () => { if (result instanceof Error) throw result; return result; } },
+      setInterval: (fn) => { tick = fn; return 1; },
+      _clearAlertsTestCountdown() {},
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(src.slice(start, end), sandbox);
+    await handler();
+    if (tick) for (let i = 0; i < 10; i += 1) tick();
+    assert.match(status.textContent, expected);
+    assert.doesNotMatch(status.textContent, /Sent\.|successfully delivered/i);
+    assert.equal(button.disabled, false);
+  }
 });

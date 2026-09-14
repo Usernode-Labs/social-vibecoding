@@ -82,14 +82,14 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
   if (readOnly) {
     return (
       <div
-        className={`px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-t border-zinc-200 dark:border-zinc-800 shrink-0 ${SAFE_BAR}`}
+        className={`px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 shrink-0 ${SAFE_BAR}`}
       >
         {notice}
       </div>
     );
   }
   return (
-    <div className={`shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 ${SAFE_BAR}`}>
+    <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
       <ComposerSlots scope="thread" />
       <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} />
     </div>
@@ -100,10 +100,10 @@ export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   if (fill) {
     return (
-      <div className="dev-thread flex flex-col h-full min-h-0">
+      <div className="dev-thread flex flex-col h-full min-h-0 dc-lift dc-lift-session">
         <div
           id="gc-thread-scroll"
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3"
         >
           {withHeader ? <div id="gc-thread-head" /> : null}
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />

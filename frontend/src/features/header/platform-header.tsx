@@ -43,7 +43,7 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
-import { improveStore } from '../improve/improve-store.js';
+import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
@@ -95,14 +95,17 @@ import '../notifications/mount';
 // The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
 // the ONLY thing that varies between the two states — the string itself has to
 // stay byte-identical to the hand-written shell's (tests/baselines).
-// The board draws the bar's three glyph controls — back, chat, bell — as dark
-// glyphs on a light DISC, and the accent pill beside them as the one filled
-// thing. Discs at 28px, not the board's larger circle: the header's content
-// row is pinned to 28px (tests/header-height-parity.test.js, and #909 before
-// it), so the ratio scales rather than the row.
+// The homescreen design draws the bar's glyph controls — back, bell — and the
+// app chip beside them all the same way: periwinkle ink on a periwinkle tint
+// with a hairline one step darker (--brand-ink / --brand-tint / --brand-line
+// in app.css, which also carry the dark values, so no dark: variants here).
+// Discs at 28px, not the design's larger circle: the header's content row is
+// pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
+// the ratio scales rather than the row. The hairline is inside the h-7 box
+// (border-box), so the row's ceiling holds.
 const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
-  + ' bg-zinc-50 text-zinc-900 hover:bg-white'
-  + ' dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 un-touch-target';
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)] un-touch-target';
 
 /** Where the header's home glyph points. NavLink owns the spelling. */
 function homeHref(): string {
@@ -126,14 +129,26 @@ function homeHref(): string {
  *
  *   Board / Activity   →  the app itself. They are the app's dev surface, and
  *                         the app is what you were looking at before it.
- *   The general chat   →  the Board. It is reached from a card there.
- *   A topic (issue,    →  the Board. `activeAppView` already counts a topic
+ *   The general chat   →  the board. It is reached from a card there.
+ *   A topic (issue,    →  the board. `activeAppView` already counts a topic
  *   proposal, gov,        as the Board for the view strip's purposes; a card
  *   shared session)       opened full-screen is still the board's content.
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
- *                         the Board on a cold deep link, which is where the
+ *                         the board on a cold deep link, which is where the
  *                         session's own card lives.
+ *
+ * ── "The board" is TWO screens, and the arrow has to pick ──────────────
+ *
+ * Workshop and Board are one screen in two layouts, and the layout IS the
+ * route. So the three rows above that read "the board" cannot spell one:
+ * `#app/<slug>/board` sent a viewer who had opened an issue from the Workshop
+ * to the Kanban board — a screen they had not been on — and, because that
+ * route applies its own layout, rewrote their stored preference to kanban as
+ * it went. `boardView` (published with the route by `Improve.setTab`) names
+ * the layout that was on screen when the sub-view was entered, and
+ * `boardHref` turns it into the matching address for this arrow and for a
+ * session's captured origin alike.
  *
  * ── The self-hosted exception ──────────────────────────────────────────
  *
@@ -149,10 +164,12 @@ function appRouteUpHref(
   subTab: string | null,
   selfHosted: boolean,
   sessionOrigin: string | null,
+  boardView: string,
 ): string | null {
   if (!slug || tab !== 'dev') return null;
-  if (subTab === 'sessions') return sessionOrigin || `#app/${slug}/board`;
-  if (subTab === 'chat' || subTab === 'topic') return `#app/${slug}/board`;
+  const board = boardHref(slug, boardView);
+  if (subTab === 'sessions') return sessionOrigin || board;
+  if (subTab === 'chat' || subTab === 'topic') return board;
   // The Board and the Activity feed themselves: up is the app.
   if (subTab === 'forum') return selfHosted ? null : `#app/${slug}/app`;
   return null;
@@ -181,10 +198,10 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    selfHosted, sessionOrigin,
+    selfHosted, sessionOrigin, boardView,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(
-    backSlug, backTab, backSubTab, selfHosted, sessionOrigin,
+    backSlug, backTab, backSubTab, selfHosted, sessionOrigin, boardView,
   );
   // An app route that has a level above it wins over the imperative call;
   // everything else keeps whatever the last setBackIcon() published, which on
@@ -208,7 +225,7 @@ export function PlatformHeader() {
     window.Notifications?.init();
   }, []);
 
-  // Chromeless mode hides the bar and floats the "Open in Usernode" pill in
+  // Chromeless mode hides the bar and floats the "Open in Homeroom" pill in
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
@@ -287,17 +304,42 @@ export function PlatformHeader() {
           the same relationship every sheet already uses (zinc-900 on
           zinc-950; cf. notifications-sheet.tsx, anchored-panel.tsx).
 
-          `rounded-b-lg` + `-mb-1` is the "eats into the app area" corner: an
-          8px radius curves the bar's bottom corners away so the page ground
-          shows through the two notches, and a 4px overlap onto the next
+          `rounded-b-2xl` + `-mb-2` is the "eats into the app area" corner: a
+          16px radius curves the bar's bottom corners away so the page ground
+          shows through the two notches, and an 8px overlap onto the next
           sibling puts that curve slightly INSIDE the area below, which is
           what makes the content read as having rounded top corners. The
           overlap is deliberately half the radius: every screen root below
-          opens with its own padding, so 4px comes out of that padding rather
+          opens with its own padding, so 8px comes out of that padding rather
           than off the top of a card, and nothing is clipped at rest.
+          It was `rounded-b-lg` + `-mb-1` (8px over 4px) until #1571, which
+          asked for a corner that reads as INTENDED rather than as a
+          rendering artifact — doubling it is the whole of that half of the
+          request. Keep the two in step: the overlap is half the radius, and
+          features/dev-chat/view.tsx's #dc-session-header carries the same
+          radius token because it is the second bar on that screen
+          (tests/dev-chat-view.test.js pins them to each other).
+
+          WHAT THIS CORNER CANNOT REACH, and what does instead: the notch is
+          cut out of the BAR, so it needs the bar to have a surface. On the
+          wallpaper routes it has none — app.css clears it so the ground runs
+          to the top of the screen — and #app-view is one of them. There the
+          radius belongs to the app frame itself; see "THE APP SHEET" in
+          app.css for the whole of that argument. The two mechanisms do not
+          overlap: #app-frame-host is the only opaque thing below this bar,
+          and every other root is transparent and has nothing to round.
           `z-10` is load-bearing — #home-screen and #messages-screen set
           `position:relative` with z-index:auto, so without it two positioned
           siblings paint in DOM order and the screen wins.
+
+          ON THE HOME ROUTE AND INSIDE AN APP THE SURFACE IS CLEARED. app.css
+          paints the home wallpaper on the body and sets this bar's background
+          to transparent under `body:has(#home-screen:not(.hidden))` and
+          `body:has(#app-view:not(.hidden))`, so the cream ground and its
+          star run up behind the bell as the design draws them — and the bar
+          is the same object on both sides of the launcher → app push, so
+          that push has nothing to animate in it. The zinc-200 here is what
+          every other route still gets.
 
           No `overflow-hidden` here, ever: see the badge rule in app.css and
           tests/header-height-parity.test.js. Height is untouched — the radius
@@ -307,8 +349,8 @@ export function PlatformHeader() {
       <header
         ref={headerRef}
         id="platform-header"
-        className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 py-3 shrink-0'
-          + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-lg -mb-1'}
+        className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 pt-3 pb-5 shrink-0'
+          + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2'}
       >
         {/*
             The LEFT group: the back chevron when there is somewhere to go
@@ -372,10 +414,10 @@ export function PlatformHeader() {
                 #1443 retired the house on the grounds that the chip's menu
                 carries a Home row an inch to its right — true, and the cost
                 was that the app itself, Profile, Settings, Admin and Messages
-                offered nothing in the bar at all. "Every page should have a
-                back or a home button, except Home" is the rule now, and this
-                anchor is the whole of it: chevron where there is a level
-                above, house where there is not, hidden only on Home.
+                offered nothing in the bar at all. Those screens keep a back
+                or home button. Home and the top-level Browse list share the
+                same root header (#1569), so only those two hide this slot;
+                their navigation menu still provides the route between them.
             */}
           <a
             id="back-btn"
@@ -516,7 +558,7 @@ export function PlatformHeader() {
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target bg-zinc-50 text-zinc-900 hover:bg-white dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {
@@ -528,6 +570,16 @@ export function PlatformHeader() {
             <BellIcon className="w-5 h-5" />
             <span
               id="notifications-badge"
+              /*
+                 Constant, and deliberately so. Notifications._renderBadge
+                 overwrites it with the live count of unread finished dev
+                 sessions, which is what a declared check selects on to prove
+                 the badge is showing BECAUSE work completed. Rendering it as
+                 a constant keeps the prerender, the first client render and
+                 React's reconciliation all agreeing on "0", so the painted
+                 value is never patched back out.
+              */
+              data-session-done="0"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
               aria-label="Unread notifications"
             >

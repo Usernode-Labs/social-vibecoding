@@ -64,8 +64,22 @@ test('stage 1 cleans optional fields and rejects unknown countries', () => {
   assert.equal('evil_extra' in full.value, false);
 
   assert.equal(q.validateStage1({ ...base, country: 'ZZ' }).ok, false);
-  // Region pseudo-codes are valid countries.
-  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, true);
+  // The five region pseudo-codes are RETIRED — the picker is the complete
+  // ISO 3166-1 list now, so there is a real entry for every place they stood
+  // in for. Two of them (EU, AP) are not ISO codes at all and are simply
+  // rejected; the other three ARE — LA is Laos, AF is Afghanistan, ME is
+  // Montenegro — and are accepted as those countries, which is exactly why
+  // the stored legacy answers were namespaced to `X-LA` and friends.
+  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, false);
+  assert.equal(q.validateStage1({ ...base, country: 'AP' }).ok, false);
+  for (const code of ['LA', 'AF', 'ME']) {
+    const r = q.validateStage1({ ...base, country: code });
+    assert.equal(r.ok, true, `${code} is a real ISO country now`);
+    assert.equal(r.value.country, code);
+  }
+  // And the namespaced legacy form can never be submitted: the field is
+  // capped at two characters, so `X-LA` is structurally unreachable.
+  assert.equal(q.validateStage1({ ...base, country: 'X-LA' }).value.country, undefined);
 });
 
 // Andrea's 27 Aug 2026 review cut three stage-1 fields. A stale client
@@ -102,12 +116,27 @@ test('stage 1 offers exactly the eight agreed discovery sources', () => {
 
 // ─── 2. Stage 2 ───────────────────────────────────────────────────────
 
-test('stage 2 takes made_url and validates it looks like a link', () => {
+test('stage 2 prepends https:// to a scheme-less made_url', () => {
   assert.equal(q.validateStage2({ made_url: 'not a link' }).ok, false);
-  const r = q.validateStage2({ made_url: 'https://example.com/repo', made_note: '  A Discord bot  ' });
+  const r = q.validateStage2({ made_url: '  example.com/repo  ', made_note: '  A Discord bot  ' });
   assert.equal(r.ok, true);
   assert.equal(r.value.made_url, 'https://example.com/repo');
   assert.equal(r.value.made_note, 'A Discord bot');
+});
+
+test('stage 2 preserves explicit web schemes and rejects unsupported ones', () => {
+  for (const url of ['https://example.com/repo', 'http://example.com/repo']) {
+    const r = q.validateStage2({ made_url: url });
+    assert.equal(r.ok, true);
+    assert.equal(r.value.made_url, url);
+  }
+  for (const url of [
+    'ftp://example.com/file',
+    'mailto:hello@example.com',
+    'javascript:alert.example.com',
+  ]) {
+    assert.equal(q.validateStage2({ made_url: url }).ok, false, `${url} is not a web URL`);
+  }
 });
 
 test('stage 2 accepts an empty body (everything optional)', () => {
@@ -139,7 +168,7 @@ test('stage 2 validates enum keys in every section', () => {
   assert.equal(ok.value.loss.had, 'yes');
 });
 
-test('stage 2 shapes handles and no longer accepts typed invites', () => {
+test('stage 2 shapes handles and drops the three retired keys', () => {
   const r = q.validateStage2({
     farcaster: '@fc',
     discord: 'disc',
@@ -157,7 +186,10 @@ test('stage 2 shapes handles and no longer accepts typed invites', () => {
   // sending `invites` gets a NORMAL save with the key dropped — not a
   // validation error somebody would have to debug.
   assert.equal(r.value.invites, undefined);
-  assert.equal(r.value.admit_together, true);
+  // `admit_together` (#1534) is retired the same way. No admission path
+  // ever read it, so it went out with the checkbox, and a stale client
+  // still sending it gets the same normal save with the key dropped.
+  assert.equal(r.value.admit_together, undefined);
   // `referrer_handle` went the same way on 27 Aug 2026, and for the same
   // reason the stage-1 copy did: the invite link records the relationship
   // as a row reference, so a typed handle was a claim nobody could resolve.

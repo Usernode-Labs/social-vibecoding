@@ -259,6 +259,22 @@ async function markCleanupPending(db, args) {
   });
 }
 
+// Closed sessions can retain records from older deployments. The watchdog
+// has already checked age, ownership, execution and any attempt ledger. Clear
+// only the exact snapshot while the session is still closed: a concurrent
+// resume, phase transition or replacement turn must win over housekeeping.
+async function clearClosedSessionTurn(db, { sessionId, activeTurn }) {
+  const turn = parseActiveTurn(activeTurn);
+  if (!turn || phaseOf(turn) === PHASE_QUARANTINED) return false;
+  const { rowCount } = await db.query(
+    `UPDATE chat_sessions SET active_turn = NULL
+     WHERE id = $1 AND status IN ('archived', 'merged')
+       AND active_turn = $2::jsonb`,
+    [sessionId, JSON.stringify(turn)],
+  );
+  return rowCount === 1;
+}
+
 // A durable-state contradiction cannot be healed by repeatedly replaying the
 // journal (for example, active_turn points at a ledger attempt that no longer
 // exists). Preserve the exact owner and make the state explicit for operators
@@ -542,6 +558,7 @@ module.exports = {
   markExecuting,
   markTailPending,
   markCleanupPending,
+  clearClosedSessionTurn,
   markQuarantined,
   mergeTailMilestones,
   incrementByokCents,

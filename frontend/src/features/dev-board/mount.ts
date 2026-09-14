@@ -49,18 +49,21 @@ import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
+import { publishDevActions } from './actions-store';
+import { publishWorkshopGroup } from './workshop/group-mode-store';
 import {
   aiEnabledStore,
   cardNowStore,
-  devFeedStore,
   devKanbanStore,
+  devWorkshopStore,
 } from './card/cards-store';
-import { DevFeed } from './card/dev-feed';
 import { DevKanban } from './card/dev-kanban';
-import type { DevFeedView, DevKanbanView } from './card/model';
+import type { DevKanbanView, DevWorkshopView } from './card/model';
+import { DevWorkshop } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { AutoSessionModal } from './modals/auto-session-modal';
+import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
 import {
@@ -91,7 +94,7 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
-  publishLockedNotice(locked: boolean): void;
+  publishLockedNotice(locked: boolean, inviteOnly?: boolean): void;
   publishDiscussion(state: DiscussionState): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
@@ -99,18 +102,21 @@ export interface DevBoardBridge {
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
   mountSessionShell(host: Element | null): void;
-  mountFeed(host: Element | null): void;
-  publishFeed(view: DevFeedView): void;
+  mountWorkshop(host: Element | null): void;
+  publishWorkshop(view: DevWorkshopView): void;
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
+  mountChangePage(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
+  mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
+  publishWorkshopGroup(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
   /** Live portal count — the leak assertion in tests reads this. */
@@ -146,13 +152,13 @@ kanbanFiltersStore.setFlush(flushSync);
 /**
  * And every card surface: each publish replaces what used to be an
  * `innerHTML` assignment whose caller's NEXT LINES read the fresh DOM —
- * `_rerenderFeed` wires the comment observer and fills the kudos hosts,
+ * `_rerenderWorkshop` wires the comment observer and fills the kudos hosts,
  * `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu, and
  * `_renderTopicHead` binds the transcript toggle it just painted around
  * the card. cardNowStore ticks inside no such read, but flushing it keeps
  * a countdown label and its expiry refetch on the same beat.
  */
-devFeedStore.setFlush(flushSync);
+devWorkshopStore.setFlush(flushSync);
 devKanbanStore.setFlush(flushSync);
 cardNowStore.setFlush(flushSync);
 // The topic head's too, and it is load-bearing three times:
@@ -177,6 +183,17 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
+    // The toolbar's six flags, for the Workshop's separate root — see
+    // ./actions-store.ts. Published BEFORE the frame renders, so whichever
+    // surface draws the row has them on its first paint.
+    publishDevActions({
+      illustrationApp: options.illustrationApp,
+      canManageIllustration: options.canManageIllustration,
+      selfHosted: options.selfHosted,
+      readOnly: options.readOnly,
+      canCollaborate: options.canCollaborate,
+      showsMembers: options.showsMembers,
+    });
     // `viewMode` seeds the store and is not a frame prop — the frame draws no
     // Kanban|Feed control any more (the choice lives under the Improve panel's
     // Board row), so it is dropped here rather than forwarded.
@@ -221,14 +238,8 @@ export const devBoardBridge: DevBoardBridge = {
     cardMenuStore.set({ rows });
   },
 
-  // The kanban board's filter strip. Mounted once per kanban entry; the feed
-  // has no filters and publishes `mounted: false`, which draws nothing and
-  // lets `empty:hidden` collapse the shared action row's host.
-  // The issue thread. `_renderTopicHead` rebuilds its host on every
-  // WS-driven refresh, so this mounts per fill; the previous host's entry is
-  // swept as detached.
-  publishLockedNotice(locked) {
-    lockedNoticeStore.set({ locked });
+  publishLockedNotice(locked, inviteOnly = false) {
+    lockedNoticeStore.set({ locked, inviteOnly: !!inviteOnly });
   },
 
   // Where the app's general chat is, and the last thing said in it — see
@@ -247,6 +258,9 @@ export const devBoardBridge: DevBoardBridge = {
     issueCommentsStore.set(state);
   },
 
+  // The shared Board/Activity filter strip. Its initial `mounted: false`
+  // state draws no children while data loads; the frame keeps the host's
+  // one-row reservation in place until this mount and publish fill it.
   mountKanbanFilters(host) {
     mountLegacyPortal(host, createElement(KanbanFilters));
   },
@@ -271,12 +285,12 @@ export const devBoardBridge: DevBoardBridge = {
   // every repaint. The stores flush synchronously (below) because the
   // repaint paths read the fresh DOM on their next lines — `Kudos.attach`,
   // `_wireFeedComments`, `_initKanbanDrag`, `_reanchorCardMenu`.
-  mountFeed(host) {
-    mountLegacyPortal(host, createElement(DevFeed));
+  mountWorkshop(host) {
+    mountLegacyPortal(host, createElement(DevWorkshop));
   },
 
-  publishFeed(view) {
-    devFeedStore.set(view);
+  publishWorkshop(view) {
+    devWorkshopStore.set(view);
   },
 
   mountKanban(host) {
@@ -294,6 +308,11 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(TopicHead));
   },
 
+  mountChangePage(host) {
+    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' },
+      createElement('div', { id: 'gc-thread-head' }, createElement(TopicHead, { conversation: true }))));
+  },
+
   publishTopicHead(state) {
     topicHeadStore.set(state);
   },
@@ -306,6 +325,10 @@ export const devBoardBridge: DevBoardBridge = {
   mountAutoSessionModal(host, view) {
     autoSessionModalStore.set({ view });
     mountLegacyPortal(host, createElement(AutoSessionModal));
+  },
+
+  mountSessionChecks(host, props) {
+    mountLegacyPortal(host, createElement(SessionChecks, props));
   },
 
   mountCreditOptionsModal(host, view) {
@@ -329,6 +352,7 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishViewMode,
+  publishWorkshopGroup,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,
   rootCount: legacyPortalCount,

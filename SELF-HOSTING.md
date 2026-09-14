@@ -1,4 +1,10 @@
-# Self-hosting Usernode inside itself
+# Self-hosting Homeroom inside itself
+
+Runtime scope: the server, Compose, Docker-log, rollback and host-deployer
+procedures here describe the standalone Docker installation and its migration
+history. For the Kubernetes installation, use [Kubernetes operations](docs/kubernetes-operations.md)
+and the [platform chart](deploy/helm/social-vibecoding-platform/README.md).
+Kubernetes uses Argo releases and Pod APIs; no cluster node runs the host poller.
 
 Operational reference for the shipped self-hosting setup. The
 self-app is the row in `apps` whose container *is* the running
@@ -424,7 +430,7 @@ async function seedSelfApp(pool, config) {
       (name, slug, repo_url, container_id, status, self_hosted,
        main_sha, last_deploy_at)
     VALUES
-      ('Usernode', $1, $2, 'usernode', 'running', TRUE, $3, NOW())
+      ('Homeroom', $1, $2, 'usernode', 'running', TRUE, $3, NOW())
   `, [
     config.selfAppSlug,         // 'usernode-2d5619'
     config.platformRepoUrl,     // USERNODE_PLATFORM_REPO
@@ -596,7 +602,7 @@ Mayor's system prompt is assembled. When the chat session's app
 has `self_hosted = TRUE`, append a paragraph (after the existing
 `getAppConventions()` block):
 
-> **You are editing the Usernode platform itself.** Refuse to
+> **You are editing the Homeroom platform itself.** Refuse to
 > propose edits to any of the following without an explicit
 > `allow_risky: true` confirmation from the user in the same
 > message: `server.js` bootstrap path; `src/middleware/auth.js`;
@@ -1026,7 +1032,7 @@ clone routinely accessible through dev-chat preview):**
   `/api/teardown-staging`). It cannot escape to the parent prod
   origin.
 
-## Host-side deployer (primary deploy path)
+## Host-side deployer (standalone Docker deploy path)
 
 Production deploys used to depend on a GitHub Actions runner picking up
 the push to `main`. During the 2026-08-06 GHA outage, merged self-app
@@ -1404,7 +1410,7 @@ GitHub OAuth apps have one callback URL.
   previous release left behind.
 - The immutable id is the uniqueness and credit authority; the changeable
   login is presentation and proposal-attribution metadata. One GitHub
-  account can belong to one Usernode account. Linking X as well does not
+  account can belong to one Homeroom account. Linking X as well does not
   increase the tier.
 - Store the client secret as `GITHUB_LINK_CLIENT_SECRET`; it is declared
   `private: true`, so it is encrypted at rest and never returned by any API.
@@ -1436,7 +1442,7 @@ described in step 3 of "Creating the X app" below (#880, #1291).
    `IDENTITY_CREDIT_POLICY=legacy`.
 2. In production, connect and disconnect each configured provider, confirm
    the provider's authorization page shows the documented read-only access,
-   and confirm Settings reports that Usernode retained no token.
+   and confirm Settings reports that Homeroom retained no token.
 3. Verify an existing legacy GitHub attribution row is shown as
    **reconnect required**, not silently counted for credits.
 4. Set `IDENTITY_CREDIT_POLICY=tiered` and deploy. Test one unverified account
@@ -1529,7 +1535,7 @@ whole path and each step has a distinguishable failure.
    from `upstream/main` instead is a finding. It should *not* open a pull
    request — the platform does that.
 6. **Ask the assistant to submit it** (`submit_work`).
-   Usernode opens the cross-fork PR with bot credentials and runs it
+   Homeroom opens the cross-fork PR with bot credentials and runs it
    through `POST /api/apps/:slug/pr-import`, producing an ordinary
    `source='imported'` proposal with a SHA-pinned staging preview, proposal
    checks and a group vote — carrying a "Built with Claude Code" chip.
@@ -1571,7 +1577,7 @@ wording as the promote route. That asymmetry is deliberate: importing used
 to be a one-at-a-time human action, and the browser button's behaviour is
 out of scope here.
 
-## Waitlist social connect (GitHub / X)
+## Waitlist social connect (GitHub / X / LinkedIn)
 
 The second-stage waitlist form ("Want in sooner?", reached from the
 private link a signer receives) can **verify** a GitHub or an X account
@@ -1582,9 +1588,14 @@ round trip lives in `src/routes/waitlist-connect.js` — the classic
 authorize/token shape for GitHub, OAuth 2.0 with mandatory PKCE (S256) and
 an HTTP Basic token exchange for X.
 
+The two routes as a caller sees them, including the `connect=` outcomes the
+round trip lands back on, are documented in
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md); what follows is
+the provider-by-provider setup.
+
 ### Configuration
 
-Five settings, all `required: false`, all declared in `dapp.json`'s
+Ten settings, all `required: false`, all declared in `dapp.json`'s
 `platform_env` under the **Waitlist** group. None blocks boot or a merge.
 Set them in the platform's **Platform variables** panel (a full admin sets
 directly; anyone else proposes by vote), and note they take effect on the
@@ -1604,15 +1615,26 @@ as an "orphan" row until the deploy catches up.
   verifies a signer's X account. X supports multiple registered callbacks,
   so this pair may also serve account linking when `/api/me/x/callback` is
   registered and the dedicated `X_LINK_*` pair is unset.
-- `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
+- `WAITLIST_LINKEDIN_CLIENT_ID` / `WAITLIST_LINKEDIN_CLIENT_SECRET` — the
+  LinkedIn app that verifies a signer's LinkedIn account. It needs the
+  "Sign In with LinkedIn using OpenID Connect" product; see the runbook
+  below.
+- `WAITLIST_FOLLOW_X_URL` / `WAITLIST_FOLLOW_LINKEDIN_URL` /
+  `WAITLIST_FOLLOW_INSTAGRAM_URL` — public profile addresses the stage-2
+  "Follow along" row links to. Independent of the OAuth pairs above and of
+  each other: a network with no URL set renders no link, and none of the
+  three is ever verified (see the closing note of the LinkedIn runbook for
+  why no network will confirm a follow).
+- `WAITLIST_INTEGRATION_KEYS` — trusted integrators; see the section below.
+- `WAITLIST_OAUTH_ORIGIN` — overrides the origin the callback URLs are
   built from (`connectOrigin()`). Unset it is this deployment's canonical
   origin; it is `http://localhost:<PORT>` only when `USERNODE_LOCAL_DEV=1`
   says a developer is running the server locally. That default is
   deliberate: a missing variable must not be able to produce a callback
   that works nowhere but a laptop, because every provider rejects
   `redirect_uri` on its own page, after the person has left your site.
-  Change it and you must register the matching callback URL with both
-  providers.
+  Change it and you must register the matching callback URL with every
+  provider you have configured.
 
 **Each provider is judged on its own, and both halves must be set
 together.** An id without a secret counts as unconfigured, so GitHub can
@@ -1646,8 +1668,8 @@ Contributed by **snait** on issue #880, who set up the GitHub side.
    screen**. X API access is pay-per-use; confirm the current billing and
    credit requirements in the developer portal before rollout.
 2. **Create a Project, then an App inside it.** X requires apps to live
-   inside a project. Name the project anything (e.g. "Social Vibecoding")
-   and the app something user-visible (e.g. "Social Vibecoding Waitlist").
+   inside a project. Name the project anything (e.g. "Homeroom")
+   and the app something user-visible (e.g. "Homeroom Waitlist").
    X immediately shows an API Key / API Key Secret / Bearer Token —
    **ignore all three**; those are the OAuth 1.0a / app-only credentials,
    not what this flow uses.
@@ -1725,8 +1747,67 @@ call is rejected before any platform code runs.
   same is true of Instagram; X can answer it, but only with the
   `follows.read` scope on a paid API tier.
 
+## Waitlist trusted integrators
+
+`POST /api/public/waitlist` is an anonymous write, so it is rate-limited at
+**5 joins per 15 minutes per IP address**. That is the right bound for a
+visitor typing their own address into the landing page, and the wrong one
+for a partner running the signup form on their own site and posting the
+results here: every one of their visitors arrives from the same server
+address, so the sixth real person in a window is refused.
+
+`WAITLIST_INTEGRATION_KEYS` names the callers allowed out of that bucket.
+It is a comma-separated list of `label:secret` pairs:
+
+```
+WAITLIST_INTEGRATION_KEYS=acme:s3cret-one,partner-two:s3cret-two
+```
+
+The label is everything before the FIRST colon, so a base64 secret
+containing one is fine. Labels are `[a-z0-9][a-z0-9_-]{0,31}`; a malformed
+entry is logged and skipped rather than failing boot. Secrets are stored as
+SHA-256 digests in memory and compared with `crypto.timingSafeEqual`, and
+neither the secret nor the header is ever logged.
+
+A caller presents its secret in **`X-Waitlist-Client-Key`**. When it
+matches:
+
+- The anonymous per-IP bucket no longer applies. A **client ceiling of 200
+  joins per 15 minutes** applies instead, keyed on the label. A leaked key
+  is therefore a bounded faucet, not an open one.
+- The caller may additionally send the visitor's own address in
+  **`X-Waitlist-Client-IP`**. When it parses as an IP, that visitor gets the
+  same **5 per 15 minutes** a direct visitor would, and it is that address
+  the signup row records instead of the proxy's. Without it there is nothing
+  finer to key on and the client ceiling is the only bound.
+
+Everything else is unchanged: the same validation, the same
+already-on-the-list dedupe, the same confirmation mail, the same
+non-enumeration contract. This is a rate-limit key and nothing more, and it
+grants no read access to anything.
+
+**Unset is the normal state**, and an unrecognised or malformed key is
+treated as anonymous rather than refused, so a stale key on a partner's
+side degrades to the ordinary limit instead of breaking their form. That is
+deliberately unlike `TOPOCHAIN_PARTNER_API_KEY`, which 500s when the server
+has no key configured: this header is optional by design.
+
+**There is no CORS on the public API**, so an integrator cannot call this
+from a browser on its own origin. The integration is server-to-server, which
+is also what keeps the secret out of a page anyone can view.
+
+This section is the operator half: which variable to set and why the
+bounds are what they are. The caller half — every endpoint, its request
+and response bodies, and both headers in context — is
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md), which is the
+document to hand a partner.
+
 ## Cross-references
 
+- [docs/waitlist-public-api.md](./docs/waitlist-public-api.md) — the
+  public waitlist API as an outside integrator implements against it;
+  the caller-facing half of "Waitlist social connect" and "Waitlist
+  trusted integrators" above.
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
   prerequisite, now done.
 - [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)

@@ -1155,12 +1155,12 @@ test('users: toggle-exclude-podium message is derived from the REFRESHED state i
     const firstToggle = await fetch(`${base}/api/v4/admin/users/42/toggle-exclude-podium`, { method: 'PATCH' });
     const firstBody = await firstToggle.json();
     assert.equal(firstBody.data.exclude_podium, true);
-    assert.equal(firstBody.message, 'User marked as internal tester.');
+    assert.equal(firstBody.message, 'User excluded from leaderboard ranking.');
 
     const secondToggle = await fetch(`${base}/api/v4/admin/users/42/toggle-exclude-podium`, { method: 'PATCH' });
     const secondBody = await secondToggle.json();
     assert.equal(secondBody.data.exclude_podium, false);
-    assert.equal(secondBody.message, 'User unmarked as internal tester.');
+    assert.equal(secondBody.message, 'User included in leaderboard ranking.');
   } finally { server.close(); }
 });
 

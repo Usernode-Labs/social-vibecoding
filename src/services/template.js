@@ -1,7 +1,10 @@
+const nodeAppPackage = require('../templates/node-app/package.json');
+const nodeAppLock = require('../templates/node-app/package-lock.json');
+
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
 // unhandled promise rejections and posts them to `window.parent` via
-// postMessage. The Usernode platform shell listens for these to power
+// postMessage. The Homeroom platform shell listens for these to power
 // the in-app developer console (header icon + log panel).
 //
 // Existing apps (created before this feature) won't have this block. The
@@ -70,9 +73,9 @@ const DEV_CONSOLE_FORWARDER = `
   })();
   </script>`;
 
-// Resolved at module-load: which Usernode platform domain do we
+// Resolved at module-load: which Homeroom platform domain do we
 // inject into scaffolded apps? Apps need to point users back to the
-// platform that hosts them (the "Open in Usernode" landing page) and
+// platform that hosts them (the "Open in Homeroom" landing page) and
 // reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
 // fork running at a different domain templates the right URL into its
 // child apps. Fallback is the canonical standalone deploy.
@@ -86,7 +89,15 @@ const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 const {
   SERVER_NAME: CONNECTOR_SERVER_NAME,
   READ_ONLY_ALLOW_RULES: CONNECTOR_ALLOW_RULES,
+  ALLOW_RULE_SERVER_NAMES: CONNECTOR_NAME_SPELLINGS,
 } = require('./mcp-connect-constants');
+
+// The spellings the shipped rules cover, rendered from the constant so a
+// name added or retired there cannot leave the scaffolded README naming a
+// different set than the settings file beside it.
+const CONNECTOR_SPELLING_LIST = CONNECTOR_NAME_SPELLINGS
+  .map((name) => `\`${name}\``)
+  .join(', ');
 
 // The `.claude/` scaffold, on its own so every path that creates a repo can
 // place it — not just the one that writes the whole template.
@@ -114,7 +125,7 @@ function getConnectorScaffoldFiles() {
       // rules — so the platform ships them where every user of every app
       // picks them up with no setup: the repo it scaffolds.
       //
-      // Three entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`, and the
+      // Narrow entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`, and the
       // reason is the scaffold rather than the tools: this file is committed
       // into every app repo, and "every call this connector can make" is not
       // something a repo should grant on a stranger's machine on their
@@ -132,7 +143,7 @@ function getConnectorScaffoldFiles() {
 
 ## Why \`settings.json\` is here
 
-This app is built on **Usernode**, and Usernode has a hosted MCP connector
+This app is built on **Homeroom**, and Homeroom has a hosted MCP connector
 that Claude and ChatGPT can talk to. Without an allow rule, Claude Code asks
 permission on **every** connector call — including read-only ones like
 \`whoami\`, \`get_proposal\` and \`list_requests\`. In a Claude Code web session
@@ -149,7 +160,9 @@ ${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}
 Deliberately not \`mcp__${CONNECTOR_SERVER_NAME}__*\`. This file is committed
 into the repo, so it grants on behalf of everyone who opens it — and "every
 call this connector can make" is not something one repo should decide for a
-stranger's machine. These three entries can only ever match reads.
+stranger's machine. These entries can only ever match reads, and they repeat
+because a permission rule names its server literally: the same short list,
+once per spelling the connector may be registered under.
 
 If you want the acting calls (\`submit_work\`, \`create_request\`,
 \`prepare_work\`, \`start_platform_build\`, \`submit_platform_build\`) allowed
@@ -170,11 +183,15 @@ permission on your behalf is exactly what that check exists to prevent.
 ## If you are still being prompted
 
 The server segment of a permission rule is a **literal** — \`mcp__*__get_*\`
-is not a thing — so these rules only match a connector named exactly
-\`${CONNECTOR_SERVER_NAME}\` or \`Usernode\` — the two spellings the shipped
-list covers. Claude.ai's "Add custom connector" dialog takes
-whatever **name you type**, and a rule aimed at a different one fails
-silently: no error, you just keep getting prompted.
+is not a thing — so these rules only match a connector named exactly one of
+the spellings the shipped list covers:
+
+${CONNECTOR_SPELLING_LIST}
+
+The last two are what this connector was called before it was renamed, kept
+so a connector added earlier keeps working. Claude.ai's "Add custom
+connector" dialog takes whatever **name you type**, and a rule aimed at a
+different one fails silently: no error, you just keep getting prompted.
 
 **Read the name off your own tool list rather than trusting this file.** The
 tool names you actually see are either \`mcp__<server>__whoami\` or
@@ -190,7 +207,7 @@ wildcard, for the version reason above.
 
 To stop the prompts in **every** repo at once rather than one at a time, put
 the same rules under \`permissions.allow\` in your personal
-\`~/.claude/settings.json\`. Usernode's Settings → Connectors page has the
+\`~/.claude/settings.json\`. Homeroom's Settings → Connectors page has the
 exact block, a copy button, and a field that rewrites the rules for a
 connector registered under some other name.
 `,
@@ -204,7 +221,7 @@ function getTemplateFiles(appName, slug, dbUrl) {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
-This app runs on **Usernode Social Vibecoding**. If you're Claude Code
+This app runs on **Homeroom**. If you're Claude Code
 editing this repo, read the platform conventions before making
 changes:
 
@@ -217,7 +234,7 @@ public/private tables, "don't \`git push\`", etc.). The hosted copy is
 updated in place when platform rules change, so fetching it gives you
 today's rules, not a stale snapshot.
 
-When running inside Usernode's dev-chat, those same conventions are
+When running inside Homeroom's dev-chat, those same conventions are
 already injected into your system prompt, so the fetch is a no-op in
 that path — but it's the right reflex when someone runs Claude Code
 against this repo locally or from another harness.
@@ -225,7 +242,7 @@ against this repo locally or from another harness.
 ## Connector permission prompts
 
 This repo ships \`.claude/settings.json\`, which allows the **read-only**
-Usernode connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
+Homeroom connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
 \`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
 that acts — filing a request, opening or advancing a proposal — still asks.
 Claude Code applies those rules only after you accept the
@@ -240,7 +257,7 @@ The screen this app currently ships — the hero, the "What's already
 working" card, and the Press! example (the demo markup in
 \`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
 the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
-from the Usernode starter template, not product intent.
+from the Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
 screen rather than building alongside it:
@@ -278,7 +295,7 @@ dependencies"; etc.)_
       path: 'README.md',
       content: `# ${appName}
 
-> **Starter template** — this repo was scaffolded by Usernode Social
+> **Starter template** — this repo was scaffolded by Homeroom Social
 > Vibecoding. Everything in it is placeholder example code until the
 > app's first real feature is built.
 
@@ -291,12 +308,12 @@ The scaffold is a small working demo that proves the plumbing works:
   demo stores button presses in a \`presses\` table.
 - **Live API** — two example routes (\`/api/press\`,
   \`/api/leaderboard\`) read and write through a real Express server.
-- **Styling** — Tailwind CSS, precompiled by the Dockerfile on every
-  deploy, so there is nothing to rebuild by hand.
+- **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
+  image creation with either Kubernetes/Paketo or standalone Docker.
 
 ## Replacing the template
 
-Open the app on Usernode, tap **Improve** in the header, and describe
+Open the app on Homeroom, tap **Improve** in the header, and describe
 the app you want in plain English — the template will be replaced with
 your real app. You can also run Claude Code against this repo directly;
 start with \`CLAUDE.md\`, which carries the app-specific notes and
@@ -308,16 +325,19 @@ Once the real app exists, rewrite this README to describe it.
     {
       path: 'package.json',
       content: JSON.stringify({
+        ...nodeAppPackage,
         name: slug,
-        version: '1.0.0',
-        private: true,
         description: appName,
-        main: 'server.js',
-        scripts: { start: 'node server.js' },
-        dependencies: {
-          express: '^4.21.0',
-          pg: '^8.13.0',
-          jsonwebtoken: '^9.0.2',
+      }, null, 2),
+    },
+    {
+      path: 'package-lock.json',
+      content: JSON.stringify({
+        ...nodeAppLock,
+        name: slug,
+        packages: {
+          ...nodeAppLock.packages,
+          '': { ...nodeAppLock.packages[''], name: slug },
         },
       }, null, 2),
     },
@@ -333,19 +353,18 @@ Once the real app exists, rewrite this README to describe it.
 # stays exactly as small as it was.
 FROM node:22-alpine AS css
 WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
 COPY tailwind.config.js ./
 COPY styles ./styles
 COPY public ./public
-RUN npm install tailwindcss@3.4.17 --no-audit --no-fund \\
- && ./node_modules/.bin/tailwindcss \\
-      -c tailwind.config.js -i styles/tailwind-input.css \\
-      -o public/tailwind.css --minify
+RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
 FROM node:22-alpine
 WORKDIR /app
-COPY package.json ./
-RUN npm install --production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY . .
 # After COPY . . so the compiled stylesheet is not overwritten by the
 # source tree (which deliberately does not contain one).
@@ -360,14 +379,13 @@ CMD ["node", "server.js"]
       path: 'tailwind.config.js',
       content: `// Tailwind config for this app's precompiled stylesheet.
 //
-// The Dockerfile's builder stage runs the Tailwind CLI over the globs below
+// npm run build (Docker or Paketo) runs the Tailwind CLI over the globs below
 // and writes public/tailwind.css, which public/index.html links as
 // /tailwind.css. Nothing is committed — every image build regenerates it.
 //
 // To build it locally (optional; the image build does this for you):
-//   npm install --no-save tailwindcss@3.4.17
-//   npx tailwindcss -c tailwind.config.js -i styles/tailwind-input.css \\
-//     -o public/tailwind.css --minify
+//   npm ci --include=dev
+//   npm run build
 module.exports = {
   // Every file that can contain a class name. Tailwind's extractor is a
   // regex over source text, so it finds class names written as whole
@@ -399,8 +417,8 @@ module.exports = {
       content: `/* Input stylesheet for this app's Tailwind build.
  *
  * Deliberately OUTSIDE public/ so it is never served — the @tailwind lines
- * are build-time directives and mean nothing to a browser. The Dockerfile
- * compiles this to public/tailwind.css.
+ * are build-time directives and mean nothing to a browser. npm run build
+ * compiles this to public/tailwind.css with Docker or Paketo.
  *
  * "base" is the preflight layer (the cross-browser reset). Keep all three
  * layers, in this order; dropping base changes every heading, list and form
@@ -418,6 +436,7 @@ module.exports = {
 .git
 .claude
 node_modules
+public/tailwind.css
 `,
     },
     {
@@ -435,15 +454,20 @@ schema-version = "0.2"
 
 [io.buildpacks]
 exclude = [
-  "node_modules/",
+  "node_modules",
+  "public/tailwind.css",
 ]
+
+[[io.buildpacks.build.env]]
+name = "BP_NODE_RUN_SCRIPTS"
+value = "build"
 `,
     },
     {
       // Per-app secrets manifest. Empty by default — apps that need
       // env vars beyond the platform-injected DATABASE_URL/
       // USERNODE_JWT_PUBLIC_KEY/USERNODE_APP_ID/PORT/USERNODE_ENV add
-      // entries here. The Usernode platform
+      // entries here. The Homeroom platform
       // reads this on every deploy and refuses to start the container
       // if a required key has no stored value (see
       // src/services/app-secrets.js + app-manifest.js in the platform).
@@ -503,6 +527,46 @@ const APP_AUDIENCE = process.env.USERNODE_APP_ID
 const PUBLIC_API_PATHS = new Set(['/health']);
 
 app.use(express.json());
+
+// The platform's three centrally hosted files — the bridge, the native UI
+// kit and the Tailwind runtime — are reachable at these paths on this app's
+// OWN origin, so index.html can load them with a RELATIVE path and never
+// name the platform's hostname. A hostname baked into an app is what breaks
+// every app at once when the platform's domain moves.
+//
+// In production and on a staging preview the platform's edge answers these
+// before the request ever reaches this process (a per-app Ingress rule on
+// Kubernetes, the wildcard site's matcher on the docker runtime). This
+// handler is what makes the same relative paths work under a plain
+// \`node server.js\`, where there is no edge in front of the app at all.
+//
+// Registered BEFORE the auth middleware because these three files are
+// public: the platform serves them anonymously from any app origin, and a
+// login redirect arriving where a <script> was expected is exactly the
+// failure a relative path is meant to avoid.
+// The platform's origin, at RUNTIME. The value baked in here is only a
+// fallback for a container that was not handed the env var (local
+// development, mainly) — the injected one wins, so this app keeps working
+// when the platform's domain moves instead of pointing at wherever it used
+// to be. That is the failure mode that broke the whole fleet once already.
+const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '${PLATFORM_BASE_URL}')
+  .replace(/\\/+$/, '');
+
+app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
+  try {
+    const upstream = await fetch(PLATFORM_ORIGIN + req.path);
+    if (!upstream.ok) return res.sendStatus(upstream.status);
+    const type = upstream.headers.get('content-type');
+    if (type) res.type(type);
+    // max-age=0 with revalidation, never a long TTL: the whole point of
+    // central hosting is that a platform-side fix lands on the next load.
+    res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    return res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (err) {
+    console.warn('hosted asset fetch failed: ' + err.message);
+    return res.sendStatus(502);
+  }
+});
 
 // Verify platform-issued JWT if one was passed, then enforce auth on
 // anything not explicitly marked public. The iframe adds \`?token=…\`
@@ -580,7 +644,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // are sent to the platform's chromeless view of this app, where the shell
 // embeds it with a real token so the link just works. Every other
 // tokenless case (iframe loads with an expired token, old browsers
-// without Sec-Fetch-*) gets the "open in Usernode" landing page instead
+// without Sec-Fetch-*) gets the "open in Homeroom" landing page instead
 // of a redirect, so the platform shell is never loaded INSIDE its own
 // app iframe and stray visits still don't reveal the app.
 app.get('*', (req, res) => {
@@ -596,14 +660,14 @@ app.get('*', (req, res) => {
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
     if (req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, '${PLATFORM_BASE_URL}/app/${slug}/full' + deepPath);
+      return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
     }
-    return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
+    return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
-    <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
+    <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Homeroom</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
+    <a href="\${PLATFORM_ORIGIN}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
   </div>
 </body>\`);
   }
@@ -619,7 +683,9 @@ async function start() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   \`);
-  app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
+  server.keepAliveTimeout = 75_000;
 }
 
 start().catch(err => { console.error(err); process.exit(1); });
@@ -637,8 +703,8 @@ start().catch(err => { console.error(err); process.exit(1); });
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
-       moved to tailwind.config.js in the repo root; the Dockerfile's builder
-       stage compiles it to public/tailwind.css on every image build, so the
+       moved to tailwind.config.js in the repo root; npm run build compiles
+       it to public/tailwind.css with Docker or Paketo on every image build, so the
        stylesheet is regenerated from THIS commit's markup every deploy and
        can never drift behind the code. ~7 KB of CSS instead of a ~400 KB
        engine, and no flash of unstyled content.
@@ -669,7 +735,7 @@ start().catch(err => { console.error(err); process.exit(1); });
           <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
           <div>
             <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
-            <p class="text-sm text-zinc-400">You're signed in through Usernode automatically — no accounts to build.</p>
+            <p class="text-sm text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
           </div>
         </div>
         <div class="flex items-start gap-3 p-4">
@@ -708,7 +774,7 @@ start().catch(err => { console.error(err); process.exit(1); });
       </div>
     </section>
 
-    <p class="text-center text-xs text-zinc-600">Built on Usernode — this template screen disappears once you build your real app.</p>
+    <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
 
   <script>

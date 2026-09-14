@@ -98,14 +98,14 @@ const BASE_APP = {
 };
 
 // #1084 chunk G: the "+" menu is a React component now
-// (frontend/src/features/dev-board/board-frame.tsx), so there is no innerHTML
+// (frontend/src/features/dev-board/actions-row.tsx), so there is no innerHTML
 // string on #app-content to capture. These tests run with no
 // frontend/node_modules — the root install never touches that workspace — so
 // the markup is asserted against the component source and the GATE is asserted
 // against the module that still evaluates it, the same split
 // tests/dev-plus-menu.test.js and tests/standings-screen.test.js use.
 const FRAME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'actions-row.tsx'),
   'utf8'
 );
 
@@ -116,11 +116,18 @@ test('import-pr item renders for a collaborator', () => {
   const gated = FRAME_SRC.slice(start, end);
   assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
   assert.ok(gated.includes('Import Feature from a PR'), 'label present');
-  // Sits directly under "Propose a change".
-  assert.ok(FRAME_SRC.indexOf('data-plus="proposal"') < FRAME_SRC.indexOf('data-plus="import-pr"'),
-    'import-pr renders after the proposal item');
-  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('data-plus="issue"'),
-    'import-pr renders before the issue item');
+  // The group heading is NOT the row's to hide. #1490 gated heading and row
+  // together, because import was the group's only action once New change
+  // started in Improve; #1900 put File an issue back beside it, ungated, so
+  // the group stays populated for every writeable viewer and only the import
+  // row is conditional.
+  assert.ok(!gated.includes('<PlusMenuHeading'), 'the heading is outside the row gate');
+  assert.ok(FRAME_SRC.indexOf('label="Add to the board"') < start,
+    'the group heading renders above the gate');
+  assert.ok(FRAME_SRC.indexOf('data-plus="issue"') < start,
+    'File an issue leads the group, outside the gate');
+  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('groupKey="settings"'),
+    'import-pr renders before the settings group');
   // …and the prop is fed from appData.can_collaborate, read in the module.
   assert.match(
     VIEW_SRC,

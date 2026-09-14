@@ -74,6 +74,32 @@
  * presentation — the markup is one panel and the CSS decides where it is,
  * which is why the desktop change is a media query and not a branch.
  *
+ * ── Same MATERIAL as the two rails, different SHAPE ────────────────────
+ *
+ * It wears `.dc-lift dc-lift-panel`, which is the frosted fill, the hairline
+ * colour and the shadow list the Improve rail and the notifications rail wear
+ * — the lift's two layers plus the modal dim, which these panes cast outward
+ * rather than painting behind themselves (see `.dc-lift-panel` in app.css for
+ * why: a dim behind the panel lands inside its own backdrop-filter).
+ *
+ * This is the pane the dim treats least kindly, and it is worth knowing why:
+ * the rails dock to a screen edge, where what shows through the frost is page
+ * margin, while this one hangs in the middle of the content, where it is body
+ * text. Blurred text behind a menu reads as a smudge rather than as depth. If
+ * that ever needs fixing it is this surface's fill alpha, not the mechanism.
+ * That is the whole of what it takes from them, and it is deliberate that it
+ * is not more: `.dc-lift` rounds a DOCKED sheet — 1.75rem on the corners that
+ * meet the page, square on the ones that run off the display — and at `sm`+
+ * this thing docks to nothing. It hangs off the chip, so all four of its
+ * corners are real and it keeps the kit's own 12px menu radius
+ * (`--un-radius-card`) and the `--brand-line` hairline that ties it to the
+ * chip's ring. Below `sm` it IS floor-docked, and there it takes the pane's
+ * 1.75rem top corners like the other two.
+ *
+ * What this replaced was `bg-white dark:bg-zinc-900` with a zinc hairline and
+ * `shadow-2xl` — a heavier, greyer drop than the lift's, and the last of the
+ * pre-lift panel look in the shell's floating surfaces.
+ *
  * First render is the prerender: closed, no apps, no app-scoped rows.
  */
 
@@ -236,11 +262,16 @@ export function AppsSwitcherSheet(): ReactNode {
   const close = useCallback(() => AppContext.close(), []);
 
   // The viewer's apps, in the home grid's own "Your apps" order — the one
-  // answer to "which apps are mine" the platform already has. Loaded when the
-  // sheet opens, never during the first render: the prerender ships an empty
-  // strip and a fetch there would be a hydration mismatch.
+  // answer to "which apps are mine" the platform already has. Revalidated on
+  // EVERY open: create/import reloads Home and Discover's add/remove action
+  // updates Home's app cache, but this island keeps its own state for the
+  // lifetime of the shell. Treating the first response as permanent left that
+  // copy stale until a page reload.
+  // Keep the previous rows while this fetch runs, so reopening never flashes an
+  // empty strip. Nothing loads during the first render: the prerender ships an
+  // empty strip and a fetch there would be a hydration mismatch.
   useEffect(() => {
-    if (!open || apps) return;
+    if (!open) return;
     let live = true;
     (async () => {
       try {
@@ -258,7 +289,7 @@ export function AppsSwitcherSheet(): ReactNode {
       }
     })();
     return () => { live = false; };
-  }, [open, apps]);
+  }, [open]);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here rather than in AppTile's click handler counts a home tile, an
@@ -282,7 +313,7 @@ export function AppsSwitcherSheet(): ReactNode {
         id="apps-switcher-overlay"
         aria-hidden="true"
         {...(open && !adopted ? { 'data-open': '' } : {})}
-        className="fixed inset-0 z-40 bg-black/40"
+        className="fixed inset-0 z-40"
         onClick={close}
       >
       </div>
@@ -292,7 +323,7 @@ export function AppsSwitcherSheet(): ReactNode {
         aria-label="Menu"
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition"
+        className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
       >
         {/* The Apps label's row. `pt-4 pb-1` is SECTION's own padding, applied
             here because the row holds two controls beside the label — so the
@@ -318,16 +349,13 @@ export function AppsSwitcherSheet(): ReactNode {
             // modal into a kit that is still dismissing a sheet loses the
             // modal. Same ordering AppTile uses for navigation.
             //
-            // The gate matches the home grid's create tile: without it this
-            // was the one create affordance offered to viewers the server
-            // would refuse, whose only feedback would have been the failure.
+            // At-limit viewers still open the dialog: its quota row explains
+            // the state and its submit button is disabled. Keeping a toast
+            // gate here would make this entry disagree with the home Create
+            // button and hide the exact usage the viewer came to inspect.
             onClick={() => {
               const win = window as any;
               void AppContext.dismissForNav().then(() => {
-                if (win.Home?.canCreate && !win.Home.canCreate()) {
-                  win.PlatformUI?.toast?.(win.Home?.CREATE_DISABLED_HINT || '');
-                  return;
-                }
                 win.App?.showCreateModal?.();
               });
             }}

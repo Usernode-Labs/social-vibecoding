@@ -147,32 +147,36 @@ test('the header keeps navigation + alerting only, hamburger first', () => {
 
 // ─── Badge geometry ──────────────────────────────────────────────────────
 
-test("the work badge sits exactly where the bell's unread one does", () => {
-  // #notifications-badge-ai used to ride the work cog. The cog is retired, so
-  // it rides the hamburger — same badge, same writer, new parent. The geometry
-  // rule below is unchanged and is the whole point of the test.
-  const cog = header.match(/<span id="notifications-badge-ai"[^>]*>/);
+test('there is ONE badge in the header, and the Improve corner is a dot', () => {
+  // #1610. There used to be two counts here — the bell's red one and
+  // #notifications-badge-ai's green one on #improve-btn — and this test
+  // diffed their class lists minus the colour token, because two numbers side
+  // by side read as one convention only if their geometry matches.
+  //
+  // There is one number now. The green count moved into the bell (nothing
+  // behind #improve-btn could mark a session notification read, so the badge
+  // pointed at the one control that could not clear it), and what is left in
+  // that corner is a bare pulse: no text, no count, nothing to dismiss. So
+  // the rule this test pins is the SHAPE distinction rather than a geometry
+  // equality — a count is a badge on the bell, a live state is a dot.
   const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
-  assert.ok(cog, '#notifications-badge-ai is on the hamburger');
   assert.ok(bellBadge, '#notifications-badge is on the bell');
-
-  // Two badges side by side in the same header read as one convention
-  // only if their geometry matches. Colour is the ONLY intended
-  // difference (emerald = your work in flight, red = unread), so diff
-  // the class lists with the colour token dropped and require equality —
-  // that catches a corner, size or padding drift on either one.
-  const classesOf = (tag) => tag.match(/class="([^"]*)"/)[1]
-    .split(/\s+/).filter((c) => c && !/^bg-(emerald|red)-500$/.test(c)).sort();
-  assert.deepEqual(classesOf(cog[0]), classesOf(bellBadge[0]),
-    'the two header badges must differ only in colour');
-
-  // Pin the corner explicitly so the equality check above can't be
-  // satisfied by moving BOTH badges somewhere unintended.
-  assert.match(cog[0], /-top-1 -right-1/, 'the work badge is top-right');
   assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
-  // …and keep the colours themselves distinct.
-  assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');
   assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
+  assert.match(bellBadge[0], /data-session-done="0"/,
+    'and carries the completed-session attribute the declared check selects on');
+  assert.ok(!header.includes('id="notifications-badge-ai"'),
+    'the green count on #improve-btn is retired, not merely emptied');
+
+  const dot = header.match(/<span id="improve-working-dot"[^>]*>[\s\S]*?<\/span>/);
+  assert.ok(dot, '#improve-working-dot is on the Improve button');
+  assert.match(dot[0], /-top-1 -right-1/, 'same corner the count used to hold');
+  assert.match(dot[0], /w-2 h-2/, 'dot-sized: it can never become a number');
+  assert.match(dot[0], /bg-emerald-500/, 'and keeps the work colour');
+  assert.match(dot[0], /animate-pulse/, 'pulsing, because it means "right now"');
+  assert.match(dot[0], /\bhidden\b/, 'hidden at rest, which is what the prerender ships');
+  assert.equal(dot[0].replace(/<[^>]*>/g, '').trim(), '',
+    'and carries no text node — a dot with a count in it is the retired badge');
 });
 
 test('the version state is the glyph, not a second dot beside it', () => {
@@ -198,16 +202,18 @@ test('the version state is the glyph, not a second dot beside it', () => {
   const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
   assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
     'the Improve button is a positioning context for its corners');
-  // The work indicators cluster on the control whose panel holds the work.
-  assert.ok(improve.includes('id="notifications-badge-ai"'),
-    'the green session count sits on the Improve button');
+  // The LIVE indicators cluster on the control whose panel holds the work;
+  // the COUNTS are the bell's (#1610).
+  assert.ok(improve.includes('id="improve-working-dot"'),
+    'a turn running right now shows as a pulse on the Improve button');
   assert.ok(improve.includes('id="feedback-queue-dot"'),
     'beside its own outbox dot');
   const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
   assert.ok(bell.includes('id="notifications-badge"'),
-    'the bell\'s red unread badge rides the bell itself');
-  assert.ok(!improve.includes('id="notifications-badge"'),
-    'and never the Improve button — they count different things');
+    'the unread badge rides the bell itself');
+  assert.ok(!/id="notifications-badge/.test(improve),
+    'and never the Improve button — a number there points at a control that '
+    + 'cannot clear it, which is exactly what #1610 fixed');
 });
 
 

@@ -72,33 +72,33 @@ test('below threshold, no window → "needs N of M active testers" with tally', 
   assert.match(txt, /Currently 0 Yes, 0 No\./);
 });
 
-test('threshold met + visibility window running → "merges in ~X unless someone objects"', () => {
+test('threshold met + visibility window running → "goes live in ~X unless someone objects"', () => {
   const AppView = makeAppView();
   const txt = AppView._votingHelpText(base({
     yes_count: 2, no_count: 0, votes_required: 2, merge_window_ends_at: hoursAhead(5),
   }));
   assert.match(txt, /enough Yes votes \(2 of 2\)/);
-  assert.match(txt, /merges in ~/);
+  assert.match(txt, /goes live in ~/);
   assert.match(txt, /unless someone objects/);
 });
 
-test('lazy consensus (below threshold, unopposed) → "silence counts as agreement"', () => {
+test('lazy consensus (below threshold, unopposed) → "quiet is taken as a nod"', () => {
   const AppView = makeAppView();
   const txt = AppView._votingHelpText(base({
     yes_count: 1, no_count: 0, votes_required: 2, merge_window_ends_at: hoursAhead(67),
   }));
   assert.match(txt, /has support \(1 of 2 needed\)/);
-  assert.match(txt, /silence counts as agreement/);
+  assert.match(txt, /quiet is taken as a nod/i);
 });
 
-test('rejection armed → "More No than Yes ... closes in ~X"', () => {
+test('rejection armed → "More No than Yes ... set aside in ~X"', () => {
   const AppView = makeAppView();
   const txt = AppView._votingHelpText(base({
     yes_count: 2, no_count: 3, votes_required: 6,
     rejection_armed: true, reject_window_ends_at: hoursAhead(140),
   }));
   assert.match(txt, /More No than Yes/);
-  assert.match(txt, /closes in ~/);
+  assert.match(txt, /set aside in ~/);
 });
 
 test('contested → needs a clear majority, timed path off', () => {
@@ -106,7 +106,7 @@ test('contested → needs a clear majority, timed path off', () => {
   const txt = AppView._votingHelpText(base({
     yes_count: 4, no_count: 3, votes_required: 6, contested: true,
   }));
-  assert.match(txt, /contested/i);
+  assert.match(txt, /needs a conversation/i);
   assert.match(txt, /clear majority/);
 });
 
@@ -144,7 +144,7 @@ test('countdown running with a failing check → appends a blocker note', () => 
     yes_count: 2, no_count: 0, votes_required: 2,
     merge_window_ends_at: hoursAhead(5), check_state: 'failing',
   }));
-  assert.match(txt, /merges in ~/);
+  assert.match(txt, /goes live in ~/);
   assert.match(txt, /Note: its automated checks are failing/);
 });
 

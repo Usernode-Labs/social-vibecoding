@@ -13,6 +13,33 @@
  * a beat later than it did — after parsing, still before DOMContentLoaded and
  * therefore before App.init(). The SW's job is to precache for the NEXT load,
  * so nothing on this load depends on the difference.
+ *
+ * ── NOTHING HERE MAY THROW ────────────────────────────────────────────
+ *
+ * main.tsx calls registerServiceWorker() at module scope, ABOVE
+ * `flushSync(() => hydrateRoot(document.body, <Shell />))`. A throw on this
+ * line therefore aborts the entry module before hydration ever starts: React
+ * never adopts the document, every island stays the empty markup the
+ * prerender shipped, `window.Offline` is never installed, and the legacy
+ * public/js/** scripts run against a shell with no reconciler behind it. The
+ * viewer is left on a static document that paints once and then goes
+ * wherever the legacy router puts it — which, with the screens empty, is a
+ * blank page.
+ *
+ * That is an absurd blast radius for a precache and a cache-freshness
+ * listener, and the guard that used to stand in front of it did not hold:
+ * `'serviceWorker' in navigator` tests for the ATTRIBUTE, and WebKit installs
+ * the attribute and then hands back `undefined` — or throws `SecurityError`
+ * off the getter — wherever the worker is unavailable to the page. A
+ * WKWebView whose host app has not opted its domains into
+ * `WKAppBoundDomains`, a `WKWebsiteDataStore.nonPersistent()` store, Safari
+ * with site data blocked: the `in` test passes in every one of them and the
+ * next statement dereferences `undefined`.
+ *
+ * So the container is resolved once, defensively, and every call into it is
+ * guarded. `register()` needs BOTH forms of guard: it rejects for the
+ * ordinary failures, but throws SYNCHRONOUSLY for the blocked-storage
+ * SecurityError, which a `.catch()` never sees.
  */
 
 /**
@@ -24,6 +51,22 @@
  * in public/js/** may listen without importing anything.
  */
 export const API_UPDATED_EVENT = 'usernode:api-updated';
+
+/**
+ * The real `navigator.serviceWorker`, or null wherever this page cannot use
+ * one. Feature-detects the METHOD rather than the attribute name, because the
+ * attribute is present in contexts where the object behind it is not.
+ */
+function swContainer(): ServiceWorkerContainer | null {
+  try {
+    const container = navigator.serviceWorker;
+    return container && typeof container.register === 'function' ? container : null;
+  } catch {
+    // WebKit throws SecurityError off the getter itself when site data is
+    // blocked. Same answer as "not available".
+    return null;
+  }
+}
 
 /**
  * The page half of the worker's late-arrival correction.
@@ -38,8 +81,8 @@ export const API_UPDATED_EVENT = 'usernode:api-updated';
  *
  * On a healthy connection nothing is ever served stale, so this never fires.
  */
-function listenForApiUpdates(): void {
-  navigator.serviceWorker.addEventListener('message', (event: MessageEvent) => {
+function listenForApiUpdates(container: ServiceWorkerContainer): void {
+  container.addEventListener('message', (event: MessageEvent) => {
     const data = event.data as { type?: string; url?: string } | null;
     if (!data || data.type !== 'api-updated') return;
     try {
@@ -53,10 +96,15 @@ function listenForApiUpdates(): void {
 }
 
 export function registerServiceWorker(): void {
-  if (!('serviceWorker' in navigator)) return;
-  listenForApiUpdates();
-  navigator.serviceWorker.register('/sw.js').catch(() => {
-    // Unsupported / blocked contexts (e.g. some WebViews) just keep
-    // today's online-only behaviour.
-  });
+  const container = swContainer();
+  if (!container) return;
+  try {
+    listenForApiUpdates(container);
+    container.register('/sw.js').catch(() => {
+      // Unsupported / blocked contexts (e.g. some WebViews) just keep
+      // today's online-only behaviour.
+    });
+  } catch {
+    // The same outcome, arriving synchronously instead of as a rejection.
+  }
 }

@@ -11,12 +11,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const models = require('../src/services/models');
 
-test('Fable 5 is an allowed model', () => {
-  assert.equal(models.isAllowed('claude-fable-5'), true);
+test('Fable 5.1 is an allowed model', () => {
+  assert.equal(models.isAllowed('claude-fable-5-1'), true);
 });
 
-test('an allowed Fable 5 selection resolves to itself', () => {
-  assert.equal(models.resolve('claude-fable-5'), 'claude-fable-5');
+test('an allowed Fable 5.1 selection resolves to itself', () => {
+  assert.equal(models.resolve('claude-fable-5-1'), 'claude-fable-5-1');
 });
 
 test('an unknown model id resolves to the default model (Opus 5)', () => {
@@ -34,7 +34,7 @@ test('Haiku 4.5 is no longer an allowed model (#800)', () => {
 test('list() exposes exactly the three model ids', () => {
   const ids = models.list().map((m) => m.id).sort();
   assert.deepEqual(ids, [
-    'claude-fable-5',
+    'claude-fable-5-1',
     'claude-opus-5',
     'claude-sonnet-5',
   ]);

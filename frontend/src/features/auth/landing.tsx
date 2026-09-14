@@ -53,7 +53,7 @@ import {
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { waitlistOptions } from './waitlist-shared';
 
-const LANDING_TITLE = 'Usernode Social Vibecoding';
+const LANDING_TITLE = 'Homeroom';
 
 /** Directory-load outcome. `loading` is what the prerendered markup ships. */
 type AppsState =
@@ -147,8 +147,10 @@ const ViewerRegion = memo(function ViewerRegion() {
  * required" caption; tapping one remembers the app deep link and routes to
  * #signup, so the account flow lands the user in the app they wanted.
  */
-function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
-  const gated = !!app.requires_login;
+export function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
+  // Only an explicit public verdict unlocks a tile. Missing/stale client
+  // metadata must not turn an unknown app into an anonymous launch (#1522).
+  const gated = app.requires_login !== false;
   const label = app.name || app.slug;
   return (
     <div
@@ -224,6 +226,14 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
     </div>
   );
 }
+
+// The landing bar's back disc: the same periwinkle disc as the signed-in
+// bar's back button (BACK_BTN_CLASS in header/platform-header.tsx). The
+// landing sits on the same wallpaper now, so its one glyph control is drawn
+// the same way.
+const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)]';
 
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -308,6 +318,16 @@ export function LandingScreen() {
 
   const openLandingApp = useCallback(
     (app: PublicApp) => {
+      // Guard the actual viewer entry, not only tile clicks: the legacy
+      // bridge calls this opener too. Never mount a gated app's frame.
+      if (app.requires_login !== false) {
+        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
+          '/app/' + encodeURIComponent(app.slug || ''),
+        );
+        location.hash = '#signup';
+        return;
+      }
+      if (!app.url) return;
       const viewer = byId('app-viewer');
       const scroller = byId('auth-landing-scroll');
       if (!viewer || !scroller) return;
@@ -432,6 +452,14 @@ export function LandingScreen() {
   }, [st]);
 
   /**
+   * The whole `?shot=anon-back` script's time budget, held well under the
+   * check runner's 25s per-check timeout so the run always ends in a verdict
+   * rather than in an abandonment. 18s leaves seven for the page load and the
+   * runner's own polling either side of it.
+   */
+  const ANON_BACK_BUDGET_MS = 18000;
+
+  /**
    * Screenshot-state deep link `?shot=anon-back` (#1028): scripts the guest
    * back path end to end — open an app, back out, open again, back out —
    * because the regression it pins only appears from the SECOND open onward,
@@ -452,33 +480,74 @@ export function LandingScreen() {
     const viewer = byId('app-viewer');
     if (!viewer) return;
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // ONE OVERALL DEADLINE, because the per-step caps MULTIPLY and nobody had
+    // added them up. Two cycles of 5000 + 5000 + 8000 plus the 2000 the tile
+    // gets before the loop is 38.4 SECONDS of worst case, against a check
+    // runner that abandons a check at 25 (TEST_TIMEOUT_MS, capture/capture.js).
+    // So on any preview slow enough to spend those budgets — which is what a
+    // pool of eight hammering one container produces — this check could not
+    // report at all, and it failed as "did not finish within 25s" rather than
+    // as anything anyone could act on.
+    //
+    // The caps below stay as they are: each one is a real statement about how
+    // long its own step may honestly take, and the close leg genuinely needs
+    // seconds (history.back() → popstate → the 600ms unwind guard). What is
+    // added is a ceiling on their SUM, so the script always returns in time to
+    // be judged. Spending it means the page really was too slow, and the
+    // assertion then fails on the missing marker — a fact — instead of on a
+    // timeout, which says nothing about the guest back path at all.
+    const deadline = Date.now() + ANON_BACK_BUDGET_MS;
     const until = async (pred: () => boolean, budgetMs: number) => {
-      const started = Date.now();
-      while (!pred() && Date.now() - started < budgetMs) await wait(30);
+      const stop = Math.min(Date.now() + budgetMs, deadline);
+      while (!pred() && Date.now() < stop) await wait(30);
       return pred();
     };
     const isOpen = () => !viewer.classList.contains('hidden');
+    /**
+     * Stamp WHY the script gave up (#1755).
+     *
+     * Every bail below used to be a bare `return`, which left
+     * `data-anon-back` unset. The assertion can then never become true, so
+     * the runner polls it to its 25s per-check cap and reports `Check did not
+     * finish within 25s` — the same sentence whichever step failed, about a
+     * page that may be perfectly healthy. That verdict is unactionable, and
+     * "re-run it" was the only tool anyone had.
+     *
+     * Stamping a non-`done` value changes nothing about what passes: the
+     * assertion requires `data-anon-back="done"` and still gets it only from
+     * the happy path. What it buys is a verdict that arrives IMMEDIATELY, on
+     * a settled DOM, naming the step.
+     *
+     * The `-slow` suffix separates the two questions that matter and used to
+     * be indistinguishable: a step that genuinely failed, versus one that ran
+     * out of the overall budget because the container was overloaded. The
+     * first is a bug in the guest back path; the second is capacity.
+     */
+    const bail = (reason: string) => {
+      viewer.setAttribute('data-anon-back', Date.now() >= deadline ? `${reason}-slow` : reason);
+    };
     try {
       await st.appsReady;
     } catch {
       /* ignore */
     }
     // First app the directory would actually open: not gated, has a URL.
-    const target = st.appsList.find((a) => a && !a.requires_login && a.url);
-    if (!target) return;
+    const target = st.appsList.find((a) => a && a.requires_login === false && a.url);
+    if (!target) { bail('no-target'); return; }
     // `st.appsReady` settles when the FETCH does; the tiles appear when React
     // commits the state it set, which is a tick or more later. So wait for
     // the element, like every other step here waits on DOM state — reading
     // "not committed yet" as "no directory" and returning is how this shot
     // finished without ever stamping the marker below.
-    if (!(await until(() => !!landingTileFor(target.slug), 2000))) return;
+    if (!(await until(() => !!landingTileFor(target.slug), 2000))) { bail('no-tile'); return; }
     for (let cycle = 0; cycle < 2; cycle++) {
+      const c = `c${cycle + 1}`;
       // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
       // tiles appear one React commit later, so a synchronous lookup here found
       // nothing and bailed — the reason this shot had never once stamped.
-      if (!(await until(() => !!landingTileFor(target.slug), 5000))) return;
+      if (!(await until(() => !!landingTileFor(target.slug), 5000))) { bail(`no-tile-${c}`); return; }
       landingTileFor(target.slug)?.click();
-      if (!(await until(isOpen, 5000))) return;
+      if (!(await until(isOpen, 5000))) { bail(`open-timeout-${c}`); return; }
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
       await wait(140);
@@ -486,7 +555,7 @@ export function LandingScreen() {
       // The stamp below is the assertion's subject: a close that never lands
       // means the guest back path is genuinely broken, so bail WITHOUT
       // stamping rather than start cycle two against an open viewer.
-      if (!(await until(() => !isOpen(), 8000))) return;
+      if (!(await until(() => !isOpen(), 8000))) { bail(`close-timeout-${c}`); return; }
       // Let the marker entry's history.back() popstate drain before the next
       // cycle pushes a fresh entry — a human cannot re-open in under 80ms.
       await wait(80);
@@ -602,14 +671,7 @@ export function LandingScreen() {
    */
   const onTileClick = useCallback(
     (app: PublicApp) => {
-      if (app.requires_login) {
-        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
-          '/app/' + encodeURIComponent(app.slug || ''),
-        );
-        location.hash = '#signup';
-        return;
-      }
-      if (app.url) live.current.openLandingApp(app);
+      live.current.openLandingApp(app);
     },
     [],
   );
@@ -648,16 +710,13 @@ export function LandingScreen() {
       */}
       <header
         id="landing-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-3 px-4 pt-3 pb-5 shrink-0"
       >
         <div className="w-7 h-7 shrink-0 flex items-center justify-center">
           <button
             id="landing-back-btn"
             type="button"
-            className={hiddenLast(
-              !openApp,
-              'text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400',
-            )}
+            className={hiddenLast(!openApp, LANDING_BACK_CLASS)}
             aria-label="Back to apps"
             onClick={() => live.current.closeLandingApp()}
           >
@@ -700,7 +759,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              className="h-7 inline-flex items-center rounded-lg border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] px-3 text-xs sm:px-5 font-medium text-[color:var(--brand-ink)] transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist
@@ -730,7 +789,7 @@ export function LandingScreen() {
         <div className="max-w-3xl mx-auto px-6 py-12">
           <div className="text-center mb-10">
             <h1 className="text-3xl font-bold mb-2">
-              Usernode Social Vibecoding
+              Homeroom
             </h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
               A place where users own and build apps together
@@ -778,10 +837,10 @@ export function LandingScreen() {
               Build apps together, own them together
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-              Usernode Social Vibecoding is a place where users describe the app
+              Homeroom is a place where users describe the app
           they want in chat, an AI builds it, and the community votes the
           changes in. Every app below was built here by the people who use
-          it. They run on the Usernode chain, and contributors own a share
+          it. They run on the Homeroom chain, and contributors own a share
           of what they build.
             </p>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
@@ -800,6 +859,32 @@ export function LandingScreen() {
             >
               Join the waitlist
             </a>
+            {/*
+                The way back for somebody who already joined, on a device that
+                knows nothing about it (#1538). It goes to the same code-entry
+                step the waitlist screen's own "Already joined?" link opens,
+                which is where an emailed code is typed and where the status
+                comes back. Hidden alongside the CTA for a session: they are
+                already in the queue and can read their own state from the
+                waiting room.
+            */}
+            <p
+              className={hiddenLast(
+                session,
+                'mt-3 text-sm text-zinc-500 dark:text-zinc-400',
+              )}
+            >
+              {'Already joined? '}
+              <a
+                id="landing-status-link"
+                href="#waitlist?confirm=1"
+                data-offline-disabled=""
+                className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                onClick={onLeaveCta}
+              >
+                Check your status
+              </a>
+            </p>
             {/*
                 Swapped in for the link when a (waiting-room) session exists —
                 they're already on the list, so pointing them at the join form
@@ -821,7 +906,7 @@ export function LandingScreen() {
               Apps built here
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              Community-built apps on the Usernode chain. Many are open to
+              Community-built apps on the Homeroom chain. Many are open to
           everyone. The grayed-out ones need an account.
             </p>
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}

@@ -94,8 +94,96 @@ export function init() {
     // Feedback
     const feedbackTitle = document.getElementById('feedback-title');
     const feedbackText = document.getElementById('feedback-text');
+
+    /**
+     * Lock the composer after a send, WITHOUT taking focus off it (#1492).
+     *
+     * This used to set `disabled`, and a disabled element cannot hold focus.
+     * On a phone that blurs the textarea the moment Submit succeeds, which
+     * tears the on-screen keyboard down — and the keyboard is what the visual
+     * viewport is measured against. `html, body { height: 100dvh }` (app.css)
+     * means the whole fixed column then reflows, the modal resizes under the
+     * "Submitted" label, and 1.5s later the close reflows it a second time.
+     * Two full relayouts around one tap is the stutter that was reported, and
+     * it is a mobile-only symptom because only a phone has a keyboard taking
+     * half the viewport.
+     *
+     * `readOnly` refuses typing exactly as #32 needs, and keeps focus, so the
+     * keyboard comes down ONCE — when the dialog actually closes. It also
+     * leaves the text selectable, so somebody whose send failed can still copy
+     * what they wrote.
+     *
+     * The submit BUTTON stays `disabled`: it holds no caret and dismisses no
+     * keyboard, and disabled is the honest state for a control that must not
+     * fire.
+     */
+    const setComposerLocked = (locked) => {
+      feedbackText.readOnly = locked;
+      feedbackTitle.readOnly = locked;
+    };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    const feedbackForm = document.getElementById('feedback-form');
+    const firstSuccess = document.getElementById('feedback-first-success');
+    const firstNotice = document.getElementById('feedback-first-notice');
+    const firstFix = document.getElementById('feedback-first-fix');
+    const firstFixNote = document.getElementById('feedback-first-fix-note');
+    const firstBoard = document.getElementById('feedback-first-board');
+    let firstFeedback = null;
+    let pendingFirstFeedback = null;
+    let closeTimer = null;
+    let presentation = 0;
+
+    const showFirstFeedback = (moment, notice) => {
+      if (!moment || Number(moment.userId) !== Number(App.user?.id)) return false;
+      clearTimeout(closeTimer);
+      firstFeedback = moment;
+      pendingFirstFeedback = null;
+      // readOnly, not disabled: disabling these two drops focus and takes
+      // the keyboard down with it, which is the bug #1757 fixed on the send
+      // paths. This path was added separately and kept the old writes, so
+      // the two changes were green apart and red together.
+      setComposerLocked(true);
+      feedbackBtn.disabled = true;
+      const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
+      firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
+      firstBoard.disabled = !hasBoard;
+      firstFixNote.textContent = firstFix.disabled
+        ? (hasBoard ? 'You need collaborator access to try a fix. You can still explore the board.' : 'This repository does not have an app board you can access here.')
+        : 'Start with a draft you can edit before sending it to the coding agent.';
+      firstNotice.textContent = notice || 'Your feedback has been sent.';
+      feedbackForm.classList.add('hidden');
+      firstSuccess.classList.remove('hidden');
+      firstSuccess.focus();
+      return true;
+    };
+
+    const closeFeedback = () => document.getElementById('feedback-cancel').click();
+    document.getElementById('feedback-first-done')?.addEventListener('click', closeFeedback);
+    firstBoard?.addEventListener('click', () => {
+      const moment = firstFeedback;
+      if (!moment || firstBoard.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      closeFeedback();
+      location.hash = `#app/${encodeURIComponent(moment.appSlug)}/board`;
+    });
+    firstFix?.addEventListener('click', async () => {
+      const moment = firstFeedback;
+      if (!moment || firstFix.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      firstFix.disabled = true;
+      closeFeedback();
+      try {
+        await App.navigateToApp(moment.appSlug, 'dev', moment.issueNumber, 'issues');
+        if (App.currentApp === moment.appSlug && AppView.appData?.slug === moment.appSlug
+            && Number(moment.userId) === Number(App.user?.id)) {
+          await AppView.createPrForIssue(moment.issueNumber);
+        }
+      } catch (err) {
+        PlatformUI.toast('Could not open a fix just now. You can try again from the issue on the board.');
+      }
+    });
+    // #1603: the inline refusal under the description. Rendered empty and
+    // hidden by ./feedback.tsx; this module owns its text and its `hidden`.
+    const feedbackTextError = document.getElementById('feedback-text-error');
     const feedbackTargetApp = document.getElementById('feedback-target-app');
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
     const feedbackCaretApp = document.getElementById('feedback-caret-app');
@@ -112,7 +200,7 @@ export function init() {
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
     // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
-    // BOTH targets — "This app" and "Social Vibecoding Platform" alike file
+    // BOTH targets — "This app" and "Homeroom Platform" alike file
     // into a repository the platform tracks as an app, so either can carry a
     // bounty.
     const bountyRow = document.getElementById('feedback-bounty-row');
@@ -130,9 +218,13 @@ export function init() {
       const exhausted = remaining === 0;
       bountyCheckbox.disabled = exhausted;
       bountyRow.classList.toggle('opacity-60', exhausted);
-      if (remaining === null) bountyNote.textContent = '';
+      // #1582: the row's own line says what a bounty DOES, so the price of
+      // ticking the box is stated here, beside the live figure. It is on
+      // screen in every state the box can be ticked in — including the one
+      // where the budget fetch failed and there is no figure to show.
+      if (remaining === null) bountyNote.textContent = 'Costs 1 kudos';
       else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week. Resets Monday 00:00 UTC.`;
-      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
       bountyRow.classList.remove('hidden');
     };
     // The selected option uses a darker violet on hover so it keeps its
@@ -250,7 +342,11 @@ export function init() {
         generateTitlePreview();
       }, TITLE_GEN_DEBOUNCE_MS);
     };
-    feedbackText.addEventListener('input', scheduleTitlePreview);
+    feedbackText.addEventListener('input', () => {
+      // #1603: typing is the fix, so the refusal goes as soon as it starts.
+      clearDescriptionError();
+      scheduleTitlePreview();
+    });
     // Leaving the description flushes the pending debounce immediately —
     // the "type body → title appears → submit" happy path.
     feedbackText.addEventListener('blur', () => {
@@ -348,6 +444,29 @@ export function init() {
       feedbackStatus.textContent = text;
       feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
       feedbackStatus.classList.remove('hidden');
+    };
+
+    // #1603: the empty-description refusal. Deliberately NOT routed through
+    // showFeedbackNotice: #feedback-status has four writers with a "newer and
+    // more specific wins" rule (see paintQueueState), so a validation message
+    // there would either be suppressed by the offline hint or erase it. This
+    // one lives on the field it is about, which is also where the fix is.
+    const showDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.textContent = 'Please add a description.';
+      feedbackTextError.classList.remove('hidden');
+      feedbackText.setAttribute('aria-invalid', 'true');
+      feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
+      // The field is the thing to fix, so put the caret in it.
+      try { feedbackText.focus(); } catch { /* detached in tests */ }
+    };
+
+    const clearDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.classList.add('hidden');
+      feedbackTextError.textContent = '';
+      feedbackText.removeAttribute('aria-invalid');
+      feedbackText.removeAttribute('aria-describedby');
     };
 
     const paintScreenshotActions = () => {
@@ -459,7 +578,7 @@ export function init() {
       // than once. Re-focusing an element that already has focus is a no-op,
       // so the extra passes cost nothing when there is no kit to lose to.
       const restoreCaret = (framesLeft) => {
-        if (feedbackText.disabled) return;
+        if (feedbackText.readOnly) return;
         try {
           feedbackText.focus();
           feedbackText.setSelectionRange(caretStart, caretEnd);
@@ -718,12 +837,12 @@ export function init() {
       queueLineText = '';
       feedbackText.value = '';
       feedbackTitle.value = '';
+      clearDescriptionError();
       // #1284: safe in the outbox now — the capture stash has nothing to add.
       clearCaptureDraft();
       resetTitleGenState();
       resetScreenshotState();
-      feedbackText.disabled = true;
-      feedbackTitle.disabled = true;
+      setComposerLocked(true);
       feedbackBtn.disabled = true;
       feedbackBtn.textContent = 'Saved';
       // This count is the freshest thing anyone knows — invalidate any read
@@ -734,7 +853,7 @@ export function init() {
       // A probe now means a connection that quietly came back sends this
       // within seconds instead of at the next 60 s tick.
       try { window.Offline?.nudge?.(); } catch (err) { /* ignore */ }
-      setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+      closeTimer = setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
       return true;
     };
 
@@ -766,13 +885,28 @@ export function init() {
                 || (filedPlatform && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
+          const moment = res.filed.find((f) => f.firstFeedback)?.firstFeedback;
+          if (moment && Number(moment.userId) === Number(App.user?.id)) {
+            const open = !document.getElementById('feedback-modal').classList.contains('hidden');
+            if (!open) App.openFeedbackModal({ firstFeedback: moment });
+            // `readOnly`, because that is what the lock is made of now.
+            // This read still probed `disabled` after #1757 stopped setting
+            // it, so it was permanently false: a flush that landed on an
+            // already-sent composer took the "someone is typing" branch and
+            // the confirmation never appeared.
+            else if (feedbackText.readOnly) showFirstFeedback(moment, 'Your saved feedback has been sent.');
+            else pendingFirstFeedback = moment; // Keep the draft being typed intact.
+          }
         },
       });
     }
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
-      if (!text) return;
+      // #1603: this used to be a bare `return` — the one submit path that
+      // refused and said nothing. It stays FIRST (ahead of the offline
+      // branch below, which would otherwise queue an empty description).
+      if (!text) { showDescriptionError(); return; }
       // Guard against double-submit while the request is in flight, and
       // also against submits after success (the textarea is disabled
       // then, but a stale cmd+enter on a focused button could still
@@ -794,6 +928,8 @@ export function init() {
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
+      const submittedPresentation = presentation;
+      const submittedBy = App.user?.id;
       try {
         // Capture the target + slug at submit time so navigating away
         // while the modal is open can't retarget an in-flight request.
@@ -886,6 +1022,9 @@ export function init() {
           return;
         }
         const data = await res.json();
+        // An old response must not replace a reopened draft or another
+        // account's dialog after sign-out/sign-in.
+        if (submittedPresentation !== presentation || submittedBy !== App.user?.id) return;
         if (res.ok) {
           // #964: report both outcomes on one line. A declined bounty
           // (allowance ran out between opening and submitting, repo isn't
@@ -905,7 +1044,7 @@ export function init() {
           }
           const filedAgainst = (target === 'app'
             ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
-            : 'Thanks! Filed against Social Vibecoding');
+            : 'Thanks! Filed against Homeroom');
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
           feedbackStatus.textContent = `${filedAgainst}.${bountyNotice}${stateNotice}`;
@@ -913,6 +1052,7 @@ export function init() {
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
+          clearDescriptionError();
           // #1284: filed — there is nothing left to rescue.
           clearCaptureDraft();
           // Discard any in-flight title preview so it can't repopulate
@@ -925,8 +1065,7 @@ export function init() {
           // typing (or re-fire cmd+enter) after their feedback has
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
-          feedbackText.disabled = true;
-          feedbackTitle.disabled = true;
+          setComposerLocked(true);
           feedbackBtn.textContent = 'Submitted';
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
@@ -940,7 +1079,9 @@ export function init() {
                 || (target === 'platform' && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
-          setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+          if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
+            closeTimer = setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+          }
           return;
         }
         feedbackStatus.textContent = data.error || 'Failed to submit';
@@ -960,18 +1101,26 @@ export function init() {
 
     // The state half of "open the Send Feedback modal", called by the
     // island's onOpen. Shared by the header feedback button (no opts) and
-    // the dev view's plus-menu "New issue" item, which passes
+    // the dev view's plus-menu "File an issue" item, which passes
     // { fromDev: true } — see issue #226. The classList.remove('hidden')
     // that used to be this function's first line belongs to useStaticModal
     // now: by the time this runs the island has already revealed the root
     // and lifted the card into the kit shell.
     Feedback._open = (opts = {}) => {
-      // Reset any "Submitted" lock from a prior session so a returning
-      // user can file another piece of feedback without reloading.
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      presentation += 1;
+      clearTimeout(closeTimer);
+      firstFeedback = null;
+      // Every open hands back an editable composer (showFirstFeedback re-locks).
+      setComposerLocked(false);
+      firstSuccess?.classList.add('hidden');
+      feedbackForm?.classList.remove('hidden');
+      // Opening a queued success must not consume a failed outbox draft or
+      // start screenshot/title probes behind the confirmation.
+      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+      // #1603: a refusal from a previous open never greets the next one.
+      clearDescriptionError();
       resetTitleGenState();
       // #683/#824: each open starts screenshot-less. Photos is immediately
       // available; native capture appears after a fresh capability probe.
@@ -991,7 +1140,7 @@ export function init() {
       // cleared together by AppView.close() (on navigateHome /
       // navigateToLeaderboard), so they're never stale on the
       // home/leaderboard screens. This unifies the old fromDev-vs-header
-      // split: the dev plus-menu's "New issue" item (currentTab==='dev')
+      // split: the dev plus-menu's "File an issue" item (currentTab==='dev')
       // and the top-bar Send feedback button now resolve identically, so
       // the header button targets the app whose dev screen is open
       // instead of falling back to "No app open" (#312).
@@ -1056,7 +1205,7 @@ export function init() {
           if (!failed || modal.classList.contains('hidden')) return;
           // Live text always wins — a returned draft must never overwrite
           // what someone is typing right now.
-          if (feedbackText.disabled || feedbackText.value.trim()) return;
+          if (feedbackText.readOnly || feedbackText.value.trim()) return;
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
@@ -1077,7 +1226,7 @@ export function init() {
       const rescued = readCaptureDraft();
       if (rescued) {
         clearCaptureDraft();
-        if (!feedbackText.disabled && !feedbackText.value.trim()) {
+        if (!feedbackText.readOnly && !feedbackText.value.trim()) {
           feedbackText.value = rescued.description;
           if (rescued.title && !feedbackTitle.value.trim()) {
             feedbackTitle.value = rescued.title;
@@ -1097,7 +1246,7 @@ export function init() {
     // giveFeedback(), which opens it with `fromDev: true` so the panel's own
     // app is preselected as the target). `App.openFeedbackModal` is unchanged
     // and still published below, so every other caller — the Dev "+" menu's
-    // "New issue", App._applyFeedbackShot, the rescued-draft notice — is
+    // "File an issue", App._applyFeedbackShot, the rescued-draft notice — is
     // untouched.
     //
     // The button's outbox dot moved rather than went: #feedback-queue-dot
@@ -1117,6 +1266,11 @@ export function init() {
     // classList.add('hidden') that used to be this handler's first line
     // belongs to useStaticModal.
     Feedback._reset = () => {
+      presentation += 1;
+      clearTimeout(closeTimer);
+      firstFeedback = null;
+      firstSuccess?.classList.add('hidden');
+      feedbackForm?.classList.remove('hidden');
       // #1284: a dismissal that lands mid-capture is the stale teardown of
       // the presentation `suspendDialog()` closed, not the user closing the
       // dialog — so the draft, the title and the notice stay. (The screenshot
@@ -1125,11 +1279,11 @@ export function init() {
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
+        clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
       }
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
@@ -1138,6 +1292,11 @@ export function init() {
       resetScreenshotState();
       // #964: drop any pledge intent with the rest of the draft.
       bountyCheckbox.checked = false;
+      const pending = pendingFirstFeedback;
+      pendingFirstFeedback = null;
+      if (pending) setTimeout(() => {
+        if (Number(pending.userId) === Number(App.user?.id)) App.openFeedbackModal({ firstFeedback: pending });
+      }, 0);
     };
     feedbackBtn.addEventListener('click', submitFeedback);
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
@@ -1160,7 +1319,7 @@ export function init() {
     });
 
   // The entry point every caller uses — the header speech-bubble wired just
-  // above, the Dev "+" menu's "New issue" item, and `App._applyFeedbackShot`
+  // above, the Dev "+" menu's "File an issue" item, and `App._applyFeedbackShot`
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
   App.openFeedbackModal = (opts = {}) => {
@@ -1199,4 +1358,17 @@ export function init() {
     async () => { const err = new Error('capture failed'); err.code = 'capture_failed'; throw err; },
     { nativeAttempt: true },
   );
+
+  // #1603: the ?shot=feedback-required reviewable state — the dialog after a
+  // submit with an empty description. Same arrangement, and for the same
+  // reason: it calls the REAL submitFeedback, so what gets photographed is
+  // the shipped refusal rather than a mock of it. That path returns before
+  // any fetch on an empty description, so this files nothing either.
+  App._simulateEmptyFeedbackSubmit = () => { void submitFeedback(); };
+
+  // Display-only review state: no feedback, session, or milestone is written.
+  App._simulateFirstFeedback = () => showFirstFeedback({
+    userId: App.user?.id, appSlug: App.currentApp || 'usernode-2d5619',
+    issueNumber: 900008, canFix: true,
+  }, 'Your feedback has been sent.');
 }

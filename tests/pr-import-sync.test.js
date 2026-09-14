@@ -68,6 +68,24 @@ const fakeSyncMain = fakeModule('../src/services/sync-main', {
 fakeModule('../src/services/staging-recovery', {
   recordStagingBootFailure: async () => {},
 });
+// The head-move classifier (#2038) redoes the merge from the app's mirror.
+// Neither a mirror nor git belongs in this suite: `scriptedMove` is what the
+// classifier answers, and the mirror fake records the branch it was asked to
+// resolve. tests/integration-classify.test.js drives the real classifier.
+let scriptedMove = { kind: 'authored' };
+let mirrorBranchHead = null;
+const fakeMirror = fakeModule('../src/services/repo-mirror', {
+  ensureMirror: async () => '/nonexistent/mirror',
+  defaultBranchSha: async () => 'f'.repeat(40),
+  resolveBranch: async () => mirrorBranchHead,
+});
+fakeModule('../src/services/integration', {
+  _parseRepo: (url) => {
+    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    return owner && repo ? { owner, repo } : null;
+  },
+  classifyHeadMove: async () => scriptedMove,
+});
 
 const fakeVisuals = require('../src/services/visuals');
 const fakeStaging = require('../src/services/staging');
@@ -80,7 +98,7 @@ const prImportSync = require('../src/services/pr-import-sync');
 // optional `head_sha = $N` predicate Slice 3 threads into qualifiedCounts.
 // Votes carry an optional `headSha`; when the gate is head-scoped only
 // matching votes count.
-function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
+function mockPool({ policy, atLeast, members, admins, votes, activeCount, epoch = 0 }) {
   return {
     query: async (sql, params) => {
       if (/SELECT approver_policy, approvals_required FROM apps/.test(sql)) {
@@ -93,12 +111,13 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
         return { rows: (admins || []).map((id) => ({ id })) };
       }
       if (/FILTER \(WHERE vote = /.test(sql)) {
-        // Restricted electorate. params = [id, approverIds, headSha?].
+        // Restricted electorate. #2038: scoped by approval epoch, which is a
+        // scalar subquery rather than a bound parameter — so the mock keys on
+        // the vote's own epoch against the session's.
         const allowed = params[1];
-        const headSha = params.length > 2 ? params[2] : null;
-        const scoped = /AND head_sha = \$3/.test(sql);
+        const scoped = /approval_epoch = \(SELECT approval_epoch/.test(sql);
         const counted = (votes || []).filter((v) =>
-          allowed.includes(v.userId) && (!scoped || v.headSha === headSha));
+          allowed.includes(v.userId) && (!scoped || (v.epoch ?? 0) === (epoch ?? 0)));
         return {
           rows: [{
             yes: String(counted.filter((v) => v.vote === 'yes').length),
@@ -107,12 +126,11 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
         };
       }
       if (/SELECT COUNT\(\*\) as cnt FROM (pr_votes|issue_votes)/.test(sql)) {
-        // Unrestricted electorate. params = [id, headSha?].
+        // Unrestricted electorate, same epoch scoping as above.
         const side = /vote = 'yes'/.test(sql) ? 'yes' : 'no';
-        const headSha = params.length > 1 ? params[1] : null;
-        const scoped = /AND head_sha = \$2/.test(sql);
+        const scoped = /approval_epoch = \(SELECT approval_epoch/.test(sql);
         const counted = (votes || []).filter((v) =>
-          v.vote === side && (!scoped || v.headSha === headSha));
+          v.vote === side && (!scoped || (v.epoch ?? 0) === (epoch ?? 0)));
         return { rows: [{ cnt: String(counted.length) }] };
       }
       if (/SELECT self_hosted, collab_visibility FROM apps/.test(sql)) {
@@ -128,72 +146,92 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
 
 let nextAppId = 5000;
 
-test('governedGate: imported gate counts only approvals matching the current head', async () => {
+test('governedGate: an imported gate counts only approvals from the current epoch', async () => {
+  // An imported head moving is always an author push — the platform does not
+  // write to the author's fork — so services/pr-import-sync.js moves the
+  // epoch on, and the approvals cast before it stop counting.
   const appId = nextAppId++;
-  const OLD = 'a'.repeat(40);
-  const NEW = 'b'.repeat(40);
   const pool = mockPool({
     policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
+    members: [10, 11], epoch: 1,
     votes: [
-      { userId: 10, vote: 'yes', headSha: OLD },
-      { userId: 11, vote: 'yes', headSha: NEW },
-    ],
-  });
-  const gateNew = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 42, openedAt: Date.now(), headSha: NEW,
-  });
-  assert.equal(gateNew.qualifiedYes, 1, 'only the current-head approval counts');
-  assert.equal(gateNew.mergeable, true);
-});
-
-test('governedGate: a superseded-head approval alone does NOT satisfy the gate', async () => {
-  const appId = nextAppId++;
-  const OLD = 'c'.repeat(40);
-  const NEW = 'd'.repeat(40);
-  const pool = mockPool({
-    policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
-    votes: [{ userId: 10, vote: 'yes', headSha: OLD }],
-  });
-  const gate = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 43, openedAt: Date.now(), headSha: NEW,
-  });
-  assert.equal(gate.qualifiedYes, 0, 'the stale-revision approval is ignored');
-  assert.equal(gate.mergeable, false, 'the head change re-opened approval');
-});
-
-test('governedGate: no headSha (native proposal) counts every approver vote', async () => {
-  const appId = nextAppId++;
-  const pool = mockPool({
-    policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
-    votes: [
-      { userId: 10, vote: 'yes', headSha: null },
-      { userId: 11, vote: 'yes', headSha: 'e'.repeat(40) },
+      { userId: 10, vote: 'yes', epoch: 0 },
+      { userId: 11, vote: 'yes', epoch: 1 },
     ],
   });
   const gate = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 44, openedAt: Date.now(), // no headSha → unfiltered
+    kind: 'pr', id: 42, openedAt: Date.now(),
   });
-  assert.equal(gate.qualifiedYes, 2, 'native counting is unchanged (no head filter)');
+  assert.equal(gate.qualifiedYes, 1, 'only the current-epoch approval counts');
+  assert.equal(gate.mergeable, true);
 });
 
-test('qualifiedCounts: anyone policy honours the head filter for imported rows', async () => {
-  const H = 'f'.repeat(40);
+test('governedGate: a superseded approval alone does NOT satisfy the gate', async () => {
+  const appId = nextAppId++;
   const pool = mockPool({
-    policy: 'anyone', atLeast: null, activeCount: 4,
+    policy: 'invited', atLeast: 1, activeCount: 50,
+    members: [10, 11], epoch: 1,
+    votes: [{ userId: 10, vote: 'yes', epoch: 0 }],
+  });
+  const gate = await governance.governedGate(pool, appId, {
+    kind: 'pr', id: 43, openedAt: Date.now(),
+  });
+  assert.equal(gate.qualifiedYes, 0, 'the superseded approval is ignored');
+  assert.equal(gate.mergeable, false, 'the change re-opened approval');
+});
+
+test('governedGate: approvals at the current epoch all count, whatever commit they saw', async () => {
+  // The point of the change. Two people approved the same proposal while it
+  // sat at two different commits — because the platform rebased it between
+  // their clicks. Both approvals describe the same work, and both count.
+  const appId = nextAppId++;
+  const pool = mockPool({
+    policy: 'invited', atLeast: 1, activeCount: 50,
+    members: [10, 11], epoch: 2,
     votes: [
-      { userId: 1, vote: 'yes', headSha: H },
-      { userId: 2, vote: 'yes', headSha: '0'.repeat(40) },
-      { userId: 3, vote: 'no', headSha: H },
+      { userId: 10, vote: 'yes', epoch: 2 },
+      { userId: 11, vote: 'yes', epoch: 2 },
     ],
   });
-  const scoped = await governance.qualifiedCounts(pool, 'pr', 7, null, H);
-  assert.deepEqual(scoped, { yes: 1, no: 1 }, 'only current-head votes count');
-  const unscoped = await governance.qualifiedCounts(pool, 'pr', 7, null, null);
-  assert.deepEqual(unscoped, { yes: 2, no: 1 }, 'no head filter → all votes count');
+  const gate = await governance.governedGate(pool, appId, {
+    kind: 'pr', id: 44, openedAt: Date.now(),
+  });
+  assert.equal(gate.qualifiedYes, 2);
 });
+
+test('qualifiedCounts: the anyone policy is epoch-scoped too', async () => {
+  const pool = mockPool({
+    policy: 'anyone', atLeast: null, activeCount: 4, epoch: 1,
+    votes: [
+      { userId: 1, vote: 'yes', epoch: 1 },
+      { userId: 2, vote: 'yes', epoch: 0 },
+      { userId: 3, vote: 'no', epoch: 1 },
+    ],
+  });
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 7, null),
+    { yes: 1, no: 1 }, 'only current-epoch votes count, under either policy');
+});
+
+test('issue votes are never epoch-scoped: they have no revision to go stale', async () => {
+  // A governance proposal is not a branch. There is no commit for anybody to
+  // push over, so scoping its votes would only ever hide valid ones. Asserted
+  // on the SQL the counter builds rather than through the mock's vote shape,
+  // which uses the up/down vocabulary and would test the fixture instead.
+  const seen = [];
+  const pool = {
+    query: async (sql) => {
+      seen.push(String(sql));
+      if (/approver_policy/.test(sql)) return { rows: [{ approver_policy: 'anyone', approvals_required: null }] };
+      return { rows: [{ cnt: '0', yes: '0', no: '0' }] };
+    },
+  };
+  await governance.qualifiedCounts(pool, 'issue', 7, null);
+  const counts = seen.filter((q) => /issue_votes/.test(q));
+  assert.ok(counts.length > 0, 'it did count something');
+  assert.ok(counts.every((q) => !/approval_epoch/.test(q)),
+    'no epoch clause may reach an issue vote');
+});
+
 
 // ── syncImportedProposal ──────────────────────────────────────────────
 
@@ -207,11 +245,27 @@ function withStubs(stubs, fn) {
   })();
 }
 
-function recordingPool() {
+const SESSION_HEAD = 'a'.repeat(40);
+
+// `pinnedHead` is what the row's imported_pr_head_sha currently holds. The
+// head install is a compare-and-swap on it (RETURNING the epoch), so the pool
+// answers that statement the way Postgres would: a row iff the pin matched,
+// with the epoch bumped iff the statement asked for it. Everything else
+// records and returns no rows.
+function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0 } = {}) {
   const calls = [];
   return {
     calls,
-    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; },
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql)) {
+        const [, , bump] = params;
+        const expectedOld = params[4];
+        if (expectedOld !== pinnedHead) return { rows: [] };
+        return { rows: [{ approval_epoch: epoch + (bump ? 1 : 0) }] };
+      }
+      return { rows: [] };
+    },
   };
 }
 
@@ -220,7 +274,8 @@ const SESSION = {
   status: 'promoted',
   source: 'imported', pr_number: 77, pr_title: 'External work',
   branch_name: 'feature/x', repo_url: 'https://github.com/acme/demo',
-  imported_pr_head_sha: 'a'.repeat(40),
+  imported_pr_head_sha: SESSION_HEAD,
+  approval_epoch: 0,
 };
 
 test('syncImportedProposal: unchanged head no-ops (one getPR, no writes)', async () => {
@@ -355,11 +410,12 @@ test('syncImportedProposal: active imports refresh without vote reset or re-revi
   });
 });
 
-test('syncImportedProposal: head change resets tally, posts re-review, re-runs pinned checks', async () => {
+test('syncImportedProposal: an authored push resets the tally, posts re-review, re-runs pinned checks', async () => {
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
   let buildSha = null;
   let captureSha = null;
+  scriptedMove = { kind: 'authored' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
@@ -374,26 +430,253 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
     assert.equal(res, 'updated');
 
-    const sqls = pool.calls.map((c) => c.sql);
     const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
     assert.ok(headUpdate, 'imported_pr_head_sha is advanced');
     assert.equal(headUpdate.params[0], NEW);
-
-    assert.ok(sqls.some((s) => /DELETE FROM pr_votes WHERE session_id = \$1/.test(s)), 'vote tally cleared');
+    assert.equal(headUpdate.params[2], true,
+      'the tally is cleared by moving the epoch on IN THE SAME STATEMENT as the head install — '
+      + 'no half-cleared window, and the votes survive as a record');
+    assert.equal(headUpdate.params[4], SESSION_HEAD,
+      'the install is a compare-and-swap on the pin the decision was made about');
 
     assert.equal(sysMessages.length, 1, 'exactly one re-review note');
     assert.match(sysMessages[0].content, /updated on GitHub/i);
     assert.match(sysMessages[0].content, /re-review/i);
     assert.deepEqual(sysMessages[0].thread, { type: 'session', ref: SESSION.id });
+    assert.equal(sysMessages[0].meta.votesKept, false);
     // #866: the rebuild rides as an appended clause on that ONE note rather
     // than a second post — the card's Preview slot going back to
     // "building…" is a consequence of the same event.
     assert.match(sysMessages[0].content, /preview and automated checks are being rebuilt/i);
 
+    const sqls = pool.calls.map((c) => c.sql);
     assert.ok(sqls.some((s) => /SET behind_main = \$1/.test(s)), 'behind_main refreshed');
 
     assert.equal(buildSha, NEW, 'staging build pinned to the new head SHA');
     assert.equal(captureSha, NEW, 'checks captured against the new head SHA');
+  });
+});
+
+// ── #2100 / #2095: a platform sync is not an author push ──────────────
+//
+// The merge queue (#2038) brings an imported proposal up to date with main
+// by pushing a merge commit onto its branch. The poller then sees a head
+// move — and used to treat every one as the author changing the proposal:
+// votes cleared, "please re-review" posted, a preview rebuilt, for a tree
+// nobody had changed. The classifier now answers what the move cost, and a
+// mechanical merge costs nothing.
+
+test('syncImportedProposal: a mechanical sync keeps the votes and carries a settled verdict', async () => {
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  const voteUpdates = [];
+  let built = false;
+  scriptedMove = { kind: 'mechanical' };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta) => { sysMessages.push({ content, meta }); }],
+    [fakeWs, 'pushVoteUpdate', (u) => { voteUpdates.push(u); }],
+    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 4 });
+    const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    assert.equal(res, 'updated');
+
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.ok(headUpdate, 'the pin still advances — the next merge attempt must offer GitHub the live head');
+    assert.equal(headUpdate.params[0], NEW);
+    assert.equal(headUpdate.params[2], false, 'the epoch does NOT move: the votes still stand');
+    assert.equal(headUpdate.params[3], true, 'the passing verdict is carried onto the merged commit');
+    assert.equal(session.approval_epoch, 4);
+    assert.equal(session.checks_commit_sha, NEW);
+
+    assert.equal(built, false, 'nothing to rebuild: a mechanical merge is pure git over a tested branch and a tested main');
+    assert.equal(sysMessages.length, 1);
+    assert.match(sysMessages[0].content, /brought up to date with main/i);
+    assert.match(sysMessages[0].content, /votes still stand/i);
+    assert.doesNotMatch(sysMessages[0].content, /re-review|votes were cleared/i);
+    assert.equal(sysMessages[0].meta.votesKept, true);
+    assert.deepEqual(voteUpdates.map((u) => u.votesKept), [true], 'the card learns the tally survived');
+  });
+});
+
+test('syncImportedProposal: a mechanical sync over a run still in flight rebuilds instead of carrying', async () => {
+  // #1728's shape: carrying a 'pending' stamp forward would leave the row
+  // pending with nothing building. Only a finished verdict rides along.
+  const NEW = 'b'.repeat(40);
+  let buildSha = null;
+  scriptedMove = { kind: 'mechanical' };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 4 });
+    const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'pending' };
+    await prImportSync.syncImportedProposal({ config: {}, pool, session });
+
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.equal(headUpdate.params[2], false, 'still no epoch bump — the tree is unchanged');
+    assert.equal(headUpdate.params[3], false, 'but an unfinished verdict is not carried');
+    assert.equal(buildSha, NEW, 'the checks re-run against the merged commit');
+  });
+});
+
+test('syncImportedProposal: a resolved sync keeps the votes but re-tests the merged tree', async () => {
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  let buildSha = null;
+  scriptedMove = { kind: 'resolved', conflictPaths: ['src/a.js', 'src/b.js'] };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 2 });
+    const session = { ...SESSION, approval_epoch: 2, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
+    await prImportSync.syncImportedProposal({ config: {}, pool, session });
+
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.equal(headUpdate.params[2], false, 'the votes survive an automatic resolution');
+    assert.equal(headUpdate.params[3], false, 'a resolved tree is one nobody has tested: no carry');
+    assert.equal(buildSha, NEW);
+    assert.match(sysMessages[0], /2 conflicting files were resolved automatically/i);
+    assert.match(sysMessages[0], /votes still stand/i);
+  });
+});
+
+test('syncImportedProposal: a move the mirror cannot classify is treated as authored, and says so', async () => {
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  scriptedMove = { kind: 'unknown', reason: 'mirror unavailable' };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
+  ], async () => {
+    const pool = recordingPool();
+    await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.equal(headUpdate.params[2], true, 'failing open here would let a real push inherit approvals');
+    assert.match(sysMessages[0], /could not verify \(mirror unavailable\)/i);
+    assert.match(sysMessages[0], /re-review/i);
+  });
+});
+
+test('applyHeadChange: a second applier of the same move writes and posts nothing', async () => {
+  // The sweep and the queue can both notice one move (PR #2101 saw two epoch
+  // bumps and two "please re-review" notes for it). The install is a CAS on
+  // the pin: whoever loses it must be a no-op.
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  let built = false;
+  scriptedMove = { kind: 'authored' };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
+    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    // The row's pin already reads NEW: another pass got there first.
+    const pool = recordingPool({ pinnedHead: NEW });
+    const res = await prImportSync.applyHeadChange({
+      config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD,
+    });
+    assert.equal(res.applied, false);
+    const writes = pool.calls.filter((c) => /^\s*(UPDATE|INSERT|DELETE)/i.test(c.sql));
+    assert.equal(writes.length, 1, 'the failed CAS is the only write');
+    assert.ok(pool.calls.some((c) => /SELECT imported_pr_head_sha, approval_epoch/.test(c.sql)),
+      'and the row is re-read so the caller carries on with the pin as it now stands');
+    assert.deepEqual(sysMessages, []);
+    assert.equal(built, false);
+  });
+});
+
+// ── reconcileImportedHead: re-pin from the mirror without asking GitHub ──
+//
+// The queue has just pushed a sync commit onto the branch and is about to
+// offer GitHub the pinned commit. Waiting for the poller to notice would
+// guarantee the 409 ("wasn't merged, because the PR was updated on GitHub")
+// loop of #2100.
+
+// A branch in the app's own repository — the only kind the mirror can see.
+const IN_APP_REPO = { ...SESSION, imported_pr_head_repo: 'acme/demo' };
+
+test('reconcileImportedHead: a head on the author fork is left to the poller', async () => {
+  const res = await prImportSync.reconcileImportedHead({
+    config: {}, pool: recordingPool(),
+    session: { ...SESSION, imported_pr_head_repo: 'someone/demo' },
+  });
+  assert.equal(res.reconciled, false);
+  assert.equal(res.reason, 'fork_head');
+});
+
+test('reconcileImportedHead: an unmoved branch is reported as such and nothing is written', async () => {
+  mirrorBranchHead = SESSION_HEAD;
+  const pool = recordingPool();
+  const res = await prImportSync.reconcileImportedHead({ config: {}, pool, session: { ...IN_APP_REPO } });
+  assert.deepEqual(res, { reconciled: true, changed: false, headSha: SESSION_HEAD });
+  assert.equal(pool.calls.length, 0);
+});
+
+test('reconcileImportedHead: a mechanical move re-pins, keeps the votes, and defers the checks to the caller', async () => {
+  const NEW = 'd'.repeat(40);
+  mirrorBranchHead = NEW;
+  scriptedMove = { kind: 'mechanical' };
+  const sysMessages = [];
+  let built = false;
+  await withStubs([
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
+    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 1 });
+    const session = { ...IN_APP_REPO, approval_epoch: 1, checks_commit_sha: 'e'.repeat(40), check_state: 'passing' };
+    const res = await prImportSync.reconcileImportedHead({ config: {}, pool, session, checks: 'defer', notify: false });
+    assert.equal(res.reconciled, true);
+    assert.equal(res.changed, true);
+    assert.equal(res.headSha, NEW);
+    assert.equal(res.kind, 'mechanical');
+    assert.equal(res.votesKept, true);
+    assert.equal(session.imported_pr_head_sha, NEW, 'the in-memory row follows, so the caller merges the live head');
+    assert.equal(session.approval_epoch, 1);
+    assert.equal(built, false, "'defer': the caller's checks gate rebuilds exactly the pinned head");
+    assert.deepEqual(sysMessages, [], "'notify: false': the caller is about to say something more specific");
+    assert.ok(!pool.calls.some((c) => /SET behind_main/.test(c.sql)),
+      'no GitHub read in hand, so no drift snapshot is written from a stale one');
+  });
+});
+
+test('reconcileImportedHead: an authored move under `defer` still kicks the rebuild', async () => {
+  // A run that cleared the approvals stops at the approvals gate and never
+  // reaches the checks gate — so 'defer' would strand the rebuild forever.
+  const NEW = 'd'.repeat(40);
+  mirrorBranchHead = NEW;
+  scriptedMove = { kind: 'authored' };
+  let buildSha = null;
+  await withStubs([
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.reconcileImportedHead({ config: {}, pool, session: { ...IN_APP_REPO }, checks: 'defer', notify: false });
+    assert.equal(res.votesKept, false);
+    // The rebuild is fire-and-forget on this path; let it start.
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(buildSha, NEW);
+  });
+});
+
+test('reconcileImportedHead: an unreadable mirror leaves the pin alone rather than guessing', async () => {
+  await withStubs([
+    [fakeMirror, 'ensureMirror', async () => { throw new Error('clone failed'); }],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.reconcileImportedHead({ config: {}, pool, session: { ...IN_APP_REPO } });
+    assert.equal(res.reconciled, false);
+    assert.equal(res.reason, 'mirror_unreadable');
+    assert.equal(pool.calls.length, 0);
   });
 });
 

@@ -110,6 +110,35 @@ async function refreshUserBudget(pool, userId) {
   }
 }
 
+// #1788: weekly companion to the tracker above. Same TTL, same fail-open
+// posture; only consulted when a weekly cap actually applies to the user.
+const weeklyBudgetCache = new Map();
+
+async function refreshUserWeeklySpend(pool, userId) {
+  const cached = weeklyBudgetCache.get(userId);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) return cached;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
+         FROM llm_usage
+        WHERE user_id = $1 AND date >= $2`,
+      [userId, limits.weekStartUtc()]
+    );
+    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
+    const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
+    weeklyBudgetCache.set(userId, fresh);
+    return fresh;
+  } catch (err) {
+    log.warn('app-llm-proxy', 'Weekly budget refresh failed; failing open', {
+      userId, err: err.message,
+    });
+    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    weeklyBudgetCache.set(userId, fresh);
+    return fresh;
+  }
+}
+
 // Limit-first payer decision, scoped by the grant: platform key while
 // the user+global budget has headroom; the user's own key only when
 // the budget is exhausted AND the user opted this app into BYOK
@@ -226,12 +255,24 @@ function appLlmProxyRoutes(config) {
 
     // User-budget snapshot for the mid-stream kill (platform path
     // only; BYOK calls don't draw from the shared allowance).
-    const userCapCents = payer.byok
+    // #1788: the shared allowance is two caps now. resolveAppPayer's
+    // checkBudget above already refused a caller who is out on either
+    // one; this snapshot is what the mid-stream kill watches, so it
+    // tracks whichever caps apply.
+    const userCaps = payer.byok
       ? null
-      : await limits.getEffectiveUserLimitCents(pool, userId);
+      : limits.resolveCaps(await limits.getUserCreditEntitlement(pool, userId));
+    const userCapCents = userCaps && userCaps.dailyApplies ? userCaps.dailyLimitCents : null;
     const userBudget = payer.byok ? null : await refreshUserBudget(pool, userId);
     const userSpentBefore = userBudget
       ? userBudget.totalAtCheckpointCents + userBudget.liveDeltaCents
+      : 0;
+    const weeklyCapCents = userCaps && userCaps.weeklyApplies ? userCaps.weeklyLimitCents : null;
+    const weeklyBudget = weeklyCapCents != null
+      ? await refreshUserWeeklySpend(pool, userId)
+      : null;
+    const weeklySpentBefore = weeklyBudget
+      ? weeklyBudget.totalAtCheckpointCents + weeklyBudget.liveDeltaCents
       : 0;
 
     const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}/${upstreamPathRaw}`;
@@ -273,6 +314,21 @@ function appLlmProxyRoutes(config) {
             return 'over_budget';
           }
         }
+        if (weeklyCapCents != null) {
+          const liveWeekly = weeklyBudgetCache.get(userId);
+          const weeklyEffective =
+            (liveWeekly
+              ? liveWeekly.totalAtCheckpointCents + liveWeekly.liveDeltaCents
+              : weeklySpentBefore) + currentCallCents;
+          if (weeklyEffective > weeklyCapCents) {
+            log.info('app-llm-proxy', 'Mid-stream kill — over weekly budget', {
+              appId, appSlug, userId,
+              spentEffectiveCents: weeklyEffective.toFixed(2), weeklyCapCents,
+              currentCallCents: currentCallCents.toFixed(4), model,
+            });
+            return 'over_budget';
+          }
+        }
         return null;
       },
     });
@@ -287,6 +343,8 @@ function appLlmProxyRoutes(config) {
       if (!payer.byok) {
         const live = userBudgetCache.get(userId);
         if (live) live.liveDeltaCents += result.costCents;
+        const liveWeekly = weeklyBudgetCache.get(userId);
+        if (liveWeekly) liveWeekly.liveDeltaCents += result.costCents;
       }
     }
     if (result.killed) {

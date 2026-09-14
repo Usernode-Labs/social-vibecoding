@@ -391,6 +391,7 @@
           target: claimed.payload && claimed.payload.target,
           appSlug: (claimed.payload && claimed.payload.appSlug) || null,
           issue: (res.data && res.data.issueUrl) || null,
+          ...(res.data?.firstFeedback ? { firstFeedback: res.data.firstFeedback } : {}),
         });
         continue;
       }

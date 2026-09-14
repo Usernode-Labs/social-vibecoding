@@ -163,8 +163,12 @@ function dashboardRoutes(config) {
            FROM activity`
         ),
         pool.query(
-          `SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents
-           FROM llm_usage WHERE date = CURRENT_DATE
+          `SELECT
+             COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents,
+             COALESCE(SUM(total_cost_cents)
+               FILTER (WHERE date >= date_trunc('week', CURRENT_DATE)::date), 0)::float AS week_cents
+           FROM llm_usage
+           WHERE date >= date_trunc('week', CURRENT_DATE)::date
              ${adminFilter('user_id', includeAdmins)}`
         ),
         pool.query(
@@ -180,6 +184,9 @@ function dashboardRoutes(config) {
         wau: active.rows[0].wau,
         mau: active.rows[0].mau,
         llmSpendTodayCents: llm.rows[0].cents,
+        // #1788: the weekly cap runs Monday 00:00 UTC to Monday 00:00 UTC,
+        // so the operator figure beside it uses the same window.
+        llmSpendWeekCents: llm.rows[0].week_cents,
         kudosTotal: kudos.rows[0].total,
       };
       // Staging demo: only when the counters are genuinely empty — a staging

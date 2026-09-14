@@ -39,7 +39,7 @@ function wildcardCert() {
     execFileSync('openssl', [
       'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
       '-keyout', keyPath, '-out', certPath, '-days', '30',
-      '-subj', '/O=Usernode Test CA/CN=*.example.test',
+      '-subj', '/O=Homeroom Test CA/CN=*.example.test',
       '-addext', 'subjectAltName=DNS:*.example.test,DNS:example.test',
     ], { stdio: 'ignore' });
   } catch {
@@ -118,7 +118,7 @@ test('handshakeOnly reports timings and cert facts without sending a request', a
   // Cert facts read off the live handshake.
   assert.ok(out.cert, 'peer certificate must be summarized');
   assert.equal(out.cert.subject, '*.example.test');
-  assert.match(out.cert.issuer, /Usernode Test CA/);
+  assert.match(out.cert.issuer, /Homeroom Test CA/);
   assert.ok(out.cert.serialNumber, 'serial identifies a re-issue / provider change');
   assert.ok(out.cert.validTo);
   assert.equal(typeof out.cert.daysToExpiry, 'number');
@@ -186,7 +186,7 @@ test('a probe logs one line carrying the durations and issuer', async (t) => {
   assert.equal(line.data.hostname, 'app.example.test');
   assert.equal(typeof line.data.totalMs, 'number');
   assert.equal(typeof line.data.tlsMs, 'number');
-  assert.match(line.data.issuer, /Usernode Test CA/);
+  assert.match(line.data.issuer, /Homeroom Test CA/);
   assert.equal(typeof line.data.daysToExpiry, 'number');
 });
 
@@ -228,3 +228,26 @@ test('the fixture really is a wildcard certificate', (t) => {
   assert.match(x.subject, /\*\.example\.test/);
   assert.ok(tls.rootCertificates.length >= 0);
 });
+
+
+for (const [runtime, override, expected] of [
+  ['kubernetes', null, 'preview.example.test'],
+  ['kubernetes', 'ingress.internal', 'ingress.internal'],
+  ['docker', null, 'caddy'],
+]) {
+  test(`edge probe routes ${runtime} with override ${override}`, async (t) => {
+    const prior = { APP_RUNTIME: process.env.APP_RUNTIME, CADDY_HOST: process.env.CADDY_HOST };
+    process.env.APP_RUNTIME = runtime;
+    if (override) process.env.CADDY_HOST = override; else delete process.env.CADDY_HOST;
+    t.after(() => { for (const [key, value] of Object.entries(prior)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    } });
+    let options;
+    t.mock.method(https, 'request', opts => { options = opts; throw new Error('test connection'); });
+    await require('../src/services/caddy').probeEdge('preview.example.test');
+    assert.equal(options.host, expected);
+    assert.equal(options.servername, 'preview.example.test');
+    assert.equal(options.headers.Host, 'preview.example.test');
+    assert.equal(options.port, 443);
+  });
+}

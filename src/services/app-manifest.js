@@ -12,6 +12,17 @@
  *
  * Shape:
  *   {
+ *     "description": "...",                    // one line, what the app IS.
+ *                                             // The launcher's Discover cards
+ *                                             // draw it; there is no such
+ *                                             // column on `apps`, and the
+ *                                             // directory derives a meta line
+ *                                             // instead. Read off the stored
+ *                                             // manifest snapshot by the
+ *                                             // client and capped at 160
+ *                                             // chars there; absent on most
+ *                                             // apps, and the card simply
+ *                                             // draws no sentence.
  *     "secrets": [
  *       {
  *         "key": "ECHO_APP_SECRET_KEY",       // env var name
@@ -92,18 +103,70 @@ const MANIFEST_FILENAME = 'dapp.json';
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
 //
-// Raised 480 → 530 (#1489) from the same state: the manifest reached 460,
-// the 20-slot floor under a 480 ceiling, and the four checks that fix the
-// double-header bug were what ran into it. Same arithmetic, one step
-// further along: 530 checks at ~3.9s over a pool of 8 is ~258s of ideal
-// work, so TESTS_DEADLINE_MS goes 470s → 520s in services/visuals.js (and
-// in capture/capture.js, which holds the container-side default). This
-// bump is the one the note above predicted would also have to move
-// RUN_TIMEOUT_MS: 520s + the 120s the media pass needs is 640s, past the
-// old 600s, so that goes to 650s. None of the three is a spend — a run
-// still ends when the suite ends. They only bound how long a wedged
-// container takes to look wedged.
-const MAX_DECLARED_TESTS = 530;
+// Raised 480 → 530 when the manifest reached 461 and crossed the 20-slot
+// floor again (19 left), which made the unit suite red on main itself and so
+// on every proposal after it. Same arithmetic, same coupled move: 530 checks
+// at ~3.9s over a pool of 8 is ~258s of ideal work, so TESTS_DEADLINE_MS
+// goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
+// deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
+// to stay the required 120s above it.
+//
+// Raised 530 → 560 when the manifest reached 512 and crossed the 20-slot floor
+// again (18 left) — the same event as the line above, for the third time, and
+// again it made the unit suite red on main itself and so on every proposal
+// after it. #1699 added the two checks that crossed it.
+//
+// Same arithmetic, same coupled move: 560 checks at ~3.9s over a pool of 8 is
+// ~273s of ideal work, so TESTS_DEADLINE_MS goes 520s → 560s to keep the 2x
+// margin (clears it by 14s, where the last move cleared by 3), and
+// RUN_TIMEOUT_MS goes 640s → 680s to stay the required 120s above it.
+//
+// The step is 30 rather than the 50 last time on purpose: 560 is what the
+// budget test's 2x rule allows without the deadline crossing 600s, and the
+// jump buys 48 slots — about two years at the rate the last three moves
+// happened. Deleting checks to make room is the thing the failing test
+// explicitly refuses, so the ceiling is the only lever.
+//
+// Raised again, 560 → 580, by a proposal in flight at the same time (this
+// one, which declares two checks of its own): same coupled move, 580 checks
+// at ~3.9s over a pool of 8 is ~283s of ideal work, so TESTS_DEADLINE_MS goes
+// 560s → 570s to keep the 2x margin (clears it by ~4s), and RUN_TIMEOUT_MS
+// 680s → 690s to stay the required 120s above it.
+//
+// Raised 580 → 600 by #1824, which declares two checks of its own and found
+// the manifest at 560 — exactly ON the 20-slot floor, so ANY proposal that
+// declared a check was red before it started. That is the fifth time this has
+// happened, and the reason it keeps happening is that the floor is a floor:
+// clearing it by zero is indistinguishable from crossing it until the next
+// person adds a check.
+//
+// Same arithmetic, same coupled move: 600 checks at ~3.9s over a pool of 8 is
+// ~293s of ideal work, so TESTS_DEADLINE_MS goes 570s → 590s to keep the 2x
+// margin (clears it by ~5s), and RUN_TIMEOUT_MS 690s → 710s to stay the
+// required 120s above it. The step buys 38 slots over the 562 declared here.
+//
+// Raised 600 → 630 by #1876, which splits the waitlist confirm errand into two
+// screens and so declares eight checks where one stood: there are two states
+// now, they cannot be photographed at once, and each needs its visible half,
+// its hidden half and its step line asserted. That put the manifest at 587
+// against a 580 floor. Sixth crossing, and the first one caused by a
+// proposal's own checks rather than by finding the floor already met — which
+// is the same lesson from the other side: a floor cleared by seven is a floor
+// the next feature crosses.
+//
+// Same arithmetic, same coupled move: 630 checks at ~3.9s over a pool of 8 is
+// ~307s of ideal work, so TESTS_DEADLINE_MS goes 590s → 620s to keep the 2x
+// margin (clears it by ~6s), and RUN_TIMEOUT_MS 710s → 740s to stay the
+// required 120s above it. The step is 30 again, and buys 23 slots over the 587
+// declared here.
+//
+// Raised 630 → 660 by #1960, whose two draft-delete checks put the manifest at
+// 611 against the 610 floor, landing beside main's own growth to 609. Same
+// arithmetic, same coupled move: 660 checks at ~3.9s over a pool of 8 is ~322s
+// of ideal work, so TESTS_DEADLINE_MS goes 620s → 650s to keep the 2x margin
+// (clears it by ~6s), and RUN_TIMEOUT_MS 740s → 770s to stay the required 120s
+// above it. The step buys 29 slots over the 611 declared here.
+const MAX_DECLARED_TESTS = 660;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -222,6 +285,10 @@ const RESERVED_KEYS = new Set([
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
   'USERNODE_PLATFORM_API_URL',
+  // The platform's public origin (services/app-identity-env.js). Reserved
+  // for the same reason as the rest: a manifest that shadowed it could
+  // point an app's "Open in Homeroom" links at a host of its choosing.
+  'USERNODE_PLATFORM_ORIGIN',
 ]);
 
 // Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),
@@ -301,6 +368,7 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'USERNODE_APP_SECRET_KEY',
   // Ingress / TLS, owned by the Caddy half of the deploy.
   'USERNODE_DOMAIN',
+  'USERNODE_APPS_DOMAIN',
   'ZEROSSL_API_KEY',
   'ZEROSSL_EAB_KID',
   'ZEROSSL_EAB_HMAC',

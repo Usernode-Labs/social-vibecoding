@@ -16,6 +16,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const appAdmins = require('../src/services/app-admins');
+const { accessFlags, canDeleteApp } = require('../src/routes/apps');
 
 // Fresh module state per assertion group: the service TTL-caches
 // rosters by app id, so tests that reuse an id must invalidate.
@@ -172,18 +173,6 @@ test('the roster is TTL-cached, and invalidateAppAdmins drops it', async () => {
 // ── accessFlags (routes/apps.js) ──────────────────────────────────────
 
 test('accessFlags: can_manage is true for an app admin via the batched id set', () => {
-  // Exercise the exported helper shape without booting Express: the
-  // route module builds the Set once per request and hands it in.
-  const accessFlags = (app, user, isCollaborator, adminAppIds = null) => {
-    const isAdmin = !!user?.isAdmin;
-    const canAdminWrite = !!user?.canAdminWrite;
-    const isAppAdmin = !!(adminAppIds && adminAppIds.has(app.id));
-    return {
-      is_collaborator: !!isCollaborator,
-      can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
-      can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
-    };
-  };
   const app = { id: 5, created_by: 1, collab_visibility: 'private' };
   const ids = new Set([5]);
 
@@ -194,6 +183,25 @@ test('accessFlags: can_manage is true for an app admin via the batched id set', 
   assert.equal(accessFlags(app, CREATOR, false, null).can_manage, true);
   assert.equal(accessFlags(app, PLATFORM_ADMIN, false, null).can_manage, true);
   assert.equal(accessFlags(app, STRANGER, false, null).can_manage, false);
+});
+
+test('can_delete is narrower than can_manage and fails closed without an exact count (#1897)', () => {
+  const app = { id: 5, created_by: 1, collab_visibility: 'private' };
+  const ids = new Set([5]);
+
+  assert.equal(canDeleteApp(app, CREATOR, 1), true);
+  assert.equal(canDeleteApp(app, CREATOR, 2), false);
+  assert.equal(canDeleteApp(app, CREATOR, null), false);
+  assert.equal(canDeleteApp(app, APP_ADMIN, 1), false,
+    'an app admin is not the app creator/sole contributor');
+  assert.equal(canDeleteApp(app, PLATFORM_ADMIN, 99), true,
+    'full admins retain their operational override');
+
+  assert.equal(accessFlags(app, CREATOR, true, null, 1).can_delete, true);
+  assert.equal(accessFlags(app, CREATOR, true, null, 2).can_delete, false);
+  const appAdminFlags = accessFlags(app, APP_ADMIN, true, ids, 1);
+  assert.equal(appAdminFlags.can_manage, true);
+  assert.equal(appAdminFlags.can_delete, false);
 });
 
 // ── admin-merge route: gate ordering ──────────────────────────────────
@@ -221,7 +229,7 @@ test('admin-merge pre-gates on "can force-merge anywhere" before touching the se
 
 // ── The gates that must NOT move ──────────────────────────────────────
 
-test('secrets / lock / delete / redeploy still require a full platform admin', () => {
+test('secrets / lock / redeploy still require a full platform admin', () => {
   // These are asserted at the source level: the spec deliberately keeps
   // them on canAdminWrite, and a future refactor that swaps in
   // canManageApp would silently hand app admins the app's credentials.
@@ -234,7 +242,6 @@ test('secrets / lock / delete / redeploy still require a full platform admin', (
     "router.delete('/api/apps/:slug/secrets/:key'",
     "router.post('/api/apps/:slug/redeploy'",
     "router.post('/api/apps/:slug/lock'",
-    "router.delete('/api/apps/:slug'",
   ]) {
     const at = src.indexOf(route);
     assert.notEqual(at, -1, `route not found: ${route}`);
@@ -244,6 +251,20 @@ test('secrets / lock / delete / redeploy still require a full platform admin', (
     assert.doesNotMatch(body, /canManageApp/,
       `${route} must NOT be widened to app admins`);
   }
+});
+
+test('delete uses the sole-contributor predicate, never general app-admin rights (#1897)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
+  const at = src.indexOf("router.delete('/api/apps/:slug'");
+  assert.notEqual(at, -1);
+  const body = src.slice(at, at + 900);
+  assert.match(body, /loadContributorCounts/,
+    'the route must re-read the contributor count at mutation time');
+  assert.match(body, /canDeleteApp/);
+  assert.doesNotMatch(body, /canManageApp/,
+    'general app-admin rights must not authorize destructive deletion');
 });
 
 test('the locked-app admin-yes gate is still platform-admin only', () => {

@@ -229,6 +229,7 @@ function seasonsRows(sql, params) {
 
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
+  if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
 
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 

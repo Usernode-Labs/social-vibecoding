@@ -66,15 +66,26 @@ const baseProposal = (over) => ({
   ...over,
 });
 
-test('console_check_state="errors" renders the amber warning badge with a count', () => {
+test('console_check_state="errors" draws NO tag on the card (#2038)', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'pageerror', message: 'boom' }, { kind: 'console', message: 'splat' }],
   }));
-  assert.match(html, /gc-vote-count-attention/, 'advisory ATTENTION tone in the pill');
-  assert.match(html, /Console errors · 2/, 'shows the error count');
-  assert.match(html, /may break the app/, 'tooltip explains the risk');
+  // Console errors already BLOCK. services/visuals.js classifyTests puts "a
+  // blocking check had console errors" straight into check_state 'failing',
+  // which draws its own red tag and which the merge gate refuses.
+  //
+  // console_check_state measures the same class of problem on a DIFFERENT
+  // target set — the screenshot capture routes rather than the declared
+  // dapp.json checks — so drawing it too meant one card carrying two tags
+  // about console errors, one red and blocking, one amber and not. The
+  // column and its messages are kept; the detail view is where an advisory
+  // reading belongs, and it still enumerates them.
+  assert.doesNotMatch(html, /Console errors/, 'no second tag about console errors');
+  assert.equal(AppView.blockReasons(baseProposal({
+    console_check_state: 'errors', console_errors: [{ message: 'x' }],
+  })).length, 0, 'and no reason either');
 });
 
 test('console_check_state="clean" renders NO warning badge', () => {
@@ -95,34 +106,34 @@ test('console_check_state="unknown" / missing renders NO warning badge', () => {
   );
 });
 
-test('two reasons at once: the pill names the worst and counts the rest', () => {
+test('two reasons at once: both are tags, and neither is the bar', () => {
   const AppView = makeAppView(ME);
-  // This card used to render "Behind main · 3" AND "⚠ Console errors · 1"
-  // side by side, leaving the reader to work out that both applied. Now the
-  // pill names the most severe one and its tooltip says how many more there
-  // are; the detail view enumerates every one of them.
+  // A LOOP worth recording, because this test has now argued both sides.
+  // Originally the card rendered "Behind main · 3" AND "Console errors · 1"
+  // side by side, and this test was written to retire that: the reader was
+  // left to work out that both applied, so the pill took the worst one and
+  // counted the rest in its tooltip.
+  //
+  // That fixed the ambiguity by removing information, and it cost the bar:
+  // whatever was most wrong took the slot the VOTE needed. So the two facts
+  // are side by side again — but they are tags now, off the bar and tinted
+  // by severity, which is the part the first arrangement was missing. The
+  // reader is not asked to work out that both apply; the colours say which
+  // one stops it landing.
   const pr = baseProposal({
     behind_main: 3,
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
   const html = proposalCardHtml(AppView, pr);
-  assert.match(html, /Behind main · 3/, 'the worst reason is the pill label');
-  assert.match(html, /and 1 more reason, open for details/, 'the rest are counted, not hidden');
-  assert.doesNotMatch(html, /gc-warning-badge/, 'no second badge stacked beside it');
-
-  // blockReasons is the shared source of truth for both.
-  const reasons = AppView.blockReasons(pr);
-  assert.equal(reasons.length, 2);
-  assert.equal(reasons.map((r) => r.key).join(','), 'behind,console_errors');
-
-  const detail = detailActionsHtml(AppView, 'proposal', pr);
-  assert.match(detail, /Worth knowing before you vote/, 'neither reason blocks, so the heading says so');
-  assert.match(detail, /Behind main · 3/);
-  assert.match(detail, /Console errors · 1/);
+  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Behind main · 3<\/span>/);
+  assert.doesNotMatch(html, /and 1 more reason, open for details/,
+    'nothing is hidden behind a tooltip count any more');
+  // #2038: the console errors are no longer one of the reasons.
+  assert.equal(AppView.blockReasons(pr).length, 1);
 });
 
-test('a HARD reason beside a soft one: the heading names the block', () => {
+test('a HARD reason beside soft ones: red first, then amber, and the bar counts votes', () => {
   const AppView = makeAppView(ME);
   const pr = baseProposal({
     behind_main: 2,
@@ -132,12 +143,16 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
   const html = proposalCardHtml(AppView, pr);
-  assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
-  assert.match(html, /gc-vote-count-blocked/);
-  assert.match(html, /and 2 more reasons/);
-  const detail = detailActionsHtml(AppView, 'proposal', pr);
-  assert.match(detail, /Why this can’t merge yet/);
-  assert.match(detail, /Checks failing · 1[\s\S]*Behind main · 2[\s\S]*Console errors · 1/,
+  // Severity-ordered: the blocking one is red and leads.
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks failing · 1<\/span>/);
+  assert.ok(html.indexOf('Checks failing · 1') < html.indexOf('Behind main · 2'),
+    'the block leads the line');
+  // The bar is no longer blocked-toned — it is the vote.
+  assert.doesNotMatch(html, /gc-vote-count-blocked/);
+  // The detail view is untouched: same heading, same severity-first order.
+  const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
+  assert.equal(reasonsView.heading, 'Why this can’t merge yet');
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Checks failing · 1|Behind main · 2',
     'enumerated severity-first');
 });
 

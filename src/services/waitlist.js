@@ -115,7 +115,11 @@ async function invitedBySignup(pool, signupId) {
 async function getSignupByMoreToken(pool, token) {
   if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return null;
   const { rows } = await pool.query(
-    `SELECT id, email, answers FROM waitlist_signups WHERE more_token = $1`,
+    // submitted_at / confirmed_at / released_at / linked_user_id back the
+    // status block the stage-2 screen renders; the other callers of this
+    // function read only id and answers, so widening it is additive.
+    `SELECT id, email, answers, submitted_at, confirmed_at, released_at, linked_user_id
+       FROM waitlist_signups WHERE more_token = $1`,
     [token]
   );
   return rows[0] || null;
@@ -146,6 +150,28 @@ async function confirmSignupByMoreToken(pool, token) {
 const CODE_TTL_MINUTES = 15;
 const MAX_CODE_ATTEMPTS = 5;
 
+// The signup row for an address, or null. The by-token lookup above is a
+// capability check; this is the plain one, and it exists for the resend
+// endpoint, which has to know three things before it decides what to mail:
+// whether the address is on the list at all, whether it is already
+// confirmed, and which more_token to carry.
+//
+// It returns a row rather than a boolean, and that is exactly why it must
+// never reach a response body: the CALLER answers every branch with the
+// same words. Nothing here is non-enumerating on its own.
+async function getSignupByEmail(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  const { rows } = await pool.query(
+    `SELECT id, email, confirmed_at, more_token
+       FROM waitlist_signups
+      WHERE email = $1
+      LIMIT 1`,
+    [normalized]
+  );
+  return rows[0] || null;
+}
+
 // Mint a six-digit verification code for an email on the waitlist.
 // Returns the PLAINTEXT code for the caller to mail; only its bcrypt hash
 // is stored. Any unconsumed code for the address is deleted first, so
@@ -172,6 +198,13 @@ async function issueVerificationCode(pool, email) {
 // Confirm a signup with the code from its join mail. Returns the signup
 // row (with more_token, so the caller can hand back the stage-2
 // capability) or null.
+//
+// The RETURNING carries the whole state tuple — submitted_at,
+// released_at, linked_user_id — because #1538's "check my status" reads
+// its answer straight off this row rather than making a second round
+// trip. An already-confirmed row is a normal, expected caller here: the
+// COALESCE below keeps its first timestamp and everything else is a
+// plain read.
 //
 // EVERY failure returns the same null — unknown email, malformed code,
 // wrong code, expired, already consumed, too many attempts — so this can
@@ -213,7 +246,8 @@ async function confirmSignupByCode(pool, email, code) {
     `UPDATE waitlist_signups
         SET confirmed_at = COALESCE(confirmed_at, NOW())
       WHERE email = $1
-      RETURNING id, email, confirmed_at, more_token`,
+      RETURNING id, email, submitted_at, confirmed_at, released_at,
+                linked_user_id, more_token`,
     [normalized]
   );
   return signup[0] || null;
@@ -306,7 +340,7 @@ async function releaseWaitlistSignup(pool, signupId) {
      UPDATE waitlist_signups w
         SET released_at = COALESCE(w.released_at, NOW())
       WHERE w.id = $1
-      RETURNING w.id, w.email, w.released_at, w.linked_user_id,
+      RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
     [signupId]
   );
@@ -338,6 +372,7 @@ module.exports = {
   normalizeEmail,
   joinWaitlist,
   getSignupByMoreToken,
+  getSignupByEmail,
   confirmSignupByMoreToken,
   issueVerificationCode,
   confirmSignupByCode,

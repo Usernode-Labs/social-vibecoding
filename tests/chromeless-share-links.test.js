@@ -41,9 +41,13 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
     server.includes("req.get('sec-fetch-dest') === 'document'"),
     'gates the redirect on Sec-Fetch-Dest: document'
   );
+  // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
+  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (falling back to
+  // the value baked in at scaffold time), so the link follows the platform
+  // when its domain moves instead of pointing at where it used to be.
   assert.match(
     server,
-    /res\.redirect\(302, 'https:\/\/[^']+\/app\/demo-app-abc123\/full' \+ deepPath\)/,
+    /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
     'redirects to the platform chromeless deep link for this slug, carrying the inner path'
   );
   // The redirect must live INSIDE the unauthenticated branch, before the
@@ -51,7 +55,7 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   // never a redirect that would nest the shell inside its own iframe).
   const unauthBranch = server.indexOf('if (!req.user) {');
   const redirect = server.indexOf("req.get('sec-fetch-dest')");
-  const landing = server.indexOf('Open this app inside Usernode');
+  const landing = server.indexOf('Open this app inside Homeroom');
   assert.ok(unauthBranch !== -1 && unauthBranch < redirect && redirect < landing,
     'redirect sits between the auth check and the landing-page fallback');
 });
@@ -78,8 +82,8 @@ test('scaffold server.js encodes ?path= from req.originalUrl behind the characte
 test('scaffold landing page deep-links to the app, not the bare platform origin', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.match(server, /href="https:\/\/[^"]+\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
-    'landing anchor carries the gated deep path too');
+  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
+    'landing anchor carries the gated deep path too, on the runtime origin');
 });
 
 // ── 2. Auth-flow fragment preservation (stubs + in-SPA login) ───────────
@@ -253,7 +257,7 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // the prerendered markup and the first hydrating render identical.
   assert.ok(pill.includes('if (!chromeless) return null;'));
   assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label=\"Open this app on Usernode\""));
+  assert.ok(pill.includes("aria-label=\"Open this app on Homeroom\""));
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
   // survives app-to-app navigation without a remount.

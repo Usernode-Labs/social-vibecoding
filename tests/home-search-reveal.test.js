@@ -37,6 +37,7 @@ function makeHome(opts = {}) {
     _scrollWired: false,
   };
   const els = { 'home-screen': screen, 'home-search-bar': bar };
+  const page = { scrollTop: opts.scrollTop || 0 };
   const sandbox = {
     console,
     App: { user: { id: 1 } },
@@ -58,11 +59,25 @@ function makeHome(opts = {}) {
     removeEventListener: () => {},
   };
   sandbox.window = sandbox;
+  if (opts.pageScroll) sandbox.PlatformUI = { scrollElement: () => page };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return { Home: sandbox.__Home, screen, bar };
+  return { Home: sandbox.__Home, screen, bar, page, sandbox };
 }
+
+test('mobile web parks and reads the search bar using document scrolling', () => {
+  const { Home, screen, bar, page } = makeHome({ pageScroll: true, barHeight: 58 });
+  Home._searchReveal.sync();
+  assert.equal(page.scrollTop, 58);
+  assert.equal(screen.scrollTop, 0, 'the former inner pane no longer scrolls');
+  page.scrollTop = 12;
+  Home._searchReveal.mark();
+  assert.equal(bar.dataset.revealed, 'true');
+  page.scrollTop = 340;
+  Home._searchReveal.sync();
+  assert.equal(page.scrollTop, 340, 'a background render preserves the reading position');
+});
 
 // ── index.html structure ──────────────────────────────────────────
 
@@ -112,6 +127,52 @@ test('sync never yanks a user who has scrolled further down', () => {
   Home._searchReveal.sync();
   assert.equal(screen.scrollTop, 800,
     'a WS-driven re-render must not scroll the page under the user');
+});
+
+for (const pageScroll of [false, true]) {
+  test(`refresh preserves every search position (${pageScroll ? 'document' : 'element'} scrolling)`, () => {
+    const { Home, screen, page, bar } = makeHome({ pageScroll });
+    const scroller = pageScroll ? page : screen;
+    Home._searchReveal.sync();
+    for (const position of [0, 20, 52, 340]) {
+      scroller.scrollTop = position;
+      for (let refresh = 0; refresh < 3; refresh++) Home._searchReveal.sync();
+      assert.equal(scroller.scrollTop, position);
+      assert.equal(bar.dataset.revealed, position < 26 ? 'true' : 'false');
+    }
+  });
+}
+
+test('an unmeasurable screen does not consume initial positioning', () => {
+  const { Home, screen, bar } = makeHome({ barHeight: 0 });
+  Home._searchReveal.sync();
+  assert.equal(screen.scrollTop, 0);
+  bar.offsetHeight = 58;
+  Home._searchReveal.sync();
+  assert.equal(screen.scrollTop, 58);
+  screen.scrollTop = 12;
+  Home._searchReveal.sync();
+  assert.equal(screen.scrollTop, 12);
+});
+
+test('load positions search before the response and preserves a reveal while waiting', async () => {
+  const { Home, screen, sandbox } = makeHome();
+  Home._probeShortcutSupport = () => {};
+  Home.publishImproveTarget = () => {};
+  Home._ensureLayoutLoaded = () => {};
+  Home._healWidgetIcons = () => {};
+  Home.render = () => Home._searchReveal.sync();
+  let finish;
+  sandbox.fetch = () => {
+    assert.equal(screen.scrollTop, 52, 'parked before the catalog request');
+    return new Promise(resolve => { finish = resolve; });
+  };
+  const loading = Home.load();
+  screen.scrollTop = 0;
+  finish({ ok: true, json: async () => ({ apps: [] }) });
+  await loading;
+  assert.equal(Home._appsLoaded, true);
+  assert.equal(screen.scrollTop, 0, 'response does not undo the user gesture');
 });
 
 test('sync wires the scroll listener that stamps data-revealed', () => {
@@ -180,9 +241,9 @@ test('an unrelated ?shot value does not pin the bar', () => {
 
 // ── Wiring pins ──────────────────────────────────────────────────
 
-test('render ends by syncing the reveal state', () => {
+test('home syncs the reveal state', () => {
   assert.match(HOME_SRC, /Home\._searchReveal\.sync\(\);/,
-    'every render re-parks the scroller');
+    'home keeps the measured reveal state current');
 });
 
 test('the search input pins on focus/input and releases on empty blur', () => {

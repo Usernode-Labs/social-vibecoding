@@ -45,7 +45,7 @@
 import { iconViewFor } from '../apps/app-card.js';
 import { adoptKitSurface } from '../../lib/kit-surface';
 import { dismissRegisteredSheets } from '../../lib/sheet-controller.js';
-import { improveStore } from './improve-store.js';
+import { boardHref, improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
 
 /** Sessions whose state means "an AI turn is in flight right now". */
@@ -303,8 +303,32 @@ const Improve = {
       // Which dev sub-view: the header's eye is a PREVIEW control on a
       // session and a back-to-the-app control everywhere else.
       subTab: nextSubTab,
+      // And which LAYOUT the Dev screen is in, for the header's back arrow on
+      // the sub-views that are reached from it. Captured on every route change
+      // rather than subscribed to, because the only reader is a route that has
+      // already left the board: by the time a topic publishes, the layout can
+      // no longer change under it.
+      boardView: Improve._boardView(),
       sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
     });
+  },
+
+  /**
+   * Which layout the Dev screen is in — 'kanban' or 'workshop'.
+   *
+   * Read through `window.AppView` rather than from the view-mode store in
+   * ../dev-board/view-mode-store.ts, and the difference is a COLD DEEP LINK:
+   * that store is seeded when the board frame mounts, and a link straight to
+   * an issue never mounts one, so it would answer with its own default
+   * instead of with this viewer's preference. `_getViewMode()` resolves the
+   * `?view=` override and then the stored preference, and needs no board.
+   *
+   * Settled by the time this runs on a layout hop too: `restoreFromHash`
+   * calls `AppView._setViewMode(boardView)` BEFORE `App.navigateToApp`, which
+   * is what reaches `App.switchTab` and therefore `setTab` above.
+   */
+  _boardView() {
+    return window.AppView?._getViewMode?.() === 'kanban' ? 'kanban' : 'workshop';
   },
 
   /**
@@ -377,11 +401,10 @@ const Improve = {
     // for one back to the dev forum — so it can never be an origin.
     if (route.tab !== 'dev') return route.selfHosted ? null : `#app/${slug}/app`;
     if (route.subTab === 'forum' || route.subTab === 'topic') {
-      // Board and Activity are one screen in two layouts, and the layout IS
+      // Workshop and Board are one screen in two layouts, and the layout IS
       // the route (see the alias block in app.js's restoreFromHash), so the
       // origin has to name the one that was on screen.
-      const feed = window.AppView?._getViewMode?.() === 'feed';
-      return `#app/${slug}/${feed ? 'activity' : 'board'}`;
+      return boardHref(slug, Improve._boardView());
     }
     if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
     return null;
@@ -397,6 +420,7 @@ const Improve = {
     improveStore.set({
       previewSessionId: (preview && preview.sessionId) || null,
       previewUrl: (preview && preview.url) || null,
+      previewBuildable: !!(preview && preview.buildable),
     });
   },
 
@@ -631,6 +655,38 @@ const Improve = {
    */
   _tasks: [],
 
+  /**
+   * Publish a session that was just created in this tab.
+   *
+   * DevChat owns session creation, but the Improve panel owns a separate
+   * cross-app cache. Waiting for its next /active-sessions response leaves a
+   * successful new session looking absent, and a preload issued before the
+   * POST can arrive afterwards and erase a naive optimistic row. Invalidate
+   * that older request and publish the server-created row immediately; the
+   * normal load on panel open remains the authoritative follow-up.
+   */
+  onSessionCreated(session, appSlug) {
+    if (!session || session.id == null) return;
+    const existing = Improve._all.find((candidate) => (
+      String(candidate.id) === String(session.id)
+    ));
+    const row = {
+      ...(existing || {}),
+      ...session,
+      app_slug: session.app_slug || existing?.app_slug || appSlug || null,
+    };
+    if (!row.app_slug) return;
+
+    // Any request already in flight describes the world before this POST.
+    Improve._loadToken += 1;
+    Improve._all = [
+      row,
+      ...Improve._all.filter((existing) => String(existing.id) !== String(row.id)),
+    ];
+    improveStore.set({ loadingSessions: false, sessionsLoaded: true });
+    Improve._rebucket();
+  },
+
   _rebucket() {
     const { slug, name } = improveStore.get();
     const mine = [];
@@ -736,22 +792,11 @@ const Improve = {
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 
-  /**
-   * The green session count, from Notifications._renderBadge.
-   *
-   * That module is loaded as a classic SCRIPT by two test files, so it cannot
-   * import this store and reaches it by name instead — the same constraint
-   * dev-chat.js documents. It used to write `textContent` and toggle `hidden`
-   * on a span inside the hamburger; the span is inside a React-owned button
-   * now, so it publishes the two numbers and the component renders them.
-   */
-  setSessionBadge(unread, done) {
-    const sessionUnread = Number(unread) || 0;
-    const sessionDone = Number(done) || 0;
-    const cur = improveStore.get();
-    if (cur.sessionUnread === sessionUnread && cur.sessionDone === sessionDone) return;
-    improveStore.set({ sessionUnread, sessionDone });
-  },
+  // setSessionBadge is GONE (#1610). Notifications._renderBadge used to
+  // publish the unread session count here so this button could render it;
+  // that count is part of the bell's number now, because the bell's list is
+  // the only place a session notification can be marked read. `working`
+  // above is the one indicator this button still carries.
 
   /**
    * Where the PLATFORM's build has got to, from
@@ -813,7 +858,7 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
-   * `fromDev: true` is the mode the Dev "+" menu's "New issue" row used: it
+   * `fromDev: true` is the mode the Dev "+" menu's "File an issue" row uses: it
    * preselects the open app as the target (falling back to Platform for the
    * self-hosted row, or while the repo does not exist yet). That is the right
    * default here for the same reason — the panel is unambiguously about one
@@ -833,7 +878,7 @@ const Improve = {
     window.App.openFeedbackModal();
   },
 
-  /** "Start a new session" — the Dev "+" menu's "Propose a change" row. */
+  /** New change: the entry point for starting a session on desktop and touch. */
   startSession() {
     Improve.close();
     Improve._withApp(() => window.AppView?.createProposal?.());
@@ -854,9 +899,16 @@ const Improve = {
   },
 
   /** The retired `#dev-console-btn`, as a row. */
+  // Waits for the panel to be GONE before presenting, for the same reason
+  // `share()` below does: on touch the console rides in a kit bottom sheet of
+  // its own, and presenting it across this panel's exit spring puts two kit
+  // surfaces on screen at once — the second one adopting its node while the
+  // first is still tearing its own down. Desktop resolves immediately after
+  // the slide, so the row costs nothing there. (#1967)
   openTerminal() {
-    Improve.close();
-    window.DevConsole?.show?.();
+    Promise.resolve(Improve.close()).then(() => {
+      window.DevConsole?.show?.();
+    });
   },
 
   /** The retired `#drawer-row-share`, as a row. */

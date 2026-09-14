@@ -35,8 +35,14 @@ export interface IssueCommentView {
   author: string;
   /** GitHub's bot accounts get a quiet tag rather than a different row. */
   bot: boolean;
-  /** `YYYY-MM-DD`, or '' when the row carries no timestamp. */
-  date: string;
+  /**
+   * GitHub's raw ISO instant, or '' when the row carries no timestamp.
+   *
+   * Deliberately NOT pre-formatted: it used to arrive as `YYYY-MM-DD` sliced
+   * off the front of this string, which is a UTC date rather than the
+   * reader's, and carried no time. The component formats it (#1808).
+   */
+  createdAt: string;
   /** Sanitized markdown, already rendered by the module. */
   bodyHtml: string;
 }

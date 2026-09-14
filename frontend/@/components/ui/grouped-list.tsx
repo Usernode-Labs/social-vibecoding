@@ -106,6 +106,9 @@ export interface ListRowProps
    * Rather than fork the primitive, such a caller passes a weight here.
    */
   titleClassName?: string;
+  /** Optional layout hooks; defaults retain the standard single-line row. */
+  contentClassName?: string;
+  subtitleClassName?: string;
 }
 
 /**
@@ -117,7 +120,7 @@ export interface ListRowProps
  */
 export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function ListRow({
   className, leading, title, subtitle, dot, chevron = true, trailing, inset, as = 'div',
-  titleClassName, ...props
+  titleClassName, contentClassName, subtitleClassName, ...props
 }, ref) {
   const Tag = as;
   // A row with no tile has nothing to inset the hairline PAST, so it falls back
@@ -140,13 +143,13 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       {...props}
     >
       {leading}
-      <div className="min-w-0 flex-1">
+      <div className={cn('min-w-0 flex-1', contentClassName)}>
         <div className={cn(
           'truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100',
           titleClassName,
         )}>{title}</div>
         {subtitle ? (
-          <div className="truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{subtitle}</div>
+          <div className={cn('truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500', subtitleClassName)}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (

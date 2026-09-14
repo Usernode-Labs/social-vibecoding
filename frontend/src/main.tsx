@@ -60,6 +60,7 @@ import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
 import { Shell } from './Shell';
+import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyShellSnapshot } from './lib/shell-snapshot-apply';
@@ -96,6 +97,13 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+
+// The wallpaper's star follows the visible screen's scroll offset (the
+// washes stay put). A side effect on a custom property, not an island:
+// every wallpaper root is a scroller the legacy router and the React
+// screens share, so it hangs off the document and the visibility store.
+import './lib/browser-scroll';
+import './lib/wallpaper-scroll';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -106,15 +114,33 @@ import './features/header/mount';
 import './features/dev-chat/mount';
 import './features/dev-chat/dev-chat.js';
 
-registerServiceWorker();
-initOffline();
+// ── Every step below is wrapped, and hydration is the one that matters ──
+//
+// A throw anywhere in this file used to abort the entry module, and an entry
+// module that aborts before `hydrateRoot` leaves React never having adopted
+// the document: every island stays the empty markup the prerender shipped,
+// and the screen the boot reveals is blank. That is exactly how the iOS
+// native app's blank screen worked (#1670) — one TypeError inside a precache
+// nicety took the whole application down.
+//
+// ./lib/boot-guard.ts records the failure and lets the boot continue, so a
+// step that fails costs its own feature and nothing else. Read its header for
+// why it records rather than console.error-ing.
+bootStep('registerServiceWorker', registerServiceWorker);
+bootStep('initOffline', initOffline);
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on
 // (`class="… flex flex-col" style="height:100dvh"` with `flex-1` <main>
 // children). Interposing a wrapper would break every screen's height.
-flushSync(() => {
-  hydrateRoot(document.body, <Shell />);
+// Wrapped like the rest, though a throw HERE is the one failure this file
+// cannot paper over — there is no shell without it. It is guarded anyway so
+// the reason lands in the boot record for the head's watchdog to print,
+// rather than being an uncaught error nobody on a phone can read.
+bootStep('hydrate', () => {
+  flushSync(() => {
+    hydrateRoot(document.body, <Shell />);
+  });
 });
 
 // ── The bar catches up here, and not one line earlier ──────────────────
@@ -138,4 +164,4 @@ flushSync(() => {
 // Everything real still overwrites it moments later; this only decides what is
 // on screen in between. See ./lib/shell-snapshot.ts for the storage contract
 // and why it is display-only.
-applyShellSnapshot();
+bootStep('applyShellSnapshot', applyShellSnapshot);

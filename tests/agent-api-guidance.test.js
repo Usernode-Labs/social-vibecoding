@@ -94,14 +94,17 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
 // actually pins the commit.
 test('the base-commit check is always-on, not only in the proposal skill', () => {
   const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.match(guidance, /Know your base commit before you write code/);
+  assert.match(guidance, /Know your base commit and create its work branch before you write code/);
   assert.match(guidance, /git rev-parse HEAD/);
-  // The three clauses that make it actionable rather than a warning: the
-  // fork's default branch is the stale thing, the base has a source, and
-  // reconciling it yourself is not the agent's call.
+  // The clauses that make it actionable rather than a warning: the fork's
+  // default branch is the stale thing, the base has a source, proposal work
+  // gets its own exact-base branch, and reconciling the default branch is
+  // forbidden.
   assert.match(guidance, /fork's default branch/);
   assert.match(guidance, /prepare_work/);
-  assert.match(guidance, /do not merge `upstream\/main` yourself/);
+  assert.match(guidance, /Never implement or commit proposal work directly on `main`/);
+  assert.match(guidance, /git switch -c <proposal-branch> <40-character-base-sha>/);
+  assert.match(guidance, /not to merge\s+or rebase the default branch/);
 
   const proposal = readSkill('usernode-proposal');
   assert.match(
@@ -111,7 +114,7 @@ test('the base-commit check is always-on, not only in the proposal skill', () =>
   );
 });
 
-test('shared Usernode skills retain API safety and scope the hook UI to Codex CLI', () => {
+test('shared Homeroom skills retain API safety and scope the hook UI to Codex CLI', () => {
   const api = readSkill('usernode-api');
   assert.match(api, /social-vibecoding codex setup/);
   assert.match(api, /social-vibecoding claude setup/);
@@ -149,6 +152,14 @@ test('proposal summaries remain scannable user-visible Markdown', () => {
   assert.match(proposal, /commit, managed-head, session, build, or similar identifiers/);
   assert.match(proposal, /Do not compress several defects, fixes, results, and identifiers into one dense paragraph/);
   assert.match(proposal, /`phase` field.*not a substitute for visible structure in `content`/);
+});
+
+test('proposal guidance preserves one work identity through check recovery', () => {
+  const proposal = readSkill('usernode-proposal');
+  assert.match(proposal, /request ID and returned session ID as the permanent identity/);
+  assert.match(proposal, /recovering stalled checks never authorizes another `proposal_start`/);
+  assert.match(proposal, /When stalled, call `proposal_recheck` for that session/);
+  assert.match(proposal, /`supersedes_session_id` only after the user explicitly asks/);
 });
 
 test('machine-local agent setup artifacts are ignored', () => {

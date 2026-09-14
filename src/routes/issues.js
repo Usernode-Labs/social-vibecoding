@@ -381,29 +381,96 @@ function stagingMockGovernance() {
 
 // #396: staging-only mock comment threads for the topic view's GitHub
 // comment section, served by GET /api/apps/:slug/github-issues/:number/
-// comments when the live fetch is empty/unavailable. Keyed by the mock
-// issue numbers above; obviously-fake "[Mock]" bodies, oldest-first (the
-// same order fetchIssueComments returns), and at least one BOT-authored
-// comment (`usernode-bot`) so the bot-labelling renders. Returns [] for
-// numbers without a mock thread. Strictly a no-op in production.
+// comments when the live fetch is empty/unavailable. Obviously-fake
+// "[Mock]" bodies, oldest-first (the same order fetchIssueComments
+// returns), and at least one BOT-authored comment (`usernode-bot`) so the
+// bot-labelling renders. Strictly a no-op in production.
+//
+// EVERY issue number gets a thread, not just the three mock ones. It used
+// to be a lookup table keyed by stagingMockIssues' own 900001-900003, and
+// `[]` for anything else — which meant the fallback both callers describe
+// as "so the section is reviewable" did nothing for a REAL issue. That is
+// the common case on a prod-cloned staging preview: the board's freshly
+// triaged requests carry no replies yet, their live thread comes back
+// empty, and the substitution had no row to make. Every feed slot rendered
+// blank, and the declared check that asserts a rendered relative age
+// (#1585) had nothing to find — it failed on every proposal, against code
+// none of them had touched.
+//
+// The generic thread is deterministic in the issue number, so a preview and
+// a declared check see the same two rows on every run; only the ages are
+// clock-relative, which is the thing those rows exist to exercise.
+// Is `number` one of stagingMockIssues' own rows? The repo URL only shapes
+// each row's htmlUrl, so any base answers the membership question.
+function isStagingMockIssueNumber(number) {
+  const n = Number(number);
+  return stagingMockIssues('https://github.com/example/app').some((i) => i.number === n);
+}
+
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const daysAgo = (d) => hoursAgo(d * 24);
+  // #1808: every thread opens with three rows whose stamps land in the three
+  // branches the comment thread formats. An earlier year (fixed, so that
+  // branch is reachable for as long as this fixture lives), earlier this
+  // year, and inside the last few days. Before the fix all three read as a
+  // bare time of day, so the ladder is what makes the change reviewable:
+  // read down a thread and the stamps have to answer "when".
+  const stampLadder = () => ([
+    {
+      author: 'staging-tester',
+      body: '[Mock] Filing this from an earlier year, so the stamp on it has to carry one.',
+      createdAt: '2024-03-05T09:15:00Z',
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Picked this up about six weeks ago, far enough back that the day matters more than the hour.',
+      createdAt: daysAgo(40),
+    },
+    {
+      author: 'another-tester',
+      body: '[Mock] And a reply from a few days ago, for the middle of the range.',
+      createdAt: daysAgo(3),
+    },
+  ]);
   const threads = {
     900001: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
       { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
       { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
     ],
     900002: [
+      ...stampLadder(),
       { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
       { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
     ],
     900003: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
     ],
   };
-  return threads[n] || [];
+  if (threads[n]) return threads[n];
+  // A number that is not an issue at all (an unparseable :number reaches
+  // the first caller before Number.isFinite is consulted) gets nothing.
+  if (!Number.isFinite(n) || n <= 0) return [];
+  return [
+    ...stampLadder(),
+    {
+      author: 'staging-tester',
+      body: `[Mock] Staging stand-in for issue #${n}: the live thread came back `
+        + 'empty or unreachable from this preview container, so this is what the '
+        + 'comment section renders instead.',
+      createdAt: hoursAgo(26),
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Replies you see here are fixtures, not the real thread. '
+        + 'Staging only, and never served in production.',
+      createdAt: hoursAgo(5),
+    },
+  ];
 }
 
 // Pick the "In progress" chip's link destination from an issue's live
@@ -835,7 +902,7 @@ function issueRoutes(config) {
         // DEPLOY, not through a rebuild of a container — so don't promise a
         // redeploy the apply path deliberately never performs.
         description = description?.trim() ||
-          `${req.user.username} (via Usernode) proposed ${
+          `${req.user.username} (via Homeroom) proposed ${
             action === 'delete' ? 'removing' : 'setting'
           } the env var "${key}". ${app.self_hosted
             ? 'Auto-applies when a majority of active users vote up; the value reaches the platform on its next deploy.'
@@ -1722,6 +1789,22 @@ function issueRoutes(config) {
         return res.json({ comments: clipped.comments, truncated: clipped.truncated });
       }
 
+      // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
+      // fixtures by choice — the list route appends these rows for it — so
+      // the thread is the fixture too, served without the live round trip.
+      // No real issue has these numbers, so the live fetch can only come
+      // back empty and fall through to the same mocks; what it costs is
+      // time. From a preview container whose outbound fetch hangs, that is
+      // the whole ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a
+      // presence assertion for five seconds after the page settles
+      // (capture/capture.js ASSERT_MAX_MS) — which is exactly how the
+      // declared issue-page check found no comment bubbles on staging while
+      // passing locally, where GitHub is off and the mocks are immediate.
+      if (IS_STAGING && req.query.demo === '1' && isStagingMockIssueNumber(number)) {
+        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
+        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
+      }
+
       const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
       let { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
 
@@ -1967,9 +2050,11 @@ function issueRoutes(config) {
   // creates it, any later click renews it (fresh TTL clock), other
   // users' claims are untouched and irrelevant (no 409, ever). The
   // target must be a currently-open GitHub issue — same positive-
-  // confirmation policy as the bounty route above. Claims are platform-
-  // local: no GitHub write. Expiry is a read-time filter in the
-  // /github-issues enrichment (ISSUE_CLAIM_TTL_DAYS).
+  // confirmation policy as the bounty route above. A successful claim also
+  // moves the caller's assignee vote to their own username, so taking the
+  // work and assigning it are one gesture. Both writes are platform-local:
+  // no GitHub write. Expiry is a read-time filter in the /github-issues
+  // enrichment (ISSUE_CLAIM_TTL_DAYS).
   // ----------------------------------------------------------------
   router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
@@ -2017,6 +2102,15 @@ function issueRoutes(config) {
         [app.id, issueNumber, req.user.id]
       );
       const created = !!rows[0]?.created;
+
+      // #1648: claiming is an explicit statement that the caller is taking
+      // the issue, so mirror it into the existing community-voted assignee
+      // field. Do this on renewals too: re-claiming repairs a missing or
+      // independently changed self-assignment. Releasing remains separate —
+      // it must not erase metadata that the user may have edited afterward.
+      await topicAttrs.castVote(
+        pool, app.id, 'issue', issueNumber, 'assignee', req.user.username, req.user.id
+      );
 
       if (created) {
         // On-the-record note in the issue's own discussion thread (which
@@ -2964,8 +3058,8 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
       await github.closeIssue(parsed.owner, parsed.repo, issueNumber);
 
       let commentBody = force
-        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Usernode.`
-        : `Closed by group vote (${upCount}/${required}) on Usernode.`;
+        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Homeroom.`
+        : `Closed by group vote (${upCount}/${required}) on Homeroom.`;
       const reason = typeof locked.payload?.reason === 'string'
         ? locked.payload.reason.trim() : '';
       if (reason) {

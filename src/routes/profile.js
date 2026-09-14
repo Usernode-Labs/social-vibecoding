@@ -49,6 +49,7 @@ const log = require('../services/logger');
 const { sniffImageType } = require('../services/attachments');
 const { profileWriteLimiter, usernameChangeLimiter } = require('../middleware/rate-limits');
 const usernames = require('../services/usernames');
+const accountEmail = require('../services/account-email');
 const {
   buildChallengeRow,
   DONE_EXPR,
@@ -258,6 +259,40 @@ function profileRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     return next();
   };
+
+  router.get('/api/me/email', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        'SELECT email, email_confirmed, password_set, is_admin FROM users WHERE id = $1', [req.user.id]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Account not found.' });
+      const user = rows[0];
+      res.set('Cache-Control', 'no-store');
+      return res.json({ email: user.email, verified: !!user.email_confirmed,
+        passwordRequired: !!user.password_set, recoveryAllowed: !user.is_admin });
+    } catch (error) {
+      log.error('account-email', 'Could not read account email', { message: error.message });
+      return res.status(500).json({ error: 'Could not load account email.' });
+    }
+  });
+
+  for (const action of ['request', 'verify']) {
+    router.post(`/api/me/email/${action}`, requireUser, profileWriteLimiter,
+      express.json({ limit: '4kb' }), async (req, res) => {
+        try {
+          const result = action === 'request'
+            ? await accountEmail.requestCode(pool, config, req.user.id, req.body?.email, req.body?.currentPassword)
+            : await accountEmail.verifyCode(pool, req.user.id, req.body?.code);
+          return res.json(result);
+        } catch (error) {
+          if (error instanceof accountEmail.AccountEmailError) {
+            return res.status(error.status).json({ error: error.message });
+          }
+          log.error('account-email', 'Email verification failed', { message: error.message });
+          return res.status(500).json({ error: 'Could not update account email. Please try again.' });
+        }
+      });
+  }
 
   // Re-read the columns the client renders, in one statement, so PATCH and
   // the avatar writes can all echo the post-write truth rather than

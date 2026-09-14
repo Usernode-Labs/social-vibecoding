@@ -5,7 +5,7 @@
 
 import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
+import { EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -64,6 +64,7 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
  * attributes and the position all stay exactly as `selectorHtml` wrote them.
  */
 function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']> }): ReactNode {
+  const busyTitle = 'Wait for the current response to finish before changing where this session is built.';
   return (
     <button
       type="button"
@@ -71,13 +72,24 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       className="dc-venue-select"
       data-venue-change="1"
       data-venue-current={venue.id}
+      data-venue-busy={venue.disabled ? '1' : undefined}
       aria-haspopup="menu"
+      aria-label={venue.disabled ? `${venue.label}. Unavailable while the agent is thinking.` : undefined}
       disabled={venue.disabled}
-      title={venue.title}
-      onClick={(e: MouseEvent<HTMLButtonElement>) => controller()?.openVenueSheet?.(e.currentTarget)}
+      title={venue.disabled ? busyTitle : venue.title}
+      onClick={venue.disabled
+        ? undefined
+        : (e: MouseEvent<HTMLButtonElement>) => controller()?.openVenueSheet?.(e.currentTarget)}
     >
       <span className="dc-venue-name">{venue.label}</span>
-      <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
+      {venue.disabled ? (
+        <span className="dc-venue-busy" aria-hidden="true">
+          <LockIcon className="dc-venue-busy-icon" />
+          <span>Thinking…</span>
+        </span>
+      ) : (
+        <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
+      )}
     </button>
   );
 }
@@ -136,9 +148,15 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
-  const { previewSessionId, previewUrl, previewActive } = useStoreState(improveStore) as {
-    previewSessionId: number | null; previewUrl: string | null; previewActive: boolean;
+  const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
+    previewSessionId: number | null; previewUrl: string | null;
+    previewBuildable: boolean; previewActive: boolean;
   };
+  // #2069: a live preview OR one the click can build. ensure-staging rebuilds
+  // from the branch's latest commit and has authorized this case since #439;
+  // only this gate had not caught up, so the single control that would restore
+  // a missing preview disappeared exactly when the preview went missing.
+  const hasPreview = !!previewUrl || !!previewBuildable;
   const seeing = !!previewActive;
   const trackRef = useRef<HTMLSpanElement | null>(null);
   const eyeRef = useRef<HTMLButtonElement | null>(null);
@@ -149,7 +167,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   // its text's, so this cannot be computed ahead of the paint. `seeing` and
   // `busy` are the two inputs that change which segment is wide.
   useIsomorphicLayoutEffect(() => {
-    if (!previewUrl) { setThumb(null); return undefined; }
+    if (!hasPreview) { setThumb(null); return undefined; }
     const measure = () => {
       const active = seeing ? eyeRef.current : penRef.current;
       if (!active) return;
@@ -161,16 +179,23 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (ro && trackRef.current) ro.observe(trackRef.current);
     return () => ro?.disconnect();
-  }, [seeing, busy, previewUrl]);
+  }, [seeing, busy, hasPreview]);
 
-  // No preview yet — the chip alone, exactly as the strip drew it before.
-  if (!previewUrl) {
+  // #1594: with no preview to switch to, Building is status, not an action.
+  // Keep it compact and neutral; the accent-filled controls remain clickable.
+  //
+  // #2069 narrows "no preview to switch to": a session whose branch has a
+  // commit HAS one to switch to, it just has to be built first. Only a session
+  // with nothing to build falls through to the status chip.
+  if (!hasPreview) {
     if (!busy) return null;
     return (
       <span
         id="dc-mode-chip"
-        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-600 text-white shrink-0"
+        role="status"
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shrink-0 cursor-default"
       >
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
         Building
       </span>
     );
@@ -208,9 +233,11 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label="Preview this change"
+        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
         aria-pressed={seeing ? 'true' : 'false'}
-        title="Preview this change on staging"
+        title={previewUrl
+          ? 'Preview this change on staging'
+          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
@@ -239,7 +266,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   );
 }
 
-export function SessionHeader(): ReactNode {
+export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(sessionHeaderStore);
   return (
     <>
@@ -252,7 +279,7 @@ export function SessionHeader(): ReactNode {
           grey caption, which read as metadata about the bar rather than as
           the thing the bar is about. */}
       <span
-        className="text-sm font-semibold text-zinc-900 truncate flex-1 min-w-0 dark:text-zinc-100"
+        className="dc-session-title text-sm font-semibold text-zinc-900 truncate flex-1 min-w-0 dark:text-zinc-100"
         title={s.branch}
       >
         {s.title}
@@ -279,9 +306,16 @@ export function SessionHeader(): ReactNode {
           sheet that changes it. Here it survives the launchpad swap, and it is
           not competing with the meter, the runner and the budget menu for the
           same strip. A direct child, which a declared check pins; the mode
-          switch sits after it, on the strip's right edge. */}
+          switch sits after it, on the strip's right edge.
+
+          #1940: it shows at EVERY width again. #1816 hid it (and the PR link)
+          below `sm` behind a "Details ▾" button that opened a Session details
+          dialog, which put the one thing people look this strip up for — what
+          the session is built with — a tap and a sheet away. The control caps
+          its own width (`max-width: min(45%, 14rem)`, app.css), and the title
+          is what gives way. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
-      <ModeSwitch busy={!!s.busy} />
+      {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
     </>
   );
 }

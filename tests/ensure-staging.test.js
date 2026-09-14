@@ -181,6 +181,7 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
     appAccess: require.resolve('../src/services/app-access'),
     stagingRecovery: require.resolve('../src/services/staging-recovery'),
     docker: require.resolve('../src/services/docker'),
+    runtime: require.resolve('../src/services/application-runtime'),
     sessions: require.resolve('../src/routes/sessions'),
   };
 
@@ -212,10 +213,14 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
     })],
   ];
 
+  const originalRuntime = require.cache[paths.runtime];
+  delete require.cache[paths.runtime];
   delete require.cache[paths.sessions];
   const subject = require('../src/routes/sessions');
 
   const restore = () => {
+    if (originalRuntime) require.cache[paths.runtime] = originalRuntime;
+    else delete require.cache[paths.runtime];
     for (const [id, original] of originals) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
@@ -262,6 +267,37 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
     assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild when already live');
   } finally { await srv.close(); loaded.restore(); }
 });
+
+for (const healthy of [true, false]) {
+  test(`Kubernetes preview readiness reports verified=${healthy} without Docker calls`, async (t) => {
+    const loaded = loadSessions({
+      pool: makePool({ ...OWNED_ACTIVE, staging_container_id: null,
+        staging_runtime_kind: 'kubernetes', staging_runtime_name: 'sv-preview-my-app-s42' }),
+      needsRebuild: false, rebuild: async () => 'built',
+    });
+    t.mock.method(require('../src/services/docker'), 'ensureNetworkAlias', () => assert.fail('Docker alias called'));
+    const srv = await startServer(loaded);
+    const realFetch = global.fetch;
+    const probes = [];
+    t.mock.method(global, 'fetch', async (url, options) => {
+      if (String(url).includes('.svc:3000/health')) {
+        probes.push({ url, options });
+        return new Response('', { status: healthy ? 200 : 503 });
+      }
+      return realFetch(url, options);
+    });
+    try {
+      const body = await (await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
+      assert.equal(body.status, 'ready');
+      assert.equal(body.verified, healthy);
+      assert.equal(loaded.healthProbes.length, 0);
+      assert.equal(loaded.getRebuildCalls(), 0);
+      assert.equal(probes.length, 1);
+      assert.equal(probes[0].url, 'http://sv-preview-my-app-s42.social-apps.svc:3000/health');
+      assert.ok(probes[0].options.signal instanceof AbortSignal);
+    } finally { await srv.close(); loaded.restore(); }
+  });
+}
 
 // ── #816: the ready branch carries server-verified readiness ─────────────
 //

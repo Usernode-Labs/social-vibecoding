@@ -1,5 +1,5 @@
 #!/bin/sh
-# Usernode worker entrypoint — long-lived "warm" wrapper.
+# Homeroom worker entrypoint — long-lived "warm" wrapper.
 #
 # The container is brought up once per chat session (via `docker run`)
 # with MODE=warm (the default). This script does one-time bootstrap —
@@ -78,6 +78,9 @@ clip() {
 : "${BRANCH:?BRANCH required}"
 : "${PAT:=}"
 : "${MODE:=warm}"
+
+# This marker belongs to this container's completed bootstrap, never its PVC.
+rm -f /tmp/usernode-worker-ready || die "cannot reset worker readiness"
 
 cd /home/node/workspace || die "no /home/node/workspace"
 
@@ -239,6 +242,7 @@ if [ "$MODE" = "warm" ]; then
   # Long-lived path. Wait for `docker exec /usr/local/bin/run-cc.sh`
   # invocations from the host. The phase marker tells the bootstrap
   # log-tailer the container is ready to receive work.
+  touch /tmp/usernode-worker-ready || die "cannot publish worker readiness"
   echo "__USERNODE_PHASE__ warm-ready"
   exec sleep infinity
 fi

@@ -35,7 +35,7 @@ const EMBED_TITLE_MAX = 60;
 // Labels embedded in a TITLE get a tighter cap than body embeds, so the
 // actor and the ` · App` suffix survive the final 80-char truncation.
 const TITLE_EMBED_MAX = 40;
-const GENERIC_COPY = Object.freeze({ title: 'Usernode', body: 'You have new activity' });
+const GENERIC_COPY = Object.freeze({ title: 'Homeroom', body: 'You have new activity' });
 
 // dev/evan-1786562509265 and friends: a trailing run of digits marks a
 // machine-generated branch name, which reads as noise in a push. Such a
@@ -93,6 +93,8 @@ function buildCopy(kind, context, now) {
   const quoted = label ? `"${truncate(label, EMBED_TITLE_MAX)}"` : '';
   const quotedTitle = label ? `"${truncate(label, TITLE_EMBED_MAX)}"` : '';
   switch (kind) {
+    case 'test_alert':
+      return { title: 'Homeroom test alert', body: 'Your phone can receive push notifications from Homeroom.' };
     case 'conversation_invite':
       return {
         title: withConversation(actor ? `@${actor} invited you to a conversation`
@@ -203,7 +205,7 @@ function buildCopy(kind, context, now) {
     case 'pr_proposed':
       return actor && {
         title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
-        body: 'Take a look. Your vote decides',
+        body: `@${actor} would love your eyes on this`,
       };
     case 'check_failed':
       return {
@@ -214,10 +216,10 @@ function buildCopy(kind, context, now) {
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle
-          ? `${quotedTitle} is waiting for votes` : 'Your proposal needs attention'),
+          ? `${quotedTitle} is waiting for eyes` : 'Your proposal needs attention'),
         body: days >= 1
-          ? `No votes in ${days} ${days === 1 ? 'day' : 'days'}. Nudge collaborators or share the preview`
-          : 'Nudge collaborators or share the preview',
+          ? `Nobody has weighed in for ${days} ${days === 1 ? 'day' : 'days'}. Share the preview or ask a friend to try it`
+          : 'Share the preview or ask a friend to try it',
       };
     }
     // #1405 path A. The agent, not you, put this somewhere — so the copy leads

@@ -61,6 +61,7 @@ function overview() {
     wau: 96,
     mau: 214,
     llmSpendTodayCents: 1873.42,
+    llmSpendWeekCents: 9420.18,
     kudosTotal: 1420,
   };
 }

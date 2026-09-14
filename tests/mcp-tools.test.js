@@ -215,7 +215,7 @@ test('a request page carries titles by default, so a whole board fits in one cal
   assert.equal(full.requests.length, 50);
   assert.equal(full.nextOffset, 50, 'and the rest is reachable rather than lost');
   assert.match(full.requests[0].body, /^<untrusted-content>/);
-  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content> \[Usernode:/,
+  assert.match(full.requests[0].body, /\[truncated\]<\/untrusted-content> \[Homeroom:/,
     'a body is still capped for display, and now says what returns the rest (#1223)');
 });
 
@@ -316,6 +316,58 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
   });
   return { handlers, calls, restore: () => { globalThis.fetch = realFetch; } };
 }
+
+test('update_proposal_issues sends bounded deltas through the platform route', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'PATCH');
+    assert.equal(pathname, '/api/sessions/412/linked-issues');
+    return {
+      proposalId: 412,
+      appSlug: 'recipe-box',
+      linkedIssues: [18, 27],
+      addedIssues: [27],
+      removedIssues: [12],
+      changed: true,
+      prBodyUpdated: true,
+      prBodyStatus: 'updated',
+    };
+  }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const result = (await c.handlers.get('update_proposal_issues')({
+      proposalId: 412, addIssues: [27], removeIssues: [12],
+    })).structuredContent;
+    assert.deepEqual(c.calls[0], {
+      method: 'PATCH',
+      pathname: '/api/sessions/412/linked-issues',
+      body: { addIssues: [27], removeIssues: [12] },
+    });
+    assert.deepEqual(result.linkedIssues, [18, 27]);
+    assert.equal(result.prBodyStatus, 'updated');
+    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/412`);
+    assert.match(result.nextStep, /No code or votes changed/);
+  } finally { c.restore(); }
+});
+
+test('update_proposal_issues refuses empty deltas and read-only grants before HTTP', async () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const empty = await c.handlers.get('update_proposal_issues')({ proposalId: 412 });
+    assert.equal(empty.isError, true);
+    assert.equal(empty.structuredContent.code, 'insufficient_scope',
+      'the shared write-scope gate runs before input handling');
+    assert.equal(c.calls.length, 0);
+  } finally { c.restore(); }
+
+  const writable = connector(() => { throw new Error('must not call platform'); }, {
+    scopes: [READ_SCOPE, WRITE_SCOPE],
+  });
+  try {
+    const empty = await writable.handlers.get('update_proposal_issues')({ proposalId: 412 });
+    assert.equal(empty.isError, true);
+    assert.equal(empty.structuredContent.code, 'invalid_request');
+    assert.equal(writable.calls.length, 0);
+  } finally { writable.restore(); }
+});
 
 test('the registered tool pages a board no single call could return', async () => {
   const issues = Array.from({ length: 120 }, (_, i) => ({
@@ -420,18 +472,18 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   // move. A marker that says text was cut and not how to get it reads as the
   // end of the document.
   const scanned = tools.shapeRequest({ number: 1221, title: 'A long report', body: long });
-  assert.match(scanned.body, /\[truncated\]<\/untrusted-content> \[Usernode: /);
+  assert.match(scanned.body, /\[truncated\]<\/untrusted-content> \[Homeroom: /);
   assert.match(scanned.body, /the first 2000 of \d+ characters/, 'how much of it you got');
   assert.match(scanned.body, /Call get_request for #1221/, 'and what returns the rest');
   assert.equal(scanned.bodyChars, long.length, 'the same two numbers, machine-readable');
   assert.equal(scanned.bodyComplete, false, 'and that this is not all of it');
 
-  // The pointer is Usernode's, so it sits OUTSIDE the envelope: everything
+  // The pointer is Homeroom's, so it sits OUTSIDE the envelope: everything
   // inside is declared to the model as data it must never act on, and an
   // instruction placed there would teach it the opposite habit — on a field
   // whose contents are written by other users.
-  assert.ok(scanned.body.indexOf('</untrusted-content>') < scanned.body.indexOf('[Usernode:'));
-  assert.equal(scanned.body.slice(scanned.body.indexOf('[Usernode:')).includes('<untrusted-content>'),
+  assert.ok(scanned.body.indexOf('</untrusted-content>') < scanned.body.indexOf('[Homeroom:'));
+  assert.equal(scanned.body.slice(scanned.body.indexOf('[Homeroom:')).includes('<untrusted-content>'),
     false, 'and nothing reopens the envelope after it');
 
   // The same request, read whole: the WRITE limit applies, not the display
@@ -443,7 +495,7 @@ test('a clipped body says how much there is, and a full read returns it', () => 
   assert.equal(read.bodyComplete, true);
   assert.equal(read.bodyChars, long.length);
   assert.ok(!read.body.includes('[truncated]'));
-  assert.ok(!read.body.includes('[Usernode:'),
+  assert.ok(!read.body.includes('[Homeroom:'),
     'nothing was cut, so there is nothing to point at');
   assert.ok(read.body.includes('And the fix.'), 'including the part the clip dropped');
   assert.match(read.body, /^<untrusted-content>/, 'read in full is still read as data');
@@ -932,6 +984,115 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+// ── #2066: advancing a shared in-progress card ──────────────────────────
+//
+// A draft landed with `share: true`, more commits were pushed onto it, and
+// the card never got a preview. Three defects, all in what the connector says
+// back rather than in what the platform did.
+
+test('submit_work refuses `share` on an update, and names the call that works', () => {
+  // `share` keys off the TASK's session_id, so passing it with proposalId did
+  // nothing at all — silently. And it is the natural call to make: the first
+  // share hands back a sessionId and get_proposal reports a sessionId, so the
+  // surface invites exactly this. Refused rather than quietly honoured,
+  // because on a proposal already up for a vote it would let a caller believe
+  // they had moved it back to drafts.
+  const { handlers, calls, restore } = connector(() => ({ updated: true }), {
+    scopes: [READ_SCOPE, WRITE_SCOPE],
+  });
+  try {
+    const res = handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix', share: true });
+    return Promise.resolve(res).then((r) => {
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /`share` is not part of an update/);
+      assert.match(r.content[0].text, /proposalId \+ branch and NO `share`/,
+        'the refusal has to name the call that does work, or it costs a round trip');
+      assert.match(r.content[0].text, /taskId \+ branch \+ share/, 'and the one that creates a card');
+      assert.equal(calls.length, 0, 'refused before anything reached the platform');
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('an update to a SESSION is reported in session words, not proposal words', async () => {
+  // It used to say "Any votes it had collected were cleared ... reviewers have
+  // been asked to look again" on a card that is up for no vote, beside a
+  // votesCleared: 0 in the same payload.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 4158, appSlug: 'recipe-box', prNumber: null,
+    headSha: 'c0ffee00506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'session', previewRebuilding: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
+    const step = res.structuredContent.nextStep;
+    assert.match(step, /shared card now points at your new commit/);
+    // The claim that must not appear, rather than the word: saying "no votes
+    // are being collected" is the correct thing to say about such a card.
+    assert.doesNotMatch(step, /votes? .*(were|was) cleared/i,
+      'a card in the in-progress area has no votes to clear');
+    assert.doesNotMatch(step, /reviewers/i, 'and nobody has been asked to review it');
+    assert.match(step, /no votes are being collected/i, 'which is worth saying outright');
+    assert.match(step, /preview is rebuilding/, 'what this push actually set going');
+    assert.equal(res.structuredContent.targetKind, 'session');
+    assert.equal(res.structuredContent.previewRebuilding, true);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+test('a push that started no build says so, rather than promising a preview', async () => {
+  // The defect that sent somebody looking for a preview that did not exist:
+  // the answer described the documented behaviour instead of the real one.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 4158, appSlug: 'recipe-box', votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'session',
+    previewRebuilding: false, resumeRequired: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
+    assert.equal(res.structuredContent.previewRebuilding, false);
+    assert.equal(res.structuredContent.resumeRequired, true);
+    assert.match(res.structuredContent.nextStep, /paused/,
+      'a paused session takes the commit and deliberately does not build');
+    assert.doesNotMatch(res.structuredContent.nextStep, /rebuilding now/);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+test('a proposal update keeps its own wording', async () => {
+  // The session branch must not swallow the case it was carved out of.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const { handlers, restore } = connector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52, votesCleared: 2,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+    assert.match(res.structuredContent.nextStep, /The proposal now points at your new commit/);
+    assert.match(res.structuredContent.nextStep, /2 votes it had collected were cleared/);
+    assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
+  } finally {
+    restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
 // ── submit_work `propose: true` — the review boundary, on the owner's ask ──
 //
 // A session continuation deliberately lands quietly; until now the ONLY way
@@ -942,18 +1103,29 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
 // caller's own token — the route applies every gate — reopening a paused
 // session first, since an external update usually lands on one.
 
-function proposeHarness(platform) {
+function proposeHarness(platform, { taskRows = [] } = {}) {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
   const realGhEnabled = gh.isEnabled;
   const realLinkEnabled = githubLink.isEnabled;
   gh.isEnabled = () => true;
   githubLink.isEnabled = () => true;
-  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  // SQL-aware, because the promote now has bookkeeping of its own to do:
+  // `taskRows` is the open work order the session is carrying (none by
+  // default), and `queries` is what the tool actually asked the database.
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes("AND session_id = $2 AND status = 'open'")) return { rows: taskRows };
+      return { rows: [{ app_slug: 'recipe-box' }] };
+    },
+  };
   const { handlers, calls, restore } = connector(platform, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   return {
     handlers,
     calls,
+    queries,
     restore: () => {
       restore();
       gh.isEnabled = realGhEnabled;
@@ -1086,6 +1258,93 @@ test('propose on a target that is already a proposal promotes nothing', async ()
   }
 });
 
+// ── The work order the promote has to close ────────────────────────────
+//
+// `share: true` leaves the work order OPEN by design — the agent keeps
+// committing onto the in-progress card — and stamps `session_id` on the row.
+// The promote that ends that arrangement is this call, and it carries no
+// taskId, so nothing downstream of the share ever closed the reservation:
+// each share -> promote held a slot of the caller's ten-open-work-order cap
+// for the fourteen days until it expired.
+//
+// It is closed HERE rather than inside the service because the promote is a
+// separate loopback that runs after submitWork has already returned, and
+// this is the first moment the work is genuinely in front of the group.
+
+const CLOSE_SQL = "SET status = 'submitted'";
+
+test('a successful promote closes the work order the share left open', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    const close = h.queries.find((q) => q.sql.includes(CLOSE_SQL));
+    assert.ok(close, 'the reservation is finished — the work is up for the vote');
+    // Scoped to the caller as well as to the session: `user` here is the
+    // connector's own account, and a work order belongs to an ACCOUNT.
+    assert.deepEqual(close.params.slice(0, 4), [91, 3140, 7, 'my-fix']);
+    assert.equal(close.params[4], 'update_branch');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote that failed leaves the work order open — the work is not up for a vote', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) {
+      return { __http: { ok: false, status: 409, body: { error: 'promoted_cap' } } };
+    }
+    if (pathname.endsWith('/resume')) return { ok: true };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, false);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0,
+      'the commit is safe on the session and the agent is told to try again — the order is still live');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote with no work order behind it writes nothing', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0);
+  } finally {
+    h.restore();
+  }
+});
+
 test('submit_work carries the request its work order named into the import', () => {
   // #1217. The service decides WHICH request (it holds the task row); this
   // module only has to put it on the wire under the name the import route
@@ -1158,6 +1417,7 @@ test('proposal shaping returns the platform hash route', () => {
       id: 58, app_slug: 'recipe-box', pr_title: 'Fix checkmarks', status: 'promoted',
       pr_number: 41, yes_count: 3, no_count: 0, votes_required: 4,
       check_state: 'passing', external_agent: 'claude_code_web',
+      linked_issues: [27, 12, 27],
     },
     ORIGIN
   );
@@ -1166,6 +1426,7 @@ test('proposal shaping returns the platform hash route', () => {
   assert.equal(proposal.yesVotes, 3);
   assert.equal(proposal.votesRequired, 4);
   assert.equal(proposal.externalAgent, 'claude_code_web');
+  assert.deepEqual(proposal.linkedIssues, [12, 27]);
   assert.match(proposal.title, /^<untrusted-content>/);
 
   // A session with no app still shapes, without inventing a link.
@@ -1229,7 +1490,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
     'prepare_work', 'release_request',
-    'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
+    'start_platform_build', 'submit_platform_build', 'submit_work',
+    'update_proposal_issues', 'whoami',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
@@ -1383,14 +1645,14 @@ test('no tool forces a prompt of its own', () => {
   }
 });
 
-test('ACTING_TOOLS still names the five, and every one is a write', () => {
+test('ACTING_TOOLS names every user-directed action, and every one is a write', () => {
   // The list outlived the marking: it is what keeps the acting tools out of
   // the setup hint and out of the shipped allow rules. A read in here would
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'create_request', 'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_work',
+    'submit_platform_build', 'submit_work', 'update_proposal_issues',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -1398,7 +1660,7 @@ test('ACTING_TOOLS still names the five, and every one is a write', () => {
     const body = SRC.slice(idx, next > 0 ? next : undefined);
     assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
   }
-  // answer_questions is a write that is deliberately not one of the five.
+  // answer_questions is a write that is deliberately not in this group.
   assert.ok(!tools.ACTING_TOOLS.includes('answer_questions'));
 });
 
@@ -1470,12 +1732,23 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
     'the canonical name comes from the constant, never a re-typed literal');
   assert.match(body, /permissionAllowRules: \[\.\.\.READ_ONLY_ALLOW_RULES\]/,
     'the rules come from the constant, and are copied so a caller cannot mutate the frozen array');
-  assert.equal(SERVER_NAME, 'usernode');
+  assert.equal(SERVER_NAME, 'homeroom');
   // Two globs and three literals per spelling. The two `notify_*` entries are
   // #1405's self-scoped pair — writes, but only into the caller's own
   // notification feed, which is why they are literals here and not a widening
-  // of the globs.
+  // of the globs. Four spellings: the canonical pair, and the pre-rename pair
+  // an already-connected account is still registered under.
   assert.deepEqual([...READ_ONLY_ALLOW_RULES], [
+    'mcp__homeroom__get_*',
+    'mcp__homeroom__list_*',
+    'mcp__homeroom__whoami',
+    'mcp__homeroom__notify_awaiting_input',
+    'mcp__homeroom__notify_input_received',
+    'mcp__Homeroom__get_*',
+    'mcp__Homeroom__list_*',
+    'mcp__Homeroom__whoami',
+    'mcp__Homeroom__notify_awaiting_input',
+    'mcp__Homeroom__notify_input_received',
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
@@ -1593,7 +1866,7 @@ test('the platform-build fallback is described as the second choice', () => {
   const idx = SRC.indexOf("server.registerTool('start_platform_build'");
   const desc = SRC.slice(idx, idx + 1200);
   // Honest about whose money it spends, and about the better path.
-  assert.match(desc, /daily Usernode credits/);
+  assert.match(desc, /daily Homeroom credits/);
   assert.match(desc, /Prefer prepare_work/);
   assert.match(desc, /user explicitly chooses the platform build/,
     'missing tools never silently opt the user into platform credit spend');
@@ -2155,7 +2428,7 @@ test('a proposal states where its head lives and whether the author can push the
 // ── #1196: an imported head is not automatically a fork ───────────────────
 //
 // Proposal 3140 is the shape this is about: submit_work could not open a
-// cross-fork pull request, so Usernode MIRRORED the agent's fork branch into
+// cross-fork pull request, so Homeroom MIRRORED the agent's fork branch into
 // `usernode/from-es92-t3-8510c5ac` in the app repository and imported the
 // same-repo pull request it opened from there. get_proposal read
 // `source='imported'`, called the head a fork, and told the agent to push to

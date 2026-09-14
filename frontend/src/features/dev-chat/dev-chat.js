@@ -115,16 +115,13 @@ const DevChat = {
     'Claude is working. Type your next note and tap 💾 to save it for later.',
   SAVE_DRAFT_TITLE:
     'Save this text as a draft (Ctrl+Enter). It stays here until you send it',
-  // #920: the hint under the composer names whatever Ctrl/Cmd+Enter does
-  // RIGHT NOW. While a turn runs sending is impossible and the keystroke
-  // parks the text as a draft instead, so the copy follows the action.
-  // Both carry the same <kbd> markup the template ships inline; the idle
-  // variant IS the template's default, so a fresh render never flashes
-  // the wrong one. _syncShortcutHint swaps them.
-  SHORTCUT_HINT_SEND:
-    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send',
-  SHORTCUT_HINT_SAVE:
-    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to save as draft',
+  SEND_TITLE: 'Send (Ctrl+Enter)',
+  // #920's hint used to be a LINE under the box, because the keystroke does
+  // two different things and nothing else said which. It is the one circle's
+  // title now: the button and the shortcut perform the same action in every
+  // state, so naming it on the control names it for both. The mid-turn half
+  // is also carried by the busy placeholder, which already says "save it for
+  // later" — which is what made the separate line affordable to lose.
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
@@ -135,6 +132,9 @@ const DevChat = {
   _titleCompletion: null,
 
   budget: null,
+  // #2118: an OpenRouter session's counterpart — what the viewer's
+  // OpenRouter key reports left of its limit (GET /allowance), read live.
+  openrouterAllowance: null,
 
   // ----- Cross-app active sessions panel state -----
   // Every non-archived session the user owns across all apps, with a `busy`
@@ -212,8 +212,8 @@ const DevChat = {
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
-    'claude-fable-5': {
-      label: 'Fable 5',
+    'claude-fable-5-1': {
+      label: 'Fable 5.1',
       changeSize: {
         short: 'design, taste, and difficult coding',
         long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
@@ -272,16 +272,85 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The chat-model picker, as data. Null on every venue that has none. */
+  /**
+   * The chat-model picker, as data. Null on every venue that has none.
+   *
+   * TWO SURFACES, and the split is what #1589 found. A native select's
+   * closed control shows the selected option's own text, so
+   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
+   * coding") set the control's width: 276px of a 344px strip on a phone,
+   * which pushed the label above it and the credit meter below it — three
+   * lines for a row that holds two things. Names brought it to 89px.
+   *
+   * That finding was about the CLOSED control, and `selectedLabel` still
+   * honours it. The picker is the kit's anchored menu now rather than a
+   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
+   * so the blurb comes back on `options`, where it costs nothing and answers
+   * the only question this control is ever asked: which one for what.
+   *
+   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
+   * name ("Opus 5: general coding work") and the row already opens with it,
+   * so the sheet joins the two itself. The Generate-proposal picker — the one
+   * a first-timer meets, in a dialog, with a caption under each option —
+   * still renders `modelOptionText`, which is untouched.
+   */
   _modelPickerView() {
     if (DevChat._currentVenueId() !== 'usernode-claude') return null;
+    const selected = DevChat.selectedModel;
+    const label = (id) => {
+      const meta = DevChat.MODELS[id];
+      return (meta && meta.label) || id;
+    };
     return {
       options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
         id,
-        label: DevChat.modelOptionText(meta),
+        label: (meta && meta.label) || id,
+        // Optional on the wire — loadModels() carries changeSize through
+        // only when the server sends it, and a server that omits it leaves
+        // the sheet rendering plain names.
+        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
       })),
-      selected: DevChat.selectedModel,
+      selected,
+      selectedLabel: label(selected),
     };
+  },
+
+  /**
+   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
+   *
+   * The venue control at the top of the session opens the kit's adaptive
+   * menu (a bottom action sheet on touch, an anchored popover on desktop).
+   * This was the only native <select> left beside it, and the two are the
+   * same question asked at different scopes: where this is built, and by
+   * whom. They should not answer in two different idioms.
+   *
+   * The kit sets row labels with textContent, so the blurb and the tick ride
+   * IN the label — the same constraint build-venues.js states at its own
+   * call. The tick trails the row, as it does there, so the two sheets mark
+   * "you are here" the same way.
+   *
+   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
+   * with the shell (public/usernode-native/v1), so this is the "someone
+   * stripped native.js" case, not a route we serve.
+   */
+  openModelSheet(anchorEl) {
+    const view = DevChat._modelPickerView();
+    if (!view || !view.options.length) return Promise.resolve(null);
+    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
+    if (!kit || !kit.hasKit()) return Promise.resolve(null);
+    DevChat._closeSessionOptions();
+    return kit.menu({
+      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
+      title: 'Which model should write this change?',
+      items: view.options.map((o) => ({
+        label: o.label
+          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
+          + (o.id === view.selected ? ' \u2713' : ''),
+        handler: () => {
+          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
+        },
+      })),
+    });
   },
 
   /** The picker's `change`, which used to be an addEventListener per render. */
@@ -294,7 +363,7 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The OpenRouter row's "Change model", likewise. */
+  /** The OpenRouter row's "Browse models", likewise. */
   _onOpenRouterModelChange() {
     DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
   },
@@ -331,7 +400,7 @@ const DevChat = {
   // and the web hand-off, in menus that sat inches apart; the venue names
   // say where the work happens and collide with nothing.
   _agentName(backend) {
-    return backend === 'codex_openrouter' ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+    return backend === 'codex_openrouter' ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
   },
 
   // Runtime rows use camelCase metadata, session rows use snake_case, and
@@ -412,7 +481,7 @@ const DevChat = {
   //
   // A SAVED DEFAULT is deliberately NOT one of them (#1353). It used to put
   // the walkthrough on screen for any untouched session, while the venue
-  // derivation above — which never read it — went on saying Usernode ·
+  // derivation above — which never read it — went on saying Homeroom ·
   // Claude: the header and the sheet said "On-Platform" over a WebUI
   // launchpad, and the only way out was to pick another venue and come back,
   // once per tab, because a preference is not a choice about THIS session
@@ -454,8 +523,8 @@ const DevChat = {
   // Three venues build somewhere else, and for all three a composer is the
   // wrong primary control: no turn will ever run here, so a text box that
   // looks like it starts one is a lie the wireframes deliberately remove.
-  // These three methods are the swap. public/js/launchpad.js owns the
-  // markup for `own-tools-pr`; the two web hand-offs reuse the walkthrough
+  // The own-tools guide is a React child; launchpad.js supplies its context.
+  // The two web hand-offs reuse the walkthrough
   // that has existed since #1049, re-sited from the transcript into the
   // composer's place.
   //
@@ -510,24 +579,7 @@ const DevChat = {
     const venue = DevChat._launchpadVenue();
     if (!venue) return '';
     const resume = DevChat._launchpadResumeState();
-    if (venue === 'own-tools-pr') {
-      const session = DevChat.currentSession || {};
-      return Launchpad.ownToolsHtml({
-        targetKind: resume.targetKind,
-        targetId: resume.targetId,
-        branchName: resume.branchName,
-        origin: (typeof window !== 'undefined' && window.location)
-          ? window.location.origin : '',
-        slug: App.currentApp || '',
-        // The request this session was opened from, when there was one —
-        // that is the whole of the prefill's brief, and the reason the
-        // block a user pastes into their agent says something more useful
-        // than "build the thing".
-        issueNumber: session.created_from_issue_number || null,
-        sessionTitle: session.session_title || session.pr_title || '',
-        canImport: !(typeof AppView !== 'undefined' && AppView.readOnly),
-      });
-    }
+    if (venue === 'own-tools-pr') return '';
     // web-claude-code / web-codex: the five-step walkthrough, which already
     // resolves every step from the server and resumes where the user left
     // off.
@@ -561,6 +613,31 @@ const DevChat = {
     });
   },
 
+  _ownToolsGuideView() {
+    if (DevChat._launchpadVenue() !== 'own-tools-pr') return null;
+    const session = DevChat.currentSession || {};
+    const resume = DevChat._launchpadResumeState();
+    return {
+      prompt: Launchpad.prefillText({
+        ...resume,
+        slug: App.currentApp || '',
+        issueNumber: session.created_from_issue_number || null,
+        sessionTitle: session.session_title || session.pr_title || '',
+      }),
+      resumeHtml: Launchpad.resumeBannerHtml(resume),
+      canImport: !(typeof AppView !== 'undefined' && AppView.readOnly),
+    };
+  },
+
+  _importOwnToolsPr() {
+    if (typeof AppView !== 'undefined' && AppView.readOnly) return;
+    if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
+      AppView.openImportPrModal();
+    } else {
+      window.location.hash = '#settings/cli';
+    }
+  },
+
   // Repaint whichever surface the walkthrough is currently living on.
   //
   // Every dev-flow action used to end in renderMessages(), because the card
@@ -586,21 +663,6 @@ const DevChat = {
   _wireLaunchpad() {
     const host = document.getElementById('dc-launchpad-slot');
     if (!host) return;
-    if (window.Launchpad) {
-      host.querySelectorAll('[data-launchpad]').forEach((el) => {
-        Launchpad.wire(el, {
-          onCopy: (key, text, button) => DevChat._launchpadCopy(text, button),
-          onAction: (action) => {
-            if (action !== 'import') return;
-            if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
-              AppView.openImportPrModal();
-            } else {
-              window.location.hash = '#settings/cli';
-            }
-          },
-        });
-      });
-    }
     // The walkthrough renders here now rather than in the transcript, so it
     // needs wiring here too — _wireDevFlowCard only ever scans #dc-messages,
     // and a card wired by nobody is the #1304 failure again.
@@ -611,20 +673,6 @@ const DevChat = {
         });
       });
     }
-  },
-
-  // Copy, with the button itself as the receipt. No toast: the button is
-  // under the user's finger and a toast for a copy is noise on a phone.
-  _launchpadCopy(text, button) {
-    const done = (ok) => {
-      if (!button) return;
-      const original = button.textContent;
-      button.textContent = ok ? 'Copied.' : 'Press ⌘C to copy';
-      setTimeout(() => { button.textContent = original; }, 1500);
-    };
-    try {
-      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
-    } catch { done(false); }
   },
 
   // Persist the venue this session is being built in (#1281).
@@ -662,8 +710,8 @@ const DevChat = {
   // user's and so is the invoice, and none of that spend passes through the
   // platform meter, so nothing else on the composer can state it.
   //
-  // A Usernode · Claude session had a sentence here too and no longer does
-  // (#1353): "Chat and coding use Usernode · Claude and its normal credit
+  // A Homeroom · Claude session had a sentence here too and no longer does
+  // (#1353): "Chat and coding use Homeroom · Claude and its normal credit
   // rules" sat under a meter counting those very credits, beside a picker
   // labelled Chat model, in a session whose header names the venue. Four
   // ways of saying the same thing, on the surface with the least room for
@@ -707,10 +755,70 @@ const DevChat = {
   },
 
   _openRouterModelOptionLabel(model) {
+    const badges = [];
+    if (model?.isFavorite) badges.push('★');
+    if (model?.isRecommended) badges.push('Recommended');
+    if (model?.createdAt) {
+      const age = Date.now() - Date.parse(model.createdAt);
+      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+    }
     const compatibility = model?.compatibility === 'verified'
       ? ' · verified'
       : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-    return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+    return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+  },
+
+  _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return (Array.isArray(models) ? models : [])
+      .map((model, index) => ({ model, index }))
+      .filter(({ model }) => {
+        if (favoritesOnly && model?.isFavorite !== true) return false;
+        if (!needle) return true;
+        return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+          .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+      })
+      .sort((a, b) => {
+        if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+        if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+        return a.index - b.index;
+      })
+      .map(({ model }) => model);
+  },
+
+  // A task picker should start with the useful shortlist, while preserving a
+  // current non-favorite selection. The latter matters when somebody picked
+  // an uncommon model deliberately: merely opening the dialog must not move
+  // them to the first recommended model.
+  _openRouterFavoritesOnlyByDefault(models, selectedModel) {
+    const selected = (Array.isArray(models) ? models : [])
+      .find((model) => model?.id === selectedModel);
+    return selected?.isFavorite === true;
+  },
+
+  _openRouterCatalogAgeText(refreshedAt) {
+    const refreshed = Date.parse(refreshedAt || '');
+    if (!Number.isFinite(refreshed)) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+    if (seconds < 60) return 'Updated just now';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `Updated ${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    return `Updated ${hours}h ago`;
+  },
+
+  async _setOpenRouterModelFavorite(modelId, favorite) {
+    const response = await fetch('/api/me/coding-agent/models/favorite', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId, favorite }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
+    return body;
   },
 
   _openRouterModelCompatibilitySummary(model) {
@@ -723,7 +831,96 @@ const DevChat = {
       || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
   },
 
-  async _loadCodingAgentChoiceData() {
+  // Prepare the saved provider for a REAL build action (currently Generate
+  // proposal). This is deliberately not called by a page-load/status read:
+  // creating a company-funded credential is a write and should happen only
+  // after the user asks Usernode to do work. An explicit Claude default is
+  // preserved. Everyone else who is eligible for OpenRouter gets the
+  // included managed key on first use, and provisioning errors are returned
+  // to the caller verbatim rather than being hidden behind a Claude fallback.
+  async _prepareDefaultCodingAgentForBuild() {
+    const readPreferences = async () => {
+      const response = await fetch('/api/me/coding-agent', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || 'Could not load your coding-agent settings.');
+      }
+      return body;
+    };
+
+    let prefs = await readPreferences();
+    const explicitClaude = prefs.backends?.claude_code?.isDefault === true;
+    if (explicitClaude) return prefs;
+    if (!prefs.codexAvailable) {
+      // This mirrors the server's deliberate flag/beta policy fallback.
+      return { ...prefs, defaultBackend: 'claude_code' };
+    }
+
+    const readCredentialStatus = async () => {
+      const response = await fetch('/api/me/credentials/openrouter', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || 'Could not check your OpenRouter credential.');
+      }
+      return body;
+    };
+    let status = await readCredentialStatus();
+    if (status.configured === true && status.status === 'valid') {
+      if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+      // The key may have appeared in another tab after the preference read.
+      // Re-read only in that mismatched state so the modal and the server do
+      // not choose different providers for the same request.
+      if (prefs.defaultBackend !== 'codex_openrouter') prefs = await readPreferences();
+      return { ...prefs, openrouterCredentialSource: status.source || null };
+    }
+
+    let openrouterCredentialSource = null;
+    const provisionResponse = await fetch('/api/me/credentials/openrouter/managed', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const provisioned = await provisionResponse.json().catch(() => ({}));
+    if (!provisionResponse.ok) {
+      // Two build clicks can race. The loser sees the reservation's
+      // byok_configured/already_issued conflict after the winner has saved a
+      // valid key; re-read once and accept that completed state. A conflict
+      // without a usable credential is a real problem and remains visible.
+      if (['byok_configured', 'already_issued'].includes(provisioned.code)) {
+        status = await readCredentialStatus();
+        openrouterCredentialSource = status.source || null;
+      }
+      if (status.configured !== true || status.status !== 'valid') {
+        const err = new Error(
+          provisioned.error
+            || `OpenRouter could not be set up automatically (HTTP ${provisionResponse.status}).`,
+        );
+        err.code = provisioned.code || 'provision_failed';
+        throw err;
+      }
+    } else {
+      // This request created the company-funded key, even on older servers
+      // whose successful response predates the explicit `source` field.
+      openrouterCredentialSource = provisioned.source || 'usernode_managed';
+    }
+
+    if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+    prefs = await readPreferences();
+    if (prefs.defaultBackend !== 'codex_openrouter') {
+      throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
+    }
+    return { ...prefs, openrouterCredentialSource };
+  },
+
+  async _loadCodingAgentChoiceData({ forceRefresh = false } = {}) {
     const data = {
       defaultBackend: 'claude_code',
       backends: {},
@@ -731,6 +928,9 @@ const DevChat = {
       credentialConfigured: false,
       models: [],
       recommendedModelId: null,
+      refreshedAt: null,
+      totalModels: 0,
+      catalogLoaded: false,
       loadError: null,
       catalogError: null,
     };
@@ -764,13 +964,18 @@ const DevChat = {
     if (!data.codexAvailable || !data.credentialConfigured) return data;
 
     try {
-      const modelsRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+      const refresh = forceRefresh ? '&refresh=1' : '';
+      const modelsRes = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
         credentials: 'same-origin',
+        cache: 'no-store',
       });
       const catalog = await modelsRes.json().catch(() => ({}));
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
+      data.refreshedAt = catalog.refreshedAt || null;
+      data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
       if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
@@ -790,7 +995,7 @@ const DevChat = {
       selectedBackend = 'claude_code';
     }
     const openRouterModelOnly = fixedBackend === 'codex_openrouter';
-    const availableIds = new Set(data.models.map((m) => m.id));
+    let availableIds = new Set(data.models.map((m) => m.id));
     const recommendedModel = availableIds.has(data.recommendedModelId)
       ? data.recommendedModelId
       : (data.models.find((m) => m.compatibility === 'verified')?.id || data.models[0]?.id || '');
@@ -812,20 +1017,29 @@ const DevChat = {
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included credits or personal key, with any available model.</span>
             ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
             ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
           <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
-          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <div class="mt-1 flex flex-wrap gap-2">
+            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="Filter by model or provider…" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">☆ Favorites</button>
+            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">Refresh</button>
+          </div>
+          <div class="mt-2 flex items-stretch gap-2">
+            <select id="dc-agent-choice-model" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="Add selected model to favorites" title="Add selected model to favorites">☆</button>
+          </div>
+          <p id="dc-agent-choice-catalog-meta" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Platform recommendations start in Favorites. Clear the Favorites filter to browse the complete key-visible catalog. Rates are per 1M tokens; actual spend depends on usage.</p>
           <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
             <option value="">Default</option>
@@ -849,23 +1063,60 @@ const DevChat = {
     const codexButton = overlay.querySelector('#dc-agent-choice-codex');
     const codexOptions = overlay.querySelector('#dc-agent-choice-codex-options');
     const modelSelect = overlay.querySelector('#dc-agent-choice-model');
+    const modelSearch = overlay.querySelector('#dc-agent-choice-model-search');
+    const favoritesOnlyButton = overlay.querySelector('#dc-agent-choice-favorites-only');
+    const refreshModelsButton = overlay.querySelector('#dc-agent-choice-refresh-models');
+    const starModelButton = overlay.querySelector('#dc-agent-choice-star-model');
+    const catalogMeta = overlay.querySelector('#dc-agent-choice-catalog-meta');
     const effortSelect = overlay.querySelector('#dc-agent-choice-effort');
     const status = overlay.querySelector('#dc-agent-choice-status');
     const settingsButton = overlay.querySelector('#dc-agent-choice-settings');
     const applyButton = overlay.querySelector('#dc-agent-choice-apply');
 
-    for (const model of data.models) {
-      const option = document.createElement('option');
-      option.value = model.id;
-      option.textContent = this._openRouterModelOptionLabel(model);
-      modelSelect.appendChild(option);
-    }
-    modelSelect.value = selectedModel;
+    // New/default OpenRouter tasks land on the curated recommended favorites
+    // instead of making the user scan the whole provider catalog. If the
+    // session is already on a non-favorite, keep All models visible so merely
+    // opening this dialog never changes the pinned selection.
+    let favoritesOnly = this._openRouterFavoritesOnlyByDefault(data.models, selectedModel);
     effortSelect.value = selectedEffort;
 
     const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
       ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
       : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
+
+    const renderModelOptions = () => {
+      const visibleModels = this._openRouterModelsForPicker(data.models, {
+        query: modelSearch.value,
+        favoritesOnly,
+      });
+      modelSelect.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        modelSelect.appendChild(option);
+      }
+      if (visibleModels.some((model) => model.id === selectedModel)) {
+        modelSelect.value = selectedModel;
+      } else {
+        selectedModel = visibleModels[0]?.id || '';
+        modelSelect.value = selectedModel;
+      }
+      modelSelect.disabled = visibleModels.length === 0;
+      favoritesOnlyButton.setAttribute('aria-pressed', String(favoritesOnly));
+      favoritesOnlyButton.textContent = favoritesOnly ? '★ Favorites' : '☆ Favorites';
+      const age = this._openRouterCatalogAgeText(data.refreshedAt);
+      catalogMeta.textContent = visibleModels.length
+        ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
+        : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      if (!visibleModels.length) {
+        starModelButton.disabled = true;
+        starModelButton.textContent = '☆';
+        starModelButton.setAttribute('aria-pressed', 'false');
+        effortSelect.disabled = true;
+        effortSelect.value = '';
+      }
+    };
 
     const render = () => {
       const codex = selectedBackend === 'codex_openrouter';
@@ -877,15 +1128,15 @@ const DevChat = {
       settingsButton.classList.toggle('hidden', !codex);
 
       applyButton.disabled = false;
-      const venueName = codex ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+      const venueName = codex ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
       applyButton.textContent = openRouterModelOnly
         ? 'Use this OpenRouter model'
         : (mode === 'switch' ? `Switch to ${venueName}` : `Build on ${venueName}`);
 
       if (!codex) {
         status.textContent = data.loadError
-          ? `${data.loadError} Usernode · Claude is still available.`
-          : 'Usernode · Claude builds in this chat on your daily Usernode credits.';
+          ? `${data.loadError} Homeroom · Claude is still available.`
+          : 'Homeroom · Claude builds in this chat on your daily Homeroom credits.';
         return;
       }
       if (data.loadError) {
@@ -894,7 +1145,7 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'Usernode · OpenRouter is not enabled for this account or deployment.';
+        status.textContent = 'Homeroom · OpenRouter is not enabled for this account or deployment.';
         applyButton.disabled = true;
         return;
       }
@@ -909,6 +1160,21 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
+      if (!model) {
+        status.textContent = "No key-visible models match. Refresh, then check this key's OpenRouter account policies.";
+        applyButton.disabled = true;
+        starModelButton.disabled = true;
+        starModelButton.textContent = '☆';
+        starModelButton.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      starModelButton.disabled = false;
+      starModelButton.textContent = model.isFavorite ? '★' : '☆';
+      starModelButton.setAttribute('aria-pressed', String(model.isFavorite === true));
+      starModelButton.setAttribute('aria-label', model.isFavorite
+        ? 'Remove selected model from favorites'
+        : 'Add selected model to favorites');
+      starModelButton.title = starModelButton.getAttribute('aria-label');
       const supportsReasoning = model?.supportsReasoning === true;
       effortSelect.disabled = !supportsReasoning;
       if (supportsReasoning) {
@@ -925,6 +1191,59 @@ const DevChat = {
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
     codexButton.addEventListener('click', () => { selectedBackend = 'codex_openrouter'; render(); });
     modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; render(); });
+    modelSearch.addEventListener('input', () => { renderModelOptions(); render(); });
+    favoritesOnlyButton.addEventListener('click', () => {
+      favoritesOnly = !favoritesOnly;
+      renderModelOptions();
+      render();
+    });
+    starModelButton.addEventListener('click', async () => {
+      const model = data.models.find((item) => item.id === selectedModel);
+      if (!model || starModelButton.disabled) return;
+      const favorite = model.isFavorite !== true;
+      starModelButton.disabled = true;
+      try {
+        await this._setOpenRouterModelFavorite(model.id, favorite);
+        model.isFavorite = favorite;
+        renderModelOptions();
+        render();
+      } catch (err) {
+        status.textContent = err.message || 'Could not update that favorite.';
+        starModelButton.disabled = false;
+      }
+    });
+    refreshModelsButton.addEventListener('click', async () => {
+      refreshModelsButton.disabled = true;
+      refreshModelsButton.textContent = 'Refreshing…';
+      try {
+        const fresh = await this._loadCodingAgentChoiceData({ forceRefresh: true });
+        if (fresh.loadError || (!fresh.catalogLoaded && fresh.catalogError)) {
+          throw new Error(fresh.loadError || fresh.catalogError);
+        }
+        data.codexAvailable = fresh.codexAvailable;
+        data.credentialConfigured = fresh.credentialConfigured;
+        data.catalogError = fresh.catalogError;
+        data.models = fresh.models;
+        data.recommendedModelId = fresh.recommendedModelId;
+        data.refreshedAt = fresh.refreshedAt;
+        data.totalModels = fresh.totalModels;
+        availableIds = new Set(data.models.map((model) => model.id));
+        const nextRecommended = availableIds.has(data.recommendedModelId)
+          ? data.recommendedModelId
+          : (data.models.find((model) => model.isRecommended)?.id
+            || data.models.find((model) => model.compatibility === 'verified')?.id
+            || data.models[0]?.id
+            || '');
+        if (!availableIds.has(selectedModel)) selectedModel = nextRecommended;
+        renderModelOptions();
+        render();
+      } catch (err) {
+        status.textContent = err.message || 'Could not refresh OpenRouter models.';
+      } finally {
+        refreshModelsButton.disabled = false;
+        refreshModelsButton.textContent = 'Refresh';
+      }
+    });
     effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
 
     return new Promise((resolve) => {
@@ -956,15 +1275,16 @@ const DevChat = {
         }
         finish({
           backend: selectedBackend,
-          model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
+          model: selectedBackend === 'codex_openrouter' ? selectedModel : null,
           reasoningEffort: selectedBackend === 'codex_openrouter'
             ? (effortSelect.value || null)
             : null,
         });
       });
+      renderModelOptions();
       render();
       (openRouterModelOnly
-        ? modelSelect
+        ? modelSearch
         : (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton)).focus();
     });
   },
@@ -1068,7 +1388,7 @@ const DevChat = {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       // No toast on the way out (#1348 follow-up). A successful pick used to
-      // pop "This session now uses Usernode · Claude." here — and only here:
+      // pop "This session now uses Homeroom · Claude." here — and only here:
       // the sheet's other three rows change the session in silence, so the
       // same act announced itself in one state out of four. The screen is
       // already the announcement. The repaint above swaps a launchpad back
@@ -1122,6 +1442,37 @@ const DevChat = {
       // it still tests for '1', so the other demo branches stay off.
       return demo === '1' || demo === 'session' ? `?demo=${demo}` : '';
     } catch { return ''; }
+  },
+
+  // The dev-flow status route takes a SECOND fixture discriminator,
+  // `?order=plain`, which narrows whichever payload `demo` selected to an
+  // ordinary work order that continues nothing.
+  //
+  // It is appended here rather than inside _demoQS, and that is deliberate.
+  // _demoQS feeds /api/sessions/:id/status and /spec as well, and those — like
+  // most fixture routes — test `demo` for exactly '1'. Widening its allowlist
+  // to carry this would send them a value they do not recognise and blank the
+  // very session the walkthrough is rendered inside; leaving the allowlist
+  // alone and inventing a new `demo` value instead fails the allowlist and
+  // sends no fixture at all. Both were real: the second one shipped, and the
+  // declared checks on the plain fixture caught it.
+  // Every `order` value the status route understands. This list is the whole
+  // mechanism and it has been wrong twice: `?order=plain` shipped read by the
+  // server and forwarded by nobody, and then `?order=none` did the same thing
+  // again, because the check here was a hardcoded === against one value. A
+  // fixture shape added on one side and not the other renders NOTHING, and
+  // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
+  // `req.query.order === '…'` literals and fails when this list does not cover
+  // them, so the next one cannot repeat it.
+  DEV_FLOW_ORDERS: ['connect', 'continue'],
+
+  _devFlowDemoQS() {
+    const base = DevChat._demoQS();
+    if (!base) return '';
+    try {
+      const order = new URLSearchParams(location.search).get('order');
+      return DevChat.DEV_FLOW_ORDERS.includes(order) ? `${base}&order=${order}` : base;
+    } catch { return base; }
   },
 
   // Fold a status payload into the runner state and repaint if it changed.
@@ -1186,7 +1537,7 @@ const DevChat = {
     const agent = DevChat._localAgent;
     if (!agent || agent.demo) return;
     const label = agent.label || 'your machine';
-    if (!confirm(`Hand coding turns back to Usernode?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    if (!confirm(`Hand coding turns back to Homeroom?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
     try {
       const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
         method: 'DELETE',
@@ -1218,15 +1569,14 @@ const DevChat = {
   // the general coding pick at any size, #809; Fable is for design and
   // taste judgment plus the most difficult coding work). Both helpers
   // take a
-  // `{ label, changeSize }` meta object and are shared with the
-  // Generate-proposal popup in app-view.js, so the two pickers can't
-  // drift. Nothing measured feeds either one.
+  // `{ label, changeSize }` meta object. Generate proposal now consumes the
+  // short guidance directly, but these helpers remain safe for an older
+  // cached shell during a rolling update. Nothing measured feeds either one.
 
   MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
-  // server sent no guidance (e.g. an older payload) — a picker that
-  // shows only names still works perfectly.
+  // server sent no guidance (e.g. an older payload).
   modelOptionText(meta) {
     if (!meta || typeof meta !== 'object') return String(meta || '');
     const label = meta.label || '';
@@ -1235,13 +1585,9 @@ const DevChat = {
     return `${label}: ${hint}`;
   },
 
-  // Full-sentence caption for a model. The COMPOSER no longer renders one
-  // (#1353): the sentence it painted under the dropdown restated, at
-  // greater length, the guidance already on the option the user had just
-  // chosen, and it did it on every render of every session. This is still
-  // the Generate-proposal popup's caption (app-view.js), where the picker
-  // is met once and the reader has not seen the option list. Returns ''
-  // when there's no guidance to show, and the caller hides the line.
+  // Full-sentence caption retained for an older cached shell during a rolling
+  // update. Neither the composer nor the simplified Generate-proposal dialog
+  // renders it now. Returns '' when there's no guidance to show.
   modelNoteText(meta) {
     if (!meta || typeof meta !== 'object') return '';
     const label = meta.label || '';
@@ -1258,6 +1604,7 @@ const DevChat = {
   // dev chat tab shows a fresh session list instead of re-rendering the
   // previous app's session.
   reset() {
+    DevChat._stopSpendPolling();
     // #161: leaving the app (home / different app) while a turn is
     // running counts as leaving the session — arm its completion
     // notification before the state below is dropped.
@@ -1297,8 +1644,17 @@ const DevChat = {
    */
   _publishPreview() {
     const s = DevChat.currentSession;
+    if (!s) { window.Improve?.setSessionPreview?.(null); return; }
+    // #2069: a session with no live preview is not necessarily a session with
+    // nothing to preview. ensure-staging rebuilds from the branch's latest
+    // commit, and `can_preview` is the server's answer to "is there one" — so
+    // the eye is published as BUILDABLE rather than withheld, and the click
+    // does what it has been authorized to do all along.
+    const buildable = !s.staging_url && !!s.can_preview;
     window.Improve?.setSessionPreview?.(
-      s && s.staging_url ? { sessionId: s.id, url: s.staging_url } : null,
+      (s.staging_url || buildable)
+        ? { sessionId: s.id, url: s.staging_url || null, buildable }
+        : null,
     );
   },
 
@@ -1328,20 +1684,45 @@ const DevChat = {
     };
   },
 
-  // True when the page carries ?demo=1. The server only honours it in
-  // staging (see the demo branch on GET /api/budget in routes/sessions.js),
-  // so this is safe to send always — same pattern as Settings._cliTokensDemo.
-  _budgetDemo() {
+  // The page's ?demo= value, when it is one the budget route answers:
+  // '1' (the daily allowance spent) or, since #1788, 'weekly-out' (the
+  // weekly one spent). The server only honours either in staging (see the
+  // demo branches on GET /api/budget in routes/sessions.js), so this is
+  // safe to send always — same pattern as Settings._cliTokensDemo.
+  _budgetDemoValue() {
     try {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    } catch { return false; }
+      const v = new URLSearchParams(window.location.search).get('demo');
+      return (v === '1' || v === 'weekly-out') ? v : null;
+    } catch { return null; }
+  },
+
+  // True when the page carries a demo budget flag of either spelling.
+  _budgetDemo() {
+    return !!DevChat._budgetDemoValue();
   },
 
   async refreshBudget() {
     // OpenRouter sessions never use the platform's Anthropic allowance.
     // Keep its meter, exhausted banner, and demo refusal card out of this
     // session instead of showing billing state that cannot affect a turn.
+    // What the meter shows here instead (#2118) is the OpenRouter key's
+    // own remaining limit, read live rather than from the snapshot taken
+    // when the key was saved: a managed key's figure moves every turn.
+    // `?shot=openrouter-spend` answers the read from a fixture, as
+    // `?shot=credits-low` does for the Claude meter below.
     if (DevChat._isOpenRouterSession()) {
+      const shot = DevChat._shotOpenRouterSpend();
+      if (shot) {
+        DevChat.openrouterAllowance = shot.allowance;
+      } else {
+        try {
+          const res = await fetch('/api/me/credentials/openrouter/allowance', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (res.ok) DevChat.openrouterAllowance = await res.json();
+        } catch {}
+      }
       DevChat.renderBudget();
       return;
     }
@@ -1359,7 +1740,7 @@ const DevChat = {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
       // daily allowance. Strictly a no-op in production.
-      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? '?demo=1' : ''}`);
+      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? `?demo=${DevChat._budgetDemoValue()}` : ''}`);
       if (res.ok) DevChat.budget = await res.json();
     } catch {}
     DevChat.renderBudget();
@@ -1381,7 +1762,9 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        error: DevChat._creditWindow().weekly
+          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
+          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1423,6 +1806,31 @@ const DevChat = {
     return CO.resetSentence(state);
   },
 
+  // #1788: the allowance runs over two windows now (daily and weekly) and
+  // the server reports whichever one is BINDING in the legacy
+  // limit/spent/remaining fields. Every sentence that used to hardcode
+  // "today" / "daily" asks here instead, so the meter, its tooltip and the
+  // banner all name the window the numbers actually describe.
+  _creditWindow() {
+    const b = DevChat.budget || {};
+    const weekly = b.capWindow === 'weekly';
+    return {
+      weekly,
+      // "Today: …" / "This week: …"
+      label: b.windowLabel || (weekly ? 'This week' : 'Today'),
+      // "…left today" / "…left this week"
+      when: weekly ? 'this week' : 'today',
+      // "your $20.00 platform daily limit"
+      limitNoun: weekly ? 'weekly limit' : 'daily limit',
+      // "your free daily AI credits"
+      creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
+      // Fallback for the reset sentence when CreditOptions is absent.
+      resetFallback: weekly
+        ? 'Resets Monday 00:00 UTC.'
+        : 'Resets at midnight UTC.',
+    };
+  },
+
   renderBudget() {
     // #463: budget data just changed (usage event, chat open, key
     // save/remove) — sync the credits-exhausted banner alongside the
@@ -1448,11 +1856,45 @@ const DevChat = {
   // thresholds, the wording, the dollar formatting, the reset sentence, and
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
+    const view = DevChat._settledBudgetPillView();
+    const spend = DevChat._liveSpend || DevChat._shotTurnSpend();
+    if (!spend || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    // #2118: an OpenRouter turn's figure is the ledger's list-price estimate
+    // (agent_turns.estimated_cost_usd), so its tooltip says what it is
+    // rather than borrowing Claude Code's wording.
+    const openRouter = DevChat._isOpenRouterSession();
+    return {
+      title: view.title,
+      parts: [...view.parts,
+        ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
+        {
+          text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
+          className: 'text-zinc-500 dark:text-zinc-400',
+          title: openRouter
+            ? 'Estimated from the model\u2019s OpenRouter list price and the tokens this turn used. OpenRouter\u2019s own usage records determine billing.'
+            : spend.estimated
+              ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
+              : 'Token spend reported by Claude Code for this turn.',
+        },
+      ],
+    };
+  },
+
+  // #2118: the figure `?shot=openrouter-spend` paints as the turn that just
+  // ran, keyed to the session on screen like a real observation.
+  _shotTurnSpend() {
+    const shot = DevChat._shotOpenRouterSpend();
+    if (!shot || !DevChat.currentSession) return null;
+    return { sessionId: DevChat.currentSession.id, ...shot.turn };
+  },
+
+  _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
     // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it.
-    if (DevChat._isOpenRouterSession()) return NONE;
+    // platform meter has nothing to say about it; what it shows instead is
+    // what is left on that key (#2118).
+    if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
     // is what someone deciding whether to start another turn is looking
@@ -1527,11 +1969,12 @@ const DevChat = {
         parts.push({ text: ' · ', className: muted });
         parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
       }
+      const win = DevChat._creditWindow();
       return {
-        title: `Today: $${spent} of your $${limit} platform daily limit`
+        title: `${win.label}: $${spent} of your $${limit} platform ${win.limitNoun}`
           + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-          + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
-          + (resetTip || 'Resets at midnight UTC.'),
+          + `. The ${win.limitNoun} is used first; your key (…${last4}) takes over once it runs out. `
+          + (resetTip || win.resetFallback),
         parts,
       };
     }
@@ -1543,9 +1986,10 @@ const DevChat = {
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
+      const winOut = DevChat._creditWindow();
       return {
-        title: `Your free daily AI credits are used up. ${
-          resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
+        title: `Your ${winOut.creditsNoun} are used up. ${
+          resetTip || winOut.resetFallback} Or add your own Anthropic API key in Settings to keep working now.`,
         parts: [
           { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
@@ -1554,13 +1998,95 @@ const DevChat = {
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+    const winOk = DevChat._creditWindow();
     return {
-      title: `Today: $${spent} of your $${limit} free daily AI credits. ${
-        resetTip || 'Resets at midnight UTC.'}`,
+      title: `${winOk.label}: $${spent} of your $${limit} ${winOk.creditsNoun}. ${
+        resetTip || winOk.resetFallback}`,
       parts: [
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
       ],
+    };
+  },
+
+  // #2118: the OpenRouter session's half of the meter. A session on an
+  // OpenRouter key never touches the platform's Anthropic allowance, so
+  // the daily meter has nothing to say about it; what the viewer wants to
+  // know instead is how much of the KEY's limit is left. OpenRouter
+  // reports that itself (GET /key: limit, limit_remaining, limit_reset),
+  // so the figure is shown as reported rather than derived, in the window
+  // the key's reset cadence names. A key with no limit draws nothing
+  // rather than a guess, and the Claude meter's red/yellow thresholds
+  // colour what is left.
+  _openRouterAllowanceView() {
+    const NONE = { title: null, parts: [] };
+    const a = DevChat.openrouterAllowance;
+    if (!a || a.configured === false) return NONE;
+    // Null is "OpenRouter reports no limit", not zero: only a number draws.
+    const left = typeof a.limitRemaining === 'number' ? a.limitRemaining : NaN;
+    if (!Number.isFinite(left)) return NONE;
+    const limit = typeof a.limit === 'number' ? a.limit : NaN;
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const remaining = Math.max(0, left);
+    const cadence = a.limitReset === 'daily' ? 'daily'
+      : a.limitReset === 'weekly' ? 'weekly'
+        : a.limitReset === 'monthly' ? 'monthly' : null;
+    const when = cadence === 'daily' ? ' today'
+      : cadence === 'weekly' ? ' this week'
+        : cadence === 'monthly' ? ' this month' : '';
+    const pct = hasLimit ? Math.min(100, ((limit - remaining) / limit) * 100) : 0;
+    const color = hasLimit && remaining <= 0 ? 'text-red-700 font-semibold dark:text-red-400'
+      : pct > 80 ? 'text-red-700 dark:text-red-400'
+        : pct > 50 ? 'text-yellow-700 dark:text-yellow-400'
+          : 'text-emerald-700 dark:text-emerald-400';
+    const owner = a.source === 'usernode_managed'
+      ? 'Your included OpenRouter key'
+      : `Your OpenRouter key${a.last4 ? ` (\u2026${a.last4})` : ''}`;
+    const allowance = hasLimit
+      ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
+      : `$${remaining.toFixed(2)} left`;
+    const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    return {
+      title: null,
+      parts: [{
+        text: `$${remaining.toFixed(2)} left${when}`,
+        className: color,
+        title: `${owner} has ${allowance}.${reset}`,
+      }],
+    };
+  },
+
+  // Screenshot-state deep link `?shot=openrouter-spend` (#2118).
+  //
+  // What an OpenRouter session's meter says is a property of the viewer's
+  // key and of a turn that ran: how much of the key's allowance OpenRouter
+  // reports left, and what the ledger estimated the last turn cost. Neither
+  // is a session column a fixture row can carry: the allowance is read
+  // live from OpenRouter, which a staging clone has no key to ask, and a
+  // turn would have to be paid for. So, as ?shot=credits-low does for the
+  // Claude meter, the URL names the state and the client answers both
+  // reads from a fixed snapshot: a managed key with $0.86 of $1.00 left
+  // today, and a turn that cost about twelve cents.
+  //
+  // Ungated by environment for the same reason: it paints figures on the
+  // session already on screen, reads nothing and writes nothing, and it
+  // only answers in an OpenRouter session, so on a Claude session the real
+  // budget read runs untouched.
+  _shotOpenRouterSpend() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'openrouter-spend' || !DevChat._isOpenRouterSession()) return null;
+    return {
+      allowance: {
+        configured: true,
+        source: 'usernode_managed',
+        last4: '7f2c',
+        limit: 1,
+        limitRemaining: 0.86,
+        limitReset: 'daily',
+        shot: true,
+      },
+      turn: { costCents: 12, estimated: true },
     };
   },
 
@@ -1619,7 +2145,7 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: 'person',
-        lead: 'Connect GitHub or X to unlock $10/day of Usernode credits.',
+        lead: 'Connect GitHub or X to unlock $10/day of Homeroom credits.',
         tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
         actionsHtml: actions({ verificationRequired: true }),
       };
@@ -1640,9 +2166,11 @@ const DevChat = {
       tone: 'red',
       icon: 'warn',
       lead: userOut
-        ? 'You\u2019ve used up today\u2019s free AI credits.'
+        ? `You\u2019ve used up ${DevChat._creditWindow().when === 'this week'
+          ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
         : 'The platform\u2019s shared daily AI budget is used up.',
-      reset: DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.',
+      reset: DevChat._creditResetSentence()
+        || `Free credits reset ${DevChat._creditWindow().weekly ? 'Monday 00:00 UTC' : 'at midnight UTC'}.`,
       tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
         ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
         : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
@@ -1878,7 +2406,7 @@ const DevChat = {
   // dropdown in the session header (#1348), the two key rows are Settings
   // links the credits banner already offers at the moment they matter, the
   // local-CLI card is what picking the CLI venue opens, and handing turns
-  // back to Usernode is the runner select's own "Run on: Usernode". A menu
+  // back to Homeroom is the runner select's own "Run on: Homeroom". A menu
   // whose every row is a second way to somewhere else is a menu of
   // duplicates — on the strip with the least room in the app.
 
@@ -2006,12 +2534,13 @@ const DevChat = {
     const CO = window.CreditOptions;
     const state = CO ? DevChat._creditState() : null;
     if (state && state.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10/day of Usernode credits.';
+      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
       ? 'The platform\u2019s shared daily AI budget is used up.'
-      : 'You\u2019ve used up today\u2019s free AI credits.';
+      : `You\u2019ve used up ${DevChat._creditWindow().weekly
+        ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`;
     return reset ? `${lead} ${reset}` : lead;
   },
 
@@ -2317,7 +2846,7 @@ const DevChat = {
   // ── Development-flow picker + walkthrough (#1049) ──────────────────
   //
   // A fresh session used to open with nothing but a text box, and the ONLY
-  // way to discover that Usernode can hand the work to your own Claude Code
+  // way to discover that Homeroom can hand the work to your own Claude Code
   // or Codex was to install the MCP connector. So the choice is offered
   // here instead: a card at the top of an empty session naming all three
   // routes, and — if you pick an external one — a five-step walkthrough
@@ -2343,7 +2872,7 @@ const DevChat = {
     busy: false,
     error: null,
     notice: null,
-    // "Build on Usernode instead" / "Build here" — hide the card for the
+    // "Build on Homeroom instead" / "Build here" — hide the card for the
     // rest of this session without writing a preference.
     dismissed: false,
     brief: null,
@@ -2401,7 +2930,7 @@ const DevChat = {
   // It is normally the LAUNCHPAD that renders this (#1281), which is why
   // renderMessages() drops the card whenever _launchpadVenue() answers. The
   // transcript keeps it for the one case that has no launchpad to put it
-  // in: public/js/launchpad.js failing to load.
+  // in: features/dev-chat/launchpad.js failing to load.
   _devFlowTarget() {
     const session = DevChat.currentSession;
     if (!session || !window.DevFlowSelect) return null;
@@ -2464,8 +2993,22 @@ const DevChat = {
     started.loading = true;
     let status = null;
     try {
+      // `sessionId` is what scopes the walkthrough to THIS launchpad. Appended
+      // to whatever the fixture query string already is, which is '' in
+      // production and `?demo=…` in a staging preview — hence the separator
+      // rather than a bare '?'.
+      const fixtureQS = DevChat._devFlowDemoQS();
+      // `proposalId`/`targetKind` are the continuation this launchpad is
+      // offering (#1054/#1071). They reach the server only so the instructions
+      // can name the proposal the agent should update rather than open a
+      // second one beside it.
+      const target = DevChat._devFlow.targetId
+        ? `&proposalId=${encodeURIComponent(DevChat._devFlow.targetId)}`
+          + `&targetKind=${encodeURIComponent(DevChat._devFlow.targetKind || 'proposal')}`
+        : '';
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status`
+          + `${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=${encodeURIComponent(session.id)}${target}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply
@@ -2494,11 +3037,11 @@ const DevChat = {
     flow.error = null;
     flow.notice = null;
     if (action === 'cancel') {
-      // "Build here instead" / "Build on Usernode instead" — the same act as
+      // "Build here instead" / "Build on Homeroom instead" — the same act as
       // picking On-Platform in the venue sheet, so it does the same two
       // things (#1353). Dismissing the in-memory wizard alone left a session
       // whose venue column had already been stored answering "handed to
-      // Claude Code" on the very next paint: the button said Usernode, the
+      // Claude Code" on the very next paint: the button said Homeroom, the
       // header said the web, and the launchpad never left.
       if (DevChat.currentSession && DevChat.currentSession.build_venue) {
         DevChat.currentSession.build_venue = null;
@@ -2508,7 +3051,7 @@ const DevChat = {
       DevChat.renderChatView();
       return;
     }
-    if (action === 'link-github') {
+    if (action === 'link-github' || action === 'link-connector') {
       window.location.hash = '#settings/connectors';
       return;
     }
@@ -2540,10 +3083,13 @@ const DevChat = {
       return;
     }
     if (action === 'copy') {
-      const task = flow.status && flow.status.task;
-      const text = task ? task.workOrder : '';
+      // The instructions, not a work order. Homeroom no longer writes the work
+      // order — the agent asks what to build and mints its own through the
+      // connector, which is also what stopped a stale one being able to sit in
+      // this tab at all.
+      const text = (flow.status && flow.status.instructions) || '';
       if (!text) {
-        flow.error = 'No work order to copy yet.';
+        flow.error = 'No instructions to copy yet.';
         DevChat._repaintDevFlow();
         return;
       }
@@ -2552,12 +3098,13 @@ const DevChat = {
         await navigator.clipboard.writeText(text);
         copied = true;
       } catch { copied = false; }
-      if (copied) flow.notice = 'Work order copied. Paste it into your agent.';
-      else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
+      if (copied) flow.notice = 'Instructions copied. Paste them into your agent, which will ask what you want to build.';
+      else flow.error = 'Could not reach the clipboard. Open the instructions below and copy them by hand.';
       DevChat._repaintDevFlow();
       return;
     }
     if (action === 'prepare') return DevChat._devFlowPrepare();
+    if (action === 'discard') return DevChat._devFlowDiscard();
     if (action === 'submit') return DevChat._devFlowSubmit();
     // #1071. A separate action, not a flag on 'submit': the two hit different
     // routes with different bodies and different failure modes, and a single
@@ -2601,11 +3148,13 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify(
-          flow.targetId
-            ? { agent: flow.agent, brief, proposalId: Number(flow.targetId) }
-            : { agent: flow.agent, brief }
-        ),
+        // `sessionId` is what makes this work order THIS launchpad's: the
+        // status route reads it back and no other session sees the order.
+        body: JSON.stringify(Object.assign(
+          { agent: flow.agent, brief },
+          DevChat.currentSession ? { sessionId: Number(DevChat.currentSession.id) } : null,
+          flow.targetId ? { proposalId: Number(flow.targetId) } : null
+        )),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -2630,7 +3179,53 @@ const DevChat = {
     }
   },
 
-  // Step 5. Usernode opens the cross-fork pull request with its own
+  // The hand-off step's "Start over". Puts the open work order away and drops
+  // back to step 3's brief field, which is the whole point: the walkthrough shows
+  // whatever open task the account holds for this app, so a stale one is
+  // otherwise permanent.
+  //
+  // `flow.brief` is cleared rather than left alone. It is seeded from the
+  // session title, and re-rendering the old text under a fresh work order is
+  // how you get a second work order describing the same finished change — an
+  // empty box asking "What should it build?" is the question actually being
+  // put to the user here.
+  //
+  // A 404 is not surfaced as an error: it means the task was already closed,
+  // so the re-read below leaves the walkthrough in exactly the state the user
+  // was reaching for.
+  async _devFlowDiscard() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    if (!task) {
+      flow.error = 'No work order to put away.';
+      DevChat._repaintDevFlow();
+      return;
+    }
+    flow.busy = true;
+    DevChat._repaintDevFlow();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/discard`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' }
+      );
+      if (res.ok || res.status === 404) {
+        flow.brief = '';
+        flow.notice = 'Work order put away. Say what you want to build instead.';
+      } else {
+        const data = await res.json().catch(() => ({}));
+        flow.error = data.error || 'Could not put that work order away.';
+      }
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      await DevChat._devFlowEnsureStatus(true);
+      DevChat._repaintDevFlow();
+    }
+  },
+
+  // Step 5. Homeroom opens the cross-fork pull request with its own
   // credentials and imports it as an ordinary proposal, then we jump to it.
   async _devFlowSubmit() {
     const flow = DevChat._devFlow;
@@ -2872,12 +3467,23 @@ const DevChat = {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
       }
+      // /api/auth/me was loaded before a first-use managed key existed.
+      // Keep venue gating in sync with the authoritative session response
+      // without waiting for a full page reload.
+      if (data.session?.agent_backend === 'codex_openrouter'
+          && typeof App !== 'undefined' && App.user) {
+        App.user.openrouterAvailable = true;
+      }
       // The one thing the venue dropdown cannot work out on its own: WHY
       // this session isn't in the venue the user's default named.
       if (data.agentFallbackReason && window.BuildVenues) {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       DevChat.sessions.unshift(data.session);
+      // Improve renders its own cross-app cache, not DevChat.sessions. Publish
+      // the successful server row now so the first open after creation cannot
+      // briefly claim that no changes are in progress (#1596).
+      try { window.Improve?.onSessionCreated?.(data.session, appSlug); } catch {}
       return data.session;
     } catch {
       PlatformUI.toast('Network error');
@@ -3006,7 +3612,8 @@ const DevChat = {
   // session's unread completion server-side, so only the former forwards
   // ?opened=1 — otherwise the turn's own reconcile fetch clears the
   // completion it just produced and the cog's green badge never shows.
-  async openSession(sessionId, { userOpened = false } = {}) {
+  async openSession(sessionId, { userOpened = false, signal } = {}) {
+    if (signal?.aborted) return false;
     // #161: opening a DIFFERENT session while the current one is
     // mid-turn counts as leaving it — arm its completion notification.
     // (Returning to the SAME session needs no client call: the server's
@@ -3035,6 +3642,7 @@ const DevChat = {
     const switchingSession = !DevChat.currentSession
       || Number(DevChat.currentSession.id) !== Number(sessionId);
     if (switchingSession) {
+      DevChat._stopSpendPolling();
       // #771: a docked staging preview belongs to the session we're
       // leaving — close it so session A's preview can't render beside
       // session B's chat.
@@ -3063,9 +3671,10 @@ const DevChat = {
       // auto-resume below skips one: `?shot=` names a state to RENDER, and
       // silently resolving the session's notification is a mutation.
       const asUser = userOpened && !DevChat._isShotDeepLink();
-      const res = await fetch(`/api/sessions/${sessionId}${asUser ? '?opened=1' : ''}`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/sessions/${sessionId}${asUser ? '?opened=1' : ''}`, { signal });
+      if (!res.ok) return false;
       const { session, messages, drafts } = await res.json();
+      if (signal?.aborted) return false;
 
       // Auto-resume on open: opening a paused session transparently
       // resumes it (the backend applies the per-user LRU + global cap
@@ -3083,7 +3692,7 @@ const DevChat = {
       // has nothing to do with what it asserts.
       if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
         try {
-          const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+          const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST', signal });
           if (rr.ok) {
             session.status = 'active';
           } else {
@@ -3093,6 +3702,7 @@ const DevChat = {
         } catch { /* network blip — fall through; session stays paused */ }
       }
 
+      if (signal?.aborted) return false;
       DevChat.currentSession = session;
       DevChat._publishPreview();
       // #940: reconcile this session's saved drafts against the server copy
@@ -3103,6 +3713,9 @@ const DevChat = {
       // `drafts` is null when the session payload's best-effort field
       // failed, which makes _reconcileDrafts fetch the list itself.
       DevChat._reconcileDrafts(session.id, drafts);
+      // #1960: `?shot=draft-delete` stages the reported failure on top of
+      // that list. No-op on every other URL and every other session.
+      DevChat._applyDraftDeleteShot(session.id);
       DevChat._startHeartbeat();
       // Drop any streaming title marker carried over from the previous
       // session. If THIS session is mid-run, the busy check below
@@ -3149,9 +3762,13 @@ const DevChat = {
         // repaints the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
-      // Q/A chip selection is per-question-turn — never carry one across
-      // a session switch / reload.
+      // Q/A answer state is per-question-turn — never carry one across
+      // a session switch / reload. Three stores, one per way of answering:
+      // a tapped chip, a typed reply, a stepped number.
       DevChat._qaSelection = {};
+      DevChat._qaTyped = {};
+      DevChat._qaTypedOpen = {};
+      DevChat._qaNumber = {};
       // #891: the AI-guess state is per-run. Carrying it across a session
       // switch would let another session's stale guess drain onto this
       // timeline, and a stale `_lastEstimateAt` would suppress this
@@ -3176,6 +3793,13 @@ const DevChat = {
           // #664: the worker proxy's one-time "switched to your API key"
           // notice — rehydrate the marker so the row keeps its subtle
           // inline-notice styling on reload.
+          // #894's `turnError`, which nothing read until now: five paths in
+          // routes/sessions.js persist it and the row came back as an
+          // ordinary system status, wearing the pipeline's green ✓.
+          if (m.metadata.turnError) m.turnError = true;
+          // A stop that landed. The prose sentence is in `content`; this
+          // is the same landing as data, so the row can draw chips.
+          if (m.metadata.stopLanding) m.stopLanding = m.metadata.stopLanding;
           if (m.metadata.billingSwitch) m.billingSwitch = true;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
@@ -3260,7 +3884,6 @@ const DevChat = {
       DevChat.messages = DevChat._hydrateChangesReadyFromSession(session, DevChat.messages);
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
-      DevChat._markInheritedMessages(DevChat.messages, session);
       // Spin a still-running background rebuild's row on load. Rebuilds take
       // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
       // mid-build often enough to matter, and a static gear next to
@@ -3300,13 +3923,14 @@ const DevChat = {
 
       // Check if Claude Code is running for this session
       try {
-        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
+        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`, { signal });
         if (statusRes.ok) {
           const statusPayload = await statusRes.json();
+          if (signal?.aborted || Number(DevChat.currentSession?.id) !== Number(sessionId)) return false;
           const { busy, progress, phase, sync, stopping, stopRequestedAt, stoppable } = statusPayload;
           // #907: restore the Run-on selector / chip from the server, so a
           // reload of a session with a machine attached does not silently
-          // claim the next turn runs on Usernode.
+          // claim the next turn runs on Homeroom.
           DevChat._applyRunnerState(statusPayload);
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
@@ -3388,7 +4012,8 @@ const DevChat = {
           }
         }
       } catch {}
-    } catch {}
+      return !signal?.aborted;
+    } catch { return false; }
   },
 
   // ── Streaming + send ─────────────────────────────────────
@@ -3419,10 +4044,14 @@ const DevChat = {
     DevChat._clearStoppingState();
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
-    // Any Q/A chip selection belonged to the question turn we're now
-    // answering — the chips vanish on re-render (the question row is no
-    // longer last), so the selection must not leak into a later turn.
+    // Any Q/A answer belonged to the question turn we're now answering — the
+    // chips vanish on re-render (the question row is no longer last), so
+    // nothing about it may leak into a later turn. All three stores, or the
+    // typed reply to one question would arrive as the answer to the next.
     DevChat._qaSelection = {};
+    DevChat._qaTyped = {};
+    DevChat._qaTypedOpen = {};
+    DevChat._qaNumber = {};
 
     // A previous turn's progress message may still be flagged as the live
     // append target. Clear it so this turn's cc_progress events create a
@@ -3691,7 +4320,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 // #990: a step line means work is under way with nothing else
                 // painting yet — put the dots where the next message will
                 // land, and keep them there until it does. Set before the
@@ -3883,6 +4512,8 @@ const DevChat = {
               case 'usage':
                 assistantMsg.model = data.model;
                 assistantMsg.costCents = data.costCents;
+                if (data.estimated) assistantMsg.costEstimated = true;
+                DevChat._noteTurnUsage(data);
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
@@ -4193,7 +4824,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         // #990: keep a live cue where the next message will land — see the
         // POST-SSE status handler. Set before the render so both channels
         // emit the indicator inside the same innerHTML write.
@@ -4317,7 +4948,12 @@ const DevChat = {
       }
       case 'usage': {
         const am = lastAssistantMsg();
-        if (am) { am.model = data.model; am.costCents = data.costCents; }
+        if (am) {
+          am.model = data.model;
+          am.costCents = data.costCents;
+          if (data.estimated) am.costEstimated = true;
+        }
+        DevChat._noteTurnUsage(data);
         DevChat.refreshBudget();
         break;
       }
@@ -4471,6 +5107,12 @@ const DevChat = {
 
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
+    if (streaming) DevChat._startSpendPolling();
+    // #2118: an OpenRouter session keeps the turn's figure up after the
+    // turn. There is no daily meter for it to be absorbed into, and the
+    // cost only became known as the run ended, so clearing it at `done`
+    // would show it for a few hundred milliseconds at best.
+    else DevChat._stopSpendPolling({ keepSpend: DevChat._isOpenRouterSession() });
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -4520,7 +5162,7 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    // The OpenRouter row's "Change model" is guarded by the same rule and
+    // The OpenRouter row's "Browse models" is guarded by the same rule and
     // rides in on the publish above — it used to be a `disabled` written by
     // hand here, which is a write React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
@@ -4933,6 +5575,81 @@ const DevChat = {
     DevChat._hideActivity();
   },
 
+  // Read the same authorized status snapshot used for reconnects. No credit
+  // writes or per-token network requests; one bounded request every 3s.
+  _liveSpend: null,
+  _spendPollTimer: null,
+  _spendPollSession: null,
+  _spendPollGeneration: 0,
+
+  _applyLiveSpend(payload, sessionId) {
+    if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    // #2118: an OpenRouter turn's cost is known only once Codex reports its
+    // usage, at the end of the coding run, after which the session reads
+    // idle while the reply is still being written. A "not busy" snapshot
+    // therefore has nothing newer to say and keeps the figure; the next
+    // turn's start (_startSpendPolling) or leaving the session drops it.
+    if (!payload?.busy && DevChat._isOpenRouterSession()) return;
+    const spend = payload?.busy ? payload.spend : null;
+    DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
+      ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
+    DevChat.renderBudget();
+  },
+
+  _startSpendPolling() {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    if (DevChat._spendPollTimer && DevChat._spendPollSession === sessionId) return;
+    DevChat._stopSpendPolling();
+    DevChat._spendPollSession = sessionId;
+    const generation = DevChat._spendPollGeneration;
+    let pending = false;
+    const poll = async () => {
+      // The reconnect poll already fetches the exact same snapshot.
+      if (pending || DevChat._progressPollTimer) return;
+      pending = true;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (generation !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
+      } catch { /* preserve the last observation through transient failures */ }
+      finally { pending = false; }
+    };
+    DevChat._spendPollTimer = setInterval(poll, 3000);
+  },
+
+  // `keepSpend` leaves the last figure on screen once polling stops — an
+  // OpenRouter session's settled "this turn" (#2118). Every other caller
+  // drops it: a new turn starts clean, and a session switch or reset must
+  // not carry one session's figure into another.
+  _stopSpendPolling({ keepSpend = false } = {}) {
+    if (DevChat._spendPollTimer) clearInterval(DevChat._spendPollTimer);
+    DevChat._spendPollTimer = null;
+    DevChat._spendPollSession = null;
+    DevChat._spendPollGeneration += 1;
+    if (keepSpend) return;
+    const hadSpend = !!DevChat._liveSpend;
+    DevChat._liveSpend = null;
+    if (hadSpend) DevChat.renderBudget();
+  },
+
+  // #2118: an OpenRouter turn's cost arrives on its usage event — the
+  // ledger's list-price estimate, sent once the reply is on screen —
+  // rather than through the Claude live tracker, so the event feeds the
+  // same "this turn" figure the /status poll does. A Claude session's
+  // usage events are the platform/BYOK settlement split and stay out.
+  _noteTurnUsage(data) {
+    if (!DevChat._isOpenRouterSession()) return;
+    const costCents = Number(data?.costCents);
+    if (!Number.isFinite(costCents) || costCents <= 0) return;
+    DevChat._applyLiveSpend(
+      { busy: true, spend: { costCents, estimated: data.estimated !== false } },
+      DevChat.currentSession?.id,
+    );
+  },
+
   _progressPollTimer: null,
 
   _startProgressPolling(sessionId, initialProgress, initialMetadata = null) {
@@ -4946,10 +5663,14 @@ const DevChat = {
     }
 
     DevChat._progressPollTimer = setInterval(async () => {
+      const spendGeneration = DevChat._spendPollGeneration;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
         const payload = await res.json();
+        if (Number(DevChat.currentSession?.id) !== Number(sessionId) || !DevChat.isStreaming
+            || spendGeneration !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
         const { busy, progress, estimate, stopping, stoppable } = payload;
         // #907: a machine can attach or detach mid-turn; keep the chip honest.
         DevChat._applyRunnerState(payload);
@@ -5402,7 +6123,8 @@ const DevChat = {
     // viewports keep today's fullscreen overlay — a side panel doesn't
     // fit there. Mount the slot BEFORE ensureStaging so the docked
     // geometry has something to pin to.
-    const dock = !!(s.id && typeof AppView !== 'undefined'
+    const dock = !!(s.id && !document.querySelector?.('.dev-change-workspace[hidden]')
+      && typeof AppView !== 'undefined'
       && AppView._stagingDockViewport && AppView._stagingDockViewport());
     if (dock) DevChat.openStagingPanel();
     // #439: route through ensure-then-open so a preview torn down while the
@@ -5417,109 +6139,11 @@ const DevChat = {
     }
   },
 
-  // #558's in-flight state, as the id of the session being proposed.
-  //
-  // It was `btn.disabled` plus a swapped `btn.innerHTML`, written onto the
-  // button the click arrived on — a second author on a node the card renders
-  // now. That is not merely untidy here: `renderMessages` runs on every 3s
-  // status poll, so a repaint mid-request would have restored the label AND
-  // cleared the re-entry guard, which is the double-submit #558 exists to
-  // stop. Keyed by session, so switching sessions mid-flight cannot leave the
-  // next one's card spinning.
-  _proposing: null,
-
+  // Both surfaces submit through the card's controller and per-session lock.
   async promotePR() {
-    if (!DevChat.currentSession?.id) return;
-    const sessionId = DevChat.currentSession.id;
-    // #558: the spinner goes up the moment the button is clicked so a slow
-    // request can't be double-submitted by impatient clicking, and an
-    // in-flight request for THIS session is the re-entry guard.
-    if (Number(DevChat._proposing) === Number(sessionId)) return;
-    DevChat._proposing = sessionId;
-    DevChat._publishTranscript();
-    // Back to a pressable button. Only the failure paths need it — success
-    // re-renders a card that no longer offers Propose at all.
-    const restoreBtn = () => {
-      DevChat._proposing = null;
-      DevChat._publishTranscript();
-    };
-    // #707: the request keeps running through navigation (no abort
-    // signal — the server does the work regardless, so let it finish),
-    // but the completion must be scoped to the session it was made
-    // for. Leaving the app nulls currentSession via reset(), and
-    // switching sessions replaces it; dereferencing it blindly after
-    // the await used to throw into the catch below and surface a
-    // spurious "Network error" alert on whatever page the user had
-    // moved to.
-    const stillCurrent = () => Number(DevChat.currentSession?.id) === Number(sessionId);
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
-      if (res.ok) {
-        // #183: promote may have lazily created the PR (sessions cloned
-        // from a headless auto run arrive PR-less). Fold the returned PR
-        // info into the session so the staging card header flips from
-        // "Changes ready" to the PR link without a refetch.
-        const data = await res.json().catch(() => ({}));
-        if (stillCurrent()) {
-          DevChat.currentSession.status = 'promoted';
-          if (data.prNumber) {
-            DevChat.currentSession.pr_number = data.prNumber;
-            if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-            if (data.prTitle) {
-              DevChat.currentSession.pr_title = data.prTitle;
-              // #249: server mirrors pr_title into session_title.
-              DevChat.currentSession.session_title = data.prTitle;
-            }
-          }
-          DevChat.renderMessages();
-        } else {
-          // Stale success (user switched sessions mid-flight): never
-          // touch the now-current session. Best-effort fold into the
-          // session list row so its "in vote" pill is right without a
-          // refetch; after a full reset() the list is empty and the
-          // server state lands via loadSessions on re-entry.
-          const row = (DevChat.sessions || []).find((s) => Number(s.id) === Number(sessionId));
-          if (row) {
-            row.status = 'promoted';
-            if (data.prNumber) {
-              row.pr_number = data.prNumber;
-              if (data.prUrl) row.pr_url = data.prUrl;
-              if (data.prTitle) {
-                row.pr_title = data.prTitle;
-                row.session_title = data.prTitle;
-              }
-            }
-          }
-        }
-      } else {
-        // Tolerate non-JSON error bodies (a proxy 502 HTML page) —
-        // res.json() throwing here used to masquerade as "Network error".
-        const data = await res.json().catch(() => ({}));
-        if (stillCurrent()) {
-          PlatformUI.toast(data.error || 'Failed to promote');
-          restoreBtn();
-        } else {
-          // No context-free popup chasing the user to another page —
-          // the session stays 'active' server-side, so the un-proposed
-          // state is visible and retryable when they return.
-          console.warn('Propose failed after leaving the session:', data.error || `HTTP ${res.status}`);
-        }
-      }
-    } catch (err) {
-      if (stillCurrent()) {
-        PlatformUI.toast('Network error');
-        restoreBtn();
-      } else {
-        // Stale rejection: swallow. The card it belongs to is not on screen.
-        console.warn('Propose request failed after leaving the session:', err?.message || err);
-      }
-    } finally {
-      // Whatever happened, this session is no longer proposing. The REPAINT is
-      // the failure paths' job above (`restoreBtn`), because on success the
-      // card has already been re-rendered without the button; this only makes
-      // sure a stale outcome cannot leave the flag set for a later re-entry.
-      DevChat._proposing = null;
-    }
+    const session = DevChat.currentSession;
+    if (!session || AppView.changeSubmissionState(session).kind !== 'ready') return;
+    return AppView.runChangeAction(session.id, 'promote');
   },
 
   // Append a live agent-suggested platform-report card to the timeline.
@@ -5594,7 +6218,12 @@ const DevChat = {
     if (raw === null || raw === undefined || raw === '') return '';
     const cents = Number(raw);
     if (!Number.isFinite(cents) || cents <= 0) return '';
-    return ` · reply $${(cents / 100).toFixed(3)}`;
+    // #2118: an OpenRouter reply's figure is the ledger's list-price
+    // estimate, never a provider-reported amount, and the label says so.
+    // A live row carries the flag from its usage event, a reloaded row
+    // from the persisted metadata.
+    const approx = (msg.costEstimated || msg.metadata?.costEstimated) ? '~' : '';
+    return ` · reply ${approx}$${(cents / 100).toFixed(3)}`;
   },
 
   // ── The transcript, as a MODEL ────────────────────────────────────
@@ -5693,19 +6322,103 @@ const DevChat = {
     return out.length ? out : undefined;
   },
 
+  // ── When the missing value is a NUMBER ─────────────────────
+  //
+  // A group whose answers are all bare numbers is a question about a
+  // quantity, and a row of chips is the wrong form for one: the model has to
+  // guess which five values you might want, and the one you actually want is
+  // the sixth. It becomes a stepper instead — the same question, asked as
+  // the thing it is.
+  //
+  // The test is deliberately strict: EVERY answer must be a bare number,
+  // optionally with a unit, and every unit present must be the same one.
+  // "0.2 m — ankle deep" is not a bare number, and it should not be — the
+  // prose is the point of that answer, and #1 in the design deck keeps those
+  // as chips. A group is numeric only when the model offered nothing but
+  // magnitudes.
+  //
+  // The STEP is the smallest gap between the values offered. That is the
+  // model's own sense of what a meaningful increment is here, which is a
+  // better answer than any constant this file could pick: 5-minute rounding
+  // steps by 5, a depth in tenths of a metre steps by a tenth.
+  _qaNumericGroup(answers) {
+    if (!Array.isArray(answers) || answers.length < 2) return null;
+    const parsed = [];
+    for (const a of answers) {
+      const m = /^\s*(-?\d+(?:\.\d+)?)\s*([^\s\d]{0,8})\s*$/.exec(String(a || ''));
+      if (!m) return null;
+      parsed.push({ value: parseFloat(m[1]), unit: (m[2] || '').trim() });
+    }
+    const units = [...new Set(parsed.map((p) => p.unit).filter(Boolean))];
+    if (units.length > 1) return null;
+    const values = parsed.map((p) => p.value);
+    const sorted = [...new Set(values)].sort((a, b) => a - b);
+    let step = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1];
+      if (gap > 0 && (step === 0 || gap < step)) step = gap;
+    }
+    if (!(step > 0)) return null;
+    // Decimal places of the step, so stepping never produces 0.30000000000004.
+    const dp = (String(step).split('.')[1] || '').length;
+    return {
+      unit: units[0] || '',
+      step,
+      dp,
+      suggested: values[0],
+      min: Math.min(...values, 0),
+    };
+  },
+
+  /** Render one numeric group's value the way its own answers were written. */
+  _qaNumberText(num, value) {
+    const n = value.toFixed(num.dp);
+    return num.unit ? `${n} ${num.unit}` : n;
+  },
+
   _qaSpec(msg) {
     const groups = msg.suggestions;
     const multi = groups.length > 1;
-    return {
-      multi,
-      groups: groups.map((g, gi) => ({
+    const specs = groups.map((g, gi) => {
+      const answers = g.answers || [];
+      const num = DevChat._qaNumericGroup(answers);
+      // The escape hatch's own wording follows the question. When the answers
+      // look like magnitudes the thing you want to do is type a number, and
+      // saying so is the difference between an affordance and a mystery.
+      const numeric = !!num || answers.some((a) => /^\s*-?\d/.test(String(a || '')));
+      return {
         label: multi && g.question ? g.question : '',
-        answers: (g.answers || []).map((a, ai) => ({
+        kind: num ? 'number' : 'chips',
+        number: num
+          ? {
+            value: DevChat._qaNumberText(
+              num, DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested
+            ),
+            suggested: DevChat._qaNumberText(num, num.suggested),
+          }
+          : null,
+        answers: num ? [] : answers.map((a, ai) => ({
           text: a,
           suggested: ai === 0,
           selected: multi && DevChat._qaSelection[gi] === ai,
         })),
-      })),
+        // The last chip in the row, and the only one that does not answer:
+        // it opens a one-line input scoped to THIS group rather than sending
+        // the reader off to the composer to do a form's job.
+        escape: num ? null : {
+          label: numeric ? 'Let me type a number' : 'Something else',
+          open: !!DevChat._qaTypedOpen[gi],
+          value: DevChat._qaTyped[gi] || '',
+        },
+      };
+    });
+    return {
+      // The shared send row appears past one question — and also whenever a
+      // group answers by typing or stepping rather than by tapping, because
+      // those have no send-on-tap moment of their own.
+      multi: multi
+        || specs.some((g) => g.kind === 'number' || (g.escape && g.escape.open)),
+      groups: specs,
     };
   },
 
@@ -5976,6 +6689,14 @@ const DevChat = {
             if (life && life.key === 'merged') status2 = { kind: 'merged' };
             else if (life && life.label) status2 = { kind: 'badge', html: MergeStatus.badgeHtml(life) };
           }
+          // #1602: proposal availability is a lifecycle, not a visibility
+          // boolean. A successful request used to make the action disappear,
+          // which left no durable acknowledgement that this exact change had
+          // already crossed into group voting. Keep the completed control on
+          // every post-proposal state, disabled and handler-free; unrelated
+          // terminal states still render no proposal action.
+          const propose = session && ['active', 'promoted', 'merging', 'merged'].includes(session.status)
+            ? AppView.changeSubmissionState(session) : null;
           rows.push({
             t: 'changes', key,
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
@@ -5987,10 +6708,7 @@ const DevChat = {
             visualsHtml,
             preview: { enabled: canPreview, url: liveUrl, title: '' },
             test: hasTesting ? { enabled: canPreview, url: liveUrl } : null,
-            canPropose: session?.status === 'active',
-            // #558's in-flight spinner, which used to be written onto the
-            // button element the click came from. See `promotePR`.
-            proposePending: Number(DevChat._proposing) === Number(session?.id),
+            propose,
             status2,
           });
           return;
@@ -6046,6 +6764,40 @@ const DevChat = {
           });
           return;
         }
+        // A FAILED TURN, which until now fell through to the generic row
+        // below and came back wearing that row's green ✓ (see the `failure`
+        // row in ./transcript-store.ts).
+        //
+        // `turnError` only — NOT `stagingFailed`. A staging-build failure
+        // carries `changesReady: true` and renders the Changes-ready card
+        // with its Preview disabled, which is the honest reading: the commit
+        // exists and is proposable, only the preview did not build. Routing
+        // it here would take that card away and lose the Propose action with
+        // it.
+        if (msg.turnError) {
+          rows.push({
+            t: 'failure', key, tone: 'blocked',
+            html: msg.content || '', text: msg.content || '', stamp,
+          });
+          return;
+        }
+        // A STOP THAT LANDED. Same card, deliberately not red: the user asked
+        // for this, and the green ✓ it used to wear was the mirror-image
+        // mistake — a pipeline tick over a pipeline that did not finish. The
+        // landing goes in chips rather than in the sentence's trailing
+        // clause, so "2 changes committed · a1b2c3d4 · pushed" is legible at
+        // a glance instead of buried mid-sentence. `headline` is the same
+        // sentence WITHOUT that clause; `content` is the fallback for rows
+        // persisted before the server sent the data.
+        if (msg.stopLanding) {
+          rows.push({
+            t: 'failure', key, tone: 'stopped',
+            text: msg.stopLanding.headline || msg.content || '',
+            chips: DevChat._stopLandingChips(msg.stopLanding),
+            stamp,
+          });
+          return;
+        }
         // #664: mid-turn payer switch onto the user's own API key. A key glyph
         // instead of the pipeline check, so it reads as an FYI.
         if (msg.billingSwitch) {
@@ -6053,10 +6805,14 @@ const DevChat = {
           return;
         }
         // #937: once a stop is clearly not landing, the row grows a Force stop
-        // button — the user's only way out of a permanent "Stopping…".
+        // button — the user's only way out of a permanent "Stopping…". It was
+        // a status row, which meant the escalation SETTLED TO A GREEN ✓ the
+        // moment the turn went inactive: the one state where the user is
+        // genuinely stuck, wearing the tick that means "done". It is the
+        // failure card now, and it keeps the button.
         if (msg._stopping && msg._forceOffered) {
           rows.push({
-            t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+            t: 'failure', key, tone: 'stopping',
             text: msg.content || '', elapsed, stamp, forceStop: true,
           });
           return;
@@ -6135,19 +6891,30 @@ const DevChat = {
     };
   },
 
-  /** #990's trailing dots, as data. */
+  /**
+   * #990's trailing dots, as data.
+   *
+   * ONE INDICATOR AT A TIME (#1590). A live step already draws a spinning
+   * arc, names itself and counts its own seconds; dots underneath it are a
+   * second answer to the same question, and on a bounce they climb into the
+   * row above. So the dots are for the window where NOTHING is live — the
+   * ladder frozen on a ✓ while the turn is still running, which is the
+   * silent gap #990 was actually about.
+   *
+   * This started as the same rule for live CODING runs only ("that row
+   * already carries a scrolling log and an ETA"), which was the reasoning
+   * generalised: every live row carries its own cue, the coding run's is
+   * merely the loudest.
+   */
   _activitySpec() {
     if (!DevChat.isStreaming || !DevChat._activity) return null;
-    // Suppressed while a coding agent's own live log is painting progress:
-    // that row already carries a scrolling log and an ETA, so dots pinned
-    // underneath read as noise. The pre-log gap is still covered, because
-    // that status line is not a live CC run yet.
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (!m || m.role !== 'system') continue;
+      // Frozen rows say nothing about what is happening NOW, so keep
+      // walking past them — the same search the live-CC-run check made.
       if (!m._active) continue;
-      if (DevChat._isLiveCcRun(m)) return null;
-      break;
+      return null;
     }
     return { label: DevChat._activity.label || '' };
   },
@@ -6201,6 +6968,10 @@ const DevChat = {
     const ai = parseInt(chip.dataset.qaAnswer, 10);
     const answer = groups[gi]?.answers?.[ai];
     if (answer == null) return;
+    // A typed answer and a tapped one fill the SAME slot, so tapping a chip
+    // after typing must not leave the typed text quietly winning at send.
+    delete DevChat._qaTyped[gi];
+    delete DevChat._qaTypedOpen[gi];
     if (groups.length === 1) {
       DevChat.sendMessage(answer);
       return;
@@ -6212,14 +6983,131 @@ const DevChat = {
     DevChat.renderMessages();
   },
 
+  /**
+   * The escape hatch: the last chip in a row, and the only one that does not
+   * answer. It opens a one-line input scoped to its own group.
+   *
+   * A question offering four answers and no way to give a fifth is a form
+   * that only accepts the answers it thought of; the way out used to be the
+   * composer, which is a text box for the conversation being asked to do a
+   * form's job. The input belongs beside the question it answers.
+   */
+  _onQaEscapeClick(chip) {
+    if (DevChat.isStreaming) return;
+    const gi = parseInt(chip.dataset.qaEscape, 10);
+    if (!Number.isFinite(gi)) return;
+    DevChat._qaTypedOpen[gi] = !DevChat._qaTypedOpen[gi];
+    if (!DevChat._qaTypedOpen[gi]) delete DevChat._qaTyped[gi];
+    // Typing IS this group's answer, so a chip choice cannot also stand.
+    else delete DevChat._qaSelection[gi];
+    DevChat.renderMessages();
+  },
+
+  /**
+   * The typed answer, committed on blur or Enter — never per keystroke.
+   *
+   * The same rule the admin console's paged search boxes follow: the field
+   * is uncontrolled with a `defaultValue`, because a controlled one would
+   * republish the whole transcript on every character and take the caret
+   * with it.
+   */
+  _onQaTypedCommit(input) {
+    const gi = parseInt(input.dataset.qaTyped, 10);
+    if (!Number.isFinite(gi)) return;
+    const value = String(input.value || '').trim();
+    if (value) DevChat._qaTyped[gi] = value;
+    else delete DevChat._qaTyped[gi];
+  },
+
+  /** − / + on a numeric group. */
+  _onQaStep(btn) {
+    if (DevChat.isStreaming) return;
+    const gi = parseInt(btn.dataset.qaGroup, 10);
+    const dir = parseInt(btn.dataset.qaStep, 10);
+    const groups = DevChat._qaCurrentGroups();
+    const num = groups && DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (!num || !Number.isFinite(dir)) return;
+    const at = DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested;
+    const next = Math.max(num.min, parseFloat((at + dir * num.step).toFixed(num.dp)));
+    DevChat._qaNumber[gi] = next;
+    DevChat.renderMessages();
+  },
+
+  /** …and typing into that same field, on the same commit rule. */
+  _onQaNumberCommit(input) {
+    const gi = parseInt(input.dataset.qaNumber, 10);
+    const groups = DevChat._qaCurrentGroups();
+    const num = groups && DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (!num) return;
+    const parsed = parseFloat(String(input.value || '').replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(parsed)) DevChat._qaNumber[gi] = Math.max(num.min, parsed);
+    DevChat.renderMessages();
+  },
+
+  /**
+   * The question groups the chips on screen are drawn from, or null (#1601).
+   *
+   * Every Q/A interaction goes through this: the chip tap, the escape hatch,
+   * the number stepper and its typed commit, "Send answers" and "Use the
+   * suggested defaults". It was CALLED in five places and DEFINED in none, so
+   * each of them threw `DevChat._qaCurrentGroups is not a function` at the
+   * first line and the whole quick-check step was a dead end — which is what
+   * "selecting use the suggested defaults does nothing, send answers does
+   * nothing, not able to continue" was.
+   *
+   * The rule is `_buildChatView`'s `wantsQa`, restated so the two cannot
+   * disagree about WHICH message is being answered: the chips render on the
+   * last non-system message when that message is the assistant's, carries a
+   * non-empty `suggestions` array, and the session is one the viewer can still
+   * act in. Anything else renders no chips, and this answers null so the
+   * handlers return instead of acting on a question nobody can see.
+   *
+   * It returns the RAW `msg.suggestions`, not `_qaSpec`'s view of them: the
+   * handlers index `groups[gi].answers[ai]` expecting plain answer strings,
+   * while the spec maps each answer to a `{ text, suggested, selected }`
+   * object for rendering.
+   */
+  _qaCurrentGroups() {
+    const session = DevChat.currentSession;
+    if (!session || (session.status !== 'active' && session.status !== 'promoted')) return null;
+    const messages = DevChat.messages || [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.role === 'system') continue;
+      // The last non-system row. If the viewer has already replied it is
+      // theirs, the chips are gone, and there is nothing to answer.
+      if (msg.role === 'user') return null;
+      return Array.isArray(msg.suggestions) && msg.suggestions.length
+        ? msg.suggestions
+        : null;
+    }
+    return null;
+  },
+
+  /**
+   * One group's answer, whichever way it was given. Typing wins over a
+   * tapped chip because the two are mutually exclusive above, and a stepper
+   * group has no chips to compete with.
+   */
+  _qaAnswerFor(groups, gi) {
+    const typed = DevChat._qaTypedOpen[gi] ? DevChat._qaTyped[gi] : null;
+    if (typed) return typed;
+    const num = DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (num) {
+      const v = DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested;
+      return DevChat._qaNumberText(num, v);
+    }
+    const ai = DevChat._qaSelection[gi];
+    return ai != null ? ((groups[gi] && groups[gi].answers[ai]) ?? null) : null;
+  },
+
   _qaSendSelected() {
     if (DevChat.isStreaming) return;
     const groups = DevChat._qaCurrentGroups();
     if (!groups) return;
     const parts = [];
     for (let gi = 0; gi < groups.length; gi++) {
-      const ai = DevChat._qaSelection[gi];
-      const answer = ai != null ? groups[gi]?.answers?.[ai] : null;
+      const answer = DevChat._qaAnswerFor(groups, gi);
       if (answer != null) parts.push(`${gi + 1}. ${answer}`);
     }
     if (!parts.length) return;
@@ -6460,57 +7348,64 @@ const DevChat = {
     DevChat._syncSaveDraftBtn();
   },
 
-  // ── Inherited (cloned auto-session) history (#647) ────────
-  //
-  // A session started from an issue's generated proposal
-  // (POST /api/sessions/:id/clone-headless) copies the auto session's whole
-  // conversation into itself. Those inherited Claude Code blocks used to
-  // open expanded — in practice two 60-215 line logs plus a ~2kB summary —
-  // burying the spec card, the "Changes ready" card and the follow-up
-  // message under a wall of log output on first entry. They now default to
-  // collapsed; anything the session produces for the human afterwards
-  // (live or finished) keeps the expanded default.
-  //
-  // The server marks each copied row with metadata.inheritedFrom (the
-  // source session id) — the only durable signal, since the copy doesn't
-  // carry created_at over and the ids are contiguous with the human's own
-  // later turns.
-
-  // The deterministic opening of the follow-up message the clone appends
-  // (buildHeadlessFollowUpMessage in src/routes/sessions.js). Used only by
-  // the legacy fallback below.
-  _CLONE_FOLLOWUP_PREFIX: 'This session was cloned from an auto session',
-
-  // Flag inherited rows in place. Marker-driven for sessions cloned after
-  // #647 shipped; for older clones (no marker on any row) fall back to the
-  // follow-up message as the boundary — everything BEFORE it was copied,
-  // the follow-up itself and everything after belong to the human session.
-  // When neither signal is present nothing is flagged and the session keeps
-  // today's all-expanded behaviour.
-  _markInheritedMessages(messages, session) {
-    if (!Array.isArray(messages) || !messages.length) return messages;
-    let sawMarker = false;
-    for (const m of messages) {
-      if (m && m.metadata && m.metadata.inheritedFrom) {
-        m.inherited = true;
-        sawMarker = true;
-      }
-    }
-    if (sawMarker) return messages;
-    if (!session || !session.cloned_from_session_id) return messages;
-    const boundary = messages.findIndex((m) => m
-      && m.role === 'assistant'
-      && String(m.content || '').startsWith(DevChat._CLONE_FOLLOWUP_PREFIX));
-    if (boundary < 0) return messages;
-    for (let i = 0; i < boundary; i++) messages[i].inherited = true;
-    return messages;
-  },
+  // #647's inherited-history pass lived here and is retired. It existed to
+  // give ONE class of Claude Code disclosure a collapsed default; every
+  // disclosure has that default now (see _ccDefaultOpen below), so the flag
+  // it computed had no reader left, and `metadata.inheritedFrom` — which the
+  // clone route still stamps, and clone-headless-suggestions.test.js still
+  // pins — had no reader on the client at all. A flag nothing consults is a
+  // trap for whoever next believes it means something.
 
   // Should a Claude Code disclosure (dc-cc-attached) start expanded?
-  // Everything defaults open — the live-run log is meant to be watched —
-  // except rows inherited from a cloned auto session.
-  _ccDefaultOpen(msg) {
-    return !(msg && msg.inherited);
+  //
+  // NO — none of them, which is now the whole rule. It used to be "everything
+  // open except rows inherited from a cloned auto session" (#647), on the
+  // argument that the live-run log is meant to be watched.
+  //
+  // That argument belonged to a summary that could not carry the run. It is a
+  // card now, and its header holds exactly what the log was watched FOR: the
+  // file being edited, the step count, the elapsed timer, the phase, and the
+  // AI guess with its countdown. The log underneath is the detail behind
+  // those facts, and at 60-215 lines it is the largest thing in the
+  // transcript by an order of magnitude.
+  //
+  // #647 had already found this and fixed it for one case. Its note is worth
+  // reading in full: two inherited logs plus a summary "burying the spec
+  // card, the Changes ready card and the follow-up message under a wall of
+  // log output on first entry". Nothing about that is specific to a clone —
+  // a twelve-turn session of the human's own is twelve open logs, and no
+  // reader wants eleven of them. This is #647's finding applied where it
+  // always applied.
+  //
+  // Anyone who opens one keeps it open: _applyDetailsPersistence round-trips
+  // the flag per message through localStorage, so being wrong here costs one
+  // click, once, on the run you actually care about.
+  //
+  // It takes the message and ignores it. This is the seam every disclosure
+  // asks, and a caller that keeps passing its row is what makes a future
+  // exception — a live run, say — a change to this function rather than to
+  // four call sites.
+  _ccDefaultOpen(_msg) {
+    return false;
+  },
+
+  // The landing of a stop, as chips. Reads only the server's data — the
+  // sentence beside it says the same thing in prose, and parsing that prose
+  // back out is the thing this field exists to avoid.
+  //
+  // `commits: null` is "a commit landed, quantity unknown" — the recovered
+  // path reaches this from durable tail milestones, which carry a sha and a
+  // push flag but no count. It draws a countless chip rather than a made-up
+  // number. `sha: null` is the ordinary case and gets one honest chip.
+  _stopLandingChips(landing) {
+    const s = landing || {};
+    if (!s.sha) return ['nothing committed'];
+    const chips = [s.commits == null
+      ? 'changes committed'
+      : `${s.commits} change${s.commits === 1 ? '' : 's'} committed`];
+    chips.push(s.sha);
+    chips.push(s.pushOk ? 'pushed' : 'not pushed');
+    return chips;
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -6593,6 +7488,7 @@ const DevChat = {
 
     if (!DevChat._markdownReady) {
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escAttr = (s) => esc(s).replace(/"/g, '&quot;');
 
       marked.use({
         breaks: true,
@@ -6616,6 +7512,24 @@ const DevChat = {
             return `<code class="dc-inline-code">${esc(text)}</code>`;
           },
           html({ text }) {
+            // GitHub emits a dragged/resized issue-comment screenshot as a
+            // raw <img ...> tag rather than Markdown image syntax. Raw HTML
+            // stays escaped everywhere by default. On an image-enabled
+            // surface, accept only one standalone image tag, extract only its
+            // quoted src/alt values, re-check the same URL policy as the
+            // Markdown image renderer, and rebuild controlled markup. Width,
+            // event handlers, styles and every other supplied attribute are
+            // deliberately discarded before DOMPurify sees the result.
+            const tag = String(text || '').trim();
+            if (DevChat._renderImagesInline && /^<img\b[^>]*\/?>$/i.test(tag)) {
+              const srcMatch = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+              const altMatch = /\salt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+              const src = srcMatch ? (srcMatch[1] ?? srcMatch[2] ?? '') : '';
+              const alt = altMatch ? (altMatch[1] ?? altMatch[2] ?? '') : '';
+              if (/^https:\/\//i.test(src) || /^\/[^/]/.test(src)) {
+                return `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+              }
+            }
             return esc(text);
           },
           // F3: real heading hierarchy. # → h3 (largest), ## → h4,
@@ -6693,7 +7607,7 @@ const DevChat = {
             const inlineOk = DevChat._renderImagesInline
               && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
             if (inlineOk) {
-              return `<img class="dc-inline-img" src="${esc(href)}" alt="${safeText}" loading="lazy">`;
+              return `<img class="dc-inline-img" src="${escAttr(href)}" alt="${escAttr(text || '')}" loading="lazy">`;
             }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
@@ -6873,6 +7787,10 @@ const DevChat = {
       // rewrites inside renderMessages don't drop the handlers.
       const chip = e.target.closest('[data-qa-group]');
       if (chip) { DevChat._onQaChipClick(chip); return; }
+      const qaEsc = e.target.closest('[data-qa-escape]');
+      if (qaEsc) { DevChat._onQaEscapeClick(qaEsc); return; }
+      const qaStep = e.target.closest('[data-qa-step]');
+      if (qaStep) { DevChat._onQaStep(qaStep); return; }
       if (e.target.closest('[data-qa-send]')) { DevChat._qaSendSelected(); return; }
       if (e.target.closest('[data-qa-defaults]')) { DevChat._qaSendDefaults(); return; }
       const card = e.target.closest('.dc-spec-preview-card');
@@ -7010,7 +7928,12 @@ const DevChat = {
       branch: s.branch_name || '',
       busy,
       pr: s.pr_url ? { url: s.pr_url, number: s.pr_number } : null,
-      date: new Date(s.created_at).toLocaleDateString(),
+      // #1808: the raw instant, not `toLocaleDateString()`. The row said
+      // "9/9/2026" — a day with no time, in a list where several sessions a
+      // day is normal — and ./session-list.tsx stamps it with the shared
+      // helper now, which this module cannot import (./mount.ts evaluates
+      // its real source in a `vm` as a classic script).
+      createdAt: s.created_at || '',
       actions,
     };
   },
@@ -7181,18 +8104,26 @@ const DevChat = {
   // title sentence is that builder's, moved here whole.
   _headerVenue(session) {
     if (!window.BuildVenues || !BuildVenues.venue) return null;
-    const v = BuildVenues.venue(DevChat._currentVenueId());
+    const v = BuildVenues.sessionVenue({
+      current: DevChat._currentVenueId(),
+      source: session?.source,
+      externalAgent: session?.external_agent,
+      buildVenue: session?.build_venue,
+      localAgent: DevChat._localAgent,
+    });
     if (!v) return null;
     return {
       id: v.id,
       label: v.label,
       title: 'Building in ' + v.label + '. ' + v.blurb
-        + ' Pick a different venue: on Usernode, on your computer, or handed to'
+        + ' Pick a different venue: on Homeroom, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
-      // `agentSelect.disabled` guarded against. Same rule, new control.
-      disabled: !!DevChat.isStreaming,
+      // `agentSelect.disabled` guarded against. `_chatBusyForPaint` keeps
+      // the deterministic busy screenshot honest without changing any of
+      // the real streaming guards. Same rule, new control.
+      disabled: DevChat._chatBusyForPaint(),
     };
   },
 
@@ -7204,6 +8135,7 @@ const DevChat = {
     const session = DevChat.currentSession;
     const s = session || {};
     return {
+      sessionId: s.id || null,
       // Streamlined Concept: the strip's Building chip. `_composerBusy` is
       // set synchronously by _setStreamingUI — which also repaints this
       // strip — so the chip tracks every turn transition without a new hook.
@@ -7324,7 +8256,8 @@ const DevChat = {
           || Number(DevChat.currentSession.id) !== Number(session.id)) return;
       // Lifecycle-relevant scalars decide whether anything visible changed;
       // copy them onto the live row either way.
-      const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
+      const watch = ['status', 'check_state', 'proposal_state',
+                     'merge_conflict_state', 'behind_main',
                      'yes_count', 'no_count', 'majority', 'merged_at',
                      // #1442: the freshness measurement. `behind_main` above
                      // is written through from the same pass, but these are
@@ -7675,11 +8608,7 @@ const DevChat = {
       placeholder: DevChat._composerBusy
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER,
-      saveDraft: DevChat._saveDraftView(),
       send: DevChat._sendButtonView(),
-      shortcutHintHtml: DevChat._chatBusyForPaint()
-        ? DevChat.SHORTCUT_HINT_SAVE
-        : DevChat.SHORTCUT_HINT_SEND,
     };
   },
 
@@ -7689,6 +8618,25 @@ const DevChat = {
    * knowing which transition it is in the middle of.
    */
   _sendButtonView() {
+    // TEXT IN THE BOX OUTRANKS EVERY BUSY SHAPE BELOW. This is #810's rule,
+    // moved from a separate icon onto the button itself: while a turn runs
+    // sending is impossible, so the only thing to do with typed text is park
+    // it. Reading the LIVE field is the one input here that cannot come from
+    // module state — the textarea is uncontrolled, so its value lives in the
+    // DOM and nowhere else. `_syncSaveDraftBtn` is the republish that every
+    // keystroke already goes through, which is what keeps this current.
+    //
+    // It takes Stop's place rather than sitting beside it, which means Stop
+    // is not reachable while the field has text. That is deliberate: saving
+    // BLANKS the field, so one press of the green button both parks the note
+    // and hands Stop back — as does clearing the box.
+    //
+    // Gated on the PAINT predicate, not on `_composerBusy`, because that is
+    // the predicate the save icon this replaces was gated on — `isStreaming`
+    // plus the `?shot=` capture state. Keeping it means the affordance is
+    // available at exactly the same moments it always was, including before
+    // `_setStreamingUI` has run for a turn that has already started.
+    if (DevChat._chatBusyForPaint() && DevChat._sendButtonHasText()) return { kind: 'save' };
     if (!DevChat._composerBusy) return { kind: 'send' };
     // #889: a requested-but-not-yet-landed stop outranks both states below —
     // the turn is still streaming (so Send is wrong), but the red Stop square
@@ -7746,10 +8694,17 @@ const DevChat = {
     const stagingOpen = !!DevChat.stagingPanel.open;
     return {
       kind: 'session',
+      embedded: !!document.getElementById('dc-view')?.dataset?.changeWorkspace,
+      change: window.AppView?._topicViewFor ? {
+        item: DevChat.currentSession,
+        ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
+
+      } : null,
       // #1281: a hand-off venue swaps the composer for the launchpad. The
       // venue dropdown lives in the header, outside the swap, which is what
       // makes it reversible — it is the way back to a chat.
       launchpadHtml: DevChat._launchpadHtml(),
+      ownToolsGuide: DevChat._ownToolsGuideView(),
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.
@@ -7761,7 +8716,42 @@ const DevChat = {
       // to be wider).
       staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
       proposalHint: !!DevChat._proposalHint,
+      returnHint: DevChat._showReturnHint(),
     };
+  },
+
+  // #1595: keep the first-use explainer until it is acknowledged. Scope the
+  // dismissal to the viewer, across apps/sessions, with an in-memory fallback
+  // when browser storage is unavailable. Merely reading someone else's chat
+  // must not consume your first-use hint.
+  _dismissedReturnHints: new Set(),
+
+  _returnHintKey() {
+    // A deterministic capture can show the tip even after dismissal, without
+    // writing the viewer's preference or changing other screenshot states.
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot) return shot === 'dev-chat-first-use' ? 'preview' : null;
+    } catch { /* no browser location */ }
+    if (!DevChat._ownsSession(DevChat.currentSession) || !App.user.id) return null;
+    return `usernode:dev-chat-return-hint:v1:${App.user.id}`;
+  },
+
+  _showReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key || DevChat._dismissedReturnHints.has(key)) return false;
+    if (key === 'preview') return true;
+    try { return localStorage.getItem(key) !== '1'; } catch { return true; }
+  },
+
+  dismissReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key) return;
+    DevChat._dismissedReturnHints.add(key);
+    if (key !== 'preview') {
+      try { localStorage.setItem(key, '1'); } catch { /* keep the in-memory dismissal */ }
+    }
+    DevChat._publishDevView();
   },
 
   /**
@@ -7790,6 +8780,10 @@ const DevChat = {
   renderChatView() {
     const content = document.getElementById('dc-view');
     if (!content) return;
+    // A lazy workspace host can exist while its session is still loading.
+    // Never let an earlier session's background poll fill that empty host.
+    if (content.dataset?.changeWorkspace
+      && Number(content.dataset.changeWorkspace) !== Number(DevChat.currentSession?.id)) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.mountDevView) return;
@@ -7887,10 +8881,14 @@ const DevChat = {
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
-    // #801 screenshot state: paint the mid-turn composer (Stop button, busy
-    // placeholder, no save icon) without any turn actually running. Pure UI
-    // — isStreaming stays false, so nothing can be sent or stopped.
+    // #801 screenshot state: paint the mid-turn composer (the circle as Stop,
+    // busy placeholder, drafts listed) without any turn actually running.
+    // Pure UI — isStreaming stays false, so nothing can be sent or stopped.
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
+    // …and `?shot=busy-typed` fills the box on top of that, which is what
+    // turns the circle green. After the paint above, so the republish it
+    // triggers is the last word on the button's shape.
+    DevChat._applyTypedShot();
 
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
@@ -7927,10 +8925,20 @@ const DevChat = {
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      // When streaming, the same button is the "Stop" affordance — so
-      // a submit event means "stop this turn" rather than "send a new
-      // message" (the input is disabled while streaming anyway).
+      // The one circle, routed. This is now the SAME three-way decision
+      // `_onComposerShortcut` makes, which is what let #920's hint line go:
+      // the button and Ctrl/Cmd+Enter do the same thing in every state, so
+      // the control's own title names it for both.
       if (DevChat.isStreaming) {
+        // Text in the box means the button is green Save, not red Stop.
+        // `_saveComposerDraft` re-checks `isStreaming` and a non-blank
+        // field itself, so a turn that ended between the paint and the
+        // click refuses quietly rather than stopping something the user
+        // did not aim at.
+        if (DevChat._sendButtonHasText()) {
+          DevChat._saveComposerDraft();
+          return;
+        }
         DevChat._stopCurrentTurn();
         return;
       }
@@ -8318,6 +9326,53 @@ const DevChat = {
     } catch { return false; }
   },
 
+  // Screenshot-state deep link `?shot=draft-delete` (#1960).
+  //
+  // "Deleting drafts is broken" turned out to be a RACE, and a race has no
+  // resting state a URL can be pointed at: the draft only came back when
+  // the trash landed while a reconcile's list was already in the air. So
+  // this link does not paint a state, it PERFORMS the report — it starts a
+  // reconcile, trashes a draft while that list is still in flight, then
+  // lets a settled resync run on top of it. What the check reads
+  // afterwards is the only thing that ever mattered to the user: is the
+  // draft still gone.
+  //
+  // Unlike every other `?shot=` link this one WRITES: a real DELETE,
+  // through the real route, against the real table. That is the point — a
+  // delete that only pretends to happen cannot catch a delete that comes
+  // back. It is fenced instead of env-gated, to one seeded staging session
+  // and one seeded draft id (seedStagingDraftDelete in src/db/migrate.js);
+  // neither exists in production, so the link is simply inert there. And
+  // because it names the id it removes rather than "the first row", a
+  // re-run finds it already gone and lands on exactly the same screen.
+  SHOT_DRAFT_DELETE_SESSION: 990414,
+  SHOT_DRAFT_DELETE_ID: 'dropthisdraft',
+
+  async _applyDraftDeleteShot(sessionId) {
+    try {
+      if (new URLSearchParams(location.search).get('shot') !== 'draft-delete') return;
+    } catch { return; }
+    if (Number(sessionId) !== DevChat.SHOT_DRAFT_DELETE_SESSION) return;
+    const victim = DevChat.SHOT_DRAFT_DELETE_ID;
+    const onThisSession = () => DevChat.currentSession
+      && Number(DevChat.currentSession.id) === Number(sessionId);
+
+    // The session payload's drafts field is best-effort, so the list may
+    // not be here yet. Settle it before staging anything.
+    if (!DevChat._getSavedDrafts(sessionId).some((d) => d.id === victim)) {
+      await DevChat._reconcileDrafts(sessionId, null);
+    }
+    if (!onThisSession()) return;
+
+    // A list fetched BEFORE the trash: the snapshot that used to undo it.
+    const inFlight = DevChat._reconcileDrafts(sessionId, null);
+    DevChat._deleteSavedDraft(victim);
+    await inFlight;
+    if (!onThisSession()) return;
+    // …and a resync after it, which is what retires the tombstone.
+    await DevChat.applyDraftsUpdate(sessionId);
+  },
+
   // Any `?shot=` deep link, whichever one. Read by openSession to keep a
   // capture read-only — see the auto-resume above.
   _isShotDeepLink() {
@@ -8333,8 +9388,35 @@ const DevChat = {
   // (sendMessage / _submitFromInput / _sendSavedDraft / _stopCurrentTurn)
   // keep reading the honest flag, and nothing here starts or stops a turn.
   _wantsBusyShot() {
-    try { return new URLSearchParams(location.search).get('shot') === 'busy-drafts'; }
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      return shot === 'busy-drafts' || shot === 'busy-typed';
+    } catch { return false; }
+  },
+
+  // `?shot=busy-typed`: the same mid-turn paint, plus TEXT IN THE BOX — which
+  // is the state where the one circle is green Save rather than red Stop.
+  //
+  // It needs its own route because that state is unreachable from a URL
+  // otherwise: the shape is read off the live field (`_sendButtonHasText`),
+  // so no amount of module state produces it and a capture of `busy-drafts`
+  // only ever shows the empty-field half. Platform rule 5's deep link, for
+  // exactly the reason it exists — the changed UI is only reachable by
+  // interacting.
+  _wantsTypedShot() {
+    try { return new URLSearchParams(location.search).get('shot') === 'busy-typed'; }
     catch { return false; }
+  },
+
+  // Seed the field for the shot above, once the composer exists. Writes the
+  // uncontrolled textarea directly, exactly as `_restoreDraft` does, then
+  // republishes so the circle repaints from it.
+  _applyTypedShot() {
+    if (!DevChat._wantsTypedShot()) return;
+    const input = document.getElementById('dc-input');
+    if (!input || input.value) return;
+    input.value = 'Also widen the meter a little';
+    DevChat._syncSaveDraftBtn();
   },
 
   // Paint-only "is a turn running" predicate. Real behaviour must keep
@@ -8420,8 +9502,13 @@ const DevChat = {
 
   // Replace the visible list, preserving the tombstones the mirror carries
   // (they belong to the sync layer, not to the list the user sees).
+  //
+  // Called only by the four local mutators (save / send / edit / trash), so
+  // it is the right place to advance the #1960 mutation clock: any list a
+  // reconcile fetched before this moment is now out of date.
   _setSavedDrafts(sessionId, list) {
     if (!sessionId) return;
+    DevChat._bumpDraftSeq(sessionId);
     const { tombstones } = DevChat._readDraftMirror(sessionId);
     DevChat._writeDraftMirror(sessionId, {
       drafts: (list || []).map(DevChat._normalizeDraft).filter(Boolean),
@@ -8445,6 +9532,7 @@ const DevChat = {
   _addDraftTombstone(sessionId, id) {
     const mirror = DevChat._readDraftMirror(sessionId);
     if (mirror.tombstones.some((t) => t.id === id)) return;
+    DevChat._bumpDraftSeq(sessionId);
     mirror.tombstones.push({ id, at: new Date().toISOString() });
     DevChat._writeDraftMirror(sessionId, mirror);
   },
@@ -8454,6 +9542,41 @@ const DevChat = {
     const tombstones = mirror.tombstones.filter((t) => t.id !== id);
     if (tombstones.length === mirror.tombstones.length) return;
     DevChat._writeDraftMirror(sessionId, { drafts: mirror.drafts, tombstones });
+  },
+
+  _isDraftTombstoned(sessionId, id) {
+    return DevChat._readDraftMirror(sessionId).tombstones.some((t) => t.id === id);
+  },
+
+  // ── #1960: how old is the list I'm holding? ─────────────────────────
+  //
+  // A reconcile fetches the server's drafts and then decides what to keep.
+  // Between those two moments the user can trash a draft, and the list in
+  // hand — fetched BEFORE the delete — still contains it. Nothing in the
+  // snapshot says so, because a REST list carries no clock.
+  //
+  // This counter is that clock. Every local mutation bumps it; a reconcile
+  // reads it before fetching and again after, and a snapshot taken across
+  // a bump is STALE: it may be missing a save and, far worse, may still be
+  // showing a delete. Stale snapshots are still merged (the tombstone set
+  // subtracts what the user removed), they just aren't allowed to retire a
+  // tombstone — that is the one decision that needs a list which postdates
+  // the delete it is being asked to forget.
+  //
+  // In-memory on purpose: it orders events inside one page's lifetime,
+  // which is the only place the two sides of the race can both exist.
+  _draftMutationSeq: Object.create(null),
+
+  _bumpDraftSeq(sessionId) {
+    if (!sessionId) return 0;
+    const key = String(sessionId);
+    DevChat._draftMutationSeq[key] = (DevChat._draftMutationSeq[key] || 0) + 1;
+    return DevChat._draftMutationSeq[key];
+  },
+
+  _draftSeq(sessionId) {
+    if (!sessionId) return 0;
+    return DevChat._draftMutationSeq[String(sessionId)] || 0;
   },
 
   _newDraftId() {
@@ -8471,6 +9594,10 @@ const DevChat = {
   // reconcile flush can re-send freely.
   async _pushDraftAdd(sessionId, draft) {
     if (!sessionId || !draft) return false;
+    // #1960: the user may have trashed this draft before its upload ever
+    // ran (a reconcile flush queues uploads, and the flush is async).
+    // Uploading it now would put back exactly what the delete removed.
+    if (DevChat._isDraftTombstoned(sessionId, draft.id)) return false;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/drafts`, {
         method: 'POST',
@@ -8486,13 +9613,30 @@ const DevChat = {
         }
         return false;
       }
+      // …and it may have been trashed WHILE the POST was in flight, in
+      // which case the delete raced ahead of a row that didn't exist yet
+      // and the server is now holding a draft nobody asked for. Undo it.
+      if (DevChat._isDraftTombstoned(sessionId, draft.id)) {
+        DevChat._pushDraftDelete(sessionId, draft.id);
+        return false;
+      }
       DevChat._markDraftSynced(sessionId, draft.id, true);
       return true;
     } catch { return false; }
   },
 
   // Delete one draft. A tombstone is recorded first by the caller so an
-  // offline delete still replays; success drops it again.
+  // offline delete still replays.
+  //
+  // #1960: a 200 here does NOT retire the tombstone. This function knows
+  // the server has honoured the delete; it does not know whether some
+  // reconcile is still holding a list fetched before it, and retiring the
+  // tombstone hands that reconcile a draft with nothing left to suppress
+  // it — which is how a trashed draft came back, in the list AND in
+  // storage, and got re-uploaded on the reconcile after that. Retiring is
+  // now the reconcile's job, from a snapshot it can prove postdates the
+  // delete (see _reconcileDrafts). The cost is one tombstone living until
+  // the next reconcile; they are capped, and the id is never reused.
   async _pushDraftDelete(sessionId, id) {
     if (!sessionId || !id) return false;
     try {
@@ -8500,9 +9644,7 @@ const DevChat = {
         `/api/sessions/${sessionId}/drafts/${encodeURIComponent(id)}`,
         { method: 'DELETE' }
       );
-      if (!res.ok) return false;
-      DevChat._dropDraftTombstone(sessionId, id);
-      return true;
+      return !!res.ok;
     } catch { return false; }
   },
 
@@ -8510,7 +9652,9 @@ const DevChat = {
   // cross-device sync and the one-time migration of drafts that existed
   // only in this browser before #940.
   //
-  //   1. union server + local by id
+  //   1. union server + local by id — except a local row already marked
+  //      synced that the server no longer has: it was deleted on another
+  //      device (or sent there), so it is dropped, never re-uploaded
   //   2. anything tombstoned locally is dropped and DELETEd server-side
   //   3. anything local-and-unsynced is POSTed (the migration/offline flush)
   //   4. tombstones the server no longer knows about are discarded
@@ -8522,8 +9666,18 @@ const DevChat = {
   // after that means the network is down: keep the mirror exactly as-is.
   async _reconcileDrafts(sessionId, serverList) {
     if (!sessionId) return;
+    // #1960: how old is this list? Only a snapshot we fetched ourselves,
+    // with no local change across the wait, is recent enough to retire a
+    // tombstone. A caller-supplied array came from some earlier payload
+    // (openSession's session fetch) whose age we cannot see, so it is
+    // treated as unprovable — it is still merged, it just never gets to
+    // decide that a delete has been honoured. The next self-fetching
+    // reconcile (the WS echo, or returning to the tab) does that.
+    const seqAtFetch = DevChat._draftSeq(sessionId);
     let server = serverList;
+    let ownFetch = false;
     if (!Array.isArray(server)) {
+      ownFetch = true;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/drafts`);
         if (!res.ok) return;
@@ -8531,6 +9685,11 @@ const DevChat = {
         server = Array.isArray(data.drafts) ? data.drafts : [];
       } catch { return; }
     }
+    // Did the user change anything while we were waiting? If so this list
+    // predates that change: it cannot be trusted to retire tombstones, nor
+    // to say that a synced row it lacks was deleted elsewhere.
+    const noLocalChange = DevChat._draftSeq(sessionId) === seqAtFetch;
+    const snapshotIsCurrent = ownFetch && noLocalChange;
 
     const mirror = DevChat._readDraftMirror(sessionId);
     const tombstoned = new Set(mirror.tombstones.map((t) => t.id));
@@ -8544,15 +9703,31 @@ const DevChat = {
     // tombstones it has already honoured.
     const deletes = [];
     for (const t of mirror.tombstones) {
+      // Still listed: re-issue the DELETE. It is idempotent, so doing this
+      // to a draft the server already dropped costs one request.
       if (serverById.has(t.id)) deletes.push(DevChat._pushDraftDelete(sessionId, t.id));
-      else DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a snapshot that postdates every local change: the
+      // server has honoured it and no in-flight list can resurrect it.
+      else if (snapshotIsCurrent) DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a STALE snapshot proves nothing — this list may simply
+      // have been taken before the draft existed. Keep the tombstone; the
+      // reconcile that follows the delete's own round trip retires it.
     }
 
     // (1) union, minus tombstones. A server row wins on text (it is the
-    // authoritative copy); a local-only row survives to be uploaded.
+    // authoritative copy); a local-only row survives to be uploaded. A row
+    // this device has already seen on the server (`synced`) and the server
+    // no longer lists was deleted elsewhere (#1960/#1961): every DELETE
+    // pushes a drafts-changed event to the account's other devices, so
+    // re-uploading it here would resurrect the draft on all of them.
+    // Only a list with no local change across its wait may say so, though:
+    // a draft saved mid-reconcile can upload and mark itself synced before
+    // the older list arrives, and that list lacks it merely for being older.
     const union = new Map();
     for (const d of mirror.drafts) {
-      if (!tombstoned.has(d.id)) union.set(d.id, d);
+      if (tombstoned.has(d.id)) continue;
+      if (d.synced && !serverById.has(d.id) && noLocalChange) continue;
+      union.set(d.id, d);
     }
     for (const [id, d] of serverById) {
       if (!tombstoned.has(id)) union.set(id, d);
@@ -8586,7 +9761,7 @@ const DevChat = {
     // (3) flush anything the server hasn't got. After the paint, so an
     // offline device still shows the right list immediately.
     const uploads = merged
-      .filter((d) => !serverById.has(d.id))
+      .filter((d) => !d.synced && !serverById.has(d.id))
       .map((d) => DevChat._pushDraftAdd(sessionId, d));
 
     if (dropped) {
@@ -8611,80 +9786,51 @@ const DevChat = {
   // WS `session_drafts_changed` from another device of the SAME user.
   // No-op unless that session is the one on screen; the next open or
   // visibility-return reconciles anyway, so a dropped socket costs nothing.
+  // Returns the reconcile's promise so a caller (and the tests) can wait
+  // for it; nothing in the app does, the WS dispatch is fire-and-forget.
   applyDraftsUpdate(sessionId) {
-    if (!DevChat.currentSession) return;
-    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return;
-    DevChat._reconcileDrafts(DevChat.currentSession.id, null);
+    if (!DevChat.currentSession) return Promise.resolve();
+    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return Promise.resolve();
+    return DevChat._reconcileDrafts(DevChat.currentSession.id, null);
   },
 
   _toast(msg) {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
-  // #920: keep the hint under the box naming what Ctrl/Cmd+Enter actually
-  // does in the current state — "to send" while stopped, "to save as
-  // draft" while a turn runs, since that is what _onComposerShortcut
-  // routes to. Driven off the PAINT predicate (like the save icon it sits
-  // under) so the `?shot=busy-drafts` capture shows the running copy;
-  // the keystroke's real routing reads the honest isStreaming flag.
-  _syncShortcutHint() {
-    DevChat._publishComposer();
-  },
-
-  // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
-  // the #801 rule it replaces), and — when shown — enable it only if there
-  // is non-whitespace text to save.
+  // Republish the composer because the FIELD changed.
   //
-  // The rule follows the send button: while the chat is stopped the user can
-  // just SEND what they typed, so a "save it for later" control is noise;
-  // the moment the button flips to Stop, sending is impossible and parking
-  // the text as a draft is the only thing to do with it. So the icon is
-  // present for exactly as long as the stop sign is — `isStreaming` is the
-  // same flag that decides Send-vs-Stop, refuses `_submitFromInput` and
-  // disables the draft rows' Send. Every streaming transition funnels
-  // through _setStreamingUI, which already calls this — no extra listeners
-  // needed.
+  // It was named for a separate save icon whose `hidden`/`disabled`/`title`
+  // it drove (#810). That icon folded into the one circle, but the reason to
+  // republish on a keystroke did not: the circle is green Save while a turn
+  // runs and the box has text, red Stop while it is empty, so every edit can
+  // change its shape. `_sendButtonHasText` is where the rule lives now.
   //
-  // Hidden via the `hidden` PROPERTY (paired with `.dc-save-draft-btn
-  // [hidden]` in app.css, which the shared inline-flex rule would
-  // otherwise beat) rather than a class, so the control also leaves the
-  // tab order and the accessibility tree. The node itself stays mounted:
-  // its click listener is bound once per render behind `_sdWired`, so a
-  // removed-and-recreated button would come back unwired.
+  // Every streaming transition also funnels through `_setStreamingUI`, which
+  // calls this — so no extra listeners are needed for the other half.
   _syncSaveDraftBtn() {
-    // One publish for both: the hint under the box flips on exactly the
-    // events the save icon does, which is why this function was the hint's
-    // only caller. `_saveDraftView` is where the rule lives now.
     DevChat._publishComposer();
   },
 
   /**
-   * #810's save icon, as data.
+   * Is there anything in the box to park? — #810's rule, as one boolean.
    *
-   * The rule follows the send button: while the chat is stopped the user can
-   * just SEND what they typed, so a "save it for later" control is noise; the
-   * moment the button flips to Stop, sending is impossible and parking the
-   * text as a draft is the only thing to do with it. So the icon is present
-   * for exactly as long as the stop sign is.
+   * This was `_saveDraftView`, which answered the same question for a
+   * separate save icon. The icon is gone; the rule decides the one circle's
+   * shape instead (see `_sendButtonView`), and it is the same rule: while
+   * the chat is stopped the user can just SEND what they typed, so a "save
+   * it for later" control is noise; the moment the button flips to Stop,
+   * sending is impossible and parking the text is the only thing to do
+   * with it.
    *
-   * `hasText` is read off the LIVE field, which is the one thing here that
-   * cannot come from a model: the textarea is uncontrolled (the draft
-   * restore and the auto-grow both write it directly), so its value lives in
-   * the DOM and nowhere else.
+   * Read off the LIVE field, which is the one input here that cannot come
+   * from a model: the textarea is uncontrolled (the draft restore and the
+   * auto-grow both write it directly), so its value lives in the DOM and
+   * nowhere else. The caller has already established that a turn is running.
    */
-  _saveDraftView() {
-    if (!DevChat._chatBusyForPaint()) {
-      return { hidden: true, disabled: true, title: DevChat.SAVE_DRAFT_TITLE };
-    }
+  _sendButtonHasText() {
     const input = document.getElementById('dc-input');
-    const hasText = !!(input && input.value.trim());
-    return {
-      hidden: false,
-      disabled: !hasText,
-      title: hasText
-        ? DevChat.SAVE_DRAFT_TITLE
-        : 'Type something first, then save it as a draft for later',
-    };
+    return !!(input && input.value.trim());
   },
 
   _renderSavedDrafts() {
@@ -8709,12 +9855,11 @@ const DevChat = {
 
   // Click delegation, bound once per renderChatView (the container node is
   // recreated on every session re-render, like #dc-quick-replies).
+  //
+  // The composer's own save button used to be bound here too. It is the one
+  // circle now, which is inside `#dc-form` and therefore already routed by
+  // that form's submit listener — see the three-way branch there.
   _wireSavedDrafts() {
-    const saveBtn = document.getElementById('dc-save-draft-btn');
-    if (saveBtn && !saveBtn._sdWired) {
-      saveBtn._sdWired = true;
-      saveBtn.addEventListener('click', () => DevChat._saveComposerDraft());
-    }
     const box = document.getElementById('dc-drafts');
     if (!box || box._sdWired) return;
     box._sdWired = true;
@@ -8731,15 +9876,19 @@ const DevChat = {
     });
   },
 
-  // Save icon: move the composer's text into the drafts list and clear the
-  // box, so the user can immediately type the next thought. Attachments are
-  // NOT captured — a draft is plain text; any pending files stay parked in
-  // the composer strip for the real send.
+  // The green circle: move the composer's text into the drafts list and clear
+  // the box, so the user can immediately type the next thought. Attachments
+  // are NOT captured — a draft is plain text; any pending files stay parked
+  // in the composer strip for the real send.
+  //
+  // CLEARING THE BOX IS load-BEARING, not just a courtesy: an empty field is
+  // what turns the circle back into red Stop, so this one press both parks
+  // the note and hands the interrupt back.
   //
   // #810: refused while the chat is STOPPED, so the rule holds in BEHAVIOUR
   // and not only in paint — a click landing exactly as a turn ends, or any
   // programmatic call, can't park a draft the user could simply send. Silent
-  // no-op (the icon is hidden then, so there's no affordance to explain
+  // no-op (the button is Send by then, so there's no affordance to explain
   // away) and the text is left in the box, where it's already persisted per
   // session. Inverse of the #801 guard it replaces.
   _saveComposerDraft() {
@@ -9264,7 +10413,17 @@ const DevChat = {
       : (DevChat.specViewer.viewVersionContent || '');
 
     const options = versions.map((v) => {
-      const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      // #1808: the year, once the version was not built this year. An
+      // option label cannot carry a `title` and cannot elide to a bare time,
+      // so it follows the shared rule's other half directly: the year is
+      // dropped inside the current one and printed outside it. Spelled here
+      // rather than imported for the reason above.
+      const builtAt = v.built_at ? new Date(v.built_at) : null;
+      const built = builtAt && !Number.isNaN(builtAt.getTime())
+        ? builtAt.toLocaleString([], builtAt.getFullYear() === new Date().getFullYear()
+          ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+          : { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it
       // resumes following new versions; older options carry their number.

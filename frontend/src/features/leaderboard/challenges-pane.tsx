@@ -37,7 +37,7 @@
 //
 // Where the old strings put a bare space between two interpolations, the
 // space is baked into a neighbouring string instead — the participant row's
-// points-and-rate and the card's contribution note are composed in
+// points-and-rate and the card rail's label are composed in
 // ./topochain-challenges.js for exactly that reason. `{' '}` is not available
 // here (tests/shell-build.test.js rejects it: adjacent text children are
 // React #418 in a hydrating tree).
@@ -46,6 +46,8 @@ import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { ChallengeCard } from './challenge-card';
+import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 
 // The controller, by name. It is published on `window` for its legacy callers
@@ -57,6 +59,7 @@ const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
     _toStandings(): void;
+    _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
     closeUserProfile(): void;
@@ -73,9 +76,18 @@ type CardView = {
   done: boolean;
   label: string;
   goal: string;
-  task: string;
   reward: string | null;
-  mineNote: string | null;
+  icon?: string | null;
+  // From TopochainChallenges._stateOf: the rail's state, its one short line,
+  // its fill (null = indeterminate), whether it is counted (a bar, from zero),
+  // and "Earned N pts" on a finished challenge the viewer scored on.
+  state: ChallengeState;
+  stateLabel: string;
+  fill: number | null;
+  counted: boolean;
+  earned: string | null;
+  // "5d left" (TopochainChallenges._deadlineOf); null when done.
+  deadline: string | null;
 };
 
 type GroupView = { key: string; heading: string | null; cards: CardView[] };
@@ -84,7 +96,7 @@ type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; summary: string; groups: GroupView[] };
+  | { kind: 'cards'; summary: string; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -99,6 +111,7 @@ type CtaView = { kind: 'link'; href: string; label: string } | { kind: 'text'; l
 type DetailView = {
   label: string;
   goal: string;
+  task: string | null;
   description: string | null;
   mineNote: string | null;
   requirements: string | null;
@@ -118,19 +131,27 @@ type ProfileView =
     activities: { key: string; text: string; points: string }[] | null;
   };
 
-// ── Class strings, carried over verbatim from the retired templates ──────
+// ── Class strings ───────────────────────────────────────────────────────
+//
+// The grid, overlays and rows are carried over verbatim from the retired
+// templates. The card itself is ./challenge-card.tsx's `ChallengeCard`, the
+// same one Home's Challenges block draws; this file only gives it the
+// `tc-se-card` root class and the featured ring. That ring is also the only
+// source of the `ring-violet-500/40` sentinel tests/tailwind-build.test.js
+// compiles for.
 
-const GRID = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
-const CARD = 'tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 '
-  + 'dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 '
-  + 'dark:hover:border-violet-600 transition-colors';
+// Columns by the CONTAINER, not the viewport. The screen caps content at
+// max-w-5xl, so the old `sm:grid-cols-2 lg:grid-cols-3` left a 204px card body
+// at three columns and 180px at two on a 640px window — narrow enough that
+// the title, the "5d left · 500 pts" line and the rail label all truncate.
+// A column is never narrower than 21rem
+// while there are two or more; below that the grid is one full-width column.
+const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
-const CARD_DONE = ' opacity-60';
-const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-700  dark:text-violet-400'
-  + 'dark:text-violet-400 font-semibold';
-const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
-  + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
-const MINE_NOTE = 'text-xs text-emerald-700 dark:text-emerald-400 mt-2 font-medium';
+// The detail overlay's category line. It used to glue two strings into
+// `dark:text-violet-400dark:text-violet-400`, a class nothing compiles, so the
+// label lost its dark-mode colour.
+const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400 font-semibold';
 const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
   + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
@@ -152,21 +173,11 @@ const TIMES = '×';
 
 function Card({ view }: { view: CardView }): ReactNode {
   return (
-    <div
-      className={CARD + (view.featured ? CARD_FEATURED : '') + (view.done ? CARD_DONE : '')}
+    <ChallengeCard
+      view={view}
+      className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
       onClick={() => controller()?._openIdx(view.idx)}
-    >
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <div className={CARD_LABEL}>{view.label}</div>
-        {view.done ? <span className={DONE_CHIP}>Completed</span> : null}
-      </div>
-      <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">{view.goal}</div>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2">{view.task}</p>
-      {view.reward ? (
-        <p className="text-xs text-violet-700 mt-2 font-medium dark:text-violet-400">{view.reward}</p>
-      ) : null}
-      {view.mineNote ? <p className={MINE_NOTE}>{view.mineNote}</p> : null}
-    </div>
+    />
   );
 }
 
@@ -189,6 +200,17 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       >
         {view.summary}
       </p>
+      {view.notice ? (
+        <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
+      ) : null}
+      {view.onboardingEventId != null ? (
+        <button
+          className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
+          onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
+        >
+          Go to onboarding challenges
+        </button>
+      ) : null}
       {/*
           Fragment, not a wrapping <div>: the two grids and the subheading
           between them were siblings in the string this replaces, and a
@@ -299,6 +321,9 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
           {TIMES}
         </button>
       </div>
+      {view.task ? (
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-2">{view.task}</p>
+      ) : null}
       {view.description ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-2">{view.description}</p>
       ) : null}

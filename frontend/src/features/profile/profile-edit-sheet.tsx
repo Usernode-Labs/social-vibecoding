@@ -435,6 +435,15 @@ export function ProfileEditSheet({
           </p>
         </section>
 
+        <section className="mb-4">
+          <Group title="Account email">
+            <a href="#settings/email" className={ROW_ACTION_CLASS} onClick={() => Profile._dismissSheet()}>
+              Email &amp; recovery
+            </a>
+          </Group>
+          <p className={FOOTNOTE_CLASS}>Add or verify a private email address in Settings.</p>
+        </section>
+
         <p
           id="profile-edit-error"
           className={formError ? 'text-sm text-red-700 mb-2 dark:text-red-400' : 'text-sm text-red-700 mb-2 hidden dark:text-red-400'}

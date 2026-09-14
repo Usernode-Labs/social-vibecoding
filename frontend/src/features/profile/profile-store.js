@@ -221,9 +221,17 @@ export function publicAvatarView(profile) {
  */
 export function tokenView(ranking, revealed) {
   if (ranking.terms_accepted === false) return { gated: true };
+  const amount = Number(ranking.total_tokens || 0);
   return {
     gated: false,
-    amount: Number(ranking.total_tokens || 0).toLocaleString(),
+    // #1552: nothing allocated yet is its own state, not a zero to reveal.
+    // `total_tokens` sums this user's `token_allocation.allocated_tokens`
+    // across seasons, so it is 0 for everyone who has not been allocated
+    // any — which is most people. Blurring that 0 behind a "Reveal" button
+    // builds up to nothing and reads as either a bug or a snub; the card
+    // says so in words instead.
+    empty: amount === 0,
+    amount: amount.toLocaleString(),
     revealed: !!revealed,
   };
 }

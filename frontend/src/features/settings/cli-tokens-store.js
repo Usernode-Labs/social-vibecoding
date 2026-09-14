@@ -40,7 +40,8 @@ import { createStore } from '../../lib/plain-store.js';
  * that sections/cli.tsx ships and the SSG prerender emits. The list is fetched
  * when the section opens, so a first render that drew the "No CLI credentials."
  * line would be a hydration mismatch — which console.errors, and a console
- * error on any route fails proposal checks.
+ * error on any route fails proposal checks. #1609's setup guide is static
+ * section markup and therefore does not depend on this state.
  */
 export const INITIAL_CLI_TOKENS = /** @type {CliTokensState} */ ({ phase: 'idle', tokens: [] });
 

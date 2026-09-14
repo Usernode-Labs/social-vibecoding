@@ -14,7 +14,8 @@
  * used to do from outside React, and Cancel and the backdrop click are
  * rendered handlers rather than listeners `App.bindEvents` attached.
  *
- * DOES NOT OWN: anything inside the card. The target pills, the title and
+ * DOES NOT OWN: anything inside the card, including the first-feedback
+ * confirmation. The target pills, the title and
  * description fields, the screenshot row, the two opt-in rows and the status
  * line are written by `./feedback-controller` — the retired ~810-line block
  * from `App.bindEvents`, whose header explains why it is still imperative.
@@ -30,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { CameraIcon, PhotoIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -39,6 +41,7 @@ import { useDialog } from './use-dialog';
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
   fromDev?: boolean;
+  firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
 export function FeedbackDialog() {
@@ -61,12 +64,13 @@ export function FeedbackDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
+        <div id="feedback-form">
         <h2 className="text-lg font-bold mb-4">
           Send Feedback
         </h2>
         {/*
             Target toggle: file this feedback against the app being viewed
-            or against the Social Vibecoding platform. The "This app" button
+            or against the Homeroom platform. The "This app" button
             is always visible but rendered disabled/grayed-out when no app
             with a repo is open (see ./feedback-controller).
         */}
@@ -98,7 +102,7 @@ export function FeedbackDialog() {
               id="feedback-target-platform"
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors"
             >
-              Social Vibecoding Platform
+              Homeroom Platform
             </button>
             <div
               id="feedback-caret-platform"
@@ -112,21 +116,55 @@ export function FeedbackDialog() {
             (the controller debounces POST /api/feedback/title as you type).
             Left blank at submit, the server names the issue as before.
         */}
-        <Input
-          id="feedback-title"
-          type="text"
-          maxLength={200}
-          placeholder="Title, generated as you type; edit as you like"
-          className="mb-2"
-        />
-        <Textarea
-          id="feedback-text"
-          rows={4}
-          maxLength={2000}
-          placeholder="Describe the issue or suggestion..."
-          className="resize-none"
-        >
-        </Textarea>
+        <div className="mb-2">
+          <Label id="feedback-title-label" htmlFor="feedback-title" className="mb-1">
+            Title
+            <span className="font-normal text-zinc-500 dark:text-zinc-500">
+              {' optional'}
+            </span>
+          </Label>
+          <Input
+            id="feedback-title"
+            type="text"
+            maxLength={200}
+            placeholder="Title, generated as you type; edit as you like"
+          />
+        </div>
+        {/*
+            #1603: the description was always mandatory — the controller's
+            submit returned early on an empty one and said nothing, so the
+            button looked dead. The requirement is on screen now (this label
+            and its asterisk) and the refusal is too (#feedback-text-error,
+            filled and revealed by ./feedback-controller on an empty submit).
+
+            `aria-required`, not the HTML `required` attribute: these fields
+            are not inside a <form>, so `required` buys no native behaviour
+            here while switching :invalid on for a field nobody has touched.
+
+            The error node renders EMPTY and hidden, exactly like
+            #feedback-status above it — the controller owns its text, and an
+            initial render that already carried the message would both lie on
+            open and mismatch on hydration.
+        */}
+        <div>
+          <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1">
+            Description
+            <span id="feedback-text-required" aria-hidden="true" className="text-red-700 dark:text-red-400">
+              *
+            </span>
+          </Label>
+          <Textarea
+            id="feedback-text"
+            rows={4}
+            maxLength={2000}
+            aria-required="true"
+            placeholder="Describe the issue or suggestion..."
+            className="resize-none"
+          >
+          </Textarea>
+          <p id="feedback-text-error" role="alert" className="hidden mt-1 text-xs text-red-700 dark:text-red-400">
+          </p>
+        </div>
         {/*
             #683/#824: desktop drag-to-select, native mobile capture, and a
             Photos fallback all converge on one preview/upload row.
@@ -206,6 +244,13 @@ export function FeedbackDialog() {
             real gate either way, and a bounty that can't be placed never
             costs the user their filed issue. Same utility classes as
             #feedback-state-row above, so no new Tailwind names appear.
+
+            #1582 shortened this line to what a bounty DOES. What it used to
+            also carry — that ticking the box spends 1 of the viewer's weekly
+            kudos — moved into the note below rather than going away: this
+            control spends a real allowance, so the cost has to stay on
+            screen. The note already had the live remaining figure and is the
+            right place for it.
         */}
         <div id="feedback-bounty-row" className="hidden mt-2">
           <label className="flex items-start gap-2 cursor-pointer select-none">
@@ -214,7 +259,7 @@ export function FeedbackDialog() {
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 Put a kudos bounty on this:
               </span>
-              pledges 1 of your weekly kudos to whoever's merged proposal closes this issue
+              encourages someone to take it up and solve it
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>
@@ -243,6 +288,24 @@ export function FeedbackDialog() {
             Submit
           </Button>
         </div>
+        </div>
+        <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
+          <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
+            Congratulations on your first feedback!
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+            You’ve helped make this app better. Want to take the next step?
+          </p>
+          <p id="feedback-first-notice" className="text-sm text-emerald-700 dark:text-emerald-400 mb-4" role="status"></p>
+          <div className="flex flex-col gap-3">
+            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]">Try a fix yourself</Button>
+            <p id="feedback-first-fix-note" className="text-xs text-zinc-500 dark:text-zinc-400">
+              Start with a draft you can edit before sending it to the coding agent.
+            </p>
+            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">See this app’s board</Button>
+            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
+          </div>
+        </section>
       </DialogCard>
     </DialogRoot>
   );

@@ -653,3 +653,170 @@ test('the username charset is a strict subset of the branch charset', () => {
       + 'would strand that user\'s dev sessions behind bad_branch (#1377)');
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// 7. The form — Settings.changeUsername()
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Every test above this line passed while the feature was completely dead
+// in the browser, which is the reason this section exists.
+//
+// The endpoint was never what broke. #1380 wrote the seven status-line
+// painters in settings.js with a SINGLE palette class each, so
+// `el.classList.add(cls)` was a legal one-token call. #1400's
+// widget-library migration rewrote all seven into `dark:` PAIRS
+// ('text-zinc-500 dark:text-zinc-400') and left the single-argument add()
+// alone — and a DOMTokenList token may not contain ASCII whitespace, so
+// every status write in the file threw InvalidCharacterError.
+//
+// It read as cosmetic because the text is assigned FIRST and still landed.
+// What actually broke was the code AFTER the call. In changeUsername() the
+// throw lands between painting "Saving…" and issuing the fetch, so the
+// request was never made, the button never re-enabled, and the user sat
+// under a "Saving…" that could not resolve. That is the whole bug.
+//
+// So the DOM stub below is not a convenience: its classList enforces the
+// DOMTokenList validation rule. A stub that happily accepts 'a b' passes
+// this test against the broken code and pins nothing.
+
+const vm = require('node:vm');
+
+const SETTINGS_SOURCE = read('frontend/src/features/settings/settings.js');
+
+/** A DOMTokenList that validates its tokens the way the DOM spec requires. */
+function tokenList(initial = []) {
+  const tokens = new Set(initial);
+  const validate = (t) => {
+    const s = String(t);
+    if (s === '') throw new Error('SyntaxError: the token provided is empty');
+    if (/\s/.test(s)) {
+      throw new Error(
+        `InvalidCharacterError: the token '${s}' contains HTML space characters, `
+        + 'which are not valid in tokens'
+      );
+    }
+  };
+  return {
+    // Both validate EVERY token before mutating anything, as the spec does.
+    add(...ts) { ts.forEach(validate); ts.forEach((t) => tokens.add(t)); },
+    remove(...ts) { ts.forEach(validate); ts.forEach((t) => tokens.delete(t)); },
+    contains: (t) => tokens.has(t),
+    toArray: () => [...tokens],
+  };
+}
+
+function node(extra = {}) {
+  return { textContent: '', value: '', disabled: false, classList: tokenList(['hidden']), ...extra };
+}
+
+/**
+ * settings.js in a vm, with just the five ids changeUsername() reads and a
+ * fetch that records what it was asked for. `respond` returns the fake
+ * Response; the default is the server's own success shape.
+ */
+function usernameForm({ respond } = {}) {
+  const els = {
+    'cu-new': node({ value: 'ada_l' }),
+    'cu-password': node({ value: PASSWORD }),
+    'cu-save': node(),
+    'cu-status': node(),
+    'cu-current': node(),
+  };
+  const calls = [];
+  const context = vm.createContext({
+    window: {},
+    document: {
+      addEventListener() {},
+      getElementById: (id) => els[id] || null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    },
+    App: {
+      user: { id: 7, username: 'ada' },
+      saveSessionSnapshot() {},
+      resyncCurrentView() {},
+    },
+    fetch: async (url, options = {}) => {
+      calls.push({ url, options });
+      return respond ? respond() : {
+        ok: true,
+        status: 200,
+        json: async () => ({ username: 'ada_l', retired: 'ada' }),
+      };
+    },
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    console,
+  });
+  context.window.window = context.window;
+  context.window.document = context.document;
+  context.window.App = context.App;
+  vm.runInContext(SETTINGS_SOURCE, context);
+  return { Settings: context.window.Settings, els, calls };
+}
+
+test('the form actually issues the rename instead of stranding on "Saving…"', async () => {
+  const { Settings, els, calls } = usernameForm();
+
+  await Settings.changeUsername();
+
+  assert.equal(calls.length, 1, 'the request must reach the server at all');
+  assert.equal(calls[0].url, '/api/me/username');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].options.body),
+    { username: 'ada_l', currentPassword: PASSWORD });
+
+  assert.equal(els['cu-status'].textContent, 'You are now @ada_l.');
+  assert.notEqual(els['cu-status'].textContent, 'Saving…',
+    'a status line still reading "Saving…" is the reported bug');
+  assert.equal(els['cu-save'].disabled, false,
+    'the button has to come back, whatever the outcome');
+});
+
+test('each status palette lands as separate class tokens', async () => {
+  const { Settings, els } = usernameForm();
+
+  await Settings.changeUsername();
+  assert.deepEqual(els['cu-status'].classList.toArray(),
+    ['text-emerald-700', 'dark:text-emerald-400'],
+    'success is the emerald pair, and "hidden" is gone so it is visible');
+
+  // The error palette travels the same path, so it needs the same proof.
+  const failed = usernameForm({
+    respond: () => ({ ok: false, status: 409, json: async () => ({ error: 'That username is taken.' }) }),
+  });
+  await failed.Settings.changeUsername();
+  assert.equal(failed.els['cu-status'].textContent, 'That username is taken.');
+  assert.deepEqual(failed.els['cu-status'].classList.toArray(),
+    ['text-red-700', 'dark:text-red-400']);
+  assert.equal(failed.els['cu-save'].disabled, false);
+});
+
+test('a rejected request leaves the button usable rather than stuck', async () => {
+  const { Settings, els, calls } = usernameForm({
+    respond: () => { throw new Error('network down'); },
+  });
+
+  await Settings.changeUsername();
+
+  assert.equal(calls.length, 1);
+  assert.match(els['cu-status'].textContent, /^Network error: /);
+  assert.equal(els['cu-save'].disabled, false,
+    'the finally has to be the only exit, or a throw strands the form');
+});
+
+test('the palette these painters read is token arrays, not class strings', () => {
+  // The whole-file rule — a classList argument is ONE token, through one hop
+  // of `const` indirection — lives in tests/theme-ink-guards.test.js, which
+  // is where the pairing pass that caused this is already guarded. This is
+  // the narrower pin that belongs to THIS feature: the shape the seven
+  // painters were consolidated into. A pair rewritten back into one string
+  // here would put every status line in the file back on the floor.
+  assert.match(SETTINGS_SOURCE,
+    /const STATUS_PALETTE = \{\s*error: \['text-red-700', 'dark:text-red-400'\],\s*ok: \['text-emerald-700', 'dark:text-emerald-400'\],\s*info: \['text-zinc-500', 'dark:text-zinc-400'\],\s*\};/,
+    'STATUS_PALETTE holds token ARRAYS, spread into classList by paintStatus');
+  assert.match(SETTINGS_SOURCE, /el\.classList\.add\(\.\.\.\(STATUS_PALETTE\[kind\] \|\| STATUS_PALETTE\.info\)\);/,
+    'and they are SPREAD — one argument per token');
+});

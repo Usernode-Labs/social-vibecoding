@@ -37,8 +37,17 @@ const mod = () => (api || (api = loadTsx('tests/fixtures/dev-view-api.ts')));
 const SESSION = {
   kind: 'session', launchpadHtml: '', barEmpty: false,
   spec: { open: false, width: null }, staging: { open: false, width: null },
-  proposalHint: false,
+  proposalHint: false, returnHint: false,
 };
+
+test('embedded workspace keeps the real composer and transcript without a second navigation strip', () => {
+  const change = { item: { id: 4073 }, card: {}, body: {} };
+  const embedded = html({ ...SESSION, change, embedded: true });
+  assert.match(embedded, /id="dc-composer-bar"/);
+  assert.match(embedded, /id="dc-messages"/);
+  assert.doesNotMatch(embedded, /Change overview|aria-label="Change views"/);
+  assert.match(html({ ...SESSION, change }), /Change overview/, 'old session bookmarks retain a route back to the card');
+});
 
 const html = (s) => renderToHtml(createElement(mod().DevChatViewView, {
   s: JSON.parse(JSON.stringify(s)),
@@ -161,7 +170,9 @@ test('every id and class the skeleton emitted still renders', () => {
     'dc-messages', 'dc-composer-bar', 'dc-spec-resizer', 'dc-spec-viewer',
     'dc-staging-resizer', 'dc-staging-panel',
   ]) assert.ok(out.includes(`id="${id}"`), `${id} is still in the document`);
-  assert.match(out, /class="dc-session-body flex-1 flex min-h-0"/);
+  // The lift classes are ADDED to this run, not a rewrite of it — the
+  // legacy modules and dapp.json's declared checks select on it.
+  assert.match(out, /class="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session"/);
   assert.match(out, /id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0"/);
   assert.match(out, /id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"/);
   // `display: contents` — #dc-view is a flex column and each banner has to
@@ -196,12 +207,22 @@ test('a pane with no saved width renders none, rather than a zero', () => {
   assert.match(open, /id="dc-spec-viewer" class="dc-spec-viewer dc-spec-viewer-open"><\/div>/);
 });
 
-test('the composer bar keeps the safe-area inset when it drops its border', () => {
+test('the composer bar keeps the safe-area inset when it drops its padding', () => {
   // #1348: in a launchpad the composer is hidden and the venue note is
-  // usually absent, so the border and padding go — an empty bordered strip
-  // reads as a broken composer. The INSET is not part of that: this is still
-  // the bottom of the screen.
-  assert.match(html(SESSION), /id="dc-composer-bar" class="shrink-0 platform-safe-bar border-t/);
+  // usually absent, so the framing goes — an empty framed strip reads as a
+  // broken composer. The INSET is not part of that: this is still the bottom
+  // of the screen.
+  //
+  // Streamlined Concept retired the `border-t`. The composer is a CARD that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it drew a second edge across a shape that already had one. What is
+  // left is padding, and it must stay ASYMMETRIC — a narrow top, a full
+  // bottom — because the card's own radius does the insetting the old bar did
+  // with a uniform `p-2`.
+  assert.match(html(SESSION),
+    /id="dc-composer-bar" class="shrink-0 platform-safe-bar px-3 pb-3 pt-1"/);
+  assert.doesNotMatch(html(SESSION), /id="dc-composer-bar"[^>]*border-t/,
+    'the card draws its own edge; a rule above it would be a second one');
   assert.match(html({ ...SESSION, barEmpty: true }),
     /id="dc-composer-bar" class="shrink-0 platform-safe-bar"/);
 });
@@ -242,6 +263,91 @@ test('the header ELEMENT keeps a constant className, because the kit writes one'
   assert.match(tag, /className="[^"{]*"/);
 });
 
+test('the strip and the session sheet each lift off the layer above (three-layer)', () => {
+  // WHAT REPLACED #1588. That change gave this strip the platform header's
+  // OWN shape — `rounded-b-2xl`, bottom corners curved away — because it was
+  // the second bar on the screen and the first one was shaped. It is the
+  // middle of three surfaces now: a running app rounds its TOP corners over
+  // the header's ground (#app-frame-host), and the same move is made twice
+  // more here, so the strip shows the wallpaper at its shoulders and the
+  // session sheet shows the strip at its.
+  //
+  // Both layers therefore ask for the geometry BY CLASS. app.css owns it, in
+  // #app-frame-host's own tokens, so the three cannot drift apart the way two
+  // hand-copied `rounded-b-2xl`s could — which is what the superseded version
+  // of this test was guarding by hand.
+  const at = VIEW_TSX.indexOf('id="dc-session-header"');
+  const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
+  assert.match(tag, /\bdc-lift dc-lift-strip\b/);
+  assert.doesNotMatch(tag, /rounded-b-2xl/, 'the bottom-corner shape is gone');
+  assert.match(VIEW_TSX, /dc-session-body[^"]*\bdc-lift dc-lift-session\b/);
+
+  const CSS = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const lift = CSS.slice(CSS.indexOf('\n.dc-lift {'));
+  const frame = CSS.slice(CSS.indexOf('\n#app-frame-host {'));
+  const radius = (block) => (block.match(/border-radius: ([^;]+);/) || [])[1];
+  assert.equal(radius(lift), radius(frame),
+    'the two layers take the running app\'s radius, not one of their own');
+  // Neither layer may clip: a sheet's shoulder is the area INSIDE its border
+  // box and OUTSIDE its arc, so `overflow: hidden` removes exactly the thing
+  // this is for. Same rule the header states for itself.
+  assert.doesNotMatch(tag, /overflow-hidden/);
+  assert.doesNotMatch(
+    lift.slice(0, lift.indexOf('\n.dc-lift-strip')), /overflow: hidden/);
+});
+
+test('the layer above the sheet extends a full radius behind it', () => {
+  // At anything less the sheet's 28px arc runs past the bottom of the layer
+  // above and the page wallpaper reappears through the shoulders — which
+  // inverts the effect: the sheet reads as a hole in the page rather than a
+  // card on the strip.
+  //
+  // TWO HOSTS, and this is the test's real subject. #dc-banners is
+  // `display: contents`, so a sync / credits / new-change banner paints as a
+  // flex child of #dc-view and stands between the strip and the sheet
+  // whenever one is up. `:has(+ .dc-session-body)` looked like it covered
+  // both and covered NEITHER: `display: contents` changes box generation,
+  // not the DOM, so #dc-banners is still the sheet's previous sibling and
+  // matched that selector in both states — while generating no box, so its
+  // ::after inherited a transparent background and nothing ever painted.
+  // Measured with a pixel probe, not by eye, which is how it got past once.
+  const CSS = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  // Comments stripped: the rule above this one EXPLAINS the superseded
+  // selector, so a plain grep would match its own post-mortem.
+  const RULES = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/:has\(\+ \.dc-session-body\)/.test(RULES),
+    'that selector can only ever match the display:contents host');
+  const at = RULES.indexOf('#dc-view > #dc-session-header:has(+ #dc-banners:empty)::after');
+  assert.ok(at > 0, 'the strip is one host, for the ordinary no-banner case');
+  const rule = RULES.slice(at, RULES.indexOf('}', at));
+  assert.match(rule, /#dc-view > #dc-banners > :last-child::after/,
+    'and the LAST BANNER is the other, sharing the one declaration');
+  assert.match(rule, /height: 1\.75rem;/, 'one full radius, the same token');
+  assert.match(rule, /background-color: inherit;/,
+    'so the shoulders show whichever surface is actually being sat on');
+  assert.match(RULES, /#dc-view > #dc-banners > \* \{ position: relative; \}/,
+    'a banner has to be positioned or the sheet cannot paint over its overhang');
+  // …and the one that now abuts the sheet drops its own bottom edge, for the
+  // reason the strip did. A banner shell carries `border-b` to divide itself
+  // from the transcript; the sheet draws its own `border-top` now, so that
+  // hairline became a second rule at the same y that does NOT follow the
+  // 28px arc — it ran out across both shoulders and read as an amber box
+  // around the banner, worst in dark against the near-black ground. Borders
+  // BETWEEN stacked banners are untouched, which is why it is :last-child.
+  assert.match(RULES,
+    /#dc-view > #dc-banners > :last-child \{ border-bottom-width: 0; \}/);
+  const SHELLS = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'),
+    'utf8');
+  assert.match(SHELLS, /border-b border-amber-200/,
+    'the shells still declare it — this overrides the last one, it does not '
+    + 'delete the divider between two stacked banners');
+  assert.match(VIEW_TSX, /id="dc-banners" className="contents"/,
+    'which is the arrangement both hosts exist for');
+});
+
 // ── 4. #194's hint, which used to be a second author ───────────────────
 
 test('the proposal hint is a field, not an insertAdjacentHTML in front of the tree', () => {
@@ -260,6 +366,69 @@ test('the proposal hint is a field, not an insertAdjacentHTML in front of the tr
   // It is one-shot: the next full render drops it.
   DevChat.renderChatView();
   assert.equal(view().proposalHint, false);
+});
+
+test('the return tip persists dismissal across sessions and reloads, independently for each viewer', () => {
+  const saved = new Map();
+  const storage = {
+    getItem: (key) => saved.get(key) || null,
+    setItem: (key, value) => saved.set(key, value),
+  };
+  const { DevChat, sandbox, view, published } = makeDevChat();
+  sandbox.localStorage = storage;
+  sandbox.App.user = { id: 42 };
+  DevChat.currentSession.user_id = 42;
+
+  assert.equal(view().returnHint, true);
+  DevChat.renderChatView();
+  assert.equal(view().returnHint, true, 'a status repaint does not consume the tip');
+  DevChat.dismissReturnHint();
+  assert.equal(published.at(-1).state.returnHint, false, 'dismissal updates the visible card');
+  DevChat.currentSession = { id: 8, user_id: 42, status: 'active' };
+  assert.equal(view().returnHint, false, 'a new session does not repeat the tip');
+
+  const reload = makeDevChat();
+  reload.sandbox.localStorage = storage;
+  reload.sandbox.App.user = { id: 42 };
+  reload.DevChat.currentSession.user_id = 42;
+  assert.equal(reload.view().returnHint, false, 'dismissal survives a page reload');
+  reload.sandbox.App.user = { id: 43 };
+  assert.equal(reload.view().returnHint, false, 'reading another person’s session is not first use');
+  reload.DevChat.currentSession.user_id = 43;
+  assert.equal(reload.view().returnHint, true, 'another account receives its own tip');
+});
+
+test('the return tip can be dismissed even when browser storage is blocked', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = { id: 42 };
+  DevChat.currentSession.user_id = 42;
+  sandbox.localStorage = {
+    getItem() { throw new Error('Storage blocked'); },
+    setItem() { throw new Error('Storage blocked'); },
+  };
+  assert.equal(view().returnHint, true);
+  DevChat.dismissReturnHint();
+  assert.equal(view().returnHint, false);
+  DevChat.renderChatView();
+  assert.equal(view().returnHint, false, 'polling keeps the in-memory dismissal');
+});
+
+test('the first-use capture renders the real explainer without changing saved preferences', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  const writes = [];
+  sandbox.localStorage = { getItem: () => '1', setItem: (...args) => writes.push(args) };
+  sandbox.location.search = '?shot=dev-chat-first-use';
+  assert.equal(view().returnHint, true, 'capture works even for a returning user');
+  const out = html(view());
+  assert.match(out, /You can leave this page and return anytime/);
+  assert.match(out, /<strong>Improve<\/strong>/);
+  assert.match(out, /session’s status/);
+  assert.match(out, /id="dc-return-hint-dismiss"[^>]*>Got it<\/button>/);
+  DevChat.dismissReturnHint();
+  assert.equal(view().returnHint, false, 'the preview uses the real dismissal');
+  assert.deepEqual(writes, [], 'a capture never consumes the account’s first-use state');
+  sandbox.location.search = '?shot=venue-sheet';
+  assert.equal(view().returnHint, false, 'other capture states remain focused on their surface');
 });
 
 // ── 5. The swap, which no longer needs the screen rebuilt ──────────────
@@ -295,4 +464,57 @@ test('re-rendering the same screen is a reconcile, not a rebuild', () => {
   // changes after an unmount.
   const portals = read('frontend', 'src', 'lib', 'legacy-portals.tsx');
   assert.match(portals, /On a re-mount \(live entry\) the children are\n\s*\/\/ React-owned/);
+});
+
+
+test('#1851: a dev session with a PR displays checks without opening a card menu', () => {
+  const store = mod().sessionHeaderStore;
+  const previous = store.get();
+  try {
+    store.set({ ...previous, sessionId: 1851, pr: 99 });
+    const rendered = html(SESSION);
+    assert.match(rendered, /aria-label="Proposal checks"/);
+    assert.match(rendered, /aria-expanded="true"/);
+    assert.match(rendered, /Loading checks…/);
+    assert.match(rendered, /Refresh results/);
+    assert.ok(rendered.indexOf('Proposal checks') < rendered.indexOf('id="dc-messages"'));
+    store.set({ ...previous, sessionId: 1852, pr: null });
+    assert.doesNotMatch(html(SESSION), /aria-label="Proposal checks"/);
+  } finally { store.set(previous); }
+});
+
+// ── #2069: what the header is told about the preview ────────────────────
+
+test('a session with no live preview publishes it as BUILDABLE, not as absent', () => {
+  // _publishPreview used to send null whenever staging_url was null, so the
+  // header's eye — the one control that calls ensure-staging — vanished on
+  // exactly the condition ensure-staging exists to fix.
+  const { DevChat, sandbox } = makeDevChat();
+  const sent = [];
+  sandbox.window.Improve = { setSessionPreview: (p) => sent.push(p) };
+
+  // Field by field: the payload is built inside the vm realm, so a deep
+  // compare against a literal from this one fails on the prototype alone.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: null, can_preview: true };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1).sessionId, 7);
+  assert.equal(sent.at(-1).url, null);
+  assert.equal(sent.at(-1).buildable, true);
+
+  // A live preview is unchanged, and is NOT reported as buildable: the eye
+  // opens it rather than rebuilding it.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: 'https://s/x', can_preview: true };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1).url, 'https://s/x');
+  assert.equal(sent.at(-1).buildable, false);
+
+  // And a session with nothing to build still publishes null, which is what
+  // keeps #1594's status chip for the case it was written for.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: null, can_preview: false };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1), null);
+
+  DevChat.currentSession = null;
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1), null, 'and no open session publishes nothing');
 });

@@ -22,6 +22,8 @@ const {
 } = require('../src/services/topochain/native-session-crypto');
 const {
   NativeSessionProtocol,
+  provisionWallet,
+  supportsWalletlessCredentials,
   buildCredentialPlaintext,
 } = require('../src/services/topochain/native-session-protocol');
 const {
@@ -217,6 +219,7 @@ test('encrypted credential carries the exact canonical account id without wideni
   ]);
   assert.match(plaintext.account.accountId, /^[1-9][0-9]*$/);
   assert.equal(plaintext.account.accountId, accountId);
+  assert.equal(plaintext.credential.bearerExpiresAt, '2026-11-24T12:00:00.000Z');
 
   const compactJwe = await compactEncryptCredential(plaintext, keys);
   assert.equal(compactJwe.includes(accountId), false,
@@ -228,6 +231,74 @@ test('encrypted credential carries the exact canonical account id without wideni
     JSON.parse(Buffer.from(decrypted.plaintext).toString('utf8')),
     plaintext
   );
+});
+
+test('walletless credential stays authenticated without inventing wallet authority', () => {
+  const pair = makeKeys();
+  const request = unsignedExchangeRequest(pair);
+  const keys = validateInstallationKeys(request.installation);
+  const plaintext = buildCredentialPlaintext({
+    row: { user_id: 41, network_id: NETWORK.id, chain_id: NETWORK.chainId },
+    request,
+    keys,
+    ticketHash: sha256Hex(request.ticket),
+    exchangeDigest: exchangeSemanticDigest(request, keys),
+    credentialReference: opaque('nsc_', 9),
+    bearerToken: 'ab'.repeat(40),
+    bearerExpiresAt: new Date('2026-11-24T12:00:00.000Z'),
+    account: null,
+    bpReleased: false,
+  });
+
+  assert.equal(plaintext.subject.userId, '41');
+  assert.equal(plaintext.account, null);
+  assert.equal(plaintext.credential.bearerToken, 'ab'.repeat(40));
+});
+
+test('walletless format gate uses a numeric minimum release across version bumps', () => {
+  for (const [appVersion, buildNumber] of [
+    ['0.4.0', '1252'], ['0.4.0', '1253'], ['0.4.0', '1300'],
+    ['0.4.1', '1'], ['0.4.10', '1'], ['0.5.0', '1'], ['0.10.0', '1'],
+    ['1.0.0', '1'], ['10.0.0', '1'],
+  ]) {
+    assert.equal(supportsWalletlessCredentials({ appVersion, buildNumber }), true,
+      `${appVersion}+${buildNumber} is compatible`);
+  }
+  for (const [appVersion, buildNumber] of [
+    ['0.4.0', '1250'], ['0.4.0', '1251'],
+    ['0.3.99', '9999'], ['0.0.0', '9999'],
+  ]) {
+    assert.equal(supportsWalletlessCredentials({ appVersion, buildNumber }), false,
+      `${appVersion}+${buildNumber} predates walletless support`);
+  }
+  for (const appVersion of ['0.4.0', '0.4.1', '1.0.0']) {
+    for (const buildNumber of [undefined, null, 1252, '', '0', '01252',
+      '1252x', '1252.0', ' 1252', '1252\n', '1252\r\n', '99999999999999999']) {
+      assert.equal(supportsWalletlessCredentials({ appVersion, buildNumber }), false);
+    }
+  }
+  for (const appVersion of [undefined, null, 1, '', '0.4', '0.4.0.1', '0.4.0-beta',
+    '0.04.1', '01.0.0', '-1.0.0', ' 1.0.0', '1.0.0\n', '0.9007199254740993.0']) {
+    assert.equal(supportsWalletlessCredentials({ appVersion, buildNumber: '1252' }), false);
+  }
+});
+
+test('wallet provisioning preserves build 1250 errors without a season or account', async () => {
+  const noSeason = { query: async () => ({ rows: [] }) };
+  await assert.rejects(provisionWallet(noSeason, 41), {
+    status: 422, code: 'native_session_no_active_season',
+  });
+
+  const responses = [
+    { rows: [{ id: 7 }] },
+    { rows: [] },
+    { rows: [] },
+  ];
+  const noAccount = { query: async () => responses.shift() };
+  await assert.rejects(provisionWallet(noAccount, 41), {
+    status: 409, code: 'native_session_wallet_pool_exhausted',
+  });
+  assert.equal(responses.length, 0);
 });
 
 class TicketPool {
@@ -257,7 +328,7 @@ class TicketPool {
           releaseLock = null;
           return { rows: [] };
         }
-        if (sql.startsWith('SELECT token, user_id, native_session_incarnation_id FROM sessions')) {
+        if (sql.startsWith('SELECT token, user_id, native_session_incarnation_id')) {
           await acquireLock();
           return params[0] === pool.session.token
             ? { rows: [{ ...pool.session }] }
@@ -277,6 +348,10 @@ class TicketPool {
               state: 'ticketed',
             });
           }
+          return { rows: [] };
+        }
+        if (sql.startsWith('UPDATE native_session_attempts SET walletless_supported')) {
+          pool.attempts.get(params[0]).walletless_supported = params[1];
           return { rows: [] };
         }
         if (sql.startsWith('INSERT INTO native_session_handoffs')) {
@@ -345,7 +420,10 @@ test('native handoff hides ticket authority and exact redemption replays byte-id
   assert.equal(first, second);
   assert.equal(pool.tickets.size, 1);
   assert.equal(pool.attempts.size, 1);
-  assert.equal(JSON.parse(first).data.ticket.startsWith('nst_'), true);
+  const ticket = JSON.parse(first).data;
+  assert.equal(ticket.ticket.startsWith('nst_'), true);
+  assert.equal(ticket.issuedAt, '2026-08-26T12:00:00.000Z');
+  assert.equal(ticket.expiresAt, '2026-08-26T12:05:00.000Z');
 });
 
 test('an exchanged exact attempt replays its ticket after issuance expiry', async () => {
@@ -394,6 +472,76 @@ function replayPool({ row, credential, keyRow }) {
   };
 }
 
+test('walletless exchange fails before issuing a bearer or credential on build 1250', async () => {
+  const pair = makeKeys();
+  const request = unsignedExchangeRequest(pair);
+  const keys = validateInstallationKeys(request.installation);
+  const challenge = Buffer.alloc(32, 6).toString('base64url');
+  const row = {
+    attempt_id: request.attemptId, protocol: 2, user_id: 41,
+    web_session_incarnation_id: opaque('nsw_', 8), desired_runtime: 'running',
+    network_id: NETWORK.id, chain_id: NETWORK.chainId,
+    request_digest: request.requestDigest, attempt_state: 'ticketed',
+    ticket_hash: sha256Hex(request.ticket), exchange_challenge: challenge,
+    ticket_state: 'issued', expires_at: new Date('2099-01-01T00:00:00.000Z'),
+  };
+  const keyRow = {
+    installation_id: request.installation.id, key_generation: 1,
+    possession_key_id: keys.possessionKeyId,
+    possession_key_thumbprint: keys.possessionKeyThumbprint,
+    possession_public_jwk: keys.possessionJwk,
+    envelope_key_id: keys.envelopeKeyId,
+    envelope_key_thumbprint: keys.envelopeKeyThumbprint,
+    envelope_public_jwk: keys.envelopeJwk,
+  };
+  request.proof.signature = signExchange(request, pair, keys, challenge);
+
+  for (const seasonAvailable of [false, true]) {
+    const queries = [];
+    const pool = {
+      async connect() {
+        return {
+          async query(rawSql) {
+            const sql = collapse(rawSql);
+            queries.push(sql);
+            if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+            if (sql.startsWith('SELECT a.attempt_id')) return { rows: [row] };
+            if (sql.startsWith('SELECT id, bp_released_at FROM users')) {
+              return { rows: [{ id: 41, bp_released_at: null }] };
+            }
+            if (sql.startsWith('SELECT token FROM sessions')) {
+              return { rows: [{ token: 'web-session-still-valid' }] };
+            }
+            if (sql.startsWith('INSERT INTO native_installation_key_generations')) {
+              return { rows: [] };
+            }
+            if (sql.startsWith('SELECT installation_id, key_generation,')) {
+              return { rows: [keyRow] };
+            }
+            if (sql.startsWith('SELECT id FROM seasons')) {
+              return { rows: seasonAvailable ? [{ id: 7 }] : [] };
+            }
+            if (sql.includes('FROM onchain_accounts')) return { rows: [] };
+            throw new Error(`Unexpected query after wallet availability check: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    };
+    const protocol = new NativeSessionProtocol({
+      pool, config: { nativeSessionV2Network: NETWORK, dataEncryptionKey: DATA_KEY },
+    });
+    await assert.rejects(protocol.exchange({ body: request }), {
+      status: seasonAvailable ? 409 : 422,
+      code: seasonAvailable
+        ? 'native_session_wallet_pool_exhausted' : 'native_session_no_active_season',
+    });
+    assert.equal(queries.at(-1), 'ROLLBACK');
+    assert.equal(queries.some((sql) => /INSERT INTO (mobile_auth_tokens|native_session_credentials|native_session_credential_envelopes)/.test(sql)), false);
+    assert.equal(queries.some((sql) => /(?:UPDATE|DELETE FROM) sessions/.test(sql)), false);
+  }
+});
+
 test('committed exchange exact retry survives web-session deletion and accepts a fresh ES256 proof', async () => {
   const pair = makeKeys();
   const request = unsignedExchangeRequest(pair);
@@ -415,6 +563,7 @@ test('committed exchange exact retry survives web-session deletion and accepts a
   };
   const credential = {
     credential_reference: opaque('nsc_', 9), credential_generation: 1,
+    account_id: 73,
     exchange_request_digest: exchangeDigest, state: 'valid',
     installation_id: request.installation.id, installation_key_generation: 1,
     expires_at: new Date('2099-01-01T00:00:00.000Z'),
@@ -441,6 +590,26 @@ test('committed exchange exact retry survives web-session deletion and accepts a
   assert.equal(await protocol.exchange({ body: request }), rawJson);
   assert.notEqual(firstProof, request.proof.signature);
   assert.equal(pool.queries.some((sql) => sql.includes('FROM sessions')), false);
+
+  // The same authenticated replay must not return an envelope issued by the
+  // walletless rollout to a build that cannot install it. No revocation or
+  // token deletion occurs: only delivery of the incompatible payload stops.
+  credential.account_id = null;
+  await assert.rejects(protocol.exchange({ body: request }), {
+    status: 409, code: 'native_session_wallet_required',
+  });
+  assert.equal(pool.queries.at(-1), 'ROLLBACK');
+  row.walletless_supported = true;
+  assert.equal(await protocol.exchange({ body: request }), rawJson);
+  row.walletless_supported = false;
+  await assert.rejects(protocol.exchange({ body: request }), {
+    status: 409, code: 'native_session_wallet_required',
+  });
+  row.walletless_supported = true;
+  credential.state = 'revoked';
+  await assert.rejects(protocol.exchange({ body: request }), {
+    status: 409, code: 'native_session_credential_revoked',
+  });
 });
 
 test('encrypted replay is byte-exact and detects ciphertext/metadata swaps', () => {
@@ -517,12 +686,12 @@ test('native self logout revokes only its exact credential in lock order', async
   assert.match(calls[2], /credential_reference = \$1[\s\S]*credential_generation = \$2/);
 });
 
-async function withNativeRoute(config, fn) {
+async function withNativeRoute(config, fn, pool = { connect: async () => { throw new Error('DB must not be reached'); } }) {
   const poolPath = require.resolve('../src/db/pool');
   const routePath = require.resolve('../src/routes/topochain/native-session');
   const original = require.cache[poolPath];
   require.cache[poolPath] = {
-    exports: { getPool: () => ({ connect: async () => { throw new Error('DB must not be reached'); } }) },
+    exports: { getPool: () => pool },
     loaded: true, id: poolPath, filename: poolPath, paths: original ? original.paths : [],
   };
   delete require.cache[routePath];
@@ -542,6 +711,43 @@ async function withNativeRoute(config, fn) {
     delete require.cache[routePath];
   }
 }
+
+test('web handoff headers refresh decoder support without changing native ticket bytes', async () => {
+  const pool = new TicketPool(new Date());
+  const config = { dataEncryptionKey: DATA_KEY, nativeSessionV2Network: NETWORK };
+  await withNativeRoute(config, async (base) => {
+    const body = { protocol: 2, attemptId: opaque('nsa_', 10), desiredRuntime: 'running' };
+    let originalTicket;
+    for (const [appVersion, buildNumber, compatible] of [
+      [undefined, undefined, false], ['0.4.0', '1250', false], ['0.4.0', '1252', true],
+      ['0.4.1', '1', true], ['0.5.0', '1', true], ['1.0.0', '1', true],
+      ['0.3.99', '9999', false], ['0.4.0', '1250', false],
+      ['0.4.0', '1252', true], [undefined, undefined, false],
+    ]) {
+      const headers = { 'content-type': 'application/json', cookie: 'session=cookie-A' };
+      if (buildNumber) {
+        headers['Usernode-Native-App-Version'] = appVersion;
+        headers['Usernode-Native-App-Build'] = buildNumber;
+      }
+      const response = await fetch(`${base}/api/v4/mobile/auth/native-establish-handoff`, {
+        method: 'POST', headers, body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { success: true, data: body });
+      assert.equal(pool.attempts.get(body.attemptId).walletless_supported, compatible);
+      const handoffToken = response.headers.get('set-cookie').match(/usernode_native_session_handoff=([^;]+)/)[1];
+      const ticket = await fetch(`${base}/api/v4/mobile/auth/native-establish-ticket`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'Usernode-Native-Handoff': handoffToken },
+        body: JSON.stringify(body),
+      });
+      assert.equal(ticket.status, 200);
+      const rawTicket = await ticket.text();
+      if (originalTicket) assert.equal(rawTicket, originalTicket);
+      originalTicket = rawTicket;
+    }
+  }, pool);
+});
 
 test('API rejects invalid config and non-closed DTOs before DB access', async () => {
   await withNativeRoute({ dataEncryptionKey: DATA_KEY, nativeSessionV2Network: null }, async (base) => {
@@ -601,4 +807,21 @@ test('schema cross-binds session, attempt, installation, token, and account subj
   assert.match(schema, /FOREIGN KEY \(installation_id, installation_key_generation\)\s+REFERENCES native_installation_key_generations\(installation_id, key_generation\)/);
   assert.match(schema, /FOREIGN KEY \(mobile_auth_token_id, user_id\)[\s\S]*?ON DELETE SET NULL \(mobile_auth_token_id\)/);
   assert.match(schema, /FOREIGN KEY \(account_id, user_id\)\s+REFERENCES onchain_accounts\(id, user_id\)/);
+  assert.match(schema, /ALTER TABLE native_session_credentials\s+ALTER COLUMN account_id DROP NOT NULL/);
+});
+
+test('a restored web cookie can replay only its original native attempt', async () => {
+  const now = new Date('2026-08-26T12:00:00.000Z');
+  const pool = new TicketPool(now);
+  pool.session.native_session_credential_reference = opaque('nsc_', 4);
+  pool.session.native_attempt_id = opaque('nsa_', 5);
+  const protocol = new NativeSessionProtocol({ pool,
+    config: { nativeSessionV2Network: NETWORK, dataEncryptionKey: DATA_KEY }, now: () => now });
+  await assert.rejects(protocol.createHandoff({ sessionToken: 'cookie-A',
+    body: { protocol: 2, attemptId: opaque('nsa_', 6), desiredRuntime: 'running' } }),
+  { status: 409, code: 'native_session_attempt_conflict' });
+  assert.equal(pool.attempts.size, 0);
+  await protocol.createHandoff({ sessionToken: 'cookie-A',
+    body: { protocol: 2, attemptId: pool.session.native_attempt_id, desiredRuntime: 'running' } });
+  assert.equal(pool.attempts.size, 1);
 });

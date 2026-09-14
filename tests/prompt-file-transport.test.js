@@ -30,6 +30,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const docker = require('../src/services/docker');
+const kubernetes = require('../src/services/kubernetes');
 const worker = require('../src/services/worker');
 const {
   buildCodingAgentBuildGuidance,
@@ -268,6 +269,43 @@ test('writeTurnSystemPrompt materializes required system context in the same wor
   } finally {
     docker.execShellStdin = orig;
     worker.evictWorker(SID);
+  }
+});
+
+test('writeTurnSystemPrompt uses Kubernetes exec without invoking Docker', async () => {
+  const SID = 990005;
+  const runtimeName = `sv-worker-s${SID}`;
+  worker.adoptWarmWorker(SID, runtimeName);
+
+  const calls = [];
+  const originalRuntime = process.env.WORKER_RUNTIME;
+  const originalKubernetesExec = kubernetes.execInWorker;
+  const originalKubernetesDelete = kubernetes.deleteWorker;
+  const originalDockerExec = docker.execShellStdin;
+  process.env.WORKER_RUNTIME = 'kubernetes';
+  kubernetes.execInWorker = async (config, name, command, stdinText) => {
+    calls.push({ config, name, command, stdinText });
+  };
+  docker.execShellStdin = async () => {
+    throw new Error('Docker must not be invoked for a Kubernetes worker');
+  };
+  kubernetes.deleteWorker = async () => {};
+  try {
+    const systemPrompt = `CONVENTIONS ${'k'.repeat(140 * 1024)}`;
+    await worker.writeTurnSystemPrompt(SID, systemPrompt);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].name, runtimeName);
+    assert.deepEqual(calls[0].command, ['sh', '-s']);
+    assert.equal(decodeScriptPayload(calls[0].stdinText), systemPrompt);
+    assert.equal(calls[0].config.kubernetes.workerNamespace, 'social-workers');
+  } finally {
+    await worker.evictWorker(SID);
+    if (originalRuntime === undefined) delete process.env.WORKER_RUNTIME;
+    else process.env.WORKER_RUNTIME = originalRuntime;
+    kubernetes.execInWorker = originalKubernetesExec;
+    kubernetes.deleteWorker = originalKubernetesDelete;
+    docker.execShellStdin = originalDockerExec;
   }
 });
 

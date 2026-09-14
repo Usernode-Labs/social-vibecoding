@@ -39,6 +39,16 @@ spec:
         {{- end }}
       ports: [{protocol: TCP, port: 3000}]
   egress:
+    # Runtime health probes use generated app/preview Services directly.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "networkPolicy.appNamespace is required" .Values.networkPolicy.appNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: social-vibecoding-runtime
+              app.kubernetes.io/part-of: social-vibecoding
+      ports: [{protocol: TCP, port: 3000}]
     - to:
         - {{- if and (not .Values.postgresql.enabled) .Values.postgresql.namespace }}
           namespaceSelector:

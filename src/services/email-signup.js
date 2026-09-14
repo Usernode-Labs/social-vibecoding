@@ -54,14 +54,42 @@ async function cleanupExpiredState(pool) {
   await mail.pruneDeliveries(pool);
 }
 
+// The mail layer suppresses a second `otp` message to the same address inside
+// RULES.otp.minGapMs (src/services/mail/rate-limit.js). Minting a fresh code
+// in that window used to delete the working one and then mail nothing, so a
+// double-tap left the recipient holding a code the server had already thrown
+// away. Inside the gap we keep the code that was actually delivered instead:
+// still unused, still unexpired, so the mail already in their inbox works.
+const OTP_REUSE_WINDOW_SECONDS = 60;
+
 async function requestCode(pool, config, rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new EmailSignupError('invalid_email', 'Enter a valid email address.');
 
-  await pool.query(
-    'DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL',
-    [email]
-  );
+  const reused = await withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `SELECT id,
+              (attempts = 0
+               AND expires_at > NOW()
+               AND created_at > NOW() - INTERVAL '${OTP_REUSE_WINDOW_SECONDS} seconds')
+                AS reusable
+         FROM mobile_otp_codes
+        WHERE email = $1 AND consumed_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+          FOR UPDATE`,
+      [email]
+    );
+    if (rows[0] && rows[0].reusable) return true;
+    // Outside the window, expired, or already guessed at: replace it.
+    await client.query(
+      'DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL',
+      [email]
+    );
+    return false;
+  });
+  if (reused) return email;
+
   await cleanupExpiredState(pool);
 
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
@@ -94,7 +122,15 @@ async function withTransaction(pool, fn) {
   }
 }
 
-async function verifyCode(pool, rawEmail, rawCode) {
+// Refusals that mean "the code was right, but a code cannot sign this account
+// in". They are distinct from `invalid_or_expired_code` so the sign-in screen
+// can route the person to the password form instead of implying they mistyped.
+const PASSWORD_REQUIRED_MESSAGE =
+  'This account signs in with a password. Enter it below to continue.';
+const ADMIN_PASSWORD_REQUIRED_MESSAGE =
+  'This admin account signs in with a password. Enter it below to continue.';
+
+async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   const email = normalizeEmail(rawEmail);
   const code = typeof rawCode === 'string' ? rawCode.trim() : '';
   if (!email || !code) {
@@ -130,14 +166,44 @@ async function verifyCode(pool, rawEmail, rawCode) {
     );
 
     const { rows: existingRows } = await client.query(
-      `SELECT id, is_admin, password_set
+      `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed
          FROM users
         WHERE lower(email) = lower($1)
         FOR UPDATE`,
       [email]
     );
     let user = existingRows[0] || null;
-    if (user && (user.is_admin || user.password_set)) return { invalid: true };
+
+    // The code is already consumed at this point, on every branch below. A
+    // correct code must never be replayable, and neither refusal is
+    // retry-able with the same code anyway.
+    if (user && user.is_admin) return { refuse: 'admin_password_required' };
+    if (user && user.password_set && !user.email_confirmed) {
+      return { refuse: 'password_required' };
+    }
+
+    // An account with a password and a confirmed email address is signed
+    // straight in: whoever reads that mailbox can already take the account
+    // over through "Forgot password?", so this grants no new capability.
+    if (user && user.password_set) {
+      if (typeof createSession !== 'function') {
+        // Programming error: throwing rolls the transaction back, so the code
+        // stays unconsumed and the person can retry it.
+        throw new Error('verifyCode requires createSession to sign an existing account in');
+      }
+      const session = await createSession(client, user.id);
+      return {
+        next: 'signed-in',
+        session,
+        userId: user.id,
+        user: {
+          id: user.id,
+          username: user.username,
+          isAdmin: !!user.is_admin,
+          adminReadonly: !!user.admin_readonly,
+        },
+      };
+    }
 
     let created = false;
     if (!user) {
@@ -155,6 +221,16 @@ async function verifyCode(pool, rawEmail, rawCode) {
       );
       user = createdRows[0];
       created = true;
+    } else if (!user.email_confirmed) {
+      // Reading the code proves the mailbox. Stamping it here stops
+      // password-less rows from ageing into the refusal branch above, and
+      // unlocks "Forgot password?" for them.
+      await client.query(
+        `UPDATE users
+            SET email_confirmed = TRUE, email_confirmed_at = NOW()
+          WHERE id = $1`,
+        [user.id]
+      );
     }
 
     const signupToken = crypto.randomBytes(32).toString('hex');
@@ -168,11 +244,17 @@ async function verifyCode(pool, rawEmail, rawCode) {
              created_at = NOW()`,
       [tokenHash(signupToken), user.id, expiresAt]
     );
-    return { signupToken, expiresAt, userId: user.id, created };
+    return { next: 'set-password', signupToken, expiresAt, userId: user.id, created };
   });
 
   if (result.invalid) {
     throw new EmailSignupError('invalid_or_expired_code', 'Invalid or expired code.');
+  }
+  if (result.refuse === 'password_required') {
+    throw new EmailSignupError('password_required', PASSWORD_REQUIRED_MESSAGE);
+  }
+  if (result.refuse === 'admin_password_required') {
+    throw new EmailSignupError('admin_password_required', ADMIN_PASSWORD_REQUIRED_MESSAGE);
   }
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });

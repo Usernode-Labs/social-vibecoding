@@ -48,7 +48,7 @@ function makeStubClient(responses) {
 
 function baseMessage(overrides = {}) {
   return {
-    model: 'claude-fable-5',
+    model: 'claude-fable-5-1',
     stop_reason: 'end_turn',
     stop_details: null,
     content: [{ type: 'text', text: 'hello' }],
@@ -113,7 +113,7 @@ test('sanitizeFallbackContent: pre-boundary tool_use/thinking dropped, text and 
     { type: 'text', text: 'partial before decline' },
     { type: 'thinking', thinking: 'truncated reasoning' },
     { type: 'tool_use', id: 'tu_truncated', name: 'dispatch_scout', input: {} },
-    { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
+    { type: 'fallback', from: { model: 'claude-fable-5-1' }, to: { model: 'claude-opus-5' } },
     { type: 'text', text: 'continued by the fallback' },
     { type: 'tool_use', id: 'tu_valid', name: 'dispatch_scout', input: {} },
   ];
@@ -155,13 +155,13 @@ test('streamChat: fable requests use the beta path with the fallback opt-in', as
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(stub.calls.length, 1);
     assert.equal(stub.calls[0].kind, 'beta');
     assert.deepEqual(stub.calls[0].params.betas, [llm.FALLBACK_BETA]);
     assert.deepEqual(stub.calls[0].params.fallbacks, [{ model: llm.FALLBACK_TARGET_MODEL }]);
-    assert.equal(result.servedModel, 'claude-fable-5');
+    assert.equal(result.servedModel, 'claude-fable-5-1');
     assert.equal(result.fallbackServed, false);
   });
 });
@@ -184,7 +184,7 @@ test('streamChat: fallback-served response reports servedModel + fallbackServed'
   const served = baseMessage({
     model: 'claude-opus-5',
     content: [
-      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
+      { type: 'fallback', from: { model: 'claude-fable-5-1' }, to: { model: 'claude-opus-5' } },
       { type: 'text', text: 'rescued' },
     ],
     usage: {
@@ -196,11 +196,11 @@ test('streamChat: fallback-served response reports servedModel + fallbackServed'
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(result.fallbackServed, true);
     assert.equal(result.servedModel, 'claude-opus-5');
-    assert.deepEqual(result.fallbackBoundary, { from: 'claude-fable-5', to: 'claude-opus-5' });
+    assert.deepEqual(result.fallbackBoundary, { from: 'claude-fable-5-1', to: 'claude-opus-5' });
     assert.equal(result.text, 'rescued');
   });
 });
@@ -210,7 +210,7 @@ test('streamChat: toolUses derive from SANITIZED content (truncated pre-boundary
     model: 'claude-opus-5',
     content: [
       { type: 'tool_use', id: 'tu_truncated', name: 'dispatch_scout', input: {} },
-      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
+      { type: 'fallback', from: { model: 'claude-fable-5-1' }, to: { model: 'claude-opus-5' } },
       { type: 'text', text: 'after' },
       { type: 'tool_use', id: 'tu_valid', name: 'web_fetch', input: { url: 'https://x.test' } },
     ],
@@ -220,7 +220,7 @@ test('streamChat: toolUses derive from SANITIZED content (truncated pre-boundary
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.deepEqual(result.toolUses.map((t) => t.id), ['tu_valid']);
     assert.ok(!result.rawContent.some((b) => b.type === 'tool_use' && b.id === 'tu_truncated'));
@@ -244,7 +244,7 @@ test('streamChat: refusal with recommended_model triggers exactly one direct ret
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(stub.calls.length, 2);
     assert.equal(stub.calls[0].kind, 'beta');
@@ -273,7 +273,7 @@ test('streamChat: refusal-after-retry is final (no second retry) and surfaces st
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(stub.calls.length, 2);
     assert.equal(result.stopReason, 'refusal');
@@ -291,7 +291,7 @@ test('streamChat: refusal WITHOUT recommended_model makes a single call and pass
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(stub.calls.length, 1);
     assert.equal(result.stopReason, 'refusal');
@@ -305,7 +305,7 @@ test('streamChat: non-refusal responses carry null stopDetails', async () => {
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-fable-5',
+      model: 'claude-fable-5-1',
     });
     assert.equal(result.stopDetails, null);
   });
@@ -315,7 +315,7 @@ test('streamChat: non-refusal responses carry null stopDetails', async () => {
 
 test('estimateCostCents: fable priced per models.js, above sonnet and opus', () => {
   const usage = { input_tokens: 1000, output_tokens: 1000 };
-  const fable = llm.estimateCostCents(usage, 'claude-fable-5');
+  const fable = llm.estimateCostCents(usage, 'claude-fable-5-1');
   const opus = llm.estimateCostCents(usage, 'claude-opus-5');
   const sonnet = llm.estimateCostCents(usage, 'claude-sonnet-5');
   const haiku = llm.estimateCostCents(usage, 'claude-haiku-4-5');

@@ -201,6 +201,170 @@ test('the default section is an ungated key', () => {
   assert.equal(hit.gate, null, 'the default section is never behind a gate');
 });
 
+// ── Grouping and the Advanced disclosure (#1554) ────────────────────────
+
+test('the registry groups into four sections, Advanced last', () => {
+  const sections = registrySections();
+  // First-appearance order, exactly what _groupedSections() derives.
+  const order = [];
+  for (const s of sections) if (!order.includes(s.group)) order.push(s.group);
+  assert.deepEqual(order, ['Preferences', 'Account', 'AI & agents', 'Advanced'],
+    'four groups, in menu order');
+  // dapp.json asserts this heading by TEXT, so the spelling is a contract.
+  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & agents'),
+    'the AI & agents heading is a declared check');
+
+  // Theme leads the registry: DEFAULT_SECTION, the visible[0] fallbacks in
+  // open()/route()/setSection and the "Theme is the first setting" check all
+  // resolve through position, so the regrouping must not have moved it.
+  assert.equal(sections[0].key, 'theme', 'Theme is still the first entry');
+  assert.equal(sections[0].group, 'Preferences');
+  assert.equal(sections[0].gate, null);
+
+  // Nothing was dropped on the way: every section is still registered, and
+  // the rarely-used ones are the ones that moved.
+  const byKey = Object.fromEntries(sections.map((s) => [s.key, s.group]));
+  for (const key of [
+    'theme', 'language', 'alerts', 'username', 'password', 'wallet',
+    'openrouter', 'api-key', 'connectors', 'app-ai', 'agent-files', 'cli',
+    'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
+  ]) assert.ok(byKey[key], `${key} is still reachable from the menu`);
+  for (const key of [
+    'app-ai', 'agent-files', 'cli', 'dev-console', 'experimental',
+    'usernode', 'admin-preview', 'about',
+  ]) assert.equal(byKey[key], 'Advanced', `${key} sits under Advanced`);
+});
+
+test('Advanced is the ONE collapsible group, and it starts closed', () => {
+  assert.match(settingsJs, /ADVANCED_GROUP: 'Advanced'/,
+    'the collapsible group is named once, not spelled at every reader');
+  const isCollapsible = sliceMethod(settingsJs, '_isCollapsibleGroup');
+  assert.match(isCollapsible, /=== Settings\.ADVANCED_GROUP/,
+    '_isCollapsibleGroup is the single reader of that name');
+
+  // The set stores the EXPANDED names, the inverse of the admin console's
+  // NAV_COLLAPSED_KEY: an empty, cleared or foreign store must resolve to
+  // "Advanced is shut", which is what the declared check asserts.
+  assert.match(settingsJs, /const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';/);
+  const isExpanded = sliceMethod(settingsJs, '_isGroupExpanded');
+  assert.match(isExpanded, /_isCollapsibleGroup\(name\)/,
+    'a group that does not collapse is always expanded');
+  assert.match(isExpanded, /_expanded\(\)\.has\(/,
+    'presence in the set is what opens it');
+  assert.match(isExpanded, /_revealedGroup === key/,
+    'or the group the active section lives in, for this visit only');
+
+  // Closing the group you are standing in has to drop that reveal too, or
+  // the heading is a button that visibly does nothing.
+  assert.match(sliceMethod(settingsJs, '_toggleGroup'),
+    /if \(!open\) Settings\._revealedGroup = null;/);
+
+  // Runs inside a render path, and the prerender pass / vm harnesses have no
+  // localStorage, so the load must neither throw nor touch storage there.
+  const load = sliceMethod(settingsJs, '_loadExpandedGroups');
+  assert.match(load, /if \(typeof window === 'undefined'\) return;/,
+    'the storage read is guarded for Node');
+  assert.match(load, /catch \{/, 'corrupt or unavailable storage is non-fatal');
+  assert.match(load, /_isCollapsibleGroup\(key\)/,
+    'names that are no longer a collapsible group are pruned');
+  assert.match(sliceMethod(settingsJs, '_saveExpandedGroups'), /catch \{/);
+});
+
+test('a disclosure press repaints the menu and nothing else', () => {
+  const fn = sliceMethod(settingsJs, '_toggleGroup');
+  assert.match(fn, /_setGroupExpanded\(/, 'it flips the persisted state');
+  assert.match(fn, /Settings\._renderNav\(\);/, 'and repaints the nav');
+  // The admin console's rule, for the same three reasons: the section on
+  // screen keeps rendering, a phone repaint would tear the menu down
+  // mid-gesture, and focus stays on the heading you just pressed.
+  for (const forbidden of [
+    /setSection\(/, /location\.hash/, /_writeHash\(/, /_renderContent\(/,
+  ]) assert.doesNotMatch(fn, forbidden, `_toggleGroup must not call ${forbidden}`);
+});
+
+test('arriving at a section reveals the group it lives in, transiently', () => {
+  const fn = sliceMethod(settingsJs, '_ensureActiveGroupExpanded');
+  assert.match(fn, /Settings\._revealedGroup =/,
+    'the reveal is derived from the active section');
+  // Persisting it would make one deep link into About or CLI the last time
+  // that viewer ever sees Advanced shut. It would also make "ships
+  // collapsed" depend on route order: the capture container walks the
+  // declared #settings routes as hash cohorts of ONE document, in
+  // declaration order, and #settings/about lands before #settings.
+  for (const forbidden of [/_setGroupExpanded\(/, /_saveExpandedGroups\(/]) {
+    assert.doesNotMatch(fn, forbidden, 'the arrival reveal never persists');
+  }
+  assert.match(fn, /: null/, 'and it clears when the section leaves the group');
+
+  // On ARRIVAL only — the three paths that resolve a section. A deep link
+  // into Advanced (the out-of-credits card's #settings/cli, the consent
+  // modal's #settings/api-key, a bookmark) must not leave the highlighted
+  // row inside a shut group.
+  const open = sliceMethod(settingsJs, 'open');
+  assert.equal((open.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
+    'open() reveals on both the menu and the section branch');
+  const route = sliceMethod(settingsJs, 'route');
+  assert.equal((route.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
+    'route() reveals on both the desktop and the mobile branch');
+  assert.match(sliceMethod(settingsJs, '_renderNavIfOpen'), /_ensureActiveGroupExpanded\(\)/,
+    'a late-arriving gate re-resolves through the same reveal');
+});
+
+test('both nav descriptors carry the disclosure, with per-surface ids', () => {
+  const disclosure = sliceMethod(settingsJs, '_groupDisclosure');
+  for (const field of ['collapsible', 'expanded', 'domId']) {
+    assert.match(disclosure, new RegExp(`${field}[,:]`), `_groupDisclosure emits ${field}`);
+  }
+  // aria-controls targets have to be unique, and at phone width BOTH hosts
+  // are in the document — hence one id prefix per surface.
+  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
+  assert.match(nav.slice(0, 1600), /_groupDisclosure\('settings-nav-group'/);
+  const menu = settingsJs.slice(settingsJs.indexOf('    _menuView() {'));
+  assert.match(menu.slice(0, 1600), /_groupDisclosure\('settings-menu-group'/);
+
+  // The component renders the button, the pair and the wrapper the declared
+  // checks select on, and leaves every other group's markup alone.
+  assert.match(navTsx, /data-settings-group-toggle=\{group\.name\}/);
+  assert.match(navTsx, /aria-expanded=\{group\.expanded \? 'true' : 'false'\}/);
+  assert.match(navTsx, /aria-controls=\{group\.domId \|\| undefined\}/);
+  assert.match(navTsx, /if \(!group\.collapsible\) \{/,
+    'a non-collapsible group keeps the bare heading it always had');
+  // The only user-facing copy this adds. No em dash, no punctuation: it is
+  // read out by screen readers and shown as the hover title.
+  assert.match(navTsx, /`\$\{group\.expanded \? 'Collapse' : 'Expand'\} \$\{group\.name\}`/,
+    'the toggle labels itself Expand / Collapse <group>');
+
+  // The two checks that hold the behaviour in staging.
+  const paths = (t) => manifest.tests.filter((x) => x.path === t);
+  assert.ok(paths('/#settings').some((t) => /group-toggle="Advanced"\]\[aria-expanded="false"/.test(t.expectSelector || '')),
+    'a declared check pins Advanced shipping collapsed');
+  assert.ok(paths('/?demo=cli-empty#settings/cli').some((t) => /#settings-nav-group-advanced:not\(\.hidden\)/.test(t.expectSelector || '')),
+    'a declared check pins the deep-link reveal');
+});
+
+// ── #1556: Language is gated on an already-saved locale ────────────────
+
+test('the Language section is offered only to a user who already saved a locale', () => {
+  const hit = registrySections().find((s) => s.key === 'language');
+  assert.ok(hit, 'language is still a registered section');
+  assert.equal(hit.gate, 'settings-language-section',
+    'the shell is English-only, so the picker is behind a capability gate');
+  // It ships hidden (the generic gate test above covers the markup), and the
+  // render fn is what reveals it — for a saved value, and only then.
+  const fn = sliceMethod(settingsJs, '_renderLanguageSection');
+  assert.match(fn, /const value = this\.state\.locale \|\| ''/,
+    'the gate is decided by the stored locale, nothing else');
+  assert.match(fn, /if \(!value\) \{[^}]*section\.classList\.add\('hidden'\);[^}]*return;/,
+    'no saved locale -> the section stays hidden and nothing else renders');
+  assert.match(fn, /section\.classList\.remove\('hidden'\)/,
+    'a saved locale -> the section is revealed, so the preference stays changeable');
+  // state.locale lands with /api/auth/me, which can resolve AFTER a cold-boot
+  // deep link has already painted the menu — so the gate re-renders there too.
+  const refresh = sliceMethod(settingsJs, 'refresh');
+  assert.match(refresh, /this\._renderLanguageSection\(\)/,
+    'refresh() re-runs the gate once the account payload arrives');
+});
+
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
 
 test('every pre-existing settings control id survived the move', () => {
@@ -488,17 +652,55 @@ test('a bare #settings means the MENU on mobile, the default on desktop', () => 
     'and never rewrite the address while we are on another route');
 });
 
-test('handleBack only pops an entry we pushed ourselves', () => {
+test('handleBack pops whenever this document put something below', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    handleBack() {'));
-  const head = fn.slice(0, 1400);
+  const head = fn.slice(0, 2000);
   assert.match(head, /if \(!Settings\._open\) return false;/,
     'a press outside the screen is never consumed');
   assert.match(head, /if \(!Settings\._isMobile\(\) \|\| Settings\._level !== 2\) return false;/,
     'desktop and the menu level fall through to navigateHome');
-  assert.match(head, /if \(Settings\._pushedFromMenu\) \{[\s\S]{0,400}history\.back\(\)/,
-    'history.back only for our own pushed entry');
+  // #1565: our own pushed menu entry is not the only thing that can be down
+  // there. An in-app link into a section — the profile editor's
+  // "Settings -> Username" — pushes one too, and back belongs on the screen
+  // the viewer came from, not on a menu they never saw.
+  assert.match(head,
+    /if \(Settings\._pushedFromMenu \|\| Settings\._entryBelow\(\)\) \{[\s\S]{0,900}history\.back\(\)/,
+    'history.back whenever there is an entry of ours below');
   assert.match(head, /history\.replaceState\(null, '', '#settings'\)/,
-    'a deep link REPLACES instead, so back cannot bounce forever');
+    'a COLD deep link REPLACES instead, so back cannot bounce forever');
+});
+
+test('"is there an entry below" is the router\'s answer, not a guess (#1565)', () => {
+  // Nothing else can tell a cold deep link from an in-app one: history.length
+  // counts other documents and document.referrer says nothing about a
+  // fragment change. So app.js records it, in the ONE funnel both events run
+  // through, and Settings reads it.
+  const route = appJs.slice(appJs.indexOf('  _routeFromHash() {'));
+  const body = route.slice(0, 700);
+  assert.match(body, /App\._previousRoute = App\._currentRoute;/);
+  assert.match(body, /if \(arriving !== App\._currentRoute\)/,
+    'a traversal fires popstate AND hashchange, so the duplicate must be a no-op');
+  assert.match(appJs, /App\._currentRoute = location\.hash \|\| '';/,
+    'seeded with the address the document loaded at');
+  assert.match(appJs, /previousRoute\(\) \{\s*return App\._previousRoute;/,
+    'and published for the screens that claim the back chevron');
+
+  const below = sliceMethod(settingsJs, '_entryBelow');
+  assert.match(below, /window\.App\?\.previousRoute\?\.\(\) != null/);
+  assert.match(below, /catch/,
+    'a shell that cannot answer is treated as a cold deep link');
+});
+
+test('the level-2 chevron points where handleBack actually goes (#1565)', () => {
+  // The href is not decorative: app.js's back-btn handler follows it when no
+  // screen claims the press, and a native or middle click uses it directly.
+  const up = sliceMethod(settingsJs, '_upHref');
+  assert.match(up, /Settings\._pushedFromMenu \|\| !Settings\._entryBelow\(\)[\s\S]{0,80}'#settings'/,
+    'the menu is the target when the menu is what is below');
+  assert.match(up, /window\.App\.previousRoute\(\) \|\| undefined/,
+    'otherwise the address the viewer came from; home falls back to the home href');
+  const chrome = sliceMethod(settingsJs, '_syncChrome');
+  assert.match(chrome, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
 });
 
 test('a menu tap is a real hash navigation', () => {
@@ -562,11 +764,12 @@ test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   const head = fn.slice(0, 1400);
   // #1036: the second argument is the anchor's href — inside a section the
-  // chevron pops to the settings menu, so that is where it points. LEVEL 2
-  // ONLY: the mobile drill-in's chevron is the only way up a level inside this
-  // screen, while the root's arrow is gone with the other two account screens'
-  // (Profile and Admin — see App.navigateToProfile). `'home'` is hidden.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
+  // chevron pops to whatever is below it, which _upHref resolves (#1565).
+  // LEVEL 2 ONLY: the mobile drill-in's chevron is the only way up a level
+  // inside this screen, while the root's arrow is gone with the other two
+  // account screens' (Profile and Admin — see App.navigateToProfile).
+  // `'home'` is hidden.
+  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
@@ -649,7 +852,7 @@ test('the "Settings → Change password" prose is a real link', () => {
 
 // ── Staging mock data ──────────────────────────────────────────────────
 
-test('the CLI credentials list has a staging ?demo=1 injection', () => {
+test('the CLI credentials list has staging row and empty-state fixtures', () => {
   assert.match(cliAuthJs, /function demoCliTokens\(\)/, 'demo rows are defined');
   assert.match(cliAuthJs,
     /req\.query\.demo === '1' && process\.env\.USERNODE_ENV === 'staging'/,
@@ -658,6 +861,11 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
     "the strict query allowlist admits 'demo'");
   assert.match(cliAuthJs, /staging-demo-cli-1/, 'rows are obviously fake');
   assert.match(cliAuthJs, /demo: true/, 'rows are flagged so Revoke is suppressed');
+  assert.match(cliAuthJs, /\['1', 'cli-empty'\]\.includes\(req\.query\?\.demo\)/,
+    'the early staging gate admits both exact read-only fixtures');
+  assert.match(cliAuthJs,
+    /req\.query\.demo === 'cli-empty'[\s\S]{0,180}tokens: \[\], next_cursor: null, demo: true/,
+    'the empty-state fixture returns no credential rows');
   // Strictly read-only — the demo branch must not touch the DB.
   const fnStart = cliAuthJs.indexOf('function demoCliTokens()');
   const fn = cliAuthJs.slice(fnStart, fnStart + 1600);
@@ -665,15 +873,21 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
     'fabricated in memory, never written');
 });
 
-test('settings.js passes ?demo=1 through to the credentials list', () => {
+test('settings.js passes the selected CLI fixture through to the credentials list', () => {
+  assert.match(settingsJs, /_cliTokensDemoValue\(\)\s*\{/,
+    'the selected fixture value has one parser');
+  assert.match(settingsJs, /flag === '1' \|\| flag === 'cli-empty'/,
+    'only the two declared fixture values are accepted');
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
   // Scoped to _loadCliTokens, not the whole module — the point is that the
   // passthrough is on the request this function builds. The window grew
   // when the capability gate (_cliAuthAvailable — skip the fetch entirely
   // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
-    'the page-level ?demo=1 reaches the endpoint');
+  assert.match(load.slice(0, 3000), /const demo = this\._cliTokensDemoValue\(\)/,
+    'the credential fetch reads the exact selected fixture');
+  assert.match(load.slice(0, 3000), /`&demo=\$\{encodeURIComponent\(demo\)\}`/,
+    'the page-level fixture reaches the endpoint without string concatenation hazards');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });
 
@@ -681,7 +895,7 @@ test('settings.js passes ?demo=1 through to the credentials list', () => {
 
 test('the screen itself is never gated on USERNODE_ENV', () => {
   // The whole shell/routing surface must be identical in staging and prod;
-  // only DATA (the ?demo=1 rows in cli-auth.js) may differ.
+  // only DATA (the read-only fixtures in cli-auth.js) may differ.
   assert.doesNotMatch(settingsJs, /USERNODE_ENV/,
     'no environment gating in the client module');
   for (const marker of ["parts[0] === 'settings'", '  navigateToSettings(section) {', '  _exitSettings() {']) {
@@ -699,7 +913,9 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  for (const key of ['password', 'app-ai', 'agent-files', 'language', 'cli', 'admin-preview']) {
+  // #1556: 'language' is deliberately absent — it is no longer a routable
+  // section for a default user, and its check asserts the FALLBACK instead.
+  for (const key of ['password', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -710,13 +926,25 @@ test('dapp.json covers the settings screen and its deep links', () => {
     bare.some((t) => (t.expectSelector || '').includes('settings-screen')),
     'the bare-route check asserts the screen is actually visible',
   );
-  // Data-dependent sections must go through the staging demo injection.
+  // Data-dependent sections must go through their staging demo injection.
   for (const t of tests) {
-    if (/#settings\/(app-ai|agent-files|cli)/.test(t.path)) {
+    if (/#settings\/(app-ai|agent-files)/.test(t.path)) {
       assert.match(t.path, /demo=1/,
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
+    if (/#settings\/cli/.test(t.path)) {
+      assert.match(t.path, /demo=(?:1|cli-empty)/,
+        `${t.path} needs an explicit CLI review fixture`);
+    }
   }
+  // #1556: the Language deep link still has a check, but it asserts that the
+  // route falls back to the default section rather than rendering a pane.
+  const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
+  assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
+  assert.match(lang[0].expectSelector || '',
+    /data-settings-section="theme"\]:not\(\.hidden\)/,
+    'the Language deep link lands on the default section, not on a Language pane');
+
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to
   // repaint inside the transition's uncaptured snapshot window.
@@ -814,7 +1042,7 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
     'the per-fragment re-apply deliberately leaves the traversal driver out');
 });
 
-// ── Usernode-app section: a failed native read is diagnosable ───────────
+// ── Homeroom-app section: a failed native read is diagnosable ───────────
 //
 // The bridge's chrome reads resolve null on a timeout, on a native
 // rejection AND on a refused privileged handshake alike, so the section
@@ -845,7 +1073,7 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(usernodeTsx, /Could not load Usernode app settings\./,
+  assert.match(usernodeTsx, /Could not load Homeroom app settings\./,
     'the headline is unchanged so existing reports stay recognisable');
   // #1079: the box is sections/usernode.tsx now. The MODEL carries the
   // app's own message and the component renders it verbatim in a mono run.
@@ -1017,9 +1245,9 @@ test('the local-agent block lives in Experimental and ships hidden', () => {
   // so it costs nothing for the overwhelming majority who never run the CLI.
   assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
   assert.match(experimental, /Local coding agent/);
-  // The copy has to answer "what still happens on Usernode?", because
-  // "runs on your machine" otherwise reads as "Usernode stops working".
-  assert.match(experimental, /Usernode still opens the pull request/);
+  // The copy has to answer "what still happens on Homeroom?", because
+  // "runs on your machine" otherwise reads as "Homeroom stops working".
+  assert.match(experimental, /Homeroom still opens the pull request/);
 });
 
 // The label is free text typed on someone's own laptop and arrives here
@@ -1037,7 +1265,8 @@ test('a machine label can never escape into markup', () => {
         leaseId: 'lease_1',
         title: hostile,
         where: hostile,
-        detail: 'claude-code · last seen 10:00',
+        runtime: 'claude-code',
+        lastSeenAt: '2026-03-04T10:00:00Z',
         detachable: true,
       }],
     },
@@ -1108,7 +1337,7 @@ test('detaching is confirmed, and an already-gone lease is not an error', () => 
       phase: 'ready',
       agents: [{
         leaseId: null, title: 'staging demo', where: 'an app',
-        detail: 'claude-code · last seen 10:00', detachable: false,
+        runtime: 'claude-code', lastSeenAt: '2026-03-04T10:00:00Z', detachable: false,
       }],
     },
   );
@@ -1121,7 +1350,7 @@ test('the Experimental toggle still gates the whole section', () => {
   assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
 
-// ── "Usernode app: connection" (the diagnostics panel) ─────────────────
+// ── "Homeroom app: connection" (the diagnostics panel) ─────────────────
 
 test('the usernode section is gated on being in the app, not on a capability', () => {
   const section = settingsJs.slice(
@@ -1166,7 +1395,7 @@ test('the panel has stable ids and both actions', () => {
   }
 });
 
-// ── Settings → "Usernode app: widget icons" ────────────────────────
+// ── Settings → "Homeroom app: widget icons" ────────────────────────
 //
 // The homescreen widget's icon path is invisible from both ends: the
 // user sees "the tile is the wrong colour", and SV's side of the story
@@ -1177,7 +1406,7 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Usernode app: widget icons/);
+  assert.match(usernodeTsx, /Homeroom app: widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1244,7 +1473,7 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
     settingsJs.indexOf('    // The row’s truth, read BEFORE it can mislead.'),
   );
   assert.match(section, /this\._widgetIconsDemo\(\) \|\|/,
-    'the demo link opens the Usernode section it lives in');
+    'the demo link opens the Homeroom section it lives in');
   // A fixed snapshot: no bridge call, no writes — and deliberately the
   // interesting state rather than the healthy one.
   const demo = settingsJs.slice(
@@ -1398,6 +1627,98 @@ test('the demo deep link is a declared test path', () => {
     'the screenshot state added this turn is exercised by dapp.json');
 });
 
+// ── Wallet recovery: a Settings button, not a pop-up ──────────────────
+//
+// The "Connect your existing wallet" dialog (features/dialogs/
+// wallet-recovery.tsx) used to open ITSELF: native-chrome.js dispatched
+// `usernode:wallet-recovery-required` whenever admission failed with
+// `native_session_wallet_pool_exhausted`, and the dialog also re-opened on
+// mount off lastSessionFailure(). Admission is retried on every online /
+// pageshow / visibilitychange, so the modal kept coming back over what is a
+// minor feature. It is offered from the connection panel now, and only there.
+
+const walletRecoveryTsx = read('frontend/src/features/dialogs/wallet-recovery.tsx');
+const nativeChromeJs = read('public/js/native-chrome.js');
+
+test('the connection panel offers wallet recovery off the recorded failure', () => {
+  const view = sliceMethod(settingsJs, '_usernodeConnectionView');
+  assert.match(view, /walletRecovery: this\._walletRecoveryAvailable\(\) \?/,
+    'the button is a slice of the connection model');
+  assert.match(view, /id: 'settings-usernode-connect-wallet'/);
+  assert.match(view, /label: 'Connect existing wallet'/);
+  assert.match(view, /action: '_openWalletRecovery'/);
+
+  const available = sliceMethod(settingsJs, '_walletRecoveryAvailable');
+  assert.match(available, /nc\.isSessionAdmitted\(\)/,
+    'an admitted session has nothing to recover');
+  assert.match(available, /nc\.lastSessionFailure\(\)/,
+    'the recorded failure is the source of truth');
+  assert.match(available, /failure\.code !== this\.WALLET_POOL_EXHAUSTED/);
+  assert.ok(settingsJs.includes(
+    "WALLET_POOL_EXHAUSTED: 'native_session_wallet_pool_exhausted'"));
+  assert.match(available, /dialogs\.walletRecovery/,
+    'no button without a dialog to open');
+
+  const open = sliceMethod(settingsJs, '_openWalletRecovery');
+  assert.match(open, /dialog\.open\(\{ userId \}\)/,
+    'the press opens the React dialog by its published controller');
+  assert.match(open, /_walletRecoveryDemo\(\)/,
+    'the demo snapshot must never open a real recovery');
+
+  // Admission flipping (the dialog succeeding, a sign-out) repaints the
+  // panel without a navigation.
+  assert.match(sliceMethod(settingsJs, 'init'),
+    /addEventListener\('usernode:native-session-admission',\s*\(\) => this\._publishUsernode\(\)\)/);
+
+  assert.match(usernodeStoreTs, /walletRecovery: UnAction \| null/);
+  assert.match(usernodeTsx, /id="settings-usernode-wallet-recovery"/);
+  assert.match(usernodeTsx, /<UnBtn btn=\{c\.walletRecovery\} \/>/);
+  // JS-built, so it must not appear in the static shell.
+  for (const id of ['settings-usernode-wallet-recovery', 'settings-usernode-connect-wallet']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built from the model, never shipped in the markup`);
+  }
+});
+
+test('nothing opens the wallet recovery dialog on its own', () => {
+  assert.ok(!nativeChromeJs.includes('offerWalletRecovery'),
+    'native-chrome.js no longer announces pool exhaustion');
+  assert.ok(!nativeChromeJs.includes("'usernode:wallet-recovery-required'"),
+    'the auto-open event is gone from the dispatcher');
+  assert.ok(!walletRecoveryTsx.includes("addEventListener('usernode:wallet-recovery-required'"),
+    'the dialog no longer listens for it');
+  assert.ok(!walletRecoveryTsx.includes('lastSessionFailure?.()'),
+    'the dialog no longer re-opens itself on mount off the recorded failure');
+  assert.doesNotMatch(walletRecoveryTsx, /dialog\.open\(/,
+    'the dialog never calls its own open(); only the Settings button does');
+  // The one listener left is the CLOSE: a realm close mid-form.
+  assert.ok(walletRecoveryTsx.includes("addEventListener('sv:native-realm-close'"));
+});
+
+test('the wallet-recovery demo deep link is read-only and declared', () => {
+  const flag = sliceMethod(settingsJs, '_walletRecoveryDemo');
+  assert.match(flag, /'bridgediag'\) === 'wallet'/);
+  assert.match(sliceMethod(settingsJs, '_bridgeDiagnostics'),
+    /_walletRecoveryDemo\(\)\) return this\.DEMO_BRIDGE_DIAGNOSTICS_WALLET/);
+  const section = sliceMethod(settingsJs, '_renderUsernodeSection');
+  assert.match(section, /this\._walletRecoveryDemo\(\)/,
+    'the demo link gates the section open in a browser, like bridgediag=demo');
+  const view = sliceMethod(settingsJs, '_usernodeConnectionView');
+  assert.match(view, /retryDisabled: !!this\._bridgeDiagDemo\(\) \|\| !!this\._walletRecoveryDemo\(\)/,
+    'the demo may not drive the real bridge');
+  assert.match(view, /disabled: demo,/,
+    'nor open a real recovery');
+  const snapshot = settingsJs.slice(
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS_WALLET: {'),
+    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  );
+  assert.match(snapshot, /Staging demo/, 'the synthetic values say so in the data itself');
+  assert.match(snapshot, /invalid/, 'the demo origin is a reserved non-resolvable name');
+  const paths = JSON.stringify(manifest.tests || []);
+  assert.ok(paths.includes('bridgediag=wallet'),
+    'the screenshot state is exercised by dapp.json');
+});
+
 // ── Protocol-2 sign-out boundary ────────────────────────────────────────
 
 test('sign-out closes once, then uses terminal protocol 2 or web navigation',
@@ -1415,7 +1736,15 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
     'web-session deletion follows the closed native boundary');
   assert.match(logout, /if \(preflight\.nativeTerminal\)/);
   assert.match(logout, /return NativeChrome\.commitNativeLogout\(\)/);
-  assert.match(logout, /window\.location\.href = '\/'/);
+  // #1524 turned the web path's `location.href = '/'` into a REPLACE onto the
+  // landing page, on both branches: an entry pushed by an assignment lets Back
+  // restore the signed-in document straight out of the BFCache. Assert the
+  // constant too, so the destination cannot drift off the landing page while
+  // the navigation still reads correct.
+  assert.match(settingsJs, /const LANDING_URL = '\/';/);
+  assert.match(logout, /window\.location\.replace\(LANDING_URL\)/);
+  assert.doesNotMatch(logout, /window\.location\.(href|assign)\b/,
+    'a pushed entry would let Back restore the signed-in document (#1524)');
   assert.doesNotMatch(settingsJs,
     /_confirmDegradedSignOut|_bestEffortNativeLogout|NATIVE_SIGNOUT_NOTICE_KEY/,
     'legacy split/fallback logout machinery is removed, not maintained');
@@ -1432,6 +1761,7 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
 
 
 const CLI_LIST = 'frontend/src/features/settings/cli-tokens-list.tsx';
+const CLI_GUIDE = 'frontend/src/features/settings/cli-setup-guide.tsx';
 const cliRows = (state) => renderComponent(CLI_LIST, 'CliTokensListView', state);
 
 test('the credential list renders its three host states', () => {
@@ -1442,9 +1772,45 @@ test('the credential list renders its three host states', () => {
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
   assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
-  // The two the module used to write with `textContent`.
+  // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
-  assert.match(cliRows({ phase: 'ready', tokens: [] }), /No CLI credentials\./);
+  // The completed empty state remains credential-specific; #1609's setup
+  // guide is always-visible section markup instead of a list phase.
+  const empty = cliRows({ phase: 'ready', tokens: [] });
+  assert.match(empty, /No CLI credentials\./);
+});
+
+test('the local-agent setup guide is always-visible section markup', () => {
+  const guide = renderComponent(CLI_GUIDE, 'CliSetupGuide');
+  assert.match(guide, /Set up a local coding agent/);
+  assert.match(guide, /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
+  assert.match(guide, /cd social-vibecoding/);
+  assert.match(guide, /<code>codex<\/code>/);
+  assert.match(guide, /<code>claude<\/code>/);
+  assert.match(guide,
+    /Create a proposal for &lt;app name&gt; that &lt;describe the change you want&gt;\./);
+  assert.match(guide, /authorize access on a Homeroom web page/);
+  assert.equal((guide.match(/>Copy<\/button>/g) || []).length, 4,
+    'repository setup, each alternative agent, and the prompt copy separately');
+  const copyLabels = guide.match(/aria-label="Copy [^"]+"/g) || [];
+  assert.equal(copyLabels.length, 4);
+  assert.equal(new Set(copyLabels).size, 4, 'every Copy control has a distinct accessible name');
+  assert.equal((guide.match(/items-stretch overflow-hidden rounded-md border/g) || []).length, 4,
+    'each command and its Copy control share one clipped, bordered field');
+  assert.equal((guide.match(/border-l border-zinc-200/g) || []).length, 4,
+    'each integrated Copy control is separated from its code by one divider');
+  const source = read(CLI_GUIDE);
+  assert.match(source, /PlatformUI/);
+  assert.match(source, /copyText\?\.\(value\)/,
+    'the shared helper keeps the clipboard fallback used elsewhere in the shell');
+  assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
+    'a rejected copy never claims success');
+  const shell = shellMarkup();
+  assert.match(shell, /id="cli-setup-guide"/,
+    'the SSG output contains the guide before capability detection or credential loading');
+  const load = sliceMethod(settingsJs, '_loadCliTokens');
+  assert.doesNotMatch(load, /section\.classList\.add\('hidden'\)/,
+    'an unavailable credential API never hides the setup guide with its parent section');
 });
 
 test('only a live, non-demo credential offers Revoke', () => {
@@ -1598,6 +1964,20 @@ test('a demo Connect control is inert but present, and matches the live one', ()
   assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
 });
 
+test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
+  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  for (const provider of ['github', 'x']) {
+    const row = view._socialIdentityRowView(provider, {
+      available: true, linked: false, pendingAttemptAt: '2026-09-07T10:00:00Z',
+    }, {}, false);
+    assert.match(row.strandedNote, /connection attempt didn't complete/);
+    assert.match(row.strandedNote, /Try Connect again/);
+    assert.match(row.strandedNote, /browser did not reach the sign-in page/);
+    assert.doesNotMatch(row.strandedNote, /callback address isn't registered/);
+    assert.equal(view._socialIdentityRowView(provider, { available: true }, {}, false).strandedNote, null);
+  }
+});
+
 test('the reviewable claims travel with the row that makes them', () => {
   const html2 = socialHtml({
     ...socialBase,
@@ -1607,7 +1987,7 @@ test('the reviewable claims travel with the row that makes them', () => {
       heading: 'GitHub · @octo',
       state: { tone: 'emerald', text: 'Ownership verified · counts toward the single $10/day social tier.' },
       linkedAt: 'linked 1 Jan',
-      noToken: 'Usernode holds no GitHub access token for your account.',
+      noToken: 'Homeroom holds no GitHub access token for your account.',
       connect: null,
       unlink: { disabled: false },
       strandedNote: 'Your last GitHub connection attempt didn’t complete.',

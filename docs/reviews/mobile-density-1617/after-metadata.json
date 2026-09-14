@@ -1,0 +1,50 @@
+{
+  "phase": "after",
+  "revision": "4a47997ddbbbfa342ecfb0244daae1826a7d2d63",
+  "browser": "152.0.7977.77",
+  "fixture": "local synthetic API data; real built shell",
+  "fingerprints": {
+    "public/css/app.css": "28eb13f52e2f486d8f8ac0a1e9dd5f39c498250ca7ec506a32e759d7de027685",
+    "public/css/tailwind.css": "a4455cfb4f4b6caaff26a07d417e600b74759572a4c432a538a16eebb3bda9d6",
+    "public/shell/assets/shell.js": "691fd6231e400d9005f142151e97a5308319843bd062faebffedfe924de29d8e"
+  },
+  "viewports": [
+    {
+      "width": 360,
+      "height": 780,
+      "deviceScaleFactor": 2
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "deviceScaleFactor": 2
+    }
+  ],
+  "requests": [
+    "GET /api/models",
+    "GET /api/public/waitlist/options",
+    "GET /api/auth/me",
+    "GET /api/version",
+    "GET /api/me/kudos-budget",
+    "GET /api/me/ai-budget",
+    "GET /api/me/session-state",
+    "GET /api/notifications",
+    "GET /api/conversations",
+    "GET /api/apps",
+    "GET /api/iframe-token",
+    "GET /api/apps/my-page",
+    "GET /api/apps/my-page/github-issues",
+    "GET /api/apps/my-page/issues",
+    "GET /api/apps/my-page/promoted",
+    "GET /api/apps/my-page/merged",
+    "GET /api/apps/my-page/board-order",
+    "GET /api/me/active-sessions",
+    "GET /api/apps/my-page/shared-sessions",
+    "GET /api/apps/my-page/sessions",
+    "GET /api/apps/my-page/topic-categories",
+    "GET /api/sessions/161700",
+    "GET /api/sessions/161700/status",
+    "POST /api/apps/game-corner/favorite"
+  ],
+  "errors": []
+}

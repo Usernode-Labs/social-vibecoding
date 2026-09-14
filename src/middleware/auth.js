@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -57,6 +58,13 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
+  // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
+  // a deploy can serve them immutable (src/services/static-cache.js). Public
+  // for the same reason as every entry above it: a deployed document loads
+  // ALL of its scripts this way, on the anonymous screens too. Static assets
+  // only, no data access.
+  '/b/',
   // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
   // qrcodejs). Same public tier as /css/ and /js/, and public for the same
   // reason: index.html loads them from its <head> on EVERY load including
@@ -203,13 +211,15 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
+             ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
         );
 
-        if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+        if (rows.length > 0 && rows[0].native_session_valid !== false
+            && new Date(rows[0].expires_at) >= new Date()) {
           // Staging identity switch: a request that carries a VALID iframe
           // JWT for a DIFFERENT user than the cookie session re-mints as
           // the token's user (replacing the cookie) instead of silently
@@ -291,7 +301,9 @@ function authMiddleware(config) {
         if (rows.length > 0) {
           await pool.query('DELETE FROM sessions WHERE token = $1', [cookieToken]);
         }
-        res.clearCookie('session');
+        // An old in-flight request may finish after native recovery installed
+        // a replacement cookie. A 401 must not clear that newer credential.
+        // Explicit logout clears cookies; login/recovery replaces them.
       } catch (err) {
         log.error('auth', 'Session check failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
@@ -410,6 +422,17 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
 }
 
 function redirectOrReject(req, res, next) {
+  // The native app opens OAuth in the system browser, whose cookie jar may
+  // be empty. Only these two account-pinned document navigations may resume
+  // after login; ordinary unauthenticated API requests still receive 401.
+  if (req.method === 'GET'
+      && /^\/api\/me\/social-identities\/(github|x)\/connect$/.test(req.path)
+      && typeof req.query?.account === 'string'
+      && /^[1-9][0-9]*$/.test(req.query.account)) {
+    const target = `${req.path}?account=${req.query.account}`;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
+  }
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }

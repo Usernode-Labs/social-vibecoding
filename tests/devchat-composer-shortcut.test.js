@@ -280,13 +280,13 @@ test('the shortcut still saves through the mayor2 wrap-up', () => {
   const { DevChat, document } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
-  const btn = document.getElementById('dc-save-draft-btn');
   const sent = spySend(DevChat);
 
   input.value = 'a note during the wrap-up';
   DevChat._setStreamingUI(true, 'mayor2');
-  assert.equal(btn.hidden, false,
-    'precondition: the save icon is offered through the wrap-up');
+  assert.equal(DevChat._sendButtonView().kind, 'save',
+    'precondition: saving is offered through the wrap-up — text in the box '
+    + 'outranks every busy shape, the wrap-up spinner included');
 
   DevChat._onComposerShortcut();
 
@@ -337,37 +337,43 @@ test('once the turn has settled the shortcut sends rather than saving', () => {
 
 // ── The hint under the box ─────────────────────────────────────────────
 
-test('the shortcut hint names the action the keystroke currently performs', () => {
+test('the one circle names the action the keystroke currently performs', () => {
+  // #920's hint line is retired. It existed because Ctrl/Cmd+Enter does two
+  // different things and nothing else said which — and that is still true, so
+  // the information had to survive somewhere. It is the BUTTON now, and this
+  // is what makes that sound: the circle and the keystroke perform the same
+  // action in every state, so the control's own shape names it for both.
   const { DevChat, document, view } = makeHarness();
   open(DevChat);
-  const hint = () => view().shortcutHintHtml;
+  const kind = () => view().send.kind;
   document.getElementById('dc-input').value = 'a note';
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(hint(), DevChat.SHORTCUT_HINT_SEND,
-    'stopped chat: the keystroke sends, so the hint says send');
+  assert.equal(kind(), 'send', 'stopped chat: the keystroke sends, so the circle sends');
 
   DevChat.isStreaming = true;
   DevChat._setStreamingUI(true, 'claude');
-  assert.equal(hint(), DevChat.SHORTCUT_HINT_SAVE,
-    'running chat: the keystroke saves, so the hint says save');
+  assert.equal(kind(), 'save', 'running chat with text: both save');
 
   DevChat.isStreaming = false;
   DevChat._setStreamingUI(false);
-  assert.equal(hint(), DevChat.SHORTCUT_HINT_SEND,
-    'and it flips back the moment the turn settles');
+  assert.equal(kind(), 'send', 'and it flips back the moment the turn settles');
 });
 
-test('the save icon tooltip advertises the shortcut', () => {
-  const { DevChat, document, view } = makeHarness();
-  open(DevChat, { streaming: true });
-  const input = document.getElementById('dc-input');
-
-  input.value = 'something worth saving';
-  DevChat._syncSaveDraftBtn();
-
-  assert.match(view().saveDraft.title, /Ctrl\+Enter/,
-    'the icon names the keystroke that does the same thing');
+test('the circle advertises the shortcut in each of its two live states', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '../frontend/src/features/dev-chat/composer.tsx'), 'utf8'
+  );
+  // The two spellings the retired hint line carried, now the titles of the
+  // one control that performs them. Both must name the keystroke — the
+  // tooltip is the only place it is written down.
+  const send = /const SEND_TITLE\s*=\s*'([^']+)'/.exec(src);
+  const save = /const SAVE_TITLE\s*\n?\s*=\s*'([^']+)'/.exec(src);
+  assert.ok(send && save, 'both titles are declared');
+  assert.match(send[1], /Ctrl\+Enter/);
+  assert.match(save[1], /Ctrl\+Enter/);
+  assert.match(src, /title=\{SEND_TITLE\}/, 'the send shape wears its title');
+  assert.match(src, /title=\{SAVE_TITLE\}/, 'the save shape wears its title');
 });
 
 // ── The real keydown wiring ────────────────────────────────────────────

@@ -21,9 +21,6 @@ import type { ReactNode } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  EllipsisVerticalIcon,
-  SearchIcon,
-  TrophyOutlineIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -50,6 +47,107 @@ export function stampProps(stamps: PanelStamps | undefined) {
     out['data-create-enabled'] = String(stamps.createEnabled);
   }
   return out;
+}
+
+/**
+ * WHICH TINT a card wears, from a string key.
+ *
+ * Discover's app cards and Challenges' challenge cards share one five-tint
+ * palette (`.home-tint-1` … `-5` in app.css), and the tint is derived from
+ * the card's own identity — an app slug, a challenge id — rather than from
+ * its POSITION in the lane. Position would repaint the whole row whenever a
+ * lane reorders, and an app people recognise by its green card would be blue
+ * the next time they looked.
+ *
+ * Any stable spread will do, so this is the smallest one that is not a
+ * pattern: a 32-bit rolling hash, folded to 1..5. It is deterministic across
+ * the server prerender and the client, which matters — a tint that differed
+ * between them would be a hydration mismatch, which console-errors and fails
+ * the proposal checks.
+ */
+export function tintOf(key: string): string {
+  // FNV-1a, which is what a rolling `* 31` hash is not: multiply-then-fold
+  // clusters badly over short strings that share a shape (an app slug, a
+  // challenge id), and the first draft put four of five demo cards on the
+  // same tint. The xor-then-multiply order is the fix, and the final
+  // avalanche step is what keeps two slugs differing in one letter apart.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2545f491);
+  h ^= h >>> 13;
+  return `home-tint-${(Math.abs(h) % 5) + 1}`;
+}
+
+/**
+ * THE WHOLE CARD-COLOUR VOCABULARY, as data.
+ *
+ * Two sets, and the difference between them is who chooses:
+ *
+ *   TONES are CHOSEN. Twelve tone-50 colours from the HIG-muted palette
+ *   (`.home-tone-cream` … `-gray` in app.css), offered in the featured
+ *   illustration editor so an author can put their artwork on a colour that
+ *   suits it. Named rather than numbered: `blue` survives the palette being
+ *   reordered or a thirteenth hue being added, where an index does not, and
+ *   the name is what the row is actually called in the palette.
+ *
+ *   LEGACY_TINTS are HASHED. The five `.home-tint-N` the launcher has always
+ *   assigned from a card's own identity (see `tintOf`). They were also, very
+ *   briefly, what the editor offered, so a handful of illustrations carry one
+ *   as a stored number. They stay valid values — an author who picked one
+ *   still sees it — but they are no longer offered.
+ *
+ * Both sets define the same three custom properties, so a card renders one
+ * way whichever it wears. The class strings are complete literals, because
+ * Tailwind's extractor is a regex over source text and the CSS here is
+ * hand-written for the same reason.
+ */
+export const TONES = [
+  'cream', 'yellow', 'orange', 'coral', 'pink', 'purple',
+  'indigo', 'blue', 'teal', 'mint', 'sage', 'gray',
+] as const;
+export type Tone = (typeof TONES)[number];
+
+export const LEGACY_TINTS = [1, 2, 3, 4, 5] as const;
+export type LegacyTint = (typeof LEGACY_TINTS)[number];
+
+const TONE_CLASS: Record<Tone, string> = {
+  cream: 'home-tone-cream', yellow: 'home-tone-yellow', orange: 'home-tone-orange',
+  coral: 'home-tone-coral', pink: 'home-tone-pink', purple: 'home-tone-purple',
+  indigo: 'home-tone-indigo', blue: 'home-tone-blue', teal: 'home-tone-teal',
+  mint: 'home-tone-mint', sage: 'home-tone-sage', gray: 'home-tone-gray',
+};
+
+const TINT_CLASS: Record<LegacyTint, string> = {
+  1: 'home-tint-1', 2: 'home-tint-2', 3: 'home-tint-3', 4: 'home-tint-4', 5: 'home-tint-5',
+};
+
+/** A tone's own name, title-cased for a label. */
+export function toneLabel(tone: Tone): string {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+
+/**
+ * The class for a stored card colour, or null for anything that is neither a
+ * tone name nor one of the five legacy tints. Null is the signal to fall back,
+ * so an unreadable value paints the card's own default rather than nothing.
+ */
+export function cardTintClass(value: unknown): string | null {
+  if (typeof value === 'string') return TONE_CLASS[value as Tone] || null;
+  return LEGACY_TINTS.includes(value as LegacyTint) ? TINT_CLASS[value as LegacyTint] : null;
+}
+
+/**
+ * What a card actually wears: the colour chosen with its illustration when
+ * there is one, otherwise the hash of its own identity. Deliberately one
+ * function, because the fallback is the thing that has to match between the
+ * server prerender and the client.
+ */
+export function cardTint(key: string, tint?: unknown): string {
+  return cardTintClass(tint) || tintOf(key);
 }
 
 /**
@@ -94,13 +192,21 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * Sized and coloured as the block titles it replaces (`text-[0.9375rem]`,
  * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
  * than a restyle.
+ *
+ * THE HOMESCREEN DESIGN then restyled it: 16px at weight 550 in the primary ink (a true half-step on the
+ * variable system faces iOS, Android and macOS ship; semibold where the
+ * face has no 550), the
+ * area title rather than a caption, with the area's link beside it at 14px
+ * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
+ * The row's shape is label + link: the ⋮ that used to ride here is gone
+ * Section hiding is retired (#1801).
  */
 export function SectionHeading({ children, action }: {
   children: ReactNode;
   action?: ReactNode;
 }) {
   return (
-    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-500">
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-[550] leading-tight text-zinc-900 dark:text-zinc-100">
       <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
@@ -108,38 +214,10 @@ export function SectionHeading({ children, action }: {
 }
 
 /**
- * The ⋮ that opens a block's own menu (hide this widget, and the rows
- * HomePanels.menuItems builds for it).
- *
- * It rides in the section heading beside the block's link — see
- * `SectionHeading` for why everything that is chrome ABOUT a block sits above
- * it rather than inside it. `data-panel-key` still names which block it acts
- * on, which is what it was for when the button lived in the card.
- */
-export function PanelMenuButton({ panelKey }: { panelKey: string }) {
-  return (
-    <button
-      type="button"
-      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
-      data-panel-key={panelKey}
-      aria-haspopup="menu"
-      title="Widget options"
-      aria-label="Widget options"
-      onClick={(e) => {
-        e.stopPropagation();
-        panels()?.openMenu?.(panelKey, e.currentTarget);
-      }}
-    >
-      <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-    </button>
-  );
-}
-
-/**
  * Discover's one destination — the `#apps` directory.
  *
  * Lifted out of DiscoverPanel with the rest of the block's chrome, so the
- * section heading can render it beside the ⋮. Same id, same classes, same
+ * section heading can render it beside the label. Same id, same classes, same
  * hash navigation: `#home-browse-btn` is selected on from dapp.json.
  */
 export function BrowseLink() {
@@ -147,7 +225,7 @@ export function BrowseLink() {
     <button
       type="button"
       id="home-browse-btn"
-      className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
       title="Browse every app in the directory"
       aria-label="Browse all apps"
       onClick={(e) => {
@@ -157,7 +235,6 @@ export function BrowseLink() {
         window.location.hash = '#apps';
       }}
     >
-      <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       <span className="whitespace-nowrap">Browse all apps</span>
     </button>
   );
@@ -177,19 +254,39 @@ export function BrowseLink() {
  * the cap entirely.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, footer, children,
+  panelKey, expanded, stamps, footer, plate = 'card', children,
 }: {
   panelKey: string;
   expanded: boolean;
   stamps?: PanelStamps;
   footer?: ReactNode;
+  /**
+   * WHAT THE BLOCK SITS ON. Three answers, because the homescreen design
+   * gave the three blocks three different ones and the article is still one
+   * component:
+   *
+   *   'card'  — the white plate the blocks have always had. Create app.
+   *   'soft'  — a translucent plate (`.home-challenges-plate`). Challenges
+   *             draws its content as tinted cards, and an opaque white
+   *             rectangle behind them would cover the wallpaper exactly
+   *             where the page is tallest.
+   *   'none'  — no plate at all. Discover's cards ARE the surface, and a
+   *             box around a row of tinted cards is a second frame around
+   *             things that already have one. It is also what lets the rail
+   *             bleed to both screen edges.
+   *
+   * `home-panel-card` rides with 'card' only: it is the name of the plate,
+   * and tests/home-panels-render.test.js asserts the pairing.
+   */
+  plate?: 'card' | 'soft' | 'none';
   children: ReactNode;
 }) {
+  const plateClass = plate === 'card'
+    ? ' home-panel-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden'
+    : (plate === 'soft' ? ' home-challenges-plate' : '');
   return (
     <article
-      className={`home-panel home-panel-card${
-        expanded ? ' home-panel--expanded' : ''
-      } rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden`}
+      className={`home-panel${expanded ? ' home-panel--expanded' : ''}${plateClass}`}
       data-panel={panelKey}
       {...stampProps(stamps)}
     >
@@ -200,29 +297,32 @@ export function PanelShell({
 }
 
 /**
- * THE LEADERBOARD LINK (#980). `BrowseLink` verbatim — same violet 12px link,
- * same icon-then-label shape, same seat in the section heading — because it
- * answers the same question on the same screen. It renders in EVERY branch and
- * at every width: between seasons, where the block draws no footer at all, it
- * is the only control the area has.
+ * THE AREA'S WAY IN (#980, renamed #1916). `BrowseLink` verbatim — same 12px
+ * link, same seat in the section heading — because it answers the same
+ * question on the same screen. It renders in EVERY branch and at every width:
+ * between seasons, where the block draws no footer at all, it is the only
+ * control the area has.
+ *
+ * It reads "Open challenges" and lands on the Challenges tab of the
+ * Leaderboard screen (#1916): the area is called Challenges, so a link out of
+ * it that named a different thing read as a way somewhere else. It is still
+ * the home screen's door to that screen — the standings are one tab over —
+ * and the trailing chevron marks it as navigation rather than an action.
  */
 export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
-      title="Open the Leaderboard screen"
-      aria-label="Open leaderboard"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
+      title="Go to the Challenges tab on the Leaderboard screen"
+      aria-label="Open challenges"
       onClick={(e) => {
         e.stopPropagation();
-        // No kind: this is the area's door to the leaderboard SCREEN, and
-        // since the standings preview was removed from the card it is the
-        // only thing here that goes there.
-        panels()?.goToLeaderboard?.();
+        panels()?.goToChallenges?.();
       }}
     >
-      <TrophyOutlineIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-      <span className="whitespace-nowrap">Open leaderboard</span>
+      <span className="whitespace-nowrap">Open challenges</span>
+      <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
 }
@@ -231,38 +331,57 @@ export function LeaderboardLink() {
  * The Challenges footer: the expand/collapse toggle on the left, the way out
  * to the Challenges tab on the right.
  *
- * That right-hand control says "Open challenges", not "Go to leaderboard"
- * (#980) — it lands on `#leaderboard/challenges` while the bar's link lands on
- * the bare `#leaderboard`, and two affordances one card apart both reading
- * "leaderboard" but opening different tabs is worse than the ambiguity the
- * label was written to fix.
+ * That right-hand control says "Open challenges" and lands on
+ * `#leaderboard/challenges` — the same label and the same destination as the
+ * heading's link since #1916, so the two never disagree about where they go
+ * (#980 was two controls one card apart reading alike but opening different
+ * tabs). The footer copy is the one under the rows, for a reader who has just
+ * scrolled past them.
+ *
+ * THE TOGGLE IS CONDITIONAL (#1824). It used to render whenever the block had
+ * any rows, so a season with three challenges drew "See all 3 challenges"
+ * under all three of them — a control whose label was false and whose click
+ * refetched the same list. `expandable` is the view's answer to "would
+ * expanding show a row that is not already on screen?", and when it is no,
+ * the footer is just the way out. The count in the label is `total` for the
+ * same reason it always was: the toggle only appears when there is more than
+ * is drawn, so the number is never the number already on screen.
  */
 export function PanelFooter({
-  panelKey, total, expanded,
-}: { panelKey: string; total: number; expanded: boolean }) {
+  panelKey, total, expanded, expandable = true,
+}: { panelKey: string; total: number; expanded: boolean; expandable?: boolean }) {
   const label = expanded
     ? 'Show less'
     : (total ? `See all ${total} challenges` : 'See all challenges');
+  // One justify utility, never two: `justify-between` seats the toggle left
+  // and the door right, and with no toggle a lone flex child would drift to
+  // the left edge instead of staying under the rows it belongs to.
   return (
-    <div className="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5">
-      <button
-        type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
-        data-panel-key={panelKey}
-        aria-expanded={expanded}
-        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
-        onClick={(e) => {
-          e.stopPropagation();
-          panels()?.toggleExpanded?.(panelKey);
-        }}
-      >
-        <ChevronDownIcon
-          className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
-          aria-hidden="true"
-        />
-        <span className="whitespace-nowrap">{label}</span>
-      </button>
+    <div
+      className={expandable
+        ? 'home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5'
+        : 'home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5'}
+    >
+      {expandable ? (
+        <button
+          type="button"
+          className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+          data-panel-key={panelKey}
+          aria-expanded={expanded}
+          title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
+          onClick={(e) => {
+            e.stopPropagation();
+            panels()?.toggleExpanded?.(panelKey);
+          }}
+        >
+          <ChevronDownIcon
+            className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
+            strokeWidth="2.5"
+            aria-hidden="true"
+          />
+          <span className="whitespace-nowrap">{label}</span>
+        </button>
+      ) : null}
       <button
         type="button"
         className="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"

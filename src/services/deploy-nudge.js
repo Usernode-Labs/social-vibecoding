@@ -30,6 +30,7 @@ const NUDGE_DIR = process.env.USERNODE_DEPLOY_NUDGE_PATH || '/var/lib/usernode/d
  * permissions) — callers should not care which.
  */
 function nudgeHostDeployer({ sha = null, prNumber = null } = {}) {
+  if (process.env.APP_RUNTIME === 'kubernetes') return false;
   try {
     if (!fs.existsSync(NUDGE_DIR)) return false;
     // Write-then-rename so the poller can never read a half-written

@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin        BOOLEAN DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+-- #1583: account-wide, durable first-feedback acknowledgement. Historical
+-- feedback was not recorded per user; existing accounts start tracking at
+-- rollout. Written only after GitHub has accepted a feedback issue.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_feedback_at TIMESTAMPTZ;
 -- #30: optional user-provided Anthropic API key. `anthropic_key_enc`
 -- holds the encrypted payload (v1:<iv>:<tag>:<ct>, base64). We also
 -- keep the last 4 chars unencrypted purely so the UI can show
@@ -26,15 +30,16 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- apps a user may have created. This is the actual app-creation gate (see
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
--- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Admins
--- bypass enforcement entirely — their quota is purely cosmetic. The client
--- still sees a derived `canCreateApps` boolean (computed in auth/me as
--- isAdmin || liveCount < app_quota) so the home screen needs no change; the
--- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- wide maxApps cap). New accounts receive two slots. Full admins
+-- bypass enforcement entirely; view-only admins keep their ordinary quota.
+-- The client sees both a derived `canCreateApps` boolean (computed in auth/me
+-- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
+-- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE users ALTER COLUMN app_quota SET DEFAULT 2;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota_requested_at TIMESTAMPTZ;
 
 -- is_admin is now mutable from the admin panel (grant/revoke toggle in
 -- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
@@ -72,6 +77,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 -- src/routes/sessions.js via src/services/limits.js.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 
+-- #1788: per-user WEEKLY LLM spend cap in cents, layered on top of the
+-- daily one above. NULL means "use the platform default" stored in
+-- platform_settings.user_weekly_limit_cents (see below); 0 means "no
+-- weekly cap applies to this user". Same admin surfaces as the daily
+-- override (/api/admin/users/:id/weekly-limit, admin console → Users).
+-- Read by limits.getUserCreditEntitlement / limits.resolveCaps, which
+-- own the full daily-vs-weekly interaction.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_limit_cents INTEGER;
+
 -- Experimental: opt-in AI progress estimate for coding runs. When TRUE,
 -- the platform periodically asks Haiku to skim the in-flight Claude Code
 -- progress log and emits a vague "AI guess" line in dev-chat (see
@@ -93,19 +107,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Home-screen panels the viewer has dismissed (issue #911) — the keys of
--- the cards that sit on the home screen next to the app grid ('challenges'
--- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
--- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
--- default for every existing and future row — means every panel in the
--- registry shows, which is what makes the challenges card default-on for
--- everyone with no backfill. Written only through
--- POST /api/home-panels/:key/visibility, which validates the key against
--- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: the client half,
--- frontend/src/features/home/home.js, already uses "widget" for the iOS
--- home-screen widget's pinned app grid.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+-- Home sections are permanent (#1801). Remove the obsolete preference from
+-- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
+ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
 -- placement). It used to hold an iOS-homescreen-style drag position per
@@ -114,9 +118,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DE
 -- (column, row) cells per breakpoint instead, and holes are a first-class
 -- concept a card-count can't represent.
 --
--- The column is LEFT IN PLACE, unread and unwritten: this file is
--- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
--- '{}' costs nothing. Nothing may read it — see user_home_layout below.
+-- This separate legacy placement field is left in place, unread and
+-- unwritten. Nothing may read it — see user_home_layout below.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
 
 -- Platform-level user language preference (issue #757). A BCP-47 language
@@ -573,7 +576,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- #416: detail of the last build/deploy failure so the UI can show a
 -- build log instead of a bare "Error" status. Shape:
 --   { stage, reason, log, at, sha }
---   stage  : 'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
+--   stage  : 'database'|'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
 --   reason : concise human line (<= 280 chars)
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
 -- Written by the deploy catch paths (services/app-creator.js,
@@ -658,6 +661,26 @@ CREATE TABLE IF NOT EXISTS app_check_history (
   UNIQUE (app_id, check_key)
 );
 CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+
+-- `consecutive_passes` is what graduation reads now. ONE observed pass used
+-- to be enough, so a check that is flaky from birth graduated on its first
+-- lucky run and blocked every proposal afterwards, with no demotion to
+-- undo it. Ten in a row, reset to zero by any failure, is a bar a 1-in-20
+-- flake clears only 60% of the time per window instead of 95%.
+--
+-- The backfill is a genuine one-time migration written to be safe under
+-- the idempotent boot: the column is added NULLABLE with no default, the
+-- two UPDATEs give every pre-existing row a value, and recordRun always
+-- writes one explicitly. On the second boot nothing is NULL, so both
+-- UPDATEs match nothing. A default would have re-run on every boot and
+-- re-graduated any check whose counter a failure had just reset.
+ALTER TABLE app_check_history ADD COLUMN IF NOT EXISTS consecutive_passes INTEGER;
+-- Already gating under the one-pass rule: keep it gating. No guard rail
+-- this app relies on is demoted by raising the bar.
+UPDATE app_check_history SET consecutive_passes = 10
+  WHERE consecutive_passes IS NULL AND first_passed_at IS NOT NULL;
+UPDATE app_check_history SET consecutive_passes = 0 WHERE consecutive_passes IS NULL;
+
 -- The graduated-set load is the hot read (once per checks run).
 CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
   ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
@@ -736,6 +759,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_image_ref TE
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_build_ref VARCHAR(253);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_kind VARCHAR(32);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_name VARCHAR(253);
+-- The commit the preview was actually built from (the clone's HEAD at build
+-- time). A clean platform sync of main carries the checks verdict forward
+-- WITHOUT a rebuild, so the preview can sit a commit behind the head the
+-- row now describes; "Re-run checks" compares this to the head and rebuilds
+-- instead of testing the new head's checks against the old build. NULL for
+-- previews built before this column existed, which keeps the old behaviour.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR(64);
 -- LLM-generated PR title shown alongside the PR number across the UI
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".
@@ -824,9 +854,10 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- parallel for one release so a rolling deploy's old readers still work.
 -- #447: 'pending' is only ever advanced out by the same captureForSession
 -- run that set it, so a restart mid-capture (or a staging rebuild that
--- predated the capture wiring) could leave a promoted PR 'pending'/NULL and
--- permanently merge-blocked. A 'pending' row whose checks_checked_at is
--- older than CHECKS_STALE_MS (default 10m) is now treated as STUCK and
+-- predated the capture wiring) could leave a submitted CLI handoff or promoted
+-- PR 'pending'/NULL and permanently merge-blocked. A 'pending' row whose
+-- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
+-- as STUCK and
 -- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
 -- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
@@ -934,6 +965,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- Live progress of the run in flight: `{ ran, passed, failed, expected,
+-- updatedAt, unit }`, written as the capture container's per-check frames
+-- stream in and cleared with the verdict. `unit` is the repo unit suite's
+-- own `{ phase, ran, passed, failed, skipped, expected, done }`, read off
+-- its TAP output the same way. NULL outside a run. The verdict itself
+-- stays in test_results; this is only what "checks running" has to say
+-- between the start and the end, which used to be nothing.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
+-- The unit suite's size from its last completed run (`# tests`), so the
+-- next run's live bar has a denominator before the suite finishes.
+ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -1118,6 +1160,16 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_local_commit_sha VARC
 -- web turn naturally changes checks_commit_sha and supersedes that upload
 -- without needing to know about CLI-specific state.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VARCHAR(40);
+-- Explicit replacement lineage for local proposal handoffs. A new request ID
+-- may replace a same-owner, same-app pre-vote handoff only when the caller
+-- names it. proposal_start archives the predecessor and inserts the successor
+-- in one transaction; the nullable self-reference preserves that decision
+-- without imposing uniqueness on an issue (other authors and promoted
+-- alternatives remain valid proposals).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_supersedes_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_handoff_supersedes_idx
+  ON chat_sessions(handoff_supersedes_session_id)
+  WHERE handoff_supersedes_session_id IS NOT NULL;
 -- Deliberately scoped independently of source: a delayed proposal_start retry
 -- must always resolve to the same cross-surface session.
 CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
@@ -1942,6 +1994,44 @@ INSERT INTO platform_settings (key, value) VALUES
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
+-- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
+-- whatever the daily default is at the moment this first runs, rather than
+-- as a literal: on an existing deployment that is exactly what a user on
+-- the default could already spend across a week, so the cap arrives
+-- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
+-- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
+INSERT INTO platform_settings (key, value)
+SELECT 'user_weekly_limit_cents',
+       (7 * COALESCE((
+         SELECT ps.value::int
+           FROM platform_settings ps
+          WHERE ps.key = 'user_daily_limit_cents'
+            AND ps.value ~ '^[0-9]+$'
+       ), 2500))::text
+ON CONFLICT (key) DO NOTHING;
+
+-- One-shot backfill of users.weekly_limit_cents for everyone who already
+-- holds a DAILY override. Without it, a raised daily cap would collide with
+-- the platform weekly default the first time the weekly gate ran — a user
+-- on $120/day would be cut off partway through Tuesday by a $140 week.
+-- Seven times their own daily cap preserves exactly what each of them could
+-- already spend. Guarded by a marker row so it runs EXACTLY ONCE, the same
+-- way app_quota_migrated above is: a re-runnable UPDATE would re-clobber
+-- any weekly cap an admin later lowers by hand. Rows with no daily override
+-- are left NULL and fall through to the platform default.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'weekly_limit_backfilled') THEN
+    UPDATE users
+       SET weekly_limit_cents = daily_limit_cents * 7
+     WHERE daily_limit_cents IS NOT NULL
+       AND weekly_limit_cents IS NULL;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('weekly_limit_backfilled', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
 -- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY
 -- ONCE: a re-run-safe UPDATE keyed only on can_create_apps = TRUE would
@@ -1954,7 +2044,7 @@ ON CONFLICT (key) DO NOTHING;
 --     below the apps they already have. Admins are included (their quota is
 --     cosmetic since they bypass enforcement) so the admin UI shows a
 --     sensible number.
---   can_create_apps = FALSE → quota stays 0 (the column default).
+--   can_create_apps = FALSE → keep the numeric quota (now defaulting to 2).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_quota_migrated') THEN
@@ -2013,6 +2103,21 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
+
+-- #1559: grant existing accounts at least two slots once, preserving higher
+-- allowances. A later explicit admin reduction must survive every restart.
+-- Persist the notification in the same migration so offline users see it too.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_allowance_default_two_migrated') THEN
+    INSERT INTO notifications (user_id, kind, detail)
+      SELECT id, 'app_quota_changed', app_quota::text || ':2'
+        FROM users WHERE app_quota < 2;
+    UPDATE users SET app_quota = 2 WHERE app_quota < 2;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('app_allowance_default_two_migrated', 'true');
+  END IF;
+END $$;
 
 -- #1405 path B: a coding agent driving the connector telling the platform it
 -- has asked the user something and is now waiting.
@@ -2446,10 +2551,10 @@ BEGIN
 END $$;
 
 -- Anonymous-shell probe result (landing-page app directory).
---   anon_shell: whether the app's own HTML shell serves without a
---     platform session. 'public' = anonymous GET / returns 2xx (echo /
---     lastwin style), 'gated' = it 401s or bounces to the platform (the
---     scaffold default), 'unknown' = never probed or unclassifiable.
+--   anon_shell: whether the app's shell and conventional API gate permit
+--     anonymous access. 'public' = GET / succeeds and GET /api/ succeeds
+--     or has no route (404, e.g. a static app). 'gated' = either requires
+--     authentication, 'unknown' = never probed or unclassifiable.
 --     Written ONLY by services/shell-probe.js; consumed by
 --     GET /api/public/apps as `requires_login` (anything not 'public').
 --     'unknown' renders as account-required — the safe default, matching
@@ -2507,8 +2612,29 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 -- and rotates the id only when the committed bytes change (the
 -- /app-icons/:id cache header is immutable, so a new id doubles as
 -- the cache-buster).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS featured_illustration JSONB;
+CREATE TABLE IF NOT EXISTS app_illustrations (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  id VARCHAR(32) NOT NULL UNIQUE,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL
+);
+
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_id VARCHAR(32) UNIQUE;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_content_type TEXT;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_data BYTEA;
+
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
+
+-- #1523: an admin's directory review, independent of container health and
+-- of the staging-only `demo` fixture flag. Existing apps remain unreviewed.
+-- A positive review is valid only for its deployed SHA and until the next
+-- deployment; demos/broken classifications persist until explicitly reviewed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_review_status VARCHAR(16)
+  NOT NULL DEFAULT 'unreviewed' CHECK (directory_review_status IN ('unreviewed', 'working', 'demo', 'broken'));
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_sha VARCHAR(40);
 
 -- Fork lineage. NULL for normally-created apps; for a fork it stores a
 -- REFERENCE ONLY to the source app: {"appId": <id>, "slug": "<slug>"}.
@@ -3507,6 +3633,18 @@ CREATE TABLE IF NOT EXISTS challenge_kinds (
   created_at   TIMESTAMPTZ,
   updated_at   TIMESTAMPTZ
 );
+-- The picture a challenge of this kind shows on the launcher's Challenges
+-- cards. It lives on the KIND rather than on the template or the challenge
+-- because that is the controlled vocabulary an organiser already picks from
+-- (`challenge_templates.kind` is a real FK to this table), so one setting
+-- gives every challenge of that kind the same face — which is what makes a
+-- column of cards scannable rather than a column of different drawings.
+--
+-- One or two characters, so an emoji including the joined ones. Anything
+-- longer is refused by the writer; anything absent (a kind with no icon, or
+-- a template with no kind at all) falls back to the challenge's category
+-- word, which is the only other per-challenge mark there is.
+ALTER TABLE challenge_kinds ADD COLUMN IF NOT EXISTS icon VARCHAR(16);
 
 -- `challenge_templates` — a reusable challenge definition; one or more
 -- `challenges` rows instantiate it per event (referenced there as
@@ -4253,6 +4391,7 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('auto_solve_done', 'developer_sessions', TRUE),
   ('connector_submitted', 'developer_sessions', TRUE),
   ('agent_awaiting_input', 'developer_sessions', TRUE),
+  ('test_alert', 'developer_sessions', TRUE),
   ('stale_pr', 'proposal_alerts', TRUE),
   ('check_failed', 'proposal_alerts', TRUE),
   ('pr_proposed', 'proposal_alerts', TRUE),
@@ -4270,7 +4409,7 @@ DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
    'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
-   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+   'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
@@ -4407,10 +4546,11 @@ BEGIN
      FOR KEY SHARE OF r
   )
   INSERT INTO mobile_push_deliveries (
-    notification_id, registration_id, environment, installation_id, platform, expires_at
+    notification_id, registration_id, environment, installation_id, platform, expires_at, available_at
   )
   SELECT NEW.id, id, environment, installation_id, platform,
-         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
+         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours',
+         NOW() + CASE WHEN NEW.kind = 'test_alert' THEN INTERVAL '10 seconds' ELSE INTERVAL '0 seconds' END
     FROM eligible
   ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
 
@@ -4661,6 +4801,7 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
   request_digest             CHAR(64) NOT NULL
     CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  walletless_supported       BOOLEAN NOT NULL DEFAULT FALSE,
   state                      VARCHAR(16) NOT NULL DEFAULT 'ticketed'
     CHECK (state IN ('ticketed', 'exchanged', 'revoked')),
   created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4670,6 +4811,10 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     REFERENCES native_session_web_incarnations(id, user_id) ON DELETE CASCADE,
   CHECK (updated_at >= created_at)
 );
+-- TODO(remove-build-1250-compat): Drop decoder negotiation when all supported
+-- mobile builds accept account:null. Existing attempts keep the safe fallback.
+ALTER TABLE native_session_attempts
+  ADD COLUMN IF NOT EXISTS walletless_supported BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
   ON native_session_attempts (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
@@ -4747,9 +4892,9 @@ CREATE TABLE IF NOT EXISTS native_installation_key_generations (
   CHECK (jsonb_typeof(envelope_public_jwk) = 'object')
 );
 
--- A credential references the existing mobile bearer and provisioned wallet,
--- but neither secret is stored here. The encrypted compact JWE in the sibling
--- table is the only response carrying those values to the native key owner.
+-- A credential always references the existing mobile bearer and may reference
+-- a provisioned wallet. The encrypted compact JWE in the sibling table is the
+-- only response carrying either secret to the native key owner.
 CREATE TABLE IF NOT EXISTS native_session_credentials (
   credential_reference       VARCHAR(47) PRIMARY KEY
     CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
@@ -4760,7 +4905,7 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
   installation_id            VARCHAR(47) NOT NULL,
   installation_key_generation INTEGER NOT NULL,
   mobile_auth_token_id       BIGINT UNIQUE,
-  account_id                 BIGINT NOT NULL,
+  account_id                 BIGINT,
   network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
   chain_id                   VARCHAR(100) NOT NULL,
   exchange_request_digest    CHAR(64) NOT NULL
@@ -4791,6 +4936,11 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 
+-- A restored web session is authority only while this exact native lease is
+-- live. Keep the incarnation too, for exact attempt replay and web logout.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_credential_reference
+  VARCHAR(47) REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE;
+
 -- Existing databases received an unnamed auto-generated CHECK that also
 -- admitted the retired `mobile_logout` value. Replace it without rewriting
 -- revoked audit history. `NOT VALID` still rejects that value on every new or
@@ -4799,6 +4949,10 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
 -- constraint above and skip this compatibility branch.
 ALTER TABLE native_session_credentials
   DROP CONSTRAINT IF EXISTS native_session_credentials_revocation_reason_check;
+-- Login, settings, and push do not require a provisioned on-chain account.
+-- Existing wallet-backed rows retain their exact account/user foreign key.
+ALTER TABLE native_session_credentials
+  ALTER COLUMN account_id DROP NOT NULL;
 -- Sliding mobile leases may move beyond their initial 90-day bound. Replace
 -- the old unnamed exact-expiry constraint while retaining the database-owned
 -- requirement that every lease ends after credential creation.
@@ -5580,6 +5734,64 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TE
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS target_session_id BIGINT
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- Which chat session a work order was PREPARED in — the launchpad the user was
+-- standing in when they pressed "Prepare work order".
+--
+-- THREE session columns now sit on this table and they mean three different
+-- things. Confusing them is not a style problem, it breaks the product:
+--   session_id        — the shared in-progress session this work BECAME. Set
+--                       only once work has been shared or submitted; an OPEN
+--                       task carrying one is a card already on the Dev board,
+--                       and submitWork REFUSES it with `already_shared`.
+--   target_session_id — the proposal or session this work order UPDATES.
+--   origin_session_id — this one. Pure provenance, written at mint time,
+--                       read by the walkthrough and by nothing else.
+--
+-- Before it existed the walkthrough resolved its task per (user, app), so one
+-- open work order spoke for every session in the app: "New change" opened a
+-- fresh session that immediately showed somebody else's half-finished order,
+-- with no relationship to the change the user had just asked to start.
+--
+-- NULL means "prepared before this column existed, or through the connector,
+-- which has no session". Those rows are adopted by the first launchpad that
+-- looks for one, so they are not stranded — see loadOpenTaskForSession.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS origin_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The walkthrough's lookup: the caller's open task for one app and one session.
+CREATE INDEX IF NOT EXISTS external_agent_tasks_origin_session_idx
+  ON external_agent_tasks (user_id, app_id, origin_session_id)
+  WHERE status = 'open';
+
+-- ── Close out the attempts that leaked before they had an ending ──────
+--
+-- A work order is one ATTEMPT at an issue. It had a beginning and two endings
+-- (submit, "Start over") but none for "the session it belonged to is over", so
+-- dead attempts accumulated: each holding one of ten open-work-order slots for
+-- its full 14-day expiry. The launchpad then tried to hand them back out — a
+-- new change claimed the newest orphan, so starting one change after another
+-- walked the user down the pile instead of opening clean.
+--
+-- BROWSER-MINTED ONLY. `usernode-web:%` is the client_id the dev-flow route
+-- writes; rows from the CONNECTOR (Claude, ChatGPT) have no session by nature,
+-- are genuinely in flight, and submit by task id without ever needing a
+-- launchpad. Closing those would break live work.
+--
+-- The `created_at` bound is what makes this ONE-TIME rather than a rule. The
+-- WHERE clause would otherwise keep matching on every boot, and would then
+-- close an order minted by a browser still running JS cached from before the
+-- client started sending its session — a user whose launchpad can still see
+-- it. A fixed instant, set when this shipped, cannot reach anything minted
+-- afterwards. Re-running is a no-op either way, which is the convention the
+-- request_key backfill above follows.
+UPDATE external_agent_tasks
+SET status = 'abandoned'
+WHERE status = 'open'
+  AND origin_session_id IS NULL
+  AND session_id IS NULL
+  AND client_id LIKE 'usernode-web:%'
+  AND created_at < TIMESTAMPTZ '2026-09-12 13:00:00+00';
+
 DO $$
 BEGIN
   -- The update path adds two more values (#1054):
@@ -5653,6 +5865,38 @@ WHERE request_key IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_request_idx
   ON external_agent_tasks (user_id, app_id, request_key)
   WHERE status = 'open';
+
+-- ── Release the slots a shared session stranded ──────────────────────
+--
+-- `share: true` leaves the work order OPEN on purpose — the agent keeps
+-- committing onto the in-progress card — and stamps `session_id` on the row.
+-- The promote that ends that arrangement is `submit_work({ proposalId,
+-- branch, propose: true })`, which carries no taskId, so until the fix in
+-- services/external-agent-tasks.js + services/mcp-tools.js nothing ever
+-- closed those rows. Each one held a slot of its owner's ten-open-work-order
+-- bound until it expired fourteen days later; one account hit the cap with
+-- ten rows it could not see, none of which were work it was still doing.
+--
+-- Forward-only and idempotent, like the backfills above: it can only move
+-- rows OUT of 'open', so a later boot finds nothing left to do, and it never
+-- touches a session that is still being built.
+--
+-- Two outcomes, because the two are not the same story:
+--   'submitted' — the session reached the group (promoted / merging /
+--                 merged). The work order did its job; only the bookkeeping
+--                 was missing.
+--   'abandoned' — the session was archived. The work was put away, and
+--                 recording it as submitted would claim something false.
+--
+-- `session_id` is ON DELETE SET NULL, so a row whose session is gone keeps
+-- no handle at all — those are left to the expiry, which is the only honest
+-- reading of them.
+UPDATE external_agent_tasks t
+SET status = CASE WHEN s.status = 'archived' THEN 'abandoned' ELSE 'submitted' END
+FROM chat_sessions s
+WHERE t.session_id = s.id
+  AND t.status = 'open'
+  AND s.status NOT IN ('active', 'paused');
 
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
@@ -5862,9 +6106,14 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   status               VARCHAR(24) NOT NULL DEFAULT 'provisioning'
                          CHECK (status IN ('provisioning', 'active', 'disabled',
                                            'deleted', 'needs_review')),
+  -- The allowance per reset period. Named for the daily cadence keys were
+  -- issued with before #2119; the column keeps that name because renaming it
+  -- would need a data migration for nothing, and limit_reset is what labels
+  -- it ('weekly' for keys issued under the current policy, 'daily' for
+  -- older ones until they are migrated).
   daily_limit_usd      NUMERIC(18,8) NOT NULL CHECK (daily_limit_usd > 0),
   limit_reset          VARCHAR(16) NOT NULL DEFAULT 'daily'
-                         CHECK (limit_reset = 'daily'),
+                         CHECK (limit_reset IN ('daily', 'weekly')),
   last_error_code      VARCHAR(64),
   issued_at            TIMESTAMPTZ,
   disabled_at          TIMESTAMPTZ,
@@ -5872,6 +6121,15 @@ CREATE TABLE IF NOT EXISTS credentials.managed_openrouter_keys (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- #2119: databases created before the weekly policy carry the original
+-- CHECK (limit_reset = 'daily') under PostgreSQL's generated name. Replace
+-- it by that name on every boot; a fresh database gets the same name from
+-- the inline CHECK above, so there this is a no-op.
+ALTER TABLE credentials.managed_openrouter_keys
+  DROP CONSTRAINT IF EXISTS managed_openrouter_keys_limit_reset_check;
+ALTER TABLE credentials.managed_openrouter_keys
+  ADD CONSTRAINT managed_openrouter_keys_limit_reset_check
+  CHECK (limit_reset IN ('daily', 'weekly'));
 CREATE INDEX IF NOT EXISTS managed_openrouter_keys_status_idx
   ON credentials.managed_openrouter_keys (status, updated_at DESC);
 COMMENT ON TABLE credentials.managed_openrouter_keys IS 'staging:private';
@@ -6008,6 +6266,26 @@ CREATE TABLE IF NOT EXISTS user_agent_preferences (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
   ON user_agent_preferences (user_id) WHERE is_default = TRUE;
+
+-- Per-model favorite overrides for the otherwise very large OpenRouter
+-- catalog. Platform recommendations begin starred when no override exists;
+-- storing both TRUE and FALSE is what lets a user keep either choice after
+-- the recommendation list changes or the model temporarily leaves the
+-- key-filtered catalog. One row per user/model keeps toggles atomic and lets
+-- every device see the same list.
+CREATE TABLE IF NOT EXISTS user_agent_model_favorites (
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend     VARCHAR(32) NOT NULL,
+  model_id    VARCHAR(255) NOT NULL,
+  is_favorite BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, backend, model_id),
+  CONSTRAINT user_agent_model_favorites_backend_check
+    CHECK (backend IN ('codex_openrouter'))
+);
+ALTER TABLE user_agent_model_favorites
+  ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT TRUE;
+COMMENT ON TABLE user_agent_model_favorites IS 'staging:private';
 
 -- Durable per-turn ledger for multi-provider usage, retries, and proxy
 -- settlement. Idempotent settlement keys on the turn id.
@@ -6171,6 +6449,79 @@ CREATE TABLE IF NOT EXISTS app_report_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
   ON app_report_snapshots (app_id, locked_at DESC);
+
+-- Workshop themes cache (the Dev screen's lander). One row per app, shared
+-- by every viewer — the input is built from shared-visibility data only,
+-- exactly like app_report_ai above. themes_json is the model's grouping:
+-- [{ id, name, description, saying, items: ['issue:12', 'session:34', …] }]
+-- with STABLE ids (the previous themes are fed back into each run so a
+-- theme keeps its id across regenerations). input_hash fingerprints the
+-- board the grouping was made from; a stale row is served as is while a
+-- regeneration runs behind the request. `source` is 'ai' for every cached
+-- row — the no-model category grouping is computed per request and never
+-- written here, so a key arriving later takes over cleanly.
+CREATE TABLE IF NOT EXISTS app_workshop_themes (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  input_hash    VARCHAR(64) NOT NULL,
+  themes_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source        VARCHAR(16) NOT NULL DEFAULT 'ai',
+  model         VARCHAR(64),
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The grouping became a two-stage pipeline (services/workshop-themes.js):
+-- themes_json now holds theme DEFINITIONS only ([{ id, name, description,
+-- saying, anchors }]) and placements_json the card → theme id map they are
+-- served with, so a card the model skipped is retried, never lost. Rows
+-- written before this carry `items` on the definitions and serve from them
+-- until the first reconcile. input_hash became the key set's digest.
+--   unplaced_json        cards the placer said fit no theme (they count as churn)
+--   discovered_at        when the definitions were last drafted
+--   discovery_key_count  how many cards that draft covered (the drift base)
+--   churn_added/removed  cards added / gone since that draft; a tenth re-drafts
+--   last_error/failed_at the last failed stage, for the footnote and the backoff
+--   last_viewed_at       stamped by GET; the hourly sweep re-checks recent apps
+--   reconcile_started_at the cross-instance lease one reconcile holds
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placements_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS unplaced_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_key_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_added INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_removed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
+-- The Workshop's status paragraph: two sentences on the week just gone and
+-- what is in flight, written by the same model that drafts the themes, from
+-- the same snapshot, on the same reconcile. Kept HERE rather than in its own
+-- table so it can never describe a board the themes beside it were not
+-- drafted against. Empty when no model is configured or the call failed: the
+-- client falls back to a sentence derived from the counts.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
+-- The same answer as three windowed one-line fields — { lastWeek, thisWeek,
+-- open } — which is what the lander draws, as three cards under the number
+-- tiles. digest_text above is kept as the flattened prose form: it is what a
+-- row written under digest prompt version 2 holds, and the fields here cannot
+-- be recovered from it, so a v2 row serves its paragraph until the version
+-- bump re-asks the model. An empty string in a field means that window was
+-- genuinely empty and its card is not drawn.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_json JSONB;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
+-- Why the last digest attempt got nothing, or NULL when it succeeded. Read by
+-- the lander's footnote, and it picks the retry window (an hour after a
+-- failure, a day after a success).
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
+-- Which version of each stage's prompt the row was last produced by: the
+-- WORKSHOP_*_VERSION constants beside the prompts in services/llm.js. A
+-- bump makes that stage due on the app's next pass whatever its clocks say
+-- (discovery re-drafts, placement re-places every card, the digest is
+-- rewritten). Stamped on the ATTEMPT, like digest_at, so a bump against a
+-- failing model keeps its backoff instead of retrying on every view. The
+-- default grandfathers the rows written before the columns existed: a
+-- deploy re-drafts nothing by itself.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
@@ -6827,3 +7178,402 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_error TEXT
 CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
   ON chat_sessions (freshness_checked_at NULLS FIRST)
   WHERE status = 'promoted';
+
+-- #2038 — the integration record, and the approval epoch.
+--
+-- ── One fact, one writer ───────────────────────────────────────────────
+--
+-- The block above is the third set of columns describing "where does this
+-- proposal stand relative to main". behind_main was the first, the
+-- merge_conflict_state / conflict_files pair the second. Five writers touch
+-- those six groups on unrelated triggers and none of them owns the answer,
+-- so they disagree with each other in normal operation: the proposal card
+-- reads freshness_behind_by while the merge gate reads behind_main, and a
+-- successful sync writes only the second. merge_conflict_state has no
+-- re-measuring writer at all — once a merge attempt stamps 'conflict' there,
+-- nothing ever clears it except another resolve, which may never run.
+--
+-- These columns replace all six groups with ONE answer, written by ONE
+-- writer (services/integration.js), carrying ONE timestamp. Everything else
+-- reads it; nothing else writes it.
+--
+-- The answers come from a local bare mirror (services/repo-mirror.js), not
+-- from GitHub's REST API, so they are exact rather than estimated and cost
+-- no rate limit: behind_by is a rev-list count, merges_clean and
+-- conflict_paths come from a real `git merge-tree`, and checks_base_current
+-- is a merge-base ancestry test.
+--
+-- integration_measured_at is deliberately a FIRST-CLASS field rather than
+-- an implementation detail. The card renders it ("behind by 6, measured 30
+-- seconds ago") instead of stating a number with implied freshness it does
+-- not have. A cache that admits its age is not the same object as a cache
+-- that pretends to be live, and the second one is what every "the UI is out
+-- of sync" report was actually about.
+--
+--   integration_head_sha        the proposal head this answer describes. An
+--                               answer about a head that has since moved is
+--                               stale by construction, and this is how a
+--                               reader tells.
+--   integration_main_sha        the default branch's head at measure time.
+--   integration_base_sha        merge base of the two.
+--   integration_behind_by       exact count of commits main has that the
+--                               proposal does not.
+--   integration_ahead_by        the reverse.
+--   integration_merges_clean    from an actual merge, not a prediction.
+--                               NULL only when the measurement failed.
+--   integration_conflict_paths  the genuinely conflicted paths. Not the
+--                               upper bound mergeability_files had to be:
+--                               git reports exactly the files it could not
+--                               resolve.
+--   integration_merged_tree     the tree a merge WOULD produce. This is the
+--                               value that lets approval follow the patch:
+--                               when the head moves, the new tree either
+--                               equals this (nobody wrote anything — a
+--                               mechanical merge) or it does not.
+--   integration_checks_base_current  is the commit this proposal's checks
+--                               ran against still on main's history.
+--   integration_block_reasons   what the SERVER knows is holding this
+--                               proposal that the browser cannot derive from
+--                               columns: 'integrating' (the queue is working
+--                               on it right now) and 'budget' (it needs a
+--                               merge with main but the shared token budget
+--                               is spent). A LIST, not one value, because
+--                               #2026 established that a card says every
+--                               reason that applies — ranking them into one
+--                               slot is how "Behind main" hid "Checks
+--                               failing". The browser keeps deriving the
+--                               rest from the columns it already reads;
+--                               these two are appended to that list.
+--   integration_error           why the last measurement could not answer.
+--                               A measurement never throws: it records this
+--                               and leaves the previous numbers in place.
+--
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_measured_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_main_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_base_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_behind_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_ahead_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merges_clean BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_conflict_paths JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merged_tree VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_checks_base_current BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_block_reasons JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_error TEXT;
+
+-- ── The approval epoch ─────────────────────────────────────────────────
+--
+-- What a vote is pinned to, replacing the commit pin.
+--
+-- reviewed_head_sha pins an approval to a COMMIT, and a sync commit changes
+-- the commit without changing the code under review. Telling those apart
+-- needed a provenance ledger (session_platform_pushes), a five-hop
+-- first-parent walk and a three-way classifier, because a commit's SHAPE can
+-- be forged: anyone can craft a merge whose first parent is the reviewed SHA.
+--
+-- An epoch cannot be forged because it is not derived from the branch at all.
+-- It is a counter the PLATFORM bumps, and it bumps on exactly one event:
+-- somebody wrote bytes that were not already approved. A mechanical merge of
+-- main — proven mechanical by recomputing it, see integration_merged_tree —
+-- does not bump it, so the approvals simply keep counting and there is
+-- nothing to carry, advance or reconcile.
+--
+-- It is also what the browser sends back with a vote. The old guard compared
+-- the rendered commit to the live head and rejected any difference, which
+-- cost a voter their click on every platform sync — including the ones that
+-- had just certified the code had not changed. An epoch compares the right
+-- thing: "is this still the proposal you were shown?"
+--
+--   chat_sessions.approval_epoch  bumped when approvals are cleared.
+--   pr_votes.approval_epoch       the epoch the vote was cast under. A vote
+--                                 counts while the two are equal.
+--
+-- Backfill: existing rows start at epoch 0, and a vote inherits epoch 0 when
+-- it counted under the OLD rule. That rule is reproduced here exactly, and
+-- the reproduction is the point — #2050. The old predicate was
+--
+--     (<reviewed head> IS NULL OR LOWER(pv.head_sha) = LOWER(<reviewed head>))
+--
+-- and this backfill originally kept only its second half. The half it dropped
+-- is not an edge case: a session with no reviewed head counted EVERY vote on
+-- it, which is every rename PR (services/rename-pr.js opens one with no head
+-- and carries people's issue votes onto it) and every staging fixture. All of
+-- them silently fell to a zero tally the moment the migration ran. The
+-- original claim that it "changes no tally in either direction" was wrong
+-- about exactly this, so the condition now says what the claim always meant.
+--
+-- A vote genuinely stale under the old rule still keeps a NULL epoch, and
+-- NULL never equals 0, so it stays uncounted with nothing having to delete
+-- it. A vote made stale LATER is untouched here: clearApprovals bumps the
+-- session's epoch and leaves the vote's alone, so it is not NULL and this
+-- does not see it. Epoch 0 rather than the session's current epoch for the
+-- same reason — a session that has since cleared its approvals must not have
+-- votes reappear underneath it, and 0 is inert there.
+--
+-- It re-runs on every boot (the schema is applied at db/migrate.js:30) and is
+-- idempotent, which is what lets it also rescue the rows written dead after
+-- the first run, before the trigger below existed.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS approval_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pr_votes      ADD COLUMN IF NOT EXISTS approval_epoch INTEGER;
+
+UPDATE pr_votes pv
+   SET approval_epoch = 0
+  FROM chat_sessions cs
+ WHERE cs.id = pv.session_id
+   AND pv.approval_epoch IS NULL
+   AND ((CASE WHEN cs.source = 'imported'
+              THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END) IS NULL
+        OR LOWER(pv.head_sha) = LOWER(
+             CASE WHEN cs.source = 'imported'
+                  THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END));
+
+-- ── Every vote is born at an epoch ─────────────────────────────────────
+--
+-- The predicate above is an equality against a NULLABLE column, and NULL
+-- equals nothing. That is deliberate for the backfill — it is what carries a
+-- stale vote across uncounted without anything having to delete it — and it
+-- is exactly wrong for an INSERT: a statement that omits the column writes a
+-- vote that can NEVER count, however the group votes.
+--
+-- Only routes/votes.js's two recordVote statements named it. The other
+-- thirteen INSERT INTO pr_votes sites did not, and wrote dead rows (#2050):
+-- services/rename-pr.js carrying real people's issue votes onto a rename PR,
+-- and twelve staging seeds whose entire purpose is a non-zero tally. The
+-- schema is applied before any of them (db/migrate.js applies it at the top
+-- of boot and the seeds run after), so the backfill cannot rescue a row that
+-- does not exist yet.
+--
+-- Stamping it here rather than at fifteen call sites makes the invariant
+-- structural. services/pr-vote-revision.js is the one definition of which
+-- approvals count; this is that definition's write-side half, and it holds
+-- for a caller that has never heard of epochs — which twelve of them, sitting
+-- in seed code, reasonably have not.
+--
+-- The WHEN clause tests the VALUE, not whether the statement named the
+-- column, so an explicit NULL is stamped too: after this, NO insert can
+-- produce a vote that cannot count. An epoch the caller actually supplies is
+-- never touched — recordVote still decides what a real vote is cast under,
+-- and those inserts do not reach the function at all.
+--
+-- It does not resurrect the backfill's stale votes: those are an UPDATE and
+-- this fires on INSERT. Nor does it disturb a staging clone, which is
+-- pg_dump -Fc | pg_restore: triggers are restored in the post-data section,
+-- after the COPY, so a stale NULL arrives in staging still NULL.
+CREATE OR REPLACE FUNCTION stamp_pr_vote_approval_epoch() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- A vote whose session does not exist leaves this NULL and stays
+  -- uncounted, which is the right answer; the foreign key refuses it anyway.
+  SELECT cs.approval_epoch INTO NEW.approval_epoch
+    FROM chat_sessions cs
+   WHERE cs.id = NEW.session_id;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'pr_votes_stamp_approval_epoch'
+       AND tgrelid = 'pr_votes'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER pr_votes_stamp_approval_epoch
+      BEFORE INSERT ON pr_votes
+      FOR EACH ROW WHEN (NEW.approval_epoch IS NULL)
+      EXECUTE FUNCTION stamp_pr_vote_approval_epoch();
+  END IF;
+END $$;
+
+-- ── What a proposal still needs before it merges ───────────────────────
+--
+-- A recording of what checkAndMerge actually did on its last run: an ordered
+-- list of the gates it cleared and the one that refused, written from the same
+-- call sites that already narrate into merge_debug_runs.
+--
+-- It is a DESCRIPTION, never an input. Nothing reads it to decide whether a
+-- proposal may merge — checkAndMerge re-evaluates everything from scratch
+-- every time — so a stale or missing record costs a card its checklist and
+-- costs the merge nothing. services/merge-gate.js turns it, plus that file's
+-- static gate order, into the list the card renders.
+--
+-- Why a recording rather than a second evaluator: re-deriving the gate's
+-- conditions anywhere else means two implementations of "can this merge",
+-- drifting, with the describing one eventually lying about the deciding one.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merge_requirements_at TIMESTAMPTZ;
+
+-- The measurement sweep's candidate ordering: promoted rows, least recently
+-- measured first, never-measured ahead of everything. Mirrors the freshness
+-- index above, which it replaces once that pass is retired.
+CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
+  ON chat_sessions (integration_measured_at NULLS FIRST)
+  WHERE status = 'promoted';
+
+-- ── Direct-merge lanes ─────────────────────────────────────────────────
+--
+-- A proposal that merges cleanly with main merges as it stands: being
+-- behind is no longer a reason to bring it up to date first, and the
+-- platform's own sync no longer precedes a merge (services/merge-queue.js).
+-- Only a measured CONFLICT costs a worker turn, and the conflict lane
+-- admits one pre-approval resolution per authored head — the author's work
+-- gets one chance to be made mergeable before anyone has voted on it, and
+-- unlimited chances once the group has approved it. What ties a resolution
+-- to "this authored head" is the approval epoch: an authored push bumps
+-- it, a mechanical or resolved move does not (see The approval epoch,
+-- above), so "spent in this epoch" is exactly "spent on this author's
+-- work".
+--
+--   integration_resolved_epoch  the approval_epoch during which the queue
+--                               last spent a pre-approval resolution on
+--                               this proposal. NULL: never. Equal to the
+--                               current approval_epoch: the one resolution
+--                               this authored head gets before approval is
+--                               used, and a further conflict waits for the
+--                               vote. Different: the author has pushed
+--                               since, and the new head has its own.
+--
+-- check_phase gains 'deferred' beside 'building' / 'testing': a promoted
+-- head that conflicts with main gets its preview and screenshots (so the
+-- group can review it) but no assertions and no unit suite, because a
+-- tree that cannot merge is not the tree that would be tested after the
+-- resolution. The verdict stays 'pending' with this phase until the head
+-- merges cleanly, at which point the checks run (services/check-admission.js).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch INTEGER;
+
+-- ── Main watch ─────────────────────────────────────────────────────────
+--
+-- The safety net under direct merges. Each merge lands a tree nobody ran
+-- the checks against as a whole (the proposal was checked on its own head,
+-- against the main of the time), so after every merge the repo's unit
+-- suite runs once more on the merge commit (services/main-watch.js). Red
+-- pauses the app's merges until a fix lands or an admin resumes them;
+-- nothing is rolled back, and the culprit is whatever landed since the
+-- last green.
+--
+--   main_check_state        'running' | 'passing' | 'failing' | 'error' |
+--                           'skipped'. NULL: never run. 'error' is a run
+--                           that could not happen (no runner, no clone)
+--                           and does not pause anything; 'skipped' is a
+--                           repo with no runnable test script.
+--   main_check_sha          the merge commit the state describes.
+--   main_check_at           when that run finished (or started, while
+--                           'running').
+--   main_check_detail       the run's own account: failing tests, the
+--                           TAP summary, the PR that landed it.
+--   main_check_resumed_sha  an admin's "resume merges" for exactly this
+--                           red sha. A later red is a new pause.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_state VARCHAR(16);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_sha VARCHAR(40);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
+
+-- The Needs-you deck's ask box (services/workshop-ask.js): one person's
+-- own questions about one card, and the answers they got.
+--
+-- PRIVATE, and not a close call. A voter's questions about a change they
+-- have not voted on yet say what they are unsure about and which way they
+-- are leaning, on a platform where the vote itself is the product. That is
+-- personal information beyond a public username, so the table is
+-- `staging:private` and a staging clone arrives with the schema and none
+-- of the rows.
+--
+-- It is a thread PER USER per card, never a shared one. Nothing reads
+-- these rows but the person who wrote them: every query carries both
+-- app_id and user_id, and there is no route that lists another member's.
+--
+-- `target_kind` / `target_ref` are the deck's own address for a card
+-- ('proposal' + chat_sessions.id, 'gov' + issues.id, 'issue' + a GitHub
+-- number). Deliberately NOT a foreign key: the three kinds live in three
+-- places and one of them is not a table at all. The cost is that a
+-- deleted session leaves its rows behind; they are small, invisible to
+-- everyone but their author, and dropped with the app.
+CREATE TABLE IF NOT EXISTS workshop_ask_messages (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_kind VARCHAR(16) NOT NULL,
+  target_ref  INTEGER NOT NULL,
+  -- 'you' or 'ai', matching the pane's own vocabulary rather than the
+  -- Anthropic role names: what is stored is a transcript of a UI, and the
+  -- mapping to user/assistant belongs at the call site.
+  role        VARCHAR(16) NOT NULL,
+  body        TEXT NOT NULL,
+  model       VARCHAR(64),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
+-- The only access path there is: one thread, in order. id rather than
+-- created_at as the tiebreak, because two turns of one exchange land in
+-- the same transaction and can share a timestamp.
+CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
+  ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);
+
+-- Durable manifest of a checks run whose containers are in flight
+-- (services/check-runs.js). Written just before the capture / unit-suite
+-- Jobs are created, heartbeated by the owning process while they run, and
+-- deleted once the verdict is stored. Its only reader is the harvester
+-- (services/check-harvest.js), which adopts a row whose owner has stopped
+-- heartbeating — a platform rollout replaced the Pod — and settles the run
+-- from the Job's own output instead of starting the suite over. The
+-- manifest holds everything the verdict needs that is not in the log:
+-- the dispatch table, the capture targets, the staging origin, the trigger.
+CREATE TABLE IF NOT EXISTS check_runs (
+  run_id       UUID PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_sha   VARCHAR(40),
+  owner        TEXT NOT NULL,
+  manifest     JSONB NOT NULL,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE check_runs IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
+
+-- ────────────────────────────────────────────────────────────────────
+-- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.
+--
+-- Two tests read this file, cut it at a marker near the top of one of the
+-- blocks below, and EXECUTE everything from there to the end of the file
+-- against a disposable schema holding nothing but their own stub tables:
+-- tests/account-email.test.js and tests/preview-lifecycle.test.js. So a
+-- statement down here has to run with no `apps`, no `users` and nothing
+-- else the platform has. A new table carrying a foreign key belongs ABOVE
+-- this line.
+--
+-- Getting it wrong is invisible locally — both tests skip without a real
+-- PostgreSQL — and only turns red on staging, after the proposal is filed.
+--
+-- The markers are matched by exact text, so do not quote them in a comment
+-- either: an earlier copy of this warning named one verbatim and moved the
+-- cut up into itself.
+-- ────────────────────────────────────────────────────────────────────
+
+-- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
+CREATE TABLE IF NOT EXISTS account_email_verifications (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  previous_email VARCHAR(255),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_email_verifications IS 'staging:private';
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';

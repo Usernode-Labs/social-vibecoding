@@ -45,19 +45,31 @@ import { useSyncExternalStore } from 'react';
 export const DEV_VIEW_MODE_STORE_KEY = '__usernodeDevViewMode';
 
 /**
- * Mirrors `AppView.VIEW_MODES`; 'feed' is the fallback for an unknown value.
+ * Mirrors `AppView.VIEW_MODES`; 'workshop' is the fallback for an unknown
+ * value.
  *
  * THE UI OVERHAUL cut this from four modes to two — 'list' became 'feed' and
- * 'pm' / 'report' were retired. The module keeps the migration table
+ * 'pm' / 'report' were retired — and the Workshop then replaced 'feed' as the
+ * Dev screen's lander. The module keeps the migration table
  * (`AppView.RETIRED_VIEW_MODES`) so a stored preference naming a retired mode
  * still resolves; nothing here needs it, because everything that reaches this
  * store has already been through `_setViewMode`.
+ *
+ * 'kanban' HAS SINCE RETIRED from `AppView.VIEW_MODES` as well: the board's
+ * columns are the Workshop's "By stage" pane, which renders the same
+ * <DevKanban/> from the same view model, so the standalone Board surface has
+ * nothing left that routes to it. The value stays in the union here because
+ * ./board-frame.tsx still compares against it to decide what that unreachable
+ * surface would draw — narrowing this type is the first step of removing that
+ * surface, which is a sweep of its own and not this change. Nothing publishes
+ * 'kanban' any more: `_getViewMode()` cannot resolve it, and
+ * `RETIRED_VIEW_MODES` maps a stored one onto 'workshop'.
  */
-export const DEV_VIEW_MODES = ['feed', 'kanban'] as const;
+export const DEV_VIEW_MODES = ['workshop', 'kanban'] as const;
 
 export type DevViewMode = (typeof DEV_VIEW_MODES)[number];
 
-export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'feed';
+export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'workshop';
 
 export function isDevViewMode(value: unknown): value is DevViewMode {
   return typeof value === 'string' && (DEV_VIEW_MODES as readonly string[]).includes(value);

@@ -171,6 +171,39 @@ async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
   }
 }
 
+// The issue already exists. A failed acknowledgement must never turn a
+// successful submission into an error (and encourage a duplicate report).
+async function firstFeedbackMoment(pool, { user, app, owner, repo, issueNumber }) {
+  if (!user?.id || !Number.isSafeInteger(issueNumber) || issueNumber <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET first_feedback_at = NOW()
+        WHERE id = $1 AND first_feedback_at IS NULL
+        RETURNING id`,
+      [user.id]
+    );
+    if (!rows.length) return null;
+    const moment = { userId: user.id, issueNumber, appSlug: null, canFix: false };
+    // Use the repository that received the feedback, including platform
+    // feedback sent while the user was looking at a different app.
+    try {
+      const target = app
+        ? await appAccess.getAppForUser(pool, app.slug, user, 'view', appAccess.ACCESS_COLUMNS)
+        : await findAppByRepo(pool, owner, repo);
+      if (target && await appAccess.checkAppAccess(pool, target, user, 'view')) {
+        moment.appSlug = target.slug;
+        moment.canFix = await appAccess.checkAppAccess(pool, target, user, 'collab');
+      }
+    } catch (err) {
+      log.warn('feedback', 'First-feedback destination unavailable', { message: err.message });
+    }
+    return moment;
+  } catch (err) {
+    log.warn('feedback', 'First-feedback acknowledgement failed', { message: err.message });
+    return null;
+  }
+}
+
 function feedbackRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -524,9 +557,13 @@ function feedbackRoutes(config) {
             issueNumber: issue.number, user: req.user,
           })
           : null;
+        const firstFeedback = await firstFeedbackMoment(pool, {
+          user: req.user, app: appContext, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
+        });
         return res.json({
           url: issue.html_url, title, titleFallback,
           ...(bounty ? { bounty } : {}),
+          ...(firstFeedback ? { firstFeedback } : {}),
         });
       }
 
@@ -583,9 +620,13 @@ function feedbackRoutes(config) {
           issueNumber: issue.number, user: req.user,
         })
         : null;
+      const firstFeedback = await firstFeedbackMoment(pool, {
+        user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
+      });
       res.json({
         url: issue.html_url, title, titleFallback,
         ...(bounty ? { bounty } : {}),
+        ...(firstFeedback ? { firstFeedback } : {}),
       });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });

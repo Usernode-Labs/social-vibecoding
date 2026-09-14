@@ -14,7 +14,7 @@
 //   2. Every section fits in one response, so "read the section" is one call
 //      rather than a paging protocol nobody implements.
 //   3. It carries the neutralisation preamble. Three sections are addressed
-//      to Usernode's own build worker, and one of them ("Don't `git push`
+//      to Homeroom's own build worker, and one of them ("Don't `git push`
 //      yourself") forbids the exact step the agent reading this was asked to
 //      perform — the work-order excerpt neutralises it, and so must this.
 //   4. It is NOT wrapped as untrusted content. Everything else the connector
@@ -31,9 +31,15 @@ const path = require('node:path');
 const prompts = require('../src/services/prompts');
 const tools = require('../src/services/mcp-tools');
 
-const CONVENTIONS = fs.readFileSync(
+// The document AS SERVED, not the raw file: app-conventions.md carries a
+// {{PLATFORM_ORIGIN}} token that services/prompts.js resolves at load, and
+// a section sliced from the served text can only be compared against the
+// served text. Reading raw here would assert the sections match a document
+// nobody actually receives.
+const CONVENTIONS_RAW = fs.readFileSync(
   path.join(__dirname, '../src/prompts/app-conventions.md'), 'utf8'
 );
+const CONVENTIONS = require('../src/services/prompts').getAppConventions();
 const TOOLS_SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
 );
@@ -86,6 +92,17 @@ test('the slugs an agent is most likely to ask for are the obvious ones', () => 
   ]) {
     assert.ok(slugs.includes(expected), `${expected} is a slug`);
   }
+});
+
+test('the served document resolves the platform-origin token', () => {
+  // The file is written once and served to every deployment, so it names
+  // the platform's origin with a token rather than a literal hostname —
+  // a literal is what left this document telling agents to load three
+  // files from a host that had stopped answering.
+  assert.ok(CONVENTIONS_RAW.includes('{{PLATFORM_ORIGIN}}'),
+    'the source document parameterises the platform origin');
+  assert.ok(!CONVENTIONS.includes('{{PLATFORM_ORIGIN}}'),
+    'and nobody is ever served the raw token');
 });
 
 test('a section is a verbatim slice of the document, heading included', () => {
@@ -190,7 +207,7 @@ test('platform-authored rules are NOT wrapped as untrusted content', () => {
 });
 
 test('the preamble neutralises the sections addressed to the build worker', () => {
-  // "Don't `git push` yourself" is written for Usernode's own worker, which
+  // "Don't `git push` yourself" is written for Homeroom's own worker, which
   // has no GitHub credentials. An agent that fetches that section and reads
   // it as its own instruction stops dead on the step it was asked to do —
   // the same failure the work-order excerpt already guards against.

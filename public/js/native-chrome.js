@@ -1,5 +1,5 @@
 // Native chrome glue — the shared seam between SV's web chrome and the
-// Usernode app's bridge (app-as-SV-chrome migration, see NATIVE-BRIDGE.md).
+// Homeroom app's bridge (app-as-SV-chrome migration, see NATIVE-BRIDGE.md).
 //
 // Owns:
 //   - a single cached `getBridgeInfo()` probe (NativeChrome.getInfo()) so
@@ -27,24 +27,13 @@
     return code === 'native_session_ticket_expired' ||
       code === 'native_session_attempt_revoked' ||
       code === 'native_session_attempt_conflict' ||
+      // Drop a walletless replay refused for an older decoder so a later attempt
+      // can provision a compatible wallet when one is available.
+      // TODO(remove-build-1250-compat): Remove this classification together with
+      // the server's wallet-required refusal once 1250-era builds are unsupported.
+      code === 'native_session_wallet_required' ||
       code === 'native_session_credential_revoked' ||
       code === 'native_session_credential_expired';
-  }
-
-  function offerWalletRecovery(userId, error) {
-    if (!error ||
-        error.usernodeCode !== 'native_session_wallet_pool_exhausted' ||
-        typeof window.dispatchEvent !== 'function' ||
-        typeof window.CustomEvent !== 'function') return;
-    try {
-      window.dispatchEvent(new CustomEvent(
-        'usernode:wallet-recovery-required',
-        { detail: { userId: String(userId) } }
-      ));
-    } catch (dispatchError) {
-      console.warn('[native-chrome] wallet recovery event failed:',
-        dispatchError);
-    }
   }
 
   const NativeChrome = {
@@ -57,7 +46,7 @@
     // Concurrent callers share ONE in-flight probe, but a DEGRADED answer
     // (the bridge's marker for a probe that timed out or errored inside
     // the app) is never memoised: caching it would hide every
-    // capability-gated row — the Settings → Usernode app section included —
+    // capability-gated row — the Settings → Homeroom app section included —
     // for the rest of the document over one cold-start hiccup (issue #978).
     // Same discipline prepareWebLogout() already applies to a version-0
     // probe below.
@@ -306,11 +295,23 @@
       return Promise.resolve(false);
     },
 
-    async _prepareNativeHandoff(attempt, userId, generation) {
+    async _prepareNativeHandoff(attempt, userId, generation, info) {
+      const headers = { 'Content-Type': 'application/json' };
+      // Existing public discovery metadata; native protocol-2 DTOs stay closed.
+      // TODO(remove-build-1250-compat): Remove these headers with the server's
+      // temporary decoder gate once 1250-era apps are no longer supported.
+      if (typeof info.appVersion === 'string' &&
+          info.appVersion.trim() === info.appVersion && /^[0-9.]{1,32}$/.test(info.appVersion)) {
+        headers['Usernode-Native-App-Version'] = info.appVersion;
+      }
+      if (typeof info.buildNumber === 'string' &&
+          info.buildNumber.trim() === info.buildNumber && /^[0-9]{1,10}$/.test(info.buildNumber)) {
+        headers['Usernode-Native-App-Build'] = info.buildNumber;
+      }
       const response = await fetch(NativeChrome._HANDOFF_ENDPOINT, {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           protocol: 2,
           attemptId: attempt.attemptId,
@@ -361,7 +362,7 @@
             !capabilities.includes('establishNativeSession') ||
             typeof bridge.establishNativeSession !== 'function') {
           throw new Error(
-            'This Usernode app version must be updated for secure sign-in'
+            'This Homeroom app version must be updated for secure sign-in'
           );
         }
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
@@ -369,7 +370,7 @@
         const attempt = NativeChrome._attemptFor(userId);
         lease.attemptId = attempt.attemptId;
         await NativeChrome._prepareNativeHandoff(
-          attempt, userId, generation
+          attempt, userId, generation, info
         );
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
         const result = await bridge.establishNativeSession({
@@ -404,7 +405,14 @@
               ? 'update-required' : 'native-establish',
             error
           );
-          offerWalletRecovery(userId, error);
+          // `native_session_wallet_pool_exhausted` used to dispatch
+          // `usernode:wallet-recovery-required` here, which popped the
+          // "Connect your existing wallet" dialog on every admission
+          // attempt — and _initSessionRecoveryEvents() retries on every
+          // online / pageshow / visibilitychange, so the dialog kept
+          // coming back. The failure is RECORDED only now; Settings →
+          // Homeroom app → connection reads lastSessionFailure() and offers
+          // the recovery as a button the user presses on purpose.
         }
         return null;
       }).finally(() => {
@@ -452,7 +460,7 @@
             !capabilities.includes('prepareForLogin') ||
             typeof bridge.prepareForLogin !== 'function') {
           throw new Error(
-            'This Usernode app version must be updated for secure sign-in'
+            'This Homeroom app version must be updated for secure sign-in'
           );
         }
         return bridge.prepareForLogin().then(() => {
@@ -471,6 +479,48 @@
       return run;
     },
 
+    _webRecovery: null,
+    _lastWebRenewal: 0,
+
+    restoreWebSession({ force = false } = {}) {
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true || NativeChrome._logoutRunning) {
+        return Promise.resolve(false);
+      }
+      if (NativeChrome._webRecovery) return NativeChrome._webRecovery;
+      if (!force && NativeChrome._lastWebRenewal &&
+          Date.now() - NativeChrome._lastWebRenewal < 24 * 60 * 60 * 1000) {
+        return Promise.resolve(false);
+      }
+      const generation = NativeChrome._realmGeneration;
+      let run;
+      run = (async () => {
+        const info = await NativeChrome.getInfo();
+        if (!info || info.degraded) throw new Error('Native session recovery is unavailable');
+        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('restoreWebSession')) return false;
+        if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) return false;
+        const result = await bridge.restoreWebSession();
+        if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) {
+          throw new Error('Native web session recovery was superseded');
+        }
+        if (result && result.status === 'absent') return false;
+        if (!result || result.status !== 'restored' || result.protocol !== 2 ||
+            typeof result.userId !== 'string' || !/^[1-9][0-9]*$/.test(result.userId) ||
+            typeof result.attemptId !== 'string' || !/^nsa_[A-Za-z0-9_-]{43}$/.test(result.attemptId)) {
+          throw new Error('Invalid native web session recovery');
+        }
+        NativeChrome._writeStoredAttempt({
+          protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
+        });
+        NativeChrome._lastWebRenewal = Date.now();
+        return true;
+      })().finally(() => {
+        if (NativeChrome._webRecovery === run) NativeChrome._webRecovery = null;
+      });
+      NativeChrome._webRecovery = run;
+      return run;
+    },
+
     // Close the JS/native realm synchronously before the first logout await.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
@@ -480,10 +530,15 @@
       // safely closed but may require a process restart to recover.
       NativeChrome._closeRealm({ discardAttempt: true });
       const bridge = window.usernode;
-      // Classification is deliberately non-fallible. The server logout must
-      // never wait on native health; semantic protocol validation belongs to
+      // Classification is deliberately non-fallible. Only an already-started
+      // recovery must settle here; semantic protocol validation belongs to
       // the terminal native call after server authority has been revoked.
-      return { nativeTerminal: !!bridge && bridge.isNative === true };
+      return {
+        nativeTerminal: !!bridge && bridge.isNative === true,
+        // Settle any already-admitted cookie installation before sending the
+        // logout request, so the server receives the latest exact cookie.
+        webRecoverySettled: NativeChrome._webRecovery?.catch(() => {}),
+      };
     },
 
     // Successful native logout replaces this WebView. Callers must return
@@ -501,7 +556,7 @@
             !capabilities.includes('logout') ||
             typeof bridge.logout !== 'function') {
           throw new Error(
-            'This Usernode app version must be updated for secure sign-out'
+            'This Homeroom app version must be updated for secure sign-out'
           );
         }
         return bridge.logout();
@@ -518,7 +573,7 @@
     // prompt has never been presented (permission still un-determined),
     // where the marker is not final: the OS prompt itself is one-shot,
     // so an un-asked device must keep its chance. The same rows live
-    // permanently in Settings → Usernode app.
+    // permanently in Settings → Homeroom app.
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
@@ -620,7 +675,7 @@
           verdict: 'no-bridge',
           settings: false,
           reason: s.isNative !== true
-            ? 'not running inside the Usernode app'
+            ? 'not running inside the Homeroom app'
             : 'the bridge exposes no requestPermissions()',
         };
       }
@@ -848,7 +903,7 @@
           ? 'Your node can produce blocks while the app is in the ' +
             'background. That needs permission to wake your device at ' +
             'exact slot times and freedom from battery optimization.'
-          : 'Allow notifications so Usernode can alert you about node ' +
+          : 'Allow notifications so Homeroom can alert you about node ' +
             'and account activity.'));
 
       const statusRow = (label, ok) => {
@@ -961,7 +1016,7 @@
 
     // Resolve what the iOS notification permission ACTUALLY ended up as
     // after requestPermissions() resolved. Shared by the sheet above and
-    // Settings → Usernode app (frontend/src/features/settings/settings.js)
+    // Settings → Homeroom app (frontend/src/features/settings/settings.js)
     // so both screens read the grant the same way.
     //
     // The native permission caches settle asynchronously after the OS
@@ -993,7 +1048,12 @@
     _initSessionRecoveryEvents() {
       const recover = () => {
         if (document.visibilityState === 'hidden') return;
-        NativeChrome.recoverSessionAdmission();
+        if (window.App && App.user && !App._sessionFromSnapshot) {
+          NativeChrome.restoreWebSession().then(() => NativeChrome.recoverSessionAdmission())
+            .catch((error) => NativeChrome._recordSessionFailure('web-recovery', error));
+        } else {
+          NativeChrome.recoverSessionAdmission();
+        }
       };
       window.addEventListener('online', recover);
       window.addEventListener('pageshow', recover);
@@ -1001,6 +1061,9 @@
         NativeChrome._closeRealm({ notifyBridge: false });
       });
       document.addEventListener('visibilitychange', recover);
+      // Long foreground sessions count as activity even without a wallet or
+      // producer requests. The recovery owner coalesces renewal to once/day.
+      setInterval(recover, 60 * 1000);
     },
 
     // ── Appearance publish (the cold-launch white flash) ─────────────

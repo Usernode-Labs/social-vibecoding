@@ -47,6 +47,11 @@ const {
   BOOT_READ_PATHS,
   BOOT_READ_PATTERNS,
   BOOT_API_TIMEOUT_MS,
+  buildIdOf,
+  buildTimeOf,
+  shouldReplaceShellDocument,
+  putShellDocumentIfNewer,
+  SHELL_BUILD_TIME_HEADER,
 } = require('../public/sw.js');
 
 const SW_SRC = fs.readFileSync(
@@ -281,8 +286,15 @@ test('all three network-first strategies carry a deadline', () => {
     const body = strategyBody(fn);
     assert.match(body, /raceNetworkAndCache/,
       `${fn} does not use the deadline helper`);
-    assert.match(body, /event\.waitUntil\(pending/,
-      `${fn} drops the in-flight request instead of keeping it alive`);
+    if (fn === 'networkFirstNavigate') {
+      assert.match(body, /pending \? pending\.then\(\(\) => cacheWrite\) : cacheWrite/,
+        `${fn} drops the late document write instead of keeping it alive`);
+      assert.match(body, /event\.waitUntil\(durableWrite/,
+        `${fn} does not extend the fetch-event lifetime through that write`);
+    } else {
+      assert.match(body, /event\.waitUntil\(pending/,
+        `${fn} drops the in-flight request instead of keeping it alive`);
+    }
     // Keeping the request ALIVE is only half of it, and the half that is
     // easy to have without the other. raceNetworkAndCache deliberately
     // leaves the cache write to the caller's startFetch, so a strategy that
@@ -291,7 +303,7 @@ test('all three network-first strategies carry a deadline', () => {
     // That is exactly what networkFirstNavigate did. The write is spelled
     // differently in each tier — the API one goes through stampAndPut so
     // the entry carries its cached-at header — so accept either.
-    assert.match(body, /cache\.put\(|stampAndPut\(cache/,
+    assert.match(body, /cache\.put\(|stampAndPut\(cache|queueShellDocumentWrite\(cache/,
       `${fn}'s startFetch never writes the response to the cache`);
   }
 });
@@ -319,12 +331,26 @@ test('the navigation writes the fresh document back under the read key', () => {
   // reads the fixed '/index.html', so storing under event.request would
   // fill the cache with per-route copies and leave the one key that is
   // actually read as stale as before.
-  assert.match(nav, /cache\.put\('\/index\.html'/,
+  assert.match(nav, /queueShellDocumentWrite\(cache, res\.clone\(\)\)/,
     'the refreshed document must land on the key matchCache reads');
   assert.match(nav, /matchCache: \(\) => cache\.match\('\/index\.html'\)/,
     'and that key must still be the one read back');
   assert.doesNotMatch(nav, /startFetch: \(\) => fetch\(event\.request\),/,
     'a bare startFetch is the bug: nothing refreshes the cached shell');
+});
+
+test('the document write outlives the response that was rendered', () => {
+  const nav = strategyBody('networkFirstNavigate');
+  // The observed regression: the live network response painted the fixed UI,
+  // but cache.put was fire-and-forget. The worker could be stopped as soon as
+  // respondWith settled, leaving the old document behind for a later slow
+  // navigation to paint. Keep the put separate from the response latency, but
+  // explicitly extend the event through it.
+  assert.match(nav, /let cacheWrite = Promise\.resolve\(false\);/);
+  assert.match(nav, /const durableWrite = pending \? pending\.then\(\(\) => cacheWrite\) : cacheWrite;/);
+  assert.match(nav, /event\.waitUntil\(durableWrite\.catch\(\(\) => \{\}\)\);/);
+  assert.doesNotMatch(nav, /cache\.put\('\/index\.html', res\.clone\(\)\)\.catch/,
+    'the old unowned, fire-and-forget write must not return');
 });
 
 test('only the real shell document may be stored as the shell', () => {
@@ -613,10 +639,87 @@ test('a full API cache evicts ordinary entries before a screen\'s standing state
 
 // ── Which BUILD a cached shell asset belongs to ──────────────────────────
 
+function shellDocument(build, builtAt, body = build || 'dev') {
+  const headers = {};
+  if (build) headers['X-Platform-Build'] = build;
+  if (builtAt != null) headers['X-Platform-Build-Time'] = String(builtAt);
+  return new Response(body, { headers });
+}
+
+function documentCache(initial = null) {
+  let current = initial;
+  return {
+    async match(key) {
+      assert.equal(key, '/index.html');
+      return current;
+    },
+    async put(key, response) {
+      assert.equal(key, '/index.html');
+      current = response;
+    },
+    current: () => current,
+  };
+}
+
+test('an older rollout response cannot replace a newer cached document', async () => {
+  const newer = shellDocument('2222222', 2_000);
+  const older = shellDocument('1111111', 1_000);
+  const cache = documentCache(newer);
+
+  assert.equal(shouldReplaceShellDocument(newer, older), false);
+  assert.equal(await putShellDocumentIfNewer(cache, older), false);
+  assert.equal(buildIdOf(cache.current()), '2222222');
+  assert.equal(buildTimeOf(cache.current()), 2_000);
+});
+
+test('a newer document durably advances an older shell cache', async () => {
+  const older = shellDocument('1111111', 1_000);
+  const newer = shellDocument('2222222', 2_000);
+  const cache = documentCache(older);
+
+  assert.equal(shouldReplaceShellDocument(older, newer), true);
+  assert.equal(await putShellDocumentIfNewer(cache, newer), true);
+  assert.equal(buildIdOf(cache.current()), '2222222');
+  assert.equal(buildTimeOf(cache.current()), 2_000);
+});
+
+test('build time, not SHA sort order, makes an intentional rollback current', () => {
+  const lexicallyLaterSha = shellDocument('ffffffff', 1_000);
+  const rebuiltRollback = shellDocument('0000000', 2_000);
+  assert.equal(shouldReplaceShellDocument(lexicallyLaterSha, rebuiltRollback), true,
+    'a rollback image is built later even though its source SHA points backward');
+});
+
+test('cross-build replacement fails closed without an ordering stamp', () => {
+  assert.equal(shouldReplaceShellDocument(
+    shellDocument('1111111', 1_000), shellDocument('2222222', null)
+  ), false);
+  assert.equal(shouldReplaceShellDocument(
+    shellDocument('1111111', null), shellDocument('2222222', 2_000)
+  ), false);
+  assert.equal(SHELL_BUILD_TIME_HEADER, 'x-platform-build-time');
+});
+
+test('a stamped deploy may replace a legacy entry, while dev remains network-first', () => {
+  const legacy = shellDocument(null, null);
+  const deployed = shellDocument('1111111', 1_000);
+  assert.equal(shouldReplaceShellDocument(legacy, deployed), true);
+  assert.equal(shouldReplaceShellDocument(legacy, shellDocument(null, null, 'edited')), true);
+  assert.equal(shouldReplaceShellDocument(deployed, legacy), false,
+    'an unstamped response cannot move a deployed cache backward');
+});
+
 test('a shell asset carries the build it was served from', () => {
-  const { shellBuildId, SHELL_BUILD_HEADER, applyShellBuildHeader } =
+  const {
+    shellBuildId,
+    SHELL_BUILD_HEADER,
+    SHELL_BUILD_TIME_HEADER: SERVER_BUILD_TIME_HEADER,
+    applyShellBuildHeader,
+    applyShellDocumentHeaders,
+  } =
     require('../src/services/static-cache.js');
   assert.equal(SHELL_BUILD_HEADER, 'X-Platform-Build');
+  assert.equal(SERVER_BUILD_TIME_HEADER, 'X-Platform-Build-Time');
   // A real deploy identity, in the shape GIT_SHA actually arrives in.
   assert.equal(shellBuildId({ GIT_SHA: 'A1B2C3D4E5F6' }), 'a1b2c3d4e5f6');
   assert.equal(shellBuildId({ GIT_SHA: ' abc1234 ' }), 'abc1234');
@@ -635,17 +738,28 @@ test('a shell asset carries the build it was served from', () => {
   set.length = 0;
   applyShellBuildHeader({ setHeader: (k, v) => set.push([k, v]) }, {});
   assert.deepEqual(set, []);
+
+  applyShellDocumentHeaders(
+    { setHeader: (k, v) => set.push([k, v]) },
+    __filename,
+    { GIT_SHA: 'abc1234' }
+  );
+  assert.equal(set[0][0], 'X-Platform-Build');
+  assert.equal(set[1][0], 'X-Platform-Build-Time');
+  assert.match(set[1][1], /^\d+$/);
 });
 
 test('the header rides the same assets the revalidation policy covers', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  // The static handler: only where a Cache-Control was set, i.e. exactly the
-  // html/js/css/webmanifest set shellAssetCacheControl matches.
-  assert.match(server, /const cc = shellAssetCacheControl\(filePath\);[\s\S]{0,400}?if \(cc\) applyShellBuildHeader\(res\);/);
+  // Every revalidated shell response carries its build id; index.html also
+  // carries the ordered build time used to reject a rollout downgrade.
+  assert.match(server,
+    /path\.basename\(filePath\) === 'index\.html'[\s\S]{0,120}?applyShellDocumentHeaders\(res, filePath\)/);
+  assert.match(server, /else if \(cc\) \{\s*applyShellBuildHeader\(res\);/);
   // And the SPA fallback, which is the DOCUMENT — the reference every cached
   // asset is compared against on a load.
   assert.match(server,
-    /res\.setHeader\('Cache-Control', shellAssetCacheControl\('index\.html'\)\);[\s\S]{0,300}?applyShellBuildHeader\(res\);/);
+    /res\.setHeader\('Cache-Control', shellAssetCacheControl\('index\.html'\)\);[\s\S]{0,300}?applyShellDocumentHeaders\(res, indexPath\);/);
 });
 
 test('a cached asset from the current build is served without a race', () => {

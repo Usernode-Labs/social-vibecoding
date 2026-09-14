@@ -69,12 +69,16 @@ const DIALOG_IDS = [
  * visibility, and is rendered by create-app.tsx rather than by index.tsx,
  * so the seam contract below does not apply to it.
  *
+ * `app-allowance.tsx` is the allowance panel shared by create-app.tsx and
+ * fork-app.tsx. It renders inside those dialogs and owns no modal root or
+ * dialog visibility, so it belongs to the same support half.
+ *
  * The partition is by "does this file render a *-modal root", and the
  * support half is then checked against an EXPLICIT list. That second step
  * is the load-bearing one: without it, a genuine dialog that forgot its
  * root would fall into the support half and skip every check in this file.
  */
-const SUPPORT_FILES = ['create-progress.tsx'];
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');

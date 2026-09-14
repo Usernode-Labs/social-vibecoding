@@ -29,6 +29,7 @@
     "social_vibecoding_social_vibecoding_proposal_push_commit": "allow",
     "social_vibecoding_social_vibecoding_proposal_submit_build": "allow",
     "social_vibecoding_social_vibecoding_proposal_status": "allow",
+    "social_vibecoding_social_vibecoding_proposal_recheck": "allow",
     "social_vibecoding_social_vibecoding_proposal_promote": "ask"
   }
 }

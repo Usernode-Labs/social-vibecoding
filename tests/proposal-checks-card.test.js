@@ -79,7 +79,7 @@ test('card: green checks + an open vote surface the vote state in the pill', () 
   assert.doesNotMatch(html, /Checks passing/, 'nothing left to warn about, so nothing is said');
 });
 
-test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () => {
+test('card: check_state="failing" is a red tag, and the tally keeps counting', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'failing',
@@ -90,11 +90,15 @@ test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () =>
       { name: 'Board', path: '/board', status: 'fail', failureReason: 'missing' },
     ],
   }));
-  // The whole point of the pill: even with the vote won, a proposal whose
-  // tests fail must not read as a neutral "3 / 3".
-  assert.match(html, /Checks failing · 2/);
-  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, not the advisory amber');
-  assert.doesNotMatch(html, /gc-vote-count-label">3 \/ 3/);
+  // This used to be the whole point of the pill: with the vote won, a
+  // proposal whose tests fail must not read as a neutral "3 / 3". The
+  // proposition is unchanged — a reader must not mistake this for ready —
+  // but it is a RED TAG that says so, not the bar, because the bar answers a
+  // different question ("where has the vote got to?") that stays worth
+  // answering while a check is red.
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks failing · 2<\/span>/);
+  assert.doesNotMatch(html, /gc-vote-count-blocked/, 'the bar is not blocked-toned');
+  assert.match(html, /3\s*\/\s*3/, 'and the tally is drawn');
 });
 
 test('checksBadgeHtml: failing carries the blocked tone (it gates the merge)', () => {
@@ -114,24 +118,28 @@ test('card: check_state="pending" renders the running pill', () => {
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
-test('card: check_state="error" is a blocked pill naming the boot failure', () => {
+test('card: check_state="error" is a red tag naming the boot failure', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /Preview won/, 'the pill names WHY checks could not run');
-  assert.match(html, /gc-vote-count-blocked/);
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
+    'the tag names WHY checks could not run');
+  assert.doesNotMatch(html, /gc-vote-count-blocked/);
   // The standalone helper keeps its own wording for the other surfaces.
   assert.match(AppView.checksBadgeHtml(baseProposal({ check_state: 'error' })), /Checks couldn/);
 });
 
-test('a legacy row (no check_state) surfaces its console errors in the pill', () => {
+test('a legacy row (no check_state) surfaces its console errors as an amber tag', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   }));
-  assert.match(html, /Console errors · 1/);
-  // Advisory, so the ATTENTION tone — it never blocks the vote.
-  assert.match(html, /gc-vote-count-attention/);
+  // Advisory — it never blocks the merge — which is what amber means here.
+  // #2038: console errors are no longer a TAG. They already block through
+  // check_state when they occur on a declared check, and the second amber tag
+  // over the capture routes said the same kind of thing in a different voice.
+  assert.doesNotMatch(html, /Console errors · 1<\/span>/);
+  assert.doesNotMatch(html, /gc-vote-count-attention/, 'the bar is the vote, in the vote\u2019s tone');
 });
 
 test('the checks detail lists per-test rows with failure reasons', () => {
@@ -428,8 +436,33 @@ test('#1442 — a superseded base annotates the verdict without contradicting it
   // The count is still the truth about the run.
   assert.match(html, /1/);
   assert.match(html, /8 commits ago/);
+  // The fact the note exists to state — and the phrase the declared check
+  // "Freshness (#1442): checks that passed on a superseded base are
+  // annotated, not contradicted" pins on the demo proposal. Blocking under
+  // earned gating, so a rewording that drops it fails every proposal.
   assert.match(html, /would no longer merge into/);
-  assert.match(html, /Syncing with main re-runs them/);
+  // A clean head merges as it stands; the note says what catches a
+  // regression the old base hid (the post-merge run on main), and does not
+  // promise a sync that will never come.
+  assert.match(html, /does not hold the merge/);
+  assert.match(html, /tests on main again straight after/);
+  assert.doesNotMatch(html, /Syncing with main re-runs them/);
+});
+
+test('a superseded base on a CONFLICTING head says the resolution re-runs the checks', () => {
+  const AppView = makeAppView(ME);
+  const note = AppView._checksBaseNote({
+    freshness: { checksBaseVerdict: 'superseded', checksBaseBehindBy: 4, mergeability: 'conflict' },
+  });
+  assert.match(note, /4 commits ago, so they describe code this proposal would no longer merge into\. It now conflicts with main/);
+  assert.match(note, /resolving the conflict re-runs them on the resolved commit/);
+  assert.doesNotMatch(note, /merges as it stands/);
+  // The board tag reads the same sentence, led by its own subject.
+  const tag = AppView.blockReasons({
+    check_state: 'passing',
+    freshness: { checksBaseVerdict: 'superseded', checksBaseBehindBy: 4, mergeability: 'clean' },
+  }).find((r) => r.key === 'checks_base_superseded');
+  assert.match(tag.detail, /^The checks passed, but ran against main as it was 4 commits ago, so they describe code this proposal would no longer merge into\./);
 });
 
 test('#1442 — the base note reads singular for one commit, and says nothing for none', () => {
@@ -461,7 +494,7 @@ test('#1442 — a current base, an unknown one, and a legacy row stay silent', (
     check_state: 'passing',
     test_results: [{ name: 'Home', path: '/', status: 'pass' }],
   }));
-  assert.doesNotMatch(html, /would no longer merge into/);
+  assert.doesNotMatch(html, /does not hold the merge/);
 });
 
 test('#1442 — the note reads flat columns too, not only the nested block', () => {

@@ -32,17 +32,15 @@
 //
 // NAMING — "panel", not "widget". home.js already owns a DIFFERENT concept
 // called "widget" (Home.widgetSectionView / #widget-strip / .widget-tile:
-// the iOS home-screen widget's pinned app grid, whose UI says "Usernode
+// the iOS home-screen widget's pinned app grid, whose UI says "Homeroom
 // widget"). Both render on this same screen, so everything here says
 // `panel`. Nothing user-facing says either: the blocks are titled by their
 // own headings.
 //
 // LAYOUT — each panel is its OWN bordered <article class="home-panel">, so a
 // block reads as a distinct box rather than another row inside a shared card.
-// The title (and the ⋮ menu) travel INSIDE each block: three blocks with
-// three titles cannot share the heading-above-the-section shape "Featured
-// apps" used. Blocks are plain full-width children — .home-column bounds the
-// feed (see app.css; #922 removed the per-box bound).
+// Each section has its own heading and navigation. Blocks are plain
+// full-width children — .home-column bounds the feed.
 //
 // DENSITY — a section sizes to its own CONTENT. That is the shape the full
 // render branch was always written for, and it is now the only one: the
@@ -81,7 +79,7 @@
 import { panelsStore } from './panels-store';
 
 const HomePanels = {
-  // Cache of GET /api/home-panels: { registry, hidden, positions, panels }.
+  // Cache of GET /api/home-panels: { registry, panels }.
   _data: null,
   _fetchedAt: 0,
   _inflight: null,
@@ -328,16 +326,6 @@ const HomePanels = {
   // markup at fixed positions now, so nothing has to be placed and nothing
   // has to wait for a registry to know where it goes.
 
-  // Is this widget allowed to be hidden? Discover is not (its footer is the
-  // shell's only door to the app directory). Everything else is — including
-  // `create`, for every account regardless of app quota.
-  isRemovable(key) {
-    const data = HomePanels._data;
-    const entry = data && Array.isArray(data.registry)
-      ? data.registry.find((r) => r.key === key) : null;
-    return !entry || entry.removable !== false;
-  },
-
   titleFor(key) {
     const data = HomePanels._data;
     const entry = data && Array.isArray(data.registry)
@@ -364,11 +352,10 @@ const HomePanels = {
       if (built) return built;
     }
     // Not in `panels` (a marker widget, or one whose build failed): still
-    // renderable if the registry knows it and the viewer hasn't hidden it.
+    // renderable if the registry knows it. Ignore stale hidden preferences
+    // from older server responses: these sections are permanent (#1801).
     if (!data || !Array.isArray(data.registry)) return null;
     if (!data.registry.some((r) => r.key === key)) return null;
-    const hidden = Array.isArray(data.hidden) ? data.hidden : [];
-    if (hidden.includes(key)) return null;
     return { key, title: HomePanels.titleFor(key) };
   },
 
@@ -411,11 +398,33 @@ const HomePanels = {
         summary: null,
         season: null,
         total,
+        allTotal: total,
+        expandable: false,
         expanded: false,
         rows: [],
       };
     }
     const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
+    // #1824: whether the footer's expand toggle has anything to reveal.
+    // `total` counts the OPEN challenges and `all_total` the ones an
+    // expansion would draw (the season's finished and out-of-window ones
+    // too), so the honest question is "are there more than are on screen?" —
+    // and a block already showing every challenge there is draws no toggle,
+    // instead of a "See all 3 challenges" beside three challenges. An older
+    // cached payload has no `all_total`; `total` alone is the fallback.
+    const allTotal = Math.max(
+      total,
+      Number.isFinite(Number(panel.all_total)) ? Number(panel.all_total) : 0
+    );
+    const expandable = expanded || rows.length < allTotal;
+    const rowViews = rows.map((c) => HomePanels.challengeRowView(c, panel));
+    const season = HomePanels.seasonView(panel);
+    // The season's deadline lives on the cards now. When no card shows one —
+    // every challenge on screen is finished or closed — the ring's second line
+    // carries it, so the block never drops how long the season has left.
+    if (season && season.deadline && !rowViews.some((r) => r.deadline)) {
+      season.sub = season.sub ? `${season.sub} · ${season.deadline}` : season.deadline;
+    }
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
@@ -424,10 +433,17 @@ const HomePanels = {
       // menu and the tests read. It is no longer rendered in the section
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
-      season: HomePanels.seasonView(panel),
+      season,
+      onboardingNote: panel.onboarding
+        ? (panel.onboarding.unlocked
+          ? 'Persistent and weekly challenges are unlocked.'
+          : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
+        : null,
       total,
+      allTotal,
+      expandable,
       expanded,
-      rows: rows.map((c) => HomePanels.challengeRowView(c)),
+      rows: rows.map((c) => HomePanels.challengeRowView(c, panel)),
     };
   },
 
@@ -509,7 +525,26 @@ const HomePanels = {
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
       icon,
+      illustration: app.featured_illustration || null,
+      blurb: HomePanels.appBlurb(app),
+      contributors: Number(app.contributor_count) || 0,
     };
+  },
+
+  // The card's sentence. There is no description COLUMN on `apps` — the
+  // directory's rows derive a meta line instead — so the one place an app can
+  // say what it is in its own words is its manifest, and the row already
+  // carries the whole of it (`manifest_snapshot` is a non-secret column).
+  // Absent or blank on most apps today, and the card draws nothing rather
+  // than a filler sentence: an invented blurb is worse than a short card.
+  // Capped here as well as at the manifest reader, because the snapshot is
+  // whatever the app's own repository last committed.
+  appBlurb(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
   },
 
   // ── Create app ─────────────────────────────────────────────────────
@@ -518,71 +553,96 @@ const HomePanels = {
   //
   // IT IS ON EVERY HOME SCREEN, FOR EVERY ACCOUNT. An account with no app
   // quota gets the same widget in the same cell — dimmed, and tapping it
-  // says why — rather than having it silently absent. Two reasons this is
+  // opens the dialog with exact usage — rather than having it silently
+  // absent. Two reasons this is
   // the right shape and not a conditional placement:
   //
-  //   1. canCreateApps is DERIVED per request (isAdmin || live app count <
-  //      app_quota — see /api/auth/me), so it flips without any user action:
+  //   1. canCreateApps is DERIVED per request (full-admin write access or
+  //      live app count < app_quota — see /api/auth/me), so it flips without
+  //      any user action:
   //      creating your one allowed app, an admin editing your quota, an app
   //      erroring out. Conditional placement would turn each of those flips
   //      into a layout mutation that re-packs the grid under the user.
   //   2. It's the majority rendering — most accounts carry no quota — so
   //      "absent" would read as a missing feature rather than a locked one.
   //
-  // The disabled state must NOT be a `disabled` attribute: a disabled
-  // element swallows pointer events, which would kill both the explanatory
-  // toast AND the widget's participation in the drag recognizer. aria-disabled
-  // plus a branch in the click handler keeps it draggable and tappable.
+  // The locked treatment belongs to the widget, not to a disabled button:
+  // that button's available action is opening the exact quota details.
   createView(panel) {
     return {
       key: panel.key,
       canCreate: !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate()),
       hint: (window.Home && Home.CREATE_DISABLED_HINT)
-        || 'Ask an admin to enable app creation for your account.',
+        || 'View your app allowance or request more slots.',
     };
   },
 
-  // Is this challenge COUNTED — "3 of 8 apps tested" — rather than a plain
-  // yes-or-no? It no longer decides whether a bar is drawn (every row draws
-  // one, see challengeRowView); it decides whether that bar has a count to
-  // print beside it and real numbers to announce.
+  // Does this challenge carry a metric with a target? With a target above one
+  // it is COUNTED — "0/8 apps tested" — and challengeRowView gives it a count
+  // and a bar from zero; a target of one is a yes-or-no and gets words.
   hasMeter(c) {
     return !!(c && c.metric && c.progress && c.progress.target != null);
   },
 
-  // TWO LINES, 56px: the well, then goal · count · reward on line one and the
-  // track on line two. Category, task, the organiser CTA and the earned-points
-  // line are deliberately absent — they don't fit at this density and all four
-  // live one tap away on the Challenges screen.
+  // ONE CARD ON BOTH SURFACES. Home's Challenges block draws the Challenges
+  // tab's card (features/leaderboard/challenge-card.tsx), so a row carries the
+  // descriptor that tab's controller builds: the rail's state, its one short
+  // label, its fill, and "Earned N pts" on a finished challenge the viewer
+  // scored on. The words are the tab's ("Not started", "3/8 apps tested",
+  // "Started", "Done"), composed here so a number and its unit stay one text
+  // node. Progress is this payload's own — resolveProgress on the server,
+  // which reads snapshot blocks — so "Not started" is a counted fact here.
+  // The card is the title, its deadline and the rail only: the organiser CTA,
+  // the category and the task stay off it, and all three are a tap away on
+  // the Challenges tab.
   //
-  // EVERY ROW HAS A METER. A yes-or-no challenge gets a two-state one — 0 of 1
-  // or 1 of 1 — so the list is one repeated shape rather than some rows with a
-  // bar and some rows with a gap where a bar would be. `binary` is what tells
-  // the row not to print "1/1" beside it: the ✓ and the full track already say
-  // it, and a count on a challenge that was never counted is noise.
-  challengeRowView(c) {
+  // A COUNTED challenge (a target above one) shows its count and bar from
+  // zero — "0/3 Apps tried" — so a challenge with steps never reads as the
+  // plain "Not started" of a yes-or-no one.
+  //
+  // The DEADLINE is the row's `ends_at` — its own schedule_end, else its
+  // event's end, the same date the Challenges tab uses — else the season's
+  // end; none on a finished or not-open challenge. It stays on every open card
+  // until deadline bands group the challenges by when they end.
+  challengeRowView(c, panel) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
-    const current = numeric ? (Number(c.progress.current) || 0) : (done ? 1 : 0);
-    const target = numeric ? Number(c.progress.target) : 1;
+    const target = numeric ? Number(c.progress.target) : null;
+    const current = numeric ? Math.max(0, Number(c.progress.current) || 0) : 0;
+    const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
+    let rail;
+    if (done) {
+      rail = { state: 'done', stateLabel: 'Done', fill: 1, counted: false };
+    } else if (numeric && target > 1) {
+      const count = Math.min(current, target);
+      const unit = c.metric.label ? ` ${c.metric.label}` : '';
+      rail = {
+        state: count > 0 || points ? 'progress' : 'new',
+        stateLabel: `${count}/${target}${unit}`,
+        fill: count / target,
+        counted: true,
+      };
+    } else if (points) {
+      rail = { state: 'progress', stateLabel: 'Started', fill: null, counted: false };
+    } else {
+      rail = { state: 'new', stateLabel: 'Not started', fill: 0, counted: false };
+    }
     return {
       id: String(c.id),
+      // The tile's picture, from the challenge's KIND (challenge_kinds.icon —
+      // one setting gives every challenge of a kind the same face). Null on a
+      // kind that has none; the tile is then an empty neutral face.
+      icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
       goal: String(c.goal || ''),
-      // The task is the row's tooltip — the one place the dropped detail still
-      // surfaces without costing height.
-      tip: c.task ? `${c.goal || ''}: ${c.task}` : (c.goal || ''),
       done,
-      reward: HomePanels.formatReward(c.reward),
-      meter: {
-        current,
-        target,
-        label: (numeric && c.metric.label) ? ` ${c.metric.label}` : '',
-        // A binary challenge is 0 or 100 by construction; progressPercent
-        // would answer the same thing, and does, but saying so here is what
-        // keeps a target of 1 from looking like a coincidence.
-        pct: numeric ? HomePanels.progressPercent(current, target) : (done ? 100 : 0),
-        binary: !numeric,
-      },
+      reward: HomePanels.formatReward(c.reward) || null,
+      ...rail,
+      // No countdown on a finished challenge, nor on one the expanded list
+      // carries while it is not open (organiser-closed, or outside its
+      // window). `ends_at` is the challenge's own end, else its event's.
+      deadline: done || c.open === false ? null
+        : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
+      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
     };
   },
 
@@ -616,8 +676,33 @@ const HomePanels = {
       // motivating number, and the ring is already showing the fraction.
       lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
       sub: hasPoints ? counted : null,
+      deadline: HomePanels.seasonDeadline(panel),
       label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
     };
+  },
+
+  // How long the SEASON has left: "7d left". It is the deadline a card shows
+  // when its challenge carries no end of its own (challengeRowView), and the
+  // ring's second line carries it only when no card on screen shows one
+  // (challengesView).
+  seasonDeadline(panel) {
+    return HomePanels.timeLeft(panel && panel.season && panel.season.ends_at);
+  },
+
+  // An end date as the cards say it, in the board's short form: whole days
+  // rounded UP ("5d left"; 23.5 hours is "1d left"), hours under a day ("7h
+  // left", at least "1h left"), and null once past or unparseable rather than
+  // a negative count — the panel is only built for a running season, so that
+  // is a clock skew case, not a state. The Challenges tab says the same words
+  // (TopochainChallenges._timeLeft); both test files pin one table.
+  timeLeft(raw) {
+    if (!raw) return null;
+    const ends = Date.parse(raw);
+    if (!Number.isFinite(ends)) return null;
+    const ms = ends - Date.now();
+    if (ms <= 0) return null;
+    const hours = Math.ceil(ms / 3600000);
+    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -626,12 +711,13 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
-  // The Challenges heading's "Open leaderboard". The Topochain standings ARE
-  // the Leaderboard screen's primary tab, so they address as the bare hash;
-  // `kind` survives because the ⋮ menu's own row still passes one, and it is
-  // the same real hash navigation as goToChallenges, so the device back
-  // gesture returns home. (It used to be the standings PREVIEW's destination
-  // too, on whichever board that preview had drawn; the preview is gone.)
+  // The Leaderboard screen's standings tab. The Topochain standings ARE the
+  // screen's primary tab, so they address as the bare hash; `kind` survives
+  // because the ⋮ menu's own row still passes one, and it is the same real
+  // hash navigation as goToChallenges, so the device back gesture returns
+  // home. (The Challenges heading's link used to come here as "Open
+  // leaderboard"; since #1916 it reads "Open challenges" and goes through
+  // goToChallenges instead.)
   goToLeaderboard(kind) {
     location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
   },
@@ -661,83 +747,6 @@ const HomePanels = {
   // #app-list, so stopping the event AT the button was what kept a press on ⋮
   // from arming a drag. These sections are outside #app-list now.
 
-  // ── The widget menu ────────────────────────────────────────────────
-  //
-  // Replaces the bare ✕ the title bar used to carry. A single destructive
-  // control with no undo, one press away, on a block whose whole job is to
-  // sit quietly on the home screen was too easy to hit by accident — and it
-  // left nowhere to put anything else. The menu is the standard home-screen
-  // widget affordance and it makes "Hide widget" a deliberate two-step.
-
-  // The rows, as data so they can be asserted without a DOM. `Hide widget`
-  // is exactly what the ✕ did: persisted per user, restorable from
-  // Settings → Preferences → Home screen widgets.
-  menuItems(key) {
-    const items = [];
-    // Only where the panel HAS a destination. A future widget without one
-    // still gets a working menu rather than a row that goes nowhere.
-    if (key === 'challenges') {
-      items.push({ label: 'Open challenges', handler: () => { HomePanels.goToChallenges(); } });
-      // Both of the widget's destinations, named the same way its two visible
-      // controls name them (#980) — the bar's link and the footer's button.
-      items.push({ label: 'Open leaderboard', handler: () => { HomePanels.goToLeaderboard(); } });
-    }
-    if (key === 'discover') {
-      items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
-    }
-    // The create widget's menu carries the ask-an-admin sentence as an inert
-    // note when the viewer has no quota — the same string the tile's tooltip
-    // and its tap toast use, so the explanation is reachable from the
-    // widget's own affordance rather than only by tapping it.
-    if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
-      items.push({
-        label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',
-        disabled: true,
-      });
-    }
-    // Discover is the shell's only door to the app directory — it has no
-    // Hide row at all (and the server refuses the write besides).
-    if (HomePanels.isRemovable(key)) {
-      items.push({
-        label: 'Hide widget',
-        destructive: true,
-        handler: () => { HomePanels.setHidden(key, true); },
-      });
-    }
-    return items;
-  },
-
-  // The kit's ADAPTIVE menu: a bottom action sheet on touch, an anchored
-  // popover on desktop, from one call site with no platform branching.
-  // PlatformUI.menu is the repo's wrapper for it (platform-ui.js) and is
-  // preferred; unNative.menu is the direct fallback for a page that loads the
-  // kit without the wrapper.
-  _menuApi() {
-    const pui = window.PlatformUI;
-    if (pui && typeof pui.menu === 'function') return (o) => pui.menu(o);
-    const un = window.unNative;
-    if (un && typeof un.menu === 'function') return (o) => un.menu(o);
-    return null;
-  },
-
-  openMenu(key, anchorEl) {
-    if (!key) return Promise.resolve(null);
-    const present = HomePanels._menuApi();
-    // No kit at all (the legacy/no-JS-kit path): send the press where the
-    // widget's own primary row goes rather than swallowing it. Hiding stays
-    // reachable in Settings.
-    if (!present) {
-      if (key === 'challenges') HomePanels.goToChallenges();
-      else if (key === 'discover') location.hash = '#apps';
-      return Promise.resolve(null);
-    }
-    return present({
-      anchorEl,
-      title: HomePanels.titleFor(key),
-      items: HomePanels.menuItems(key),
-    });
-  },
-
   // Grow the block past its height cap in place, showing every challenge
   // including the organiser-finished ones; the same control collapses it.
   // Expanding needs a refetch because the collapsed payload is filtered
@@ -758,63 +767,8 @@ const HomePanels = {
       return false;
     }
   },
-
-  // NOTE: setPosition() is gone. A widget's place on the home screen is a
-  // real (column, row) cell now, written for the whole grid at once through
-  // PUT /api/home-layout — see HomeLayout + Home._persistLayout in home.js.
-
-  // Per-user show/hide. Optimistic: the block disappears immediately and
-  // comes back if the write fails.
-  //
-  // Discover refuses to hide (the server 400s it too): its footer is the
-  // shell's only door to the app directory. Create hides like any other
-  // widget REGARDLESS of app quota — the widget is on every home screen,
-  // so removing it must be equally available to everyone.
-  async setHidden(key, hidden) {
-    if (!key) return false;
-    if (hidden && !HomePanels.isRemovable(key)) return false;
-    const prev = HomePanels._data;
-    if (prev) {
-      HomePanels._data = {
-        ...prev,
-        hidden: hidden
-          ? Array.from(new Set([...(prev.hidden || []), key]))
-          : (prev.hidden || []).filter((k) => k !== key),
-        panels: hidden
-          ? (prev.panels || []).filter((p) => p.key !== key)
-          : (prev.panels || []),
-      };
-      HomePanels.render();
-    }
-    try {
-      const res = await fetch(`/api/home-panels/${encodeURIComponent(key)}/visibility`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ hidden: !!hidden }),
-      });
-      if (!res.ok) throw new Error('save failed');
-      // Un-hiding needs the payload rebuilt — it was never fetched, or was
-      // filtered out of the cache above.
-      if (!hidden) await HomePanels.ensureLoaded({ force: true });
-      // Showing/hiding a widget changes which items the grid places, so the
-      // layout has to be re-derived (and re-persisted) around it. Home owns
-      // that; a missing Home just means the next load picks it up.
-      if (window.Home && typeof Home.load === 'function') Home.load();
-      return true;
-    } catch (err) {
-      HomePanels._data = prev;
-      HomePanels.render();
-      return false;
-    }
-  },
 };
 
-// Still published as a global. This module rides in the React bundle as of
-// #1083 chunk F step 4, but home.js's grid renderer, the Settings screen's
-// "Home screen widgets" rows and the server-side PANEL_REGISTRY's client
-// counterpart all reach it by name, and its own nine `window.Home` /
-// `window.HomeLayout` reads are the mirror of that arrangement. The guard is for
-// the SSG prerender pass — frontend/scripts/build-shell.mjs evaluates the
-// island's whole module graph in Node, where there is no window.
+// Home calls this module through the legacy global. Guard the
+// publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;

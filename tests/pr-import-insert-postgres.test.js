@@ -79,14 +79,18 @@ const DDL = `
     testing_path         VARCHAR(512),
     testing_paths        JSONB,
     linked_issues        INTEGER[] NOT NULL DEFAULT '{}',
-    pr_body              TEXT
+    pr_body              TEXT,
+    pr_summary_md        TEXT
   )`;
 
-// The same 15-element parameter shape the handler binds ($10 is the head
+// The same 16-element parameter shape the handler binds ($10 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $14 is the request
 // the work order was prepared from, #1217; $15 is the pull request's body,
-// mirrored so get_proposal can report a description, #1333).
+// mirrored so get_proposal can report a description, #1333; $16 is the
+// user-facing summary a submitter may send, which until now only on-platform
+// sessions had — an import wrote none, so the About sheet's plain-language
+// half was empty for every proposal that arrived this way).
 //
 // NOTE the DDL above is hand-copied from src/db/schema.sql on purpose, so a
 // column added to the INSERT must be added there too — that omission is
@@ -104,6 +108,9 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     // #1333. The imported PR's body, mirrored so get_proposal can report the
     // description a voter reads without a GitHub round trip.
     'What this pull request changes, in the author\'s own words.',
+    // The user-facing half of the About sheet, in the register that half is
+    // for: no identifiers, no paths, nothing a non-developer has to decode.
+    'Signing in now brings you back to what you were doing.',
   ];
 }
 

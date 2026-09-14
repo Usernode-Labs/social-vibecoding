@@ -396,9 +396,21 @@ export class DevConsoleStore {
       this.sheet = sheet;
       return;
     }
-    // The kit refused, or this is not a touch platform: back to the panel the
-    // island renders. adoptKitSurface has already undone whatever it did.
-    panel.classList.add('hidden');
+    // The kit refused, or this is not a touch platform: back to whatever the
+    // ISLAND's own visibility says, which on this path is VISIBLE.
+    //
+    // #1967. This line used to add `hidden` unconditionally, and on desktop
+    // that re-hid the panel one frame after it appeared: `useHiddenClass` is a
+    // LAYOUT effect and takes `hidden` off as soon as `panelOpen` flips, while
+    // this runs from the passive effect just after it. The desktop console is
+    // the fixed bottom bar the island renders — there is nothing to roll back
+    // when the kit declines, because nothing was adopted.
+    //
+    // The damage outlived the click. `panelOpen` stayed true over a hidden
+    // panel, so every later show() hit its `if (this.panelOpen) return` guard
+    // and the Improve panel's "Developer terminal" row (and #staging-dev-
+    // console-btn, same store) did nothing for the rest of the page's life.
+    panel.classList.toggle('hidden', !this.panelOpen);
   }
 
   /** True while the kit owns the panel — the island leaves `hidden` alone. */

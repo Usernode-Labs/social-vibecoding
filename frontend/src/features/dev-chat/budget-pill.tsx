@@ -46,8 +46,12 @@ export function BudgetPill() {
  * The meter WITH its host span, for a caller whose element is React's.
  *
  * `#dc-budget` renders whether or not there are figures to show: a dapp.json
- * check selects it as `#dc-venue-detail ~ #dc-budget`, so its POSITION in the
- * status line is part of the contract, and `refreshBudget` finds it by id.
+ * check selects it as `.dc-card-row > #dc-budget ~ #dc-venue-detail`, so its
+ * POSITION in the row is part of the contract, and `refreshBudget` finds it
+ * by id. The pair swapped order when the composer became one card
+ * (Streamlined Concept) — the meter now leads the model name, following the
+ * mock — which is why that selector reads the other way round from the
+ * `#dc-venue-detail ~ #dc-budget` it replaced.
  */
 export function BudgetPillBar() {
   return <span id="dc-budget" className="text-xs font-mono"><BudgetPill /></span>;

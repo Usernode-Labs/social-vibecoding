@@ -33,6 +33,28 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
+ * The Dev screen's board, as an href, in the LAYOUT named.
+ *
+ * Workshop and Board are one screen in two layouts and the layout IS the
+ * route — `/workshop` and `/board`, mapped back to a layout by the alias
+ * block in app.js's `restoreFromHash`, which also applies it. So "go to the
+ * board" is not a fixed address, and the two places that answer it have to
+ * agree: `Improve._routeHref` (what a session captures as its origin) and
+ * `appRouteUpHref` in ../header/platform-header.tsx (where the back arrow
+ * points from a topic or the general chat). One expression, imported by both.
+ *
+ * Anything that is not 'kanban' is the Workshop, matching
+ * `AppView._getViewMode()`'s own terminal fallback.
+ *
+ * @param {string} slug
+ * @param {string} boardView  'workshop' | 'kanban'
+ * @returns {string}
+ */
+export function boardHref(slug, boardView) {
+  return `#app/${slug}/${boardView === 'kanban' ? 'board' : 'workshop'}`;
+}
+
+/**
  * One row in the panel's list. TWO KINDS share this shape (#1417):
  *
  *   'session'  a chat_sessions row — a real dev session with a container, a
@@ -89,12 +111,12 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
- * @property {number} sessionUnread
- * @property {number} sessionDone
  * @property {'idle'|'deploying'|'stale'} versionState
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
+ * @property {'workshop'|'kanban'} boardView
  * @property {number|null} previewSessionId
  * @property {string|null} previewUrl
+ * @property {boolean} previewBuildable
  * @property {boolean} previewActive
  */
 
@@ -173,37 +195,30 @@ const INITIAL = {
 
   // ── The indicators the store carries with the panel shut ─────────────
   //
-  // All of these used to be painted onto other controls by classic modules
-  // that resolved a span by id and wrote `classList` / `textContent` into it.
-  // Their nodes are React-owned now (<MenuIndicators/> on the hamburger —
-  // see ../header/platform-header.tsx), so they are state here and the
-  // component renders them — the same reason #feedback-queue-dot goes
-  // through the visibility store rather than being toggled by id.
+  // These used to be painted onto other controls by classic modules that
+  // resolved a span by id and wrote `classList` / `textContent` into it.
+  // Their nodes are React-owned now, so they are state here and the component
+  // renders them — the same reason #feedback-queue-dot goes through the
+  // visibility store rather than being toggled by id.
   //
-  // None of them is derived from `sessions` below, deliberately: that array is
-  // only loaded while the panel is OPEN, and every one of these has to be true
+  // Neither is derived from `sessions` below, deliberately: that array is
+  // only loaded while the panel is OPEN, and both of these have to be true
   // when it is shut. They come from sources that run at boot instead —
-  // SessionState's live entries and the notification stream.
+  // SessionState's live entries and the platform version pill.
+  //
+  // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
+  // the unread session count Notifications._renderBadge published so this
+  // button could render it. #1610 retired both. The count is on the bell now,
+  // because the bell's list is the only surface that can mark a session
+  // notification read, and a number on a control that cannot clear it is what
+  // sent the reporter back to press Improve a second time.
 
   /**
-   * A dev session the viewer can see is mid-turn. Drives the emerald badge's
-   * pulse, so "something is running" is legible without opening anything.
+   * A dev session the viewer can see is mid-turn. Drives #improve-working-dot,
+   * so "something is running" is legible without opening anything.
    * From `SessionState.anyActive()`.
    */
   working: false,
-  /**
-   * Unread session-related notifications — the green count on the hamburger.
-   * Split out of the bell's red count by Notifications._renderBadge so the
-   * two never double-count; this is that same split, published rather than
-   * written into a span.
-   */
-  sessionUnread: 0,
-  /**
-   * How many of those are specifically "your session finished". Rendered as
-   * `data-session-done`, which a declared check selects on to prove the badge
-   * is showing for a real reason rather than merely present.
-   */
-  sessionDone: 0,
   /**
    * The platform version row's state, mirrored onto the hamburger's dot:
    * amber while a deploy is in flight, violet once the platform has rolled
@@ -216,6 +231,24 @@ const INITIAL = {
    * the header's eye needs to know whether it is looking at a SESSION.
    */
   subTab: null,
+  /**
+   * WHICH LAYOUT THE DEV SCREEN IS IN — 'workshop' or 'kanban'.
+   *
+   * Read by the header's back arrow on the sub-views that are reached FROM
+   * the board: a topic (an issue, a proposal, a governance proposal, a shared
+   * session) and the general chat. Those pointed unconditionally at
+   * `#app/<slug>/board`, which sent a viewer who had opened a card from the
+   * Workshop to the Kanban board instead of back where they were — and,
+   * because that route APPLIES its layout, quietly rewrote their stored
+   * preference to kanban on the way.
+   *
+   * Republished with `tab` and `subTab` from App.switchTab, so it names the
+   * layout that was on screen when the sub-view was entered. It is a MIRROR
+   * of `AppView._getViewMode()`, which stays the source of truth; the initial
+   * value here is that function's own fallback rather than a stored one,
+   * because a store INITIAL is what the prerender renders.
+   */
+  boardView: 'workshop',
   /**
    * WHERE THE OPEN DEV SESSION WAS ENTERED FROM, as an href — or null.
    *
@@ -243,6 +276,16 @@ const INITIAL = {
    */
   previewSessionId: null,
   previewUrl: null,
+  /**
+   * #2069: whether a preview could be BUILT for the open session, even
+   * though none is live. `ensure-staging` rebuilds from the branch's latest
+   * commit, so "no URL" stopped meaning "nothing to see" when #439 landed —
+   * but the eye kept the old gate and vanished on exactly the condition the
+   * rebuild exists for. Separate from previewUrl because the two answer
+   * different questions: one is "is there a page", the other "is there a
+   * commit".
+   */
+  previewBuildable: false,
   /**
    * True while a staging preview is actually ON SCREEN — the "seeing" half
    * of the board's doing↔seeing loop. Set by AppView.ensureStaging (the one

@@ -110,7 +110,7 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   assert.ok(title < select && select < sw,
     'name, then venue, then the switch on the right edge');
   assert.match(HEADER_TSX, /id="dc-mode-chip"/, 'the state word survives, on the switch');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/,
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/,
     'resolved through the shared module, not retyped');
 });
 
@@ -154,10 +154,14 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
   // The RENDER's site is the model now — `_headerVenue` resolves `disabled`
   // from the same flag, and the component renders it — so the two sites are
   // one derivation and one in-place write rather than two in-place writes.
-  assert.match(DEV_CHAT_SRC, /disabled: !!DevChat\.isStreaming/,
-    'the render resolves it from the streaming flag');
+  assert.match(DEV_CHAT_SRC, /disabled: DevChat\._chatBusyForPaint\(\)/,
+    'the render resolves it from the streaming paint seam');
   assert.match(HEADER_TSX, /disabled=\{venue\.disabled\}/,
     'and the component is the only thing that writes it on the render path');
+  assert.match(HEADER_TSX, /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
+    'the disabled state has a stable visible-check hook');
+  assert.match(HEADER_TSX, /<LockIcon[\s\S]*Thinking…/,
+    'the disabled state explains itself without relying on a mouse cursor');
   const sites = DEV_CHAT_SRC.match(
     /getElementById\('dc-venue-select'\)/g
   ) || [];
@@ -201,14 +205,14 @@ test('each in-chat provider gets its own model control, and other venues get non
 test('the card chip names the venue and carries the blurb as its title', () => {
   const chip = BV.chipHtml('usernode-openrouter');
   assert.match(chip, /class="dc-venue-chip"/);
-  assert.ok(chip.includes('Usernode · OpenRouter'));
+  assert.ok(chip.includes('Homeroom · OpenRouter'));
   assert.match(chip, /title="/, 'the blurb is the hover explanation');
   assert.equal(BV.chipHtml('nonsense'), '', 'an unknown id renders no chip');
 });
 
 test('an imported proposal gets no chip, because it has no venue to be in', () => {
   // own-tools-pr is the one venue with no chat and no session — the work
-  // already happened somewhere Usernode never saw. A chip saying "Your
+  // already happened somewhere Homeroom never saw. A chip saying "Your
   // computer · your own tools" on a card with no session behind it would
   // read as a place you could go.
   // The chip's MARKUP is card/dev-card.tsx's `venue` badge since #1367's
@@ -218,14 +222,14 @@ test('an imported proposal gets no chip, because it has no venue to be in', () =
   assert.ok(fnStart !== -1, '_sessionVenueChipSpec must exist');
   const fn = APP_VIEW_SRC.slice(fnStart, APP_VIEW_SRC.indexOf('\n  },', fnStart));
   assert.match(fn, /s\.source === 'imported'/, 'imported rows are excluded');
-  assert.match(fn, /\bBV\.currentVenue\(/, 'and the rest resolve through the shared chain');
+  assert.match(fn, /\bBV\.sessionVenue\(/, 'and the rest resolve through the shared chain');
   assert.match(fn, /externalAgent: s\.external_agent/,
-    'external_agent travels, or a handed-off session reads as a Usernode one');
+    'external_agent travels, or a handed-off session reads as a Homeroom one');
 });
 
 test('the session list SELECT carries what the chip needs', () => {
   // A chip derived from `agent_backend` alone cannot tell an imported row
-  // from a Usernode · Claude one: an imported row has a DEFAULTED backend
+  // from a Homeroom · Claude one: an imported row has a DEFAULTED backend
   // that no turn ever ran through. `source` and `external_agent` are the
   // two columns that make the difference expressible.
   const list = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf('SELECT id, branch_name, pr_number'));
@@ -238,20 +242,20 @@ test('the session list SELECT carries what the chip needs', () => {
 // ── 3. The fallback note ─────────────────────────────────────────────
 
 test('every server fallback reason becomes a sentence', () => {
-  // resolveDefaultAgentPreference is deliberately lenient — a session that
-  // runs beats a 4xx — but until now the fallback was a log line and
-  // nothing else. A reason with no copy is silence again.
+  // Only deliberate feature-policy decisions fall back now. Credential,
+  // provisioning, and catalog failures stop visibly instead of changing
+  // providers; the remaining policy reasons still need user-facing copy.
   const fn = SESSIONS_SRC.slice(
     SESSIONS_SRC.indexOf('async function resolveDefaultAgentPreference('),
     SESSIONS_SRC.indexOf('\n}', SESSIONS_SRC.indexOf('async function resolveDefaultAgentPreference('))
   );
   const reasons = new Set();
   for (const m of fn.matchAll(/claudeFallback\('([a-z_]+)'\)/g)) reasons.add(m[1]);
-  assert.ok(reasons.size >= 3, `the resolver produces reason codes (got ${reasons.size})`);
+  assert.deepEqual([...reasons].sort(), ['flag_off', 'not_in_beta']);
   for (const reason of reasons) {
     const note = BV.fallbackNote(reason);
     assert.ok(note.length > 0, `reason '${reason}' has no user-facing copy`);
-    assert.ok(note.includes('Usernode · Claude'),
+    assert.ok(note.includes('Homeroom · Claude'),
       `reason '${reason}' must name the venue it fell back TO`);
   }
 });
@@ -324,5 +328,38 @@ test('every class these surfaces render has a rule', () => {
   ]) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),
       `.${cls} has no rule in app.css`);
+  }
+});
+
+
+test('session card and header display the same native provider after reload', () => {
+  const extract = (source, signature) => {
+    const start = source.indexOf(signature);
+    const end = source.indexOf('\n  },', start);
+    return source.slice(start + signature.length, end);
+  };
+  const card = new Function('s', 'window', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+  const header = new Function('session', 'window', 'BuildVenues', 'DevChat',
+    extract(DEV_CHAT_SRC, '_headerVenue(session) {'));
+  for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], [null, 'External agent']]) {
+    const session = { source: 'cli_handoff', external_agent: agent, agent_backend: 'claude_code' };
+    const window = { BuildVenues: BV };
+    assert.equal(card(session, window).label, label);
+    assert.equal(header(session, window, BV, {
+      _currentVenueId: () => 'local', _chatBusyForPaint: () => false, _localAgent: null,
+    }).label, label);
+  }
+});
+
+
+test('all session lists serialize the identity needed by provider badges', () => {
+  for (const route of ['/api/me/active-sessions', '/api/apps/:slug/sessions', '/api/apps/:slug/shared-sessions']) {
+    const start = SESSIONS_SRC.indexOf("router.get('" + route + "'");
+    assert.ok(start >= 0, route);
+    const select = SESSIONS_SRC.indexOf('`SELECT', start);
+    const query = SESSIONS_SRC.slice(select, SESSIONS_SRC.indexOf('FROM chat_sessions', select));
+    for (const field of ['source', 'external_agent', 'build_venue', 'agent_backend']) {
+      assert.ok(query.includes(field), route + ' includes ' + field);
+    }
   }
 });

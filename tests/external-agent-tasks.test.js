@@ -202,7 +202,7 @@ test('the work order creates the branch itself — the platform no longer does',
     // accepted now, and a differently-named branch is never a reason to
     // redo a finished commit.
     assert.match(order, /git push -u origin HEAD/, `${status}: and pushed`);
-    assert.match(order, /Usernode has no write access to your GitHub account/,
+    assert.match(order, /Homeroom has no write access to your GitHub account/,
       `${status}: and says why the agent has to do it`);
   }
 });
@@ -553,10 +553,10 @@ test('every guidance step is an action the HUMAN takes, never agent narration', 
 
     // The hand-off back to this conversation is always last — and it now
     // sets the expectation that the coding agent submits for ITSELF, since
-    // the Usernode connector is attached to the account rather than to one
+    // the Homeroom connector is attached to the account rather than to one
     // conversation. The human is told what to expect and when to come back,
     // not asked to relay a branch name.
-    assert.match(result.guidance[result.guidance.length - 1], /submit the change to Usernode itself/);
+    assert.match(result.guidance[result.guidance.length - 1], /submit the change to Homeroom itself/);
     assert.match(result.guidance[result.guidance.length - 1], /can't submit/);
     assert.match(result.guidance[result.guidance.length - 2], /exactly as written/);
   }
@@ -588,17 +588,17 @@ test('an explicitly chosen agent beats sniffing the calling client', async () =>
   // and every prepared task would otherwise come back as 'external', with
   // guidance that names no product and a badge that names no agent.
   for (const agent of ['claude-code', 'codex']) {
-    const picked = await prepareWith({ agent, clientName: 'Usernode' }, FORK_MISSING);
+    const picked = await prepareWith({ agent, clientName: 'Homeroom' }, FORK_MISSING);
     assert.equal(picked.ok, true);
     assert.equal(picked.agent, agent, 'the resolved agent comes back to the caller');
     assert.equal(picked.guidance.length, 5, 'the hosted-web-UI guidance, not the generic four');
   }
   assert.match(
-    (await prepareWith({ agent: 'claude-code', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    (await prepareWith({ agent: 'claude-code', clientName: 'Homeroom' }, FORK_MISSING)).guidance[1],
     /https:\/\/claude\.ai\/code/,
   );
   assert.match(
-    (await prepareWith({ agent: 'codex', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    (await prepareWith({ agent: 'codex', clientName: 'Homeroom' }, FORK_MISSING)).guidance[1],
     /https:\/\/chatgpt\.com\/codex/,
   );
 
@@ -656,7 +656,7 @@ test('the work order is addressed to the agent and to nobody else', async () => 
   assert.match(result.workOrder, /git clone https:\/\/github\.com\/someuser\/recipe-box\.git recipe-box/);
   assert.match(result.workOrder, /git remote add upstream https:\/\/github\.com\/usernode-bot\/recipe-box/);
   // And it still forbids opening the pull request on the normal path —
-  // Usernode opens it, so the change arrives as a proposal with a preview,
+  // Homeroom opens it, so the change arrives as a proposal with a preview,
   // checks and a vote rather than a bare PR nobody is voting on.
   assert.match(result.workOrder, /Do not open the pull request yourself in the normal path/);
 });
@@ -853,6 +853,24 @@ const PUSHED_BRANCH = {
   },
 };
 
+// The mirror is the FIRST rung of the branch path (task 153), and its
+// provenance read is a public GET of the fork repository. None of the
+// fixtures below stub that read, so on the real helper it fails CLOSED as
+// `platform_unavailable` — never with a thrown error, fakeFetch's refusal is
+// caught inside githubPublic — and the ladder falls through to the
+// cross-fork rungs those tests were written for. Tests ABOUT the ladder say
+// so explicitly with `withMirrorUnavailable`; tests about the mirror itself
+// stub it with `withStubbedMirror` further down.
+function withMirrorUnavailable(fn, onCall) {
+  const headSvc = require('../src/services/external-agent-head');
+  const real = headSvc.mirrorForkBranch;
+  headSvc.mirrorForkBranch = async (args) => {
+    if (onCall) onCall(args);
+    return { ok: false, code: 'platform_unavailable', message: 'no write credential', retryable: true };
+  };
+  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+}
+
 function submitPool(queries, extra = []) {
   return fakePool([
     ['FROM external_agent_tasks t JOIN apps a', [TASK_ROW]],
@@ -862,7 +880,7 @@ function submitPool(queries, extra = []) {
   ], queries);
 }
 
-test('submit_work opens the cross-fork PR and stamps the agent on the session', async () => {
+test('submit_work opens the cross-fork PR when the mirror is unavailable, and stamps the agent on the session', async () => {
   const queries = [];
   const calls = [];
   const created = [];
@@ -875,7 +893,7 @@ test('submit_work opens the cross-fork PR and stamps the agent on the session', 
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
@@ -885,7 +903,7 @@ test('submit_work opens the cross-fork PR and stamps the agent on the session', 
         return { ok: true, status: 200, body: { sessionId: 55 } };
       },
     }
-  ));
+  )));
 
   assert.equal(result.ok, true);
   assert.equal(result.proposalId, 55);
@@ -1219,9 +1237,11 @@ test('a submission that names no request links nothing', async () => {
 // The reason this whole area was rewritten. `submit_work` had never once
 // succeeded in production: every attempt reached `platform_error: The pull
 // request could not be opened`, an error that discarded whatever GitHub
-// actually said. There are three rungs now — the plain cross-fork create,
-// the same call with an explicit head_repo, and a mirror into the app's own
-// repository — and the error that survives all three names the cause.
+// actually said. There are three rungs — a mirror into the app's own
+// repository first (task 153), then the plain cross-fork create, then the
+// same call with an explicit head_repo — and the error that survives all
+// three names the cause. The cross-fork tests here run with the mirror
+// unavailable, which is the only way those rungs are reached now.
 
 const logger = require('../src/services/logger');
 
@@ -1270,23 +1290,23 @@ test('a 4xx cross-fork create is retried ONCE with an explicit head_repo', async
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, taskId: 31, source: 'work_order',
       importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 71 } }),
     }
-  ));
+  )), () => { mirrored = true; });
 
   assert.equal(result.ok, true);
   assert.equal(result.prNumber, 92);
   assert.equal(result.submittedVia, 'branch_head_repo');
   assert.equal(attempts.length, 2, 'exactly one retry, never a loop');
-  assert.equal(attempts[0].headRepo, undefined, 'the plain cross-fork shape is still preferred');
+  assert.equal(attempts[0].headRepo, undefined, 'the plain cross-fork shape is tried first');
   assert.equal(attempts[1].headRepo, 'someuser/recipe-box');
   assert.equal(attempts[1].head, 'someuser:usernode/recipe-box-issue-4-abc123',
     'head is unchanged — head_repo only disambiguates it');
-  assert.equal(mirrored, false, 'a working retry never reaches the mirror');
+  assert.equal(mirrored, true, 'the mirror ran first and was unavailable — that is how the cross-fork rungs are reached');
 
   // Recorded so "was the missing head_repo the whole bug?" is a SQL query
   // rather than another production audit.
@@ -2179,8 +2199,8 @@ function fullOrder(overrides = {}) {
 
 test('the work order names the task and says who it belongs to', async () => {
   const order = fullOrder();
-  assert.match(order, /Usernode task id:\s+31/);
-  assert.match(order, /Usernode app slug:\s+recipe-box/);
+  assert.match(order, /Homeroom task id:\s+31/);
+  assert.match(order, /Homeroom app slug:\s+recipe-box/);
   // The exact sentence a production run needed and did not have: it had a
   // live connector, the right account and the taskId one call away, and
   // declined on a guess about who owned it.
@@ -2238,8 +2258,84 @@ test('the work order presents every submit shape, in order of preference', async
   // The push comes before the submit, and the patch after both.
   assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
   assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
-  // The connector reaches Usernode even though the sandbox cannot.
+  // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
+});
+
+test('the work order tells an agent with no Homeroom tools what that means and how to finish', async () => {
+  // The connector is per Claude / ChatGPT account, so a second account has
+  // none — and the old step 6 treated a missing connector as an unexplained
+  // state with a single remedy (hand it back). Now it names the cause,
+  // points at the page with the connect steps, and tailors the finish to
+  // who started the hand-off.
+  const assistant = fullOrder();
+  // Next to the first thing the connector is needed for: the rules pointer.
+  assert.match(assistant, /If this session has NO Homeroom tools, the connector was never added to\n {2}the Claude or ChatGPT account you are running in/);
+  assert.match(assistant, /the excerpt below is enough to build with/);
+  assert.match(assistant, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m,
+    'the settings URL is on its own indented line, like a command');
+  // And under WHEN YOU ARE DONE.
+  assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
+  assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
+  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /retry `submit_work` as in step 2/);
+  // Started by a chat assistant: hand it back, patch included.
+  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
+  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /If they started from the Homeroom tab instead/);
+  assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
+  // The URL appears in both places.
+  assert.equal(assistant.split('https://usernode.example/#settings/connectors').length - 1, 2);
+
+  // Started from the browser walkthrough: that tab's Submit button finishes.
+  const walkthrough = fullOrder({ startedFromWalkthrough: true });
+  assert.match(walkthrough, /Otherwise finish from Homeroom: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /its Submit button opens the proposal/);
+  assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
+
+  // No origin, no URL — the page is still named.
+  const noOrigin = fullOrder({ webPath: '' });
+  assert.doesNotMatch(noOrigin, /#settings\/connectors/);
+  assert.match(noOrigin, /Settings → Connectors,\n {3}which has the connector URL/);
+});
+
+test('the update work order says the same for a missing connector, in its own terms', async () => {
+  const update = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+  });
+  assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added/);
+  assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
+  assert.match(update, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
+  assert.doesNotMatch(update, /save the patch/, 'an update never sends a patch — that opens a second proposal');
+  const fromTab = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+    startedFromWalkthrough: true,
+  });
+  assert.match(fromTab, /its Submit button applies the update/);
+  assert.doesNotMatch(fromTab, /Otherwise hand it back/);
+});
+
+test('renderPreparedTask derives "started from the walkthrough" from client_id', async () => {
+  // The browser flow stamps `usernode-web:<agent>` into client_id
+  // (routes/dev-flow.js); that is the only record of where a job came from.
+  const row = {
+    id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
+    branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
+  };
+  const common = {
+    app: APP, owner: 'usernode-bot', repo: 'recipe-box',
+    origin: 'https://usernode.example', clientName: null,
+    forkStatus: 'ready', reused: true,
+  };
+  const fromTab = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'usernode-web:claude-code' }, clientId: 'usernode-web:claude-code',
+  });
+  assert.match(fromTab.workOrder, /Otherwise finish from Homeroom/);
+  const fromChat = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'claude-ai-abc' }, clientId: 'claude-ai-abc',
+  });
+  assert.match(fromChat.workOrder, /Otherwise hand it back/);
+  assert.match(fromChat.workOrder, /https:\/\/usernode\.example\/#settings\/connectors/);
 });
 
 test('the work order contains no triple-backtick fence and indents every command', async () => {
@@ -2274,11 +2370,11 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // A host model that truncates should cost background guidance, never the
   // base commit, the push commands or the task id.
   const rulesAt = order.indexOf('PLATFORM RULES');
-  for (const essential of [BASE_SHA, 'git push -u origin HEAD', 'Usernode task id', 'submit_work']) {
+  for (const essential of [BASE_SHA, 'git push -u origin HEAD', 'Homeroom task id', 'submit_work']) {
     assert.ok(order.indexOf(essential) < rulesAt, `${essential} survives a truncation`);
   }
   // And the hosted-asset warning sits immediately above it.
-  for (const url of svc.HOSTED_ASSETS) assert.ok(order.includes(url), url);
+  for (const path of svc.HOSTED_ASSET_PATHS) assert.ok(order.includes(path), path);
   assert.match(order, /That\s+is your SANDBOX, not the change/i);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
   // The rule holds by consequence, not by an enforcement claim: nothing the
@@ -2286,7 +2382,7 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // two checks reject this (#1215).
   assert.doesNotMatch(order, /rejected by/i);
   assert.match(order, /No automated check catches that/);
-  assert.match(order, /staging preview Usernode builds/);
+  assert.match(order, /staging preview Homeroom builds/);
   assert.match(order, /https:\/\/usernode\.example\/claude\.md/);
 
   // Omitted entirely when there is nothing to append — never an empty heading.
@@ -2320,7 +2416,7 @@ test('an unreadable GitHub produces hedged wording, never "you have no fork"', a
   assert.match(result.guidance[0], /If you don't already have/);
   assert.match(result.guidance[0], /Skip this if you already have one/);
   assert.doesNotMatch(result.guidance.join('\n'), /the copy you just made/);
-  assert.match(result.workOrder, /Usernode could not read GitHub just now/);
+  assert.match(result.workOrder, /Homeroom could not read GitHub just now/);
   assert.match(result.workOrder, /no-op if you do/);
   assert.doesNotMatch(result.workOrder, /you do not have one yet/);
 });
@@ -2514,7 +2610,12 @@ function withStubbedMirror(stub, fn) {
   return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
 }
 
-test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo PR opens', async () => {
+test('the mirror is the first rung: the verified fork branch is copied and a same-repo PR opens', async () => {
+  // Task 153. A head in the app's own repository is one the platform can
+  // write, so the auto-sync and the conflict resolver keep the proposal
+  // current when main moves — a fork head sat at "Conflict resolution
+  // failed" until its author came back. No cross-fork create is attempted
+  // at all when the mirror works.
   const queries = [];
   const created = [];
   let cleaned = false;
@@ -2522,10 +2623,7 @@ test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo
     findOpenPrByBranch: async () => null,
     createPR: async (owner, repo, opts) => {
       created.push(opts);
-      // Only the cross-fork shape is refused. The same-repo one — the shape
-      // that demonstrably worked on this deployment the same afternoon the
-      // connector failed — succeeds.
-      if (opts.head) throw validationFailed();
+      if (opts.head) throw new Error('a cross-fork create must not be attempted when the mirror worked');
       return { number: 97, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
     },
   });
@@ -2555,12 +2653,11 @@ test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo
   assert.equal(result.submittedVia, 'mirror');
   assert.equal(cleaned, false, 'a successful submission keeps its branch');
 
-  // Three createPR calls: cross-fork, cross-fork + head_repo, then same-repo.
-  assert.equal(created.length, 3);
+  // ONE createPR call: the plain same-repo create from the mirrored branch.
+  assert.equal(created.length, 1);
+  assert.equal(created[0].head, undefined, 'a PLAIN same-repo create');
   assert.equal(created[0].headRepo, undefined);
-  assert.equal(created[1].headRepo, 'someuser/recipe-box');
-  assert.equal(created[2].head, undefined, 'the third is a PLAIN same-repo create');
-  assert.equal(created[2].branch, 'usernode/from-someuser-t31-deadbeef');
+  assert.equal(created[0].branch, 'usernode/from-someuser-t31-deadbeef');
 
   // A mirrored head is owned by the bot, so the PR-level owner check would
   // pass vacuously — it is skipped BECAUSE provenance was proven first.
@@ -2574,10 +2671,7 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
   let cleaned = false;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async (o, r, opts) => {
-      if (opts.head) throw validationFailed();
-      return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
-    },
+    createPR: async () => ({ number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } }),
   });
   const result = await withStubbedMirror(
     async () => ({
@@ -2598,12 +2692,15 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
 
 test('a mirror the platform refuses is reported as its own reason, not as GitHub’s', async () => {
   // "That branch is in somebody else's repository" is a better answer than
-  // GitHub's 422, and a different one: it tells the user what to fix.
+  // GitHub's 422, and a different one: it tells the user what to fix. A
+  // cross-fork create would fail on the same fact with a worse sentence, so
+  // the mirror's own refusals never fall through to it.
+  let crossForkAttempts = 0;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async () => { throw validationFailed(); },
+    createPR: async () => { crossForkAttempts += 1; throw validationFailed(); },
   });
-  for (const [code, message] of [['fork_mismatch', 'not yours'], ['base_mismatch', 'wrong base']]) {
+  for (const [code, message] of [['fork_mismatch', 'not yours'], ['base_mismatch', 'wrong base'], ['branch_not_found', 'no such branch']]) {
     const result = await withStubbedMirror(
       async () => ({ ok: false, code, message }),
       () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
@@ -2614,9 +2711,12 @@ test('a mirror the platform refuses is reported as its own reason, not as GitHub
     assert.equal(result.code, code);
     assert.equal(result.message, message);
   }
+  assert.equal(crossForkAttempts, 0, 'a refusal about the BRANCH is final — no cross-fork retry');
 
-  // Anything else falls back to the typed GitHub error, which now says what
-  // actually happened rather than "could not be opened".
+  // A refusal about the PLATFORM (no credential, the copy failed) falls
+  // through to the cross-fork rungs, and when those refuse too the typed
+  // GitHub error says what actually happened rather than "could not be
+  // opened".
   const fellBack = await withStubbedMirror(
     async () => ({ ok: false, code: 'platform_unavailable', message: 'git was unhappy' }),
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
@@ -2627,6 +2727,7 @@ test('a mirror the platform refuses is reported as its own reason, not as GitHub
   assert.equal(fellBack.code, 'pr_open_failed');
   assert.match(fellBack.message, /HTTP 422/);
   assert.ok(fellBack.compareUrl);
+  assert.equal(crossForkAttempts, 2, 'both cross-fork rungs were tried');
 });
 
 test('slug + branch with no taskId finds the caller’s open work for that app', async () => {
@@ -2684,23 +2785,24 @@ test('every cross-fork rung declines the maintainer-edit grant', async () => {
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
     { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, taskId: 31,
       importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 90 } }),
     }
-  ));
+  )));
 
   assert.equal(result.ok, true);
-  assert.equal(attempts.length, 1, 'rung 1 now succeeds — no retry, no mirror');
+  assert.equal(attempts.length, 1, 'the plain cross-fork create succeeds — no head_repo retry');
   assert.equal(attempts[0].maintainerCanModify, false,
     'the platform never asks for write access to somebody else’s fork');
 });
 
-test('rung 1 succeeding is recorded as `branch`, and the mirror never runs', async () => {
-  // The acceptance signal for this fix: `submitted_via` moving off
-  // 'mirror' is how we know the parameter did its job in production.
+test('the cross-fork create succeeding is recorded as `branch` — the rung that actually ran', async () => {
+  // `submitted_via` is how "how often is the platform's own write path
+  // unwell?" becomes a SQL query: a 'branch' row is one the mirror could not
+  // take, and the platform will not be able to sync it.
   const queries = [];
   let mirrorCalled = false;
   const gh = ghWithDiagnostics({
@@ -2712,20 +2814,20 @@ test('rung 1 succeeding is recorded as `branch`, and the mirror never runs', asy
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => { mirrorCalled = true; return { ok: false, code: 'unexpected' }; },
+  const result = await withMirrorUnavailable(
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31, source: 'work_order',
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 91 } }),
       }
-    ))
+    )),
+    () => { mirrorCalled = true; }
   );
 
   assert.equal(result.ok, true);
   assert.equal(result.submittedVia, 'branch');
-  assert.equal(mirrorCalled, false);
+  assert.equal(mirrorCalled, true, 'the mirror was tried first');
 
   const close = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
   assert.ok(close.params.includes('branch'),
@@ -2755,9 +2857,9 @@ function forkCollabRefused() {
 }
 
 test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condition', async () => {
-  // Retrying with head_repo cannot help and mirroring would paper over a
-  // defect at the call site, so neither happens. Unreachable once every
-  // cross-fork caller sends `false` — which is exactly why it is named.
+  // Retrying with head_repo cannot help, so it does not happen. Unreachable
+  // once every cross-fork caller sends `false` — which is exactly why it is
+  // named.
   const attempts = [];
   let mirrorCalled = false;
   const gh = ghWithDiagnostics({
@@ -2768,15 +2870,15 @@ test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condi
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => { mirrorCalled = true; return { ok: false, code: 'unexpected' }; },
+  const result = await withMirrorUnavailable(
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31,
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 92 } }),
       }
-    ))
+    )),
+    () => { mirrorCalled = true; }
   );
 
   assert.equal(result.ok, false);
@@ -2786,94 +2888,96 @@ test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condi
   assert.match(result.message, /bug on our side/i,
     'says whose fault it is, so nobody re-audits their fork');
   assert.equal(attempts.length, 1, 'no head_repo retry');
-  assert.equal(mirrorCalled, false, 'and no mirror');
+  assert.equal(mirrorCalled, true, 'the mirror ran first — and only once');
 });
 
-test('an ordinary 422 still walks the whole ladder — only fork_collab short-circuits', async () => {
+test('with the mirror unavailable, an ordinary 422 still walks both cross-fork rungs — only fork_collab short-circuits', async () => {
   // Guard against the typed stop swallowing the fallback it sits beside.
   const attempts = [];
-  let mirrorCalled = false;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
     createPR: async (owner, repo, opts) => {
       attempts.push(opts);
-      if (opts.head) throw validationFailed();
-      return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
+      throw validationFailed();
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => {
-      mirrorCalled = true;
-      return {
-        ok: true,
-        branch: 'usernode/from-someuser-t31-cafe',
-        credential: 'pat',
-        cleanup: async () => {},
-      };
-    },
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 93 } }),
+    }
+  )));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'pr_open_failed');
+  assert.equal(attempts.length, 2, 'cross-fork, then cross-fork + head_repo');
+  assert.equal(attempts[0].maintainerCanModify, false);
+  assert.equal(attempts[1].maintainerCanModify, false, 'rung 3 declines the grant too');
+  assert.equal(attempts[1].headRepo, 'someuser/recipe-box');
+});
+
+test('the same-repo mirror create keeps GitHub’s default for the maintainer grant', async () => {
+  // The grant is vacuous on a same-repo head, so nothing is sent.
+  const attempts = [];
+  await withStubbedMirror(
+    async () => ({
+      ok: true, branch: 'usernode/from-someuser-t31-cafe', credential: 'pat', cleanup: async () => {},
+    }),
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
-      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        pool: submitPool([]), config: {},
+        gh: ghWithDiagnostics({
+          findOpenPrByBranch: async () => null,
+          createPR: async (owner, repo, opts) => {
+            attempts.push(opts);
+            return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
+          },
+        }),
+        githubLink: linkedAs('someuser'), limits: okLimits,
+      },
       {
         user: { id: 3 }, taskId: 31,
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 93 } }),
       }
     ))
   );
-
-  assert.equal(result.ok, true);
-  assert.equal(result.submittedVia, 'mirror');
-  assert.equal(mirrorCalled, true);
-  assert.equal(attempts.length, 3, 'cross-fork, cross-fork + head_repo, then same-repo');
-  assert.equal(attempts[0].maintainerCanModify, false);
-  assert.equal(attempts[1].maintainerCanModify, false, 'rung 2 declines the grant too');
-  assert.equal(attempts[2].maintainerCanModify, undefined,
-    'the same-repo mirror create keeps GitHub’s default — the grant is vacuous there');
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].maintainerCanModify, undefined);
 });
 
-test('the mirror announces which rung failed and why', async () => {
-  // Cross-fork creates now decline the grant, so rung 1 is expected to
-  // succeed and this line should stop appearing. Its presence in the log
-  // is the signal that something new is refusing the fork head — visible
-  // without anyone going and querying submitted_via.
+test('the fallback announces why the mirror was unavailable', async () => {
+  // With the mirror first, the cross-fork rungs run only when the platform
+  // could not write the app repository. That is worth a line in the log:
+  // its presence is the signal that the platform's own write path is
+  // unwell — visible without anyone going and querying submitted_via.
   const lines = [];
-  const realInfo = logger.info;
-  logger.info = (scope, msg, meta) => { lines.push({ scope, msg, meta }); };
+  const realWarn = logger.warn;
+  logger.warn = (scope, msg, meta) => { lines.push({ scope, msg, meta }); };
 
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async (owner, repo, opts) => {
-      if (opts.head) throw validationFailed();
-      return { number: 99, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
-    },
+    createPR: async () => ({ number: 99, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } } }),
   });
 
   try {
-    await withStubbedMirror(
-      async () => ({
-        ok: true,
-        branch: 'usernode/from-someuser-t31-feed',
-        credential: 'pat',
-        cleanup: async () => {},
-      }),
-      () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
-        { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
-        {
-          user: { id: 3 }, taskId: 31,
-          importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 94 } }),
-        }
-      ))
-    );
+    await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        user: { id: 3 }, taskId: 31,
+        importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 94 } }),
+      }
+    )));
   } finally {
-    logger.info = realInfo;
+    logger.warn = realWarn;
   }
 
-  const line = lines.find((l) => /falling back to the mirror/.test(l.msg));
+  const line = lines.find((l) => /falling back to a cross-fork pull request/.test(l.msg));
   assert.ok(line, 'the fallback is announced, not silent');
-  assert.equal(line.meta.failedRungs, 'branch, branch_head_repo');
-  assert.equal(line.meta.status, 422);
-  assert.equal(line.meta.githubField, 'head', 'names the field GitHub objected to');
-  assert.equal(line.meta.requestId, 'ABCD:1234:5678');
+  assert.equal(line.meta.mirrorCode, 'platform_unavailable');
+  assert.equal(line.meta.mirrorMessage, 'no write credential');
+  assert.equal(line.meta.taskId, 31);
   assert.equal(line.meta.head, 'someuser:usernode/recipe-box-issue-4-abc123');
 });
 
@@ -2974,7 +3078,7 @@ test('a proposal id that is not a proposal, or is on another app, is invalid_req
   assert.match(elsewhere.message, /is not on recipe-box/);
 });
 
-test('a fork-home proposal Usernode cannot describe is a platform fault, not the caller’s', () => {
+test('a fork-home proposal Homeroom cannot describe is a platform fault, not the caller’s', () => {
   // The branch NAME matters on this path in a way it never did for new work:
   // an open pull request cannot be repointed, so this exact ref is the only
   // one that can advance the proposal. A name git would reject means the
@@ -3048,7 +3152,7 @@ test('a bot-owned update gets a fresh branch whose name says which proposal it r
   assert.notEqual(result.branch, 'session-512', 'the caller cannot push to the app’s own repository');
 });
 
-test('a proposal head Usernode cannot read produces a retryable refusal, not a work order', async () => {
+test('a proposal head Homeroom cannot read produces a retryable refusal, not a work order', async () => {
   const gh = baseGh({ getBranchSha: async () => { throw new Error('502'); } });
   const { result, queries } = await prepareUpdate(BOT_PROPOSAL, { gh });
   assert.equal(result.ok, false);
@@ -3109,7 +3213,7 @@ test('the update work order names the proposal, its head, and where it is being 
   const order = result.workOrder;
   assert.match(order, /You are UPDATING a proposal that is already up for a vote/);
   assert.match(order, /THE PROPOSAL YOU ARE UPDATING/);
-  assert.match(order, /Usernode proposal id:\s+512/);
+  assert.match(order, /Homeroom proposal id:\s+512/);
   assert.match(order, /Its title:\s+Add a dark-mode toggle/);
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
   // The line a production run needed: the agent had the proposal id and no
@@ -3127,12 +3231,12 @@ test('the update work order says, up front, that submitting clears the votes', a
 test('the update work order tells the agent to fetch the proposal’s head from UPSTREAM', async () => {
   // The commit lives only in the app's repository on a bot-owned branch, so
   // `git checkout -b <b> <sha>` in a fresh fork clone cannot find it — which
-  // is exactly the failure that reads as "Usernode gave me a bad SHA".
+  // is exactly the failure that reads as "Homeroom gave me a bad SHA".
   const { result } = await prepareUpdate(BOT_PROPOSAL);
   assert.match(result.workOrder, /THE STARTING COMMIT IS IN THE APP'S REPOSITORY, not in your fork/);
   assert.match(result.workOrder, new RegExp(`git fetch upstream ${BASE_SHA}`));
   assert.match(result.workOrder, new RegExp(`git checkout -b ${result.branch} ${BASE_SHA}`));
-  assert.match(result.workOrder, /only Usernode writes/);
+  assert.match(result.workOrder, /only Homeroom writes/);
   assert.match(result.workOrder, /You do NOT need access to it/);
 });
 
@@ -3151,7 +3255,7 @@ test('a fork-home update work order says USE the existing branch, and to check i
 
 test('the update work order asks for proposalId, and never offers the patch fallback', async () => {
   const { result } = await prepareUpdate(BOT_PROPOSAL);
-  assert.match(result.workOrder, /SUBMIT THE UPDATE, through the Usernode connector/);
+  assert.match(result.workOrder, /SUBMIT THE UPDATE, through the Homeroom connector/);
   assert.match(result.workOrder, /with proposalId 512/);
   assert.match(result.workOrder, /taskId 44/);
   // The two refusals an update gets that new work never does, each with the
@@ -3243,7 +3347,7 @@ test('the session work order says CONTINUING, and names the session it continues
   assert.match(order, /You are CONTINUING work in progress on "Recipe Box"/);
   assert.doesNotMatch(order, /already up for a vote/);
   assert.match(order, /THE WORK YOU ARE CONTINUING/);
-  assert.match(order, /Usernode session id:\s+601/);
+  assert.match(order, /Homeroom session id:\s+601/);
   assert.match(order, /Its title:\s+Fix the failing dark-mode check/);
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
   assert.match(order, /Where its owner is reading it:\s+https:\/\/usernode\.example\/#app\/recipe-box\/dev\/sessions\/601/);
@@ -3281,14 +3385,14 @@ test('the session work order keeps every mechanical instruction the update path 
   const order = result.workOrder;
   // Same starting commit, fetched the same way from upstream…
   assert.match(order, /THE STARTING COMMIT IS IN THE APP'S REPOSITORY, not in your fork/);
-  assert.match(order, /session's own head, on a branch only Usernode writes/);
+  assert.match(order, /session's own head, on a branch only Homeroom writes/);
   assert.match(order, new RegExp(`git fetch upstream ${BASE_SHA}`));
   assert.match(order, new RegExp(`git checkout -b ${result.branch} ${BASE_SHA}`));
   assert.match(order, new RegExp(`It must start at the session's head:\\s+${BASE_SHA}`));
   assert.match(order, /NOT the app's main branch/);
   assert.match(order, /work already done here/);
   // …and the same submission, with the same two refusals and no patch route.
-  assert.match(order, /SUBMIT THE UPDATE, through the Usernode connector/);
+  assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
   assert.match(order, /with proposalId 601/);
   assert.match(order, /base_mismatch/);
   assert.match(order, /branch_moved/);
@@ -3303,11 +3407,11 @@ test('the session work order closes on "not up for a vote yet", not on the PR re
   assert.doesNotMatch(order, /cannot merge however the vote goes/);
   assert.doesNotMatch(order, /every submission clears the votes again/);
   assert.match(order, /Do not open a pull request — this work is not up for a vote yet/);
-  assert.match(order, /who started it promotes it from Usernode when it is ready/);
+  assert.match(order, /who started it promotes it from Homeroom when it is ready/);
   assert.doesNotMatch(order, /this proposal already has one/);
   // The ownership appendix says session, and says ADD TO rather than revise.
   assert.match(order, /Session 601 belongs to the same account, which is why you can add to/);
-  assert.match(order, /Usernode only advances a session from a fork owned by the GitHub/);
+  assert.match(order, /Homeroom only advances a session from a fork owned by the GitHub/);
 });
 
 test('the proposal work order is untouched by all of this', async () => {
@@ -3716,6 +3820,144 @@ test('an update with no GitHub link, or no GitHub at all, is refused before the 
   assert.deepEqual(calls, [], 'the attribution gate is never skipped — the submission is refused instead');
 });
 
+// ── The work order a shared session strands ────────────────────────────
+//
+// `share: true` leaves the work order OPEN on purpose — the whole point is
+// that the agent keeps committing onto the in-progress card — and stamps
+// `session_id` on the row on its way past. The promote that ENDS that
+// arrangement is documented as `submit_work({ proposalId, branch, propose:
+// true })` and carries no taskId, so the closing UPDATE, which is guarded by
+// a task resolved only from `taskId`, never ran. Every share -> promote
+// leaked one of the ten open-work-order slots for the fourteen days until it
+// expired; an account hit the cap holding ten rows it could not see, none of
+// them work it was still doing.
+//
+// The fix is a second handle on the reservation — the session id — and these
+// tests pin what it may and may not close.
+
+const SESSION_TASK_SQL = "AND session_id = $2 AND status = 'open'";
+
+test('a shared session\'s open work order is found by its session id', async () => {
+  const queries = [];
+  const pool = fakePool([[SESSION_TASK_SQL, [{ id: 91, session_id: 512 }]]], queries);
+  const found = await svc.findOpenTaskBySession(pool, 3, 512);
+  assert.equal(found.id, 91);
+  assert.deepEqual(queries[0].params, [3, 512], 'scoped to the owner, never to the session alone');
+  // A submission is past the point of no return by the time this runs, so a
+  // lookup that cannot answer must degrade to "no task", never throw.
+  const broken = { async query() { throw new Error('pg is down'); } };
+  assert.equal(await svc.findOpenTaskBySession(broken, 3, 512), null);
+  // And a garbage id never reaches the database at all.
+  const untouched = [];
+  const spy = fakePool([], untouched);
+  for (const bad of [null, undefined, 0, -1, 'abc', 1.5]) {
+    assert.equal(await svc.findOpenTaskBySession(spy, 3, bad), null, String(bad));
+  }
+  assert.deepEqual(untouched, []);
+});
+
+test('closing a session\'s work order stamps it submitted, and is a no-op when there is none', async () => {
+  const queries = [];
+  const pool = fakePool([
+    [SESSION_TASK_SQL, [{ id: 91, session_id: 512 }]],
+    ['UPDATE external_agent_tasks', []],
+  ], queries);
+  const closed = await svc.closeTaskForSession(pool, 3, 512, {
+    branch: 'my-fix', submittedVia: 'update_branch', source: 'work_order', clientId: 'cli-1',
+  });
+  assert.equal(closed, 91);
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.match(update.sql, /SET status = 'submitted'/);
+  // Owner AND session AND still-open, all three: a row somebody else's
+  // submission closed in between must not be re-stamped by this one.
+  assert.match(update.sql, /WHERE id = \$1 AND session_id = \$2 AND user_id = \$3 AND status = 'open'/);
+  assert.deepEqual(update.params, [91, 512, 3, 'my-fix', 'update_branch', 'work_order', 'cli-1']);
+  // An unrecognised submittedVia is dropped rather than sent — the column
+  // carries a CHECK constraint, and a write that violates it would throw
+  // inside a call whose work has already landed.
+  const q2 = [];
+  const pool2 = fakePool([
+    [SESSION_TASK_SQL, [{ id: 92, session_id: 512 }]],
+    ['UPDATE external_agent_tasks', []],
+  ], q2);
+  await svc.closeTaskForSession(pool2, 3, 512, { submittedVia: 'made-up' });
+  assert.equal(q2.find((q) => q.sql.includes('UPDATE')).params[4], null);
+
+  // Nothing open: no write, and no complaint.
+  const q3 = [];
+  const none = fakePool([[SESSION_TASK_SQL, []]], q3);
+  assert.equal(await svc.closeTaskForSession(none, 3, 512, {}), null);
+  assert.equal(q3.filter((q) => q.sql.includes('UPDATE')).length, 0);
+});
+
+// The two halves of the leak, through submitWork itself. `taskId` is absent
+// on both — that is the documented shape for continuing a proposal, not an
+// omission.
+function submitUpdateNoTask({ targetKind, taskRows }) {
+  const queries = [];
+  const pool = fakePool([
+    ['JOIN apps a ON a.id = s.app_id', [{ app_slug: 'recipe-box' }]],
+    [SESSION_TASK_SQL, taskRows],
+    ['UPDATE external_agent_tasks', []],
+  ], queries);
+  return withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, proposalId: 512, branch: 'my-fix', source: 'work_order',
+      updateProposal: async () => ({
+        ...UPDATE_OK, body: { ...UPDATE_OK.body, targetKind },
+      }),
+    }
+  )).then((result) => ({ result, queries }));
+}
+
+test('an update that lands on a proposal closes the work order its share left open', async () => {
+  const { result, queries } = await submitUpdateNoTask({
+    targetKind: 'proposal', taskRows: [{ id: 93, session_id: 512 }],
+  });
+  assert.equal(result.ok, true);
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.ok(update, 'the reservation is finished — the work is in front of the group');
+  assert.equal(update.params[0], 93);
+});
+
+test('an update that lands on a session leaves it open — share\'s contract is exactly that', async () => {
+  const { result, queries } = await submitUpdateNoTask({
+    targetKind: 'session', taskRows: [{ id: 94, session_id: 512 }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(queries.filter((q) => q.sql.includes('UPDATE external_agent_tasks')).length, 0,
+    'nobody is voting on this yet; the agent is meant to keep committing');
+  // It is not even LOOKED UP — the close is the only reason to ask.
+  assert.equal(queries.filter((q) => q.sql.includes(SESSION_TASK_SQL)).length, 0);
+});
+
+test('an explicit taskId still closes its own row, whatever the push landed on', async () => {
+  // The pre-existing contract, unchanged: a work order submitted BY ID is
+  // finished when it is submitted. Only the taskId-less shape was leaking.
+  const { queries } = await submitUpdateWork({}, {
+    updateProposal: async () => ({ ...UPDATE_OK, body: { ...UPDATE_OK.body, targetKind: 'session' } }),
+  });
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.ok(update);
+  assert.equal(update.params[0], 44);
+});
+
+test('the schema releases the slots the leak already stranded', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  const sweep = schema.slice(schema.indexOf('Release the slots a shared session stranded'));
+  const from = sweep.indexOf('UPDATE external_agent_tasks t');
+  const stmt = sweep.slice(from, sweep.indexOf(';', from) + 1);
+  assert.match(stmt, /FROM chat_sessions s/);
+  assert.match(stmt, /t\.status = 'open'/);
+  // Forward-only: a session still being BUILT keeps its reservation, which
+  // is the whole point of share leaving it open.
+  assert.match(stmt, /s\.status NOT IN \('active', 'paused'\)/);
+  // And an archived session's work was put away, not submitted — recording
+  // it as submitted would claim something that did not happen.
+  assert.match(stmt, /WHEN s\.status = 'archived' THEN 'abandoned' ELSE 'submitted' END/);
+});
+
 // ── pushForkBranchToAppBranch: the gates that run before any git ────────
 
 // A public-read stub shaped like githubPublic: { ok, status, body }.
@@ -3816,7 +4058,7 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
   assert.match(block, /refs\/heads\/\$\{targetBranch\}:\$\{expectedRemoteSha\.toLowerCase\(\)\}/);
   assert.match(block, /--force-with-lease=\$\{lease\}/);
   assert.doesNotMatch(block.slice(0, block.indexOf('return { ok: true')), /'--force'|"--force"|`--force`/);
-  // The fork is read UNAUTHENTICATED: Usernode holds no credential for the
+  // The fork is read UNAUTHENTICATED: Homeroom holds no credential for the
   // user's GitHub account, and this path does not change that.
   assert.match(block, /sourceCloneUrl\(forkOwner, forkRepo\)/);
   assert.match(block, /UNAUTHENTICATED/);
@@ -3826,4 +4068,326 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
   const returns = block.slice(0, block.indexOf('\n}\n'));
   assert.doesNotMatch(returns, /cleanup:/, 'there is no branch to clean up — only a head that moved');
   assert.match(returns, /return \{ ok: true, headSha: verified\.headSha/);
+});
+
+
+// ── The stale-work-order fix ────────────────────────────────────────────
+//
+// Two readers, one row, and they want opposite things from an expired
+// reservation — the same split findOpenTaskBySession already documents.
+
+test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async () => {
+  const LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+  // submitWork's `slug` + `branch` recovery: the default, and it must still
+  // see an expired row. That row is the only record of the base commit the
+  // pushed branch was cut from, and mirrorForkBranch runs its ancestry check
+  // `if (baseSha)` — so filtering it here would drop base_mismatch protection
+  // from exactly the long-running job most likely to need it.
+  const recovery = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], recovery), 3, 'recipe-box'
+  );
+  assert.doesNotMatch(recovery[0].sql, /expires_at/,
+    'recovery keeps seeing an expired task');
+  assert.deepEqual(recovery[0].params, [3, 'recipe-box']);
+
+  // The walkthrough: opts in, because resumable is not the same as permanent.
+  const walkthrough = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], walkthrough), 3, 'recipe-box', { unexpiredOnly: true }
+  );
+  assert.match(walkthrough[0].sql, /AND t\.expires_at > NOW\(\)/,
+    'an expired reservation stops pinning the launchpad');
+  // Same parameters either way: the filter is a literal, never interpolated
+  // user input.
+  assert.deepEqual(walkthrough[0].params, [3, 'recipe-box']);
+
+  // Still open to the caller's OWN rows for this app, both ways round.
+  for (const q of [recovery[0], walkthrough[0]]) {
+    assert.match(q.sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
+    assert.match(q.sql, /ORDER BY t\.id DESC LIMIT 1/);
+  }
+});
+
+test('discardTask abandons one open row of the caller\'s, for one app, and nothing else', async () => {
+  const queries = [];
+  const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
+  assert.equal(await svc.discardTask(pool, 3, 7, 4242), 4242);
+
+  const update = queries[0];
+  assert.match(update.sql, /SET status = 'abandoned'/,
+    "'abandoned' is the status the CHECK constraint already allows");
+  // Owner AND app AND still-open, all three: a replayed request must reach
+  // neither somebody else's reservation, nor one of the caller's own filed
+  // under a different app whose slug happens to be in the URL, nor reopen
+  // bookkeeping on one already submitted.
+  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3 AND status = 'open'/);
+  assert.deepEqual(update.params, [4242, 3, 7]);
+
+  // Matching nothing is null, not a cheerful success — the route turns that
+  // into unknown_task rather than telling the user it put something away.
+  const q2 = [];
+  assert.equal(
+    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 7, 4242),
+    null
+  );
+
+  // A junk id never reaches the database at all.
+  const q3 = [];
+  const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
+  for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
+    assert.equal(await svc.discardTask(junkPool, 3, 7, bad), null, `${bad} is not a task id`);
+  }
+  assert.equal(q3.length, 0, 'no query is issued for any of them');
+
+  // A database that THROWS propagates. It used to be flattened to null, which
+  // the route answers as 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
+  const throwing = { async query() { throw new Error('database is on fire'); } };
+  await assert.rejects(() => svc.discardTask(throwing, 3, 7, 4242), /database is on fire/);
+});
+
+test('an EXPIRED reservation stops blocking the same brief for ever', async () => {
+  // The dead end the walkthrough change opened up. The partial unique index
+  // external_agent_tasks_open_request_idx is (user_id, app_id, request_key)
+  // WHERE status='open' with NO expiry predicate, so an expired row still
+  // holds the key — while findOpenTaskByRequest, which is what the conflict
+  // path re-selects through, filters expiry and cannot see it. Nothing sweeps
+  // the table, so before this the second prepare of the same brief returned
+  // `platform_unavailable` and would have done so for ever.
+  const queries = [];
+  assert.equal(
+    await svc.abandonExpiredRequest(
+      fakePool([['UPDATE external_agent_tasks', [{ id: 91 }, { id: 92 }]]], queries),
+      3, 7, 'brief:deadbeef'
+    ),
+    2
+  );
+  const q = queries[0];
+  assert.match(q.sql, /SET status = 'abandoned'/);
+  // EXPIRED ones only, and only this caller's, this app's, this request's. A
+  // blanket sweep here would abandon live reservations the caller is working
+  // in — this is unblocking one insert, not garbage collection.
+  assert.match(q.sql, /AND status = 'open' AND expires_at <= NOW\(\)/);
+  assert.match(q.sql, /WHERE user_id = \$1 AND app_id = \$2 AND request_key = \$3/);
+  assert.deepEqual(q.params, [3, 7, 'brief:deadbeef']);
+
+  // Nothing expired: zero, and the caller still fails rather than looping.
+  assert.equal(
+    await svc.abandonExpiredRequest(fakePool([['UPDATE external_agent_tasks', []]], []), 3, 7, 'k'),
+    0
+  );
+
+  // And prepareWork only reaches for it AFTER the unexpired re-select has come
+  // back empty — so it can never close a row somebody is still using.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const block = src.slice(src.indexOf('  if (!row) {'), src.indexOf('  const workOrder'));
+  assert.ok(block.indexOf('findOpenTaskByRequest') < block.indexOf('abandonExpiredRequest'),
+    'the live lookup comes first');
+  assert.match(block, /row = await insertTask\(\);/, 'and the insert is retried once after clearing');
+});
+
+
+// ── Per-session work orders ─────────────────────────────────────────────
+//
+// The walkthrough used to resolve its task per (user, app), so one open work
+// order answered for every session: "New change" opened a fresh session
+// already showing an unrelated, often long-finished order.
+
+const SESSION_LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+test('loadOpenTaskForSession finds THIS session\'s task, not the app\'s newest', async () => {
+  const q = [];
+  const row = await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7, origin_session_id: 990404 }]]], q),
+    3, 'recipe-box', 990404, { unexpiredOnly: true }
+  );
+  assert.equal(row.id, 7);
+  assert.equal(q.length, 1, 'one query: its own task was there, so no orphan scan');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+  assert.match(q[0].sql, /AND t\.expires_at > NOW\(\)/);
+  assert.deepEqual(q[0].params, [3, 'recipe-box', 990404]);
+
+  // Without unexpiredOnly it is the same lookup minus that predicate.
+  const q2 = [];
+  await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q2), 3, 'recipe-box', 990404
+  );
+  assert.doesNotMatch(q2[0].sql, /expires_at/);
+  assert.match(q2[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('...and no session means no task, rather than the app\'s newest', async () => {
+  // The failure that would reintroduce the bug: falling back to the app-wide
+  // row here would make every session show every other session's order again.
+  for (const bad of [undefined, null, 0, -3, 1.5, NaN, 'abc', {}]) {
+    const q = [];
+    assert.equal(
+      await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q), 3, 'r', bad),
+      null,
+      `${JSON.stringify(bad)} is not a session`
+    );
+    assert.equal(q.length, 0, 'and no query is issued for it');
+  }
+});
+
+test('a work order belonging to no session is NOT handed to a new one', () => {
+  // The inverse of what this used to do, and the whole point of the change.
+  // Adopting the newest orphan turned one permanently stale launchpad into a
+  // QUEUE of them: every new change claimed the next one off the pile.
+  //
+  // The reasoning behind adoption was wrong twice. Factually, orphans were
+  // never invisible — listOpenWorkOrders filters on `session_id` (the shared
+  // column) and expiry, never on origin_session_id, so the Improve panel
+  // listed them throughout. Conceptually, a work order is one ATTEMPT at an
+  // issue, so an attempt whose session is gone is not a backlog item to hand
+  // out; it is over.
+  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function loadOpenTaskForSession('),
+    svcSrc.indexOf('async function abandonTasksForSession(')
+  );
+  assert.ok(fn.length > 0, 'the lookup is where this test thinks it is');
+  assert.ok(!/origin_session_id IS NULL/.test(fn), 'no orphan scan remains');
+  assert.ok(!/adoptTaskForSession/.test(fn), 'and nothing is claimed on a read');
+  assert.equal((fn.match(/await pool\.query\(/g) || []).length, 2,
+    'two literals: this session with and without the expiry filter, and nothing else');
+});
+
+test('...so a session with no work order of its own gets none', async () => {
+  const q = [];
+  assert.equal(
+    await svc.loadOpenTaskForSession(
+      fakePool([['FROM external_agent_tasks t JOIN apps a', []]], q),
+      3, 'recipe-box', 990404, { unexpiredOnly: true }
+    ),
+    null
+  );
+  assert.equal(q.length, 1, 'one query, and no second look for somebody else\'s order');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('archiving a session ends the attempt it was making', async () => {
+  const q = [];
+  assert.equal(
+    await svc.abandonTasksForSession(fakePool([['UPDATE external_agent_tasks', [{ id: 5 }, { id: 6 }]]], q), 990404),
+    2
+  );
+  assert.match(q[0].sql, /SET status = 'abandoned'/);
+  assert.match(q[0].sql, /WHERE origin_session_id = \$1 AND status = 'open' AND session_id IS NULL/);
+  assert.deepEqual(q[0].params, [990404]);
+
+  // `session_id IS NULL` is the one exclusion and it is load-bearing: that
+  // column means the work has been SHARED as a card on the Dev board, which
+  // outlives the chat session it was started from. Closing its reservation
+  // would strand a submission the group can already see.
+  assert.match(q[0].sql, /session_id IS NULL/);
+
+  // No session is a no-op, never a blind UPDATE.
+  const q2 = [];
+  for (const bad of [null, undefined, 0, -3, 'abc', 1.5]) {
+    assert.equal(await svc.abandonTasksForSession(fakePool([['UPDATE', [{}]]], q2), bad), 0);
+  }
+  assert.equal(q2.length, 0);
+});
+
+test('the archive path calls it, and never fails over it', () => {
+  const life = fs.readFileSync(path.join(__dirname, '..', 'src/services/session-lifecycle.js'), 'utf8');
+  assert.match(life, /externalAgentTasks\.abandonTasksForSession\(pool, sessionId\)/,
+    'archiving ends the attempt');
+  // finalizeArchivedSession is the funnel every archive path runs through,
+  // including proposal_start's atomic archive-and-replace.
+  const fin = life.slice(life.indexOf('async function finalizeArchivedSession('));
+  assert.ok(fin.indexOf('abandonTasksForSession') >= 0, 'from inside the funnel, not one caller');
+  assert.match(fin.slice(fin.indexOf('abandonTasksForSession')), /\.catch\(/,
+    'best-effort: an archive must not fail because a reservation could not be closed');
+});
+
+test('the one-time backfill closes litter, not live work', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  const backfill = schema.slice(
+    schema.indexOf("UPDATE external_agent_tasks\nSET status = 'abandoned'\nWHERE status = 'open'\n  AND origin_session_id IS NULL")
+  ).split(';')[0];
+  assert.ok(backfill.length > 0, 'the backfill is in schema.sql');
+
+  // Browser-minted only. Connector rows (Claude, ChatGPT) have no session by
+  // nature, are genuinely in flight, and submit by task id — closing those
+  // would break live work.
+  assert.match(backfill, /client_id LIKE 'usernode-web:%'/);
+  // Never a shared card's reservation.
+  assert.match(backfill, /session_id IS NULL/);
+  // And bounded in time, which is what makes it one-time rather than a rule:
+  // without it the clause would keep matching on every boot and would close an
+  // order minted by a browser running JS cached from before the client began
+  // sending its session — one whose launchpad can still see it.
+  assert.match(backfill, /created_at < TIMESTAMPTZ '20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\+00'/);
+});
+
+test('preparing records the launchpad it was prepared in', async () => {
+  const queries = [];
+  const calls = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 61 }]]], queries);
+  const result = await withFetch(FORK_READY, calls, () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+
+  const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
+  assert.match(insert.sql, /origin_session_id\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12\)/,
+    'and the placeholder list grew with it');
+  assert.equal(insert.params[11], 990404, 'with the session that asked');
+
+  // The connector has no session at all, and that is a null rather than a
+  // refusal — those rows are adopted by the first launchpad that looks.
+  const q2 = [];
+  await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool: fakePool([['INSERT INTO external_agent_tasks', [{ id: 62 }]]], q2),
+      config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'Add a button.', origin: 'https://usernode.example' }
+  ));
+  assert.equal(q2.find((q) => /INSERT INTO/.test(q.sql)).params[11], null);
+});
+
+test('reusing a work order moves it to the launchpad that asked', async () => {
+  // One open task per request stays the invariant — asking twice must not mint
+  // a second job. But being told "you already have this" only helps if you can
+  // then SEE it, so the order follows the session that asked rather than
+  // staying visible in the one it was first prepared in.
+  const queries = [];
+  const existing = {
+    id: 71, user_id: 3, app_id: 7, branch_name: 'usernode/x', base_sha: BASE_SHA,
+    fork_owner: 'someuser', fork_repo: 'recipe-box', brief: 'Add a button.',
+    issue_number: null, origin_session_id: 990001,
+  };
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/UPDATE external_agent_tasks/.test(sql)) return { rows: [{ origin_session_id: 990404 }] };
+      if (/FROM external_agent_tasks/.test(sql)) return { rows: [existing] };
+      return { rows: [] };
+    },
+  };
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+  assert.equal(result.reused, true, 'still a reuse, not a second job');
+  assert.equal(queries.filter((q) => /INSERT INTO/.test(q.sql)).length, 0, 'nothing was minted');
+
+  const move = queries.find((q) => /UPDATE external_agent_tasks/.test(q.sql));
+  assert.ok(move, 'the existing order is re-pointed');
+  assert.match(move.sql, /SET origin_session_id = \$3/);
+  assert.deepEqual(move.params, [71, 3, 990404]);
 });

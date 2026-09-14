@@ -1,10 +1,10 @@
 /* The guided walkthrough for the two web hand-off venues (#1049).
  *
- * Usernode has always had two ways to build a proposal: here on the
- * platform with the Usernode agent and your daily AI credits, or by handing
+ * Homeroom has always had two ways to build a proposal: here on the
+ * platform with the Homeroom agent and your daily AI credits, or by handing
  * a work order to the coding agent you already pay for — Claude Code
  * (claude.ai/code) or Codex (chatgpt.com/codex) — which pushes a branch to
- * your own fork that Usernode turns into an ordinary proposal. The second
+ * your own fork that Homeroom turns into an ordinary proposal. The second
  * route existed only behind the MCP connector, so essentially nobody found
  * it.
  *
@@ -54,7 +54,7 @@
   // here is the allowlist, because these three ids are a persisted column's
   // domain and this module is one of the three copies that must agree.
   var FLOWS = [
-    { id: 'platform', title: 'Usernode · Claude' },
+    { id: 'platform', title: 'Homeroom · Claude' },
     { id: 'claude-code', title: 'Claude Code on the web' },
     { id: 'codex', title: 'Codex on the web' },
   ];
@@ -78,11 +78,18 @@
     return AGENT_URLS[agent] || '';
   }
 
+  // The chat product a hand-off's connector lives in. Claude Code on the web
+  // signs in as a Claude.ai account and Codex as a ChatGPT one, and the
+  // Homeroom connector is added in THAT account's settings — not in Claude
+  // Code or Codex themselves.
+  function connectorProduct(agent) {
+    return agent === 'codex' ? 'ChatGPT' : 'Claude';
+  }
   // Why the external flows are not on offer, in the user's words. The
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
     if (reason === 'no_repository') {
-      return 'This app has no GitHub repository yet, so it can only be built here on Usernode.';
+      return 'This app has no GitHub repository yet, so it can only be built here on Homeroom.';
     }
     if (reason === 'platform_unavailable' || reason === 'link_unavailable' || reason === 'unavailable') {
       return 'Handing work to Claude Code or Codex is unavailable on this deployment right now.';
@@ -101,16 +108,15 @@
     var st = status || {};
     var gh = st.github || {};
     var fork = st.fork || null;
-    var task = st.task || null;
-    var branch = st.branch || null;
-    var label = agentLabel(agent || (task && task.agent));
-    // #1054 + #1071. When the prepared task carries a target, this run is a
-    // CONTINUATION and the last two steps say something different: the branch
-    // goes back onto something that already exists, and the final press is an
-    // update, not a new pull request. `targetKind` distinguishes the proposal
-    // the group is voting on from the session still being built.
-    var target = (task && task.targetProposal) || null;
-    var targetKind = target ? (target.targetKind || 'proposal') : null;
+    var label = agentLabel(agent);
+    // #1054 + #1071. A CONTINUATION goes back onto work that already exists,
+    // so the instructions name that proposal and the step says so. The server
+    // decides which it is; this only renders the difference.
+    var targetKind = st.targetKind || null;
+    // The connector is a REQUIREMENT now, not the advisory note it used to be
+    // below this step. Without it the agent cannot call prepare_work, so it
+    // has no base commit and no task id — there is nothing useful to hand it.
+    var connected = !!(st.connectors && st.connectors.count > 0);
 
     var list = [
       {
@@ -119,7 +125,7 @@
         done: !!gh.linked,
         detail: gh.linked
           ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
-          : 'Identity only. Usernode asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
+          : 'Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
         actions: gh.linked ? [] : [{ action: 'link-github', label: 'Link GitHub', primary: true }],
       },
       {
@@ -132,38 +138,26 @@
         actions: forkActions(fork),
       },
       {
-        key: 'prepare',
-        title: 'Prepare the work order',
-        done: !!task,
-        detail: task
-          ? prepareDetail(task, target, targetKind)
-          : 'Usernode writes the work order: the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
-        // #1281: the field lives HERE rather than in the composer. In a
-        // launchpad venue the composer is hidden — no turn will run in this
-        // session — so a step that told you to type in it would be pointing
-        // at something that is not on the screen.
-        brief: !task,
-        actions: task ? [] : [{ action: 'prepare', label: 'Prepare work order', primary: true }],
-      },
-      {
         key: 'handoff',
-        title: 'Hand it to ' + label,
-        done: !!(branch && branch.pushed),
-        detail: handoffDetail(branch, task, label, targetKind),
-        actions: task ? handoffActions(agent || task.agent) : [],
-      },
-      {
-        key: 'submit',
-        title: target ? 'Submit the update' : 'Submit for review',
+        title: connected ? 'Hand it to ' + label : 'Connect Homeroom',
+        // Terminal. Homeroom used to track the rest — a work order minted
+        // here, a branch to watch for, a Submit button to come back and press
+        // — and that tracking is exactly what left a stale work order sitting
+        // in a launchpad nobody could clear. The agent asks what to build,
+        // mints its own work order through the connector and submits it, so
+        // there is nothing further for this tab to know.
         done: false,
-        detail: branch && branch.pushed
-          ? submitDetail(targetKind)
-          : 'Available once your branch is pushed.',
-        actions: branch && branch.pushed
-          ? [target
-            ? { action: 'submit-update', label: 'Submit the update', primary: true }
-            : { action: 'submit', label: 'Submit for review', primary: true }]
-          : [],
+        detail: connected
+          ? handoffDetail(label, targetKind)
+          : 'Homeroom hands ' + label + ' a short set of instructions; '
+            + label + ' asks what you want to build and takes it from there: '
+            + 'writing the work order, reading this app\'s rules, pushing the '
+            + 'branch and opening the proposal. It needs the connector in the '
+            + connectorProduct(agent) + ' account it runs as to do any of that.',
+        actions: connected
+          ? handoffActions(agent)
+          : [{ action: 'link-connector', label: 'Connect Homeroom', primary: true },
+            { action: 'refresh', label: 'Check again' }],
       },
     ];
 
@@ -180,10 +174,7 @@
         key: step.key,
         title: step.title,
         state: state,
-        detail: step.detail,
-        // Only on the step you are ON, for the same reason its actions are:
-        // a brief box under a step nobody can act on is furniture.
-        brief: !!step.brief && state === 'current',
+        detail: step.detail + (step.detailExtra || ''),
         // Only the step you are on offers buttons: three live "Check again"
         // buttons down the card is noise, and acting on a later step out of
         // order just produces an error the user did not need to see.
@@ -197,13 +188,13 @@
   }
 
   function forkDetail(fork) {
-    if (!fork) return 'Your agent needs somewhere to push. Usernode checks GitHub for your fork of this app.';
+    if (!fork) return 'Your agent needs somewhere to push. Homeroom checks GitHub for your fork of this app.';
     if (fork.state === 'ready') return 'Found ' + fork.owner + '/' + fork.repo + '.';
     if (fork.state === 'name_conflict') {
       return 'You already own a repository called ' + fork.repo.replace(/-usernode$/, '')
         + ' that is not a fork of this app, so fork it as ' + fork.repo + ' instead.';
     }
-    if (fork.state === 'unknown') return 'Usernode could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.';
+    if (fork.state === 'unknown') return 'Homeroom could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.';
     return 'No fork yet. Fork the app on GitHub, then come back and check again.';
   }
 
@@ -216,60 +207,28 @@
     actions.push({ action: 'refresh', label: 'Check again' });
     return actions;
   }
-
-  // Step 3's detail. The branch and base commit are the same facts either
-  // way; what changes is that a continuation names WHAT it is continuing,
-  // because "starting from 4f2a1c9" on its own gives no clue that this run
-  // will move an existing session or proposal rather than open a new one.
-  function prepareDetail(task, target, targetKind) {
-    var line = 'Branch ' + (task.branch || '') + ', starting from ' + shortSha(task.baseSha) + '.';
-    if (!target) return line;
-    var title = target.title ? '"' + target.title + '"' : (targetKind === 'session' ? 'this session' : 'this proposal');
-    return (targetKind === 'session' ? 'Continuing ' : 'Updating ') + title + '. ' + line;
-  }
-
-  // Step 5's detail. Three sentences for three consequences — the vote
-  // clearing is the one people most need warning about, and a continuation of
-  // an unpromoted session has no votes to clear, so saying so there would be
-  // false.
-  function submitDetail(targetKind) {
-    if (targetKind === 'session') {
-      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request, just the same session further along.';
-    }
-    if (targetKind === 'proposal') {
-      return 'Usernode moves this proposal onto the commit your agent pushed. Its existing votes are cleared and its checks re-run, because the group would otherwise be approving code it never saw.';
-    }
-    return 'Usernode opens the pull request for you and imports it as a proposal you can put to a vote.';
-  }
-
-  function handoffDetail(branch, task, label, targetKind) {
-    if (!task) return 'Paste the work order into ' + label + ' and let it build.';
-    if (branch && branch.pushed) return 'Branch ' + task.branch + ' is pushed and ready to submit.';
-    if (branch && branch.unpushed) {
-      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit. It looks like the commits were made locally and never pushed.';
-    }
-    var base = 'Copy the work order, paste it into ' + label
-      + ', and let it push branch ' + task.branch + ' to your fork. Usernode checks for the branch when you come back to this tab.';
-    // The one thing that trips people up on a continuation: the agent gets
-    // its own conversation over there, and this transcript will not grow.
+  function handoffDetail(label, targetKind) {
+    var base = 'Copy the instructions and paste them into ' + label + '. It will ask '
+      + 'what you want to build, then write the work order, push the branch and open '
+      + 'the proposal itself. You do not come back here to finish.';
     if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The agent talks to you in ' + label + ', not here. This transcript stays where it is until the update lands.';
+      base += ' The instructions name the ' + (targetKind === 'session' ? 'session' : 'proposal')
+        + ' this continues, so the work lands as an update to it rather than as a second copy.';
     }
     return base;
   }
 
   function handoffActions(agent) {
-    var actions = [{ action: 'copy', label: 'Copy work order', primary: true }];
+    var actions = [{ action: 'copy', label: 'Copy instructions', primary: true }];
     var url = agentUrl(agent);
     if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
-    actions.push({ action: 'refresh', label: 'Check again' });
     return actions;
   }
 
   // An action with an href renders as a REAL ANCHOR, not a button that
   // window.open()s it. The two differ only off desktop, which is where it
   // matters (#1312): mobile popup heuristics eat a scripted window.open the
-  // moment anything about the tap looks indirect, and inside the Usernode
+  // moment anything about the tap looks indirect, and inside the Homeroom
   // app the anchor is what nav-link.js's delegated listener routes through
   // the bridge's openExternal — the app's webview is bound to the
   // platform's own domains and cannot navigate to github.com itself, by
@@ -368,6 +327,17 @@
           + step.actions.map(function (a) { return actionHtml(a, !!s.busy); }).join('')
           + '</div>'
         : '';
+      // A plain anchor, on purpose: it carries no data-flow-action, so
+      // wire() leaves it alone and the browser's own hash navigation opens
+      // Settings → Connectors in this tab, where the walkthrough resumes
+      // from the server's status when the person comes back.
+      var note = step.note
+        ? '<div class="dc-flow-step-note" data-flow-note="connector">'
+          + escapeHtml(step.note.before)
+          + '<a href="' + escapeHtml(step.note.href) + '">' + escapeHtml(step.note.linkLabel) + '</a>'
+          + escapeHtml(step.note.after)
+          + '</div>'
+        : '';
       var brief = step.brief
         ? '<textarea class="dc-flow-brief" data-flow-brief="1" rows="3"'
           + (s.busy ? ' disabled' : '')
@@ -380,23 +350,40 @@
         + '<div class="dc-flow-step-body">'
         + '<div class="dc-flow-step-title">' + escapeHtml(step.title) + '</div>'
         + '<div class="dc-flow-step-detail">' + escapeHtml(step.detail) + '</div>'
+        + note
         + brief
         + actions
         + '</div>'
         + '</div>';
     }).join('');
 
-    var task = s.status.task;
-    var order = task && task.workOrder
-      ? '<details class="dc-flow-order"><summary>Work order</summary>'
-        + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(task.workOrder) + '</pre>'
+    // The instructions in full, but COLLAPSED (#2088). #2041 opened this by
+    // default: the text seemed short enough to just read, and reading what
+    // you are about to paste into an agent is the point. In use the open box
+    // took over the card, on a phone the whole screen, and the button people
+    // actually press is Copy, which reads the status payload (dev-chat.js's
+    // 'copy' action) and never this node. So the summary is what shows and
+    // the text stays one tap away, still on the card for a clipboard that
+    // refuses. The declared check on it asserts on the summary of a
+    // details:not([open]), as the other details-based checks in dapp.json
+    // do, because a collapsed body is not there to be seen.
+    var order = s.status.instructions
+      ? '<details class="dc-flow-order"><summary>Instructions</summary>'
+        + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(s.status.instructions) + '</pre>'
         + '</details>'
       : '';
 
+    // The server counts the user's connectors across every Claude and
+    // ChatGPT account, so a non-zero count says nothing about the ONE account
+    // the paste is going to — hence the per-account caveat, with the same
+    // link the zero-connector note on the hand-off step carries.
     var connectors = s.status.connectors && s.status.connectors.count
       ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
         + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected. You can also just ask it to pick this task up.</div>'
+        + ' connected. You can also just ask it to pick this task up.'
+        + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
+        + ' account it was added in, so pasting into a different account needs its own:'
+        + ' <a href="#settings/connectors">Settings → Connectors</a> has the steps.</div>'
       : '';
 
     return ''
@@ -409,7 +396,7 @@
       + order
       + connectors
       + '<div class="dc-flow-actions dc-flow-actions-footer">'
-      + actionHtml({ action: 'cancel', label: 'Build on Usernode instead' }, !!s.busy)
+      + actionHtml({ action: 'cancel', label: 'Build on Homeroom instead' }, !!s.busy)
       + '</div>'
       + '</div>';
   }
@@ -459,6 +446,7 @@
     AGENT_URLS: AGENT_URLS,
     agentLabel: agentLabel,
     agentUrl: agentUrl,
+    connectorProduct: connectorProduct,
     unavailableNote: unavailableNote,
     steps: steps,
     vendorToggleHtml: vendorToggleHtml,

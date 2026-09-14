@@ -451,16 +451,23 @@ test('#906: the side slot is resolved at tick time from live state only', () => 
   // anchor its own model carries. What #906 actually pinned survives intact:
   // ELAPSED TIME is the only input, and the whole visibility rule lives in the
   // pure helper rather than in a flag frozen at render.
-  const at = transcriptSrc.indexOf('function ProgressSpans');
-  assert.ok(at > 0, 'the coding-run summary spans must exist');
+  const at = transcriptSrc.indexOf('function ProgressNote');
+  assert.ok(at > 0, 'the coding-run note row must exist');
   const body = transcriptSrc.slice(at, transcriptSrc.indexOf('function Attached', at));
   assert.match(body, /w\.runCohortHint\(Math\.max\(0, now - p\.cohortSince\)\)/,
     'the hint must be derived from the live elapsed anchor, through the helper');
   assert.doesNotMatch(body, /p\.estimate[^\n]*cohort|cohort[^\n]*p\.estimate/,
     'the AI guess must not gate the hint — that was the frozen flag #906 removed');
-  // An empty hint must render an empty span rather than a dangling "· ".
-  assert.ok(body.includes("{hint ? ` · ${hint}` : ''}"),
-    'an empty hint must render an empty span, not a bare separator');
+  // An empty hint must still render an empty span rather than a dangling
+  // separator. The separator moved into CSS with the row split
+  // (`.dc-cc-cohort:not(:empty)::before`), which is what makes "empty span,
+  // no bare · " true by construction rather than by a ternary.
+  assert.ok(body.includes('{hint}'),
+    'the hint is the span\'s whole text — no separator baked into it');
+  const appCss = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(appCss, /\.dc-cc-cohort:not\(:empty\)::before/,
+    'and the separator is drawn only when there is a hint to separate');
 });
 
 test('#906: the retired range copy ships nowhere in the client', () => {
@@ -483,7 +490,12 @@ test('#906: the retired range copy ships nowhere in the client', () => {
 
 test('#892: the deterministic stage label renders and refreshes as lines stream in', () => {
   assert.match(transcriptSrc, /className="dc-cc-phase"/, 'the stage label must have its own span');
-  assert.ok(transcriptSrc.includes("{p.phase ? `· ${p.phase}` : ''}"),
+  // A chip now, so it carries no `· ` separator of its own: the gap between
+  // chips is the gap. It still renders when empty (app.css hides it with
+  // `:empty`) — the span is addressed by class from here and from two
+  // declared checks, and a node that disappears when its value is blank is
+  // a selector that fails invisibly.
+  assert.ok(transcriptSrc.includes('<span className="dc-cc-phase">{p.phase}</span>'),
     'the stage label must be empty-safe — React escapes the text itself');
   assert.match(devChat, /phase: summ\.phaseLabel \|\| '',/,
     'the model must carry the deterministic label');
@@ -496,20 +508,33 @@ test('#892: the deterministic stage label renders and refreshes as lines stream 
     'a streamed progress line must still refresh the summary');
 });
 
-test('#892: the summary row renders countdown and cohort in the specified order', () => {
-  const rowAt = transcriptSrc.indexOf('function ProgressSpans');
-  assert.ok(rowAt > 0, 'the coding-run summary row must exist');
-  const row = transcriptSrc.slice(rowAt, transcriptSrc.indexOf('function Attached', rowAt));
-  // current action · steps · phase · elapsed · countdown (inside estimate) · cohort.
-  // The elapsed suffix renders INSIDE this component precisely to hold that
-  // position: it is the one span of the six that also appears on a row with
-  // no progress at all, and hoisting it out put it after the cohort hint.
-  const order = ['dc-cc-current', 'dc-cc-steps', 'dc-cc-phase', '<Elapsed e={elapsed} />',
-    'dc-cc-estimate', 'dc-cc-countdown', 'dc-cc-cohort'];
+test('#892: the run summary keeps its order across the chips/note split', () => {
+  // It was ONE inline run of six spans joined by `· `. It is two rows now —
+  // the four FACTS as chips, then the two SENTENCES (the guess and the
+  // cohort hint) beneath them — because a guess in a pill reads as a fact.
+  // The order within each row is unchanged, and the rows themselves are in
+  // the old order, so a reader's eye lands on the same things it did.
+  const chipsAt = transcriptSrc.indexOf('function ProgressChips');
+  const noteAt = transcriptSrc.indexOf('function ProgressNote');
+  assert.ok(chipsAt > 0 && noteAt > chipsAt, 'the facts row comes before the sentences');
+
+  const chips = transcriptSrc.slice(chipsAt, noteAt);
+  // current action · steps · phase · elapsed. The elapsed suffix renders
+  // INSIDE this component precisely to hold that position: it is the one
+  // span that also appears on a row with no progress at all, and hoisting it
+  // out put it after the cohort hint.
   let at = -1;
-  for (const token of order) {
-    const next = row.indexOf(token);
-    assert.ok(next > at, `${token} must follow the previous element in the summary row`);
+  for (const token of ['dc-cc-current', 'dc-cc-steps', 'dc-cc-phase', '<Elapsed e={elapsed} />']) {
+    const next = chips.indexOf(token);
+    assert.ok(next > at, `${token} must follow the previous chip`);
+    at = next;
+  }
+
+  const note = transcriptSrc.slice(noteAt, transcriptSrc.indexOf('function Attached', noteAt));
+  at = -1;
+  for (const token of ['dc-cc-estimate', 'dc-cc-countdown', 'dc-cc-cohort']) {
+    const next = note.indexOf(token);
+    assert.ok(next > at, `${token} must follow the previous element in the note row`);
     at = next;
   }
 });

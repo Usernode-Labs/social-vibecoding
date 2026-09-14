@@ -77,9 +77,10 @@ test('streaming UTF-8 decoding preserves a character split across chunks', () =>
 test('sanitizeModel converts per-token prices and uses reasoning metadata', () => {
   const compatibility = { status: 'verified', note: null };
   const arrayModel = sanitizeModel({
-    id: 'array', pricing: { prompt: '0', completion: '0.000002' },
+    id: 'vendor/array', canonical_slug: 'vendor/array-20260910', created: 1788998400,
+    pricing: { prompt: '0', completion: '0.000002' },
     supported_parameters: ['tools', 'reasoning'], context_length: 32000,
-  }, compatibility);
+  }, compatibility, { recommended: true });
   assert.equal(arrayModel.inputPricePerMillion, 0);
   assert.equal(arrayModel.outputPricePerMillion, 2);
   assert.equal(arrayModel.averagePricePerMillion, 1);
@@ -88,6 +89,15 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
   assert.equal(arrayModel.meetsCodexMinimums, true);
   assert.equal(arrayModel.supportsReasoning, true);
   assert.equal(arrayModel.reasoningEfforts, null);
+  assert.equal(arrayModel.provider, 'vendor');
+  assert.equal(arrayModel.canonicalSlug, 'vendor/array-20260910');
+  assert.equal(arrayModel.createdAt, '2026-09-10T00:00:00.000Z');
+  assert.equal(arrayModel.isRecommended, true);
+
+  const malformedCreated = sanitizeModel({
+    id: 'vendor/malformed-created', created: Number.MAX_VALUE,
+  }, compatibility);
+  assert.equal(malformedCreated.createdAt, null, 'one malformed provider timestamp cannot break the catalog');
 
   const metadataModel = sanitizeModel({
     id: 'metadata', supported_parameters: { tools: true, reasoning: { efforts: ['low', 'high'] } },
@@ -146,6 +156,7 @@ test('catalog exposes every key-visible model and sorts known prices low to high
     config: {
       openrouterApiBase: 'https://openrouter.ai/api/v1',
       openrouterOrigin: 'https://usernode.dev',
+      openrouterRecommendedModels: ['vendor/low'],
       // Regression: the old implementation hid all non-verified models
       // when this flag was false. It is intentionally ignored now.
       openrouterExperimentalModels: false,
@@ -163,6 +174,7 @@ test('catalog exposes every key-visible model and sorts known prices low to high
     'free', 'low', 'medium', 'high', 'unknown',
   ]);
   assert.equal(catalog.recommendedModelId, 'vendor/medium-verified');
+  assert.equal(catalog.models.find((model) => model.id === 'vendor/low').isRecommended, true);
   assert.equal(catalog.models.find((model) => model.id === 'vendor/high-limited').compatibility, 'blocked');
 });
 

@@ -12,6 +12,90 @@
 
 const log = require('./logger');
 
+const DEFAULT_CHECKS_STALE_MS = 10 * 60 * 1000;
+
+function checksStaleMs() {
+  const configured = Number.parseInt(
+    process.env.CHECKS_STALE_MS || String(DEFAULT_CHECKS_STALE_MS),
+    10
+  );
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_CHECKS_STALE_MS;
+}
+
+// A missing/old timestamp is actionable only after a proposal has a submitted
+// head. Runtime ownership is deliberately checked by the caller: this helper
+// answers whether the durable snapshot is overdue, not whether a live process
+// is still working on it.
+function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() } = {}) {
+  if (session?.check_state != null && session.check_state !== 'pending') return false;
+  // A deferred verdict is waiting on a conflict, not on a runner
+  // (services/check-admission.js): no run is overdue because none was
+  // started, and re-driving one would only defer it again.
+  if (session?.check_phase === 'deferred') return false;
+  if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
+  const checkedAt = session?.checks_checked_at == null
+    ? NaN
+    : new Date(session.checks_checked_at).getTime();
+  return !Number.isFinite(checkedAt) || (now - checkedAt) > staleMs;
+}
+
+// Promoted proposals retain the recovery behavior they have always had.
+// Before promotion, only a submitted native CLI handoff is eligible: ordinary
+// active Dev sessions have their own turn-tail recovery, a fresh draft has no
+// checks to re-run, and an uploaded-but-unsubmitted commit is still waiting on
+// proposal_submit_build rather than on the checks service.
+function isStuckCheckRecoveryScope(session) {
+  if (session?.status === 'promoted') return true;
+  if (session?.status !== 'active' || session?.source !== 'cli_handoff') return false;
+  if (!(session.checks_commit_sha || session.handoff_head_sha)) return false;
+  const hasUnsubmittedUpload = !!session.handoff_uploaded_sha
+    && session.handoff_uploaded_sha !== session.handoff_head_sha
+    && (session.checks_commit_sha || null)
+      === (session.handoff_upload_checked_sha || null);
+  return !hasUnsubmittedUpload;
+}
+
+// One query shared by boot reconciliation and the live sweeper. Keeping the
+// scope here prevents the two recovery paths from drifting back to the old
+// promoted-only rule that stranded pre-vote CLI handoffs after a restart.
+async function findStuckCheckSessions({
+  pool,
+  staleMs = checksStaleMs(),
+  maxAutoRetries,
+  limit = 50,
+}) {
+  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE (cs.status = 'promoted'
+             OR (cs.status = 'active'
+                 AND cs.source = 'cli_handoff'
+                 AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
+                 AND NOT (cs.handoff_uploaded_sha IS NOT NULL
+                          AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
+                          AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)))
+        AND cs.branch_name IS NOT NULL
+        AND (cs.check_state IS NULL
+             OR (cs.check_state = 'pending'
+                 AND cs.check_phase IS DISTINCT FROM 'deferred'
+                 AND (cs.checks_checked_at IS NULL
+                      OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+             OR (cs.check_state = 'error'
+                 AND cs.consecutive_check_failures < $2
+                 AND cs.check_next_retry_at IS NOT NULL
+                 AND cs.check_next_retry_at < NOW()))
+      ORDER BY COALESCE(cs.promoted_at, cs.last_activity_at, cs.created_at) ASC
+      LIMIT $3`,
+    [staleMs, maxAutoRetries, boundedLimit]
+  );
+  // The SQL is the efficient filter; this is the executable invariant that
+  // keeps a future query refactor from widening recovery to ordinary sessions.
+  return { rows: rows.filter(isStuckCheckRecoveryScope) };
+}
+
 // Does a session need its staging preview (re)built?
 //
 // THREE failure shapes leave a card without a working preview:
@@ -35,26 +119,46 @@ const log = require('./logger');
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
+//   4. The preview is of ANOTHER COMMIT than the head the caller is about to
+//      test. A clean platform sync of main carries the checks verdict forward
+//      (sync-main.advanceReviewAfterPlatformSync, carryChecks) and builds
+//      nothing, so the preview stays at the pre-sync commit while the branch
+//      tip — and the dapp.json the capture reads from it — moves on. A
+//      "Re-run checks" then ran the new head's checks against the old build
+//      and reported failures that were not the proposal's (#1710 collected
+//      seven that way). Detected by comparing `staging_commit_sha`, stamped
+//      at build time from the clone's HEAD, against `headSha`.
+// All four are healable by a rebuild. We deliberately do NOT rebuild on a
+// merely-unhealthy-but-running container (that's a 502, an app bug, not
+// a missing preview) to avoid churn.
+//
 // `config` is optional. Without it the staleness comparison is skipped and
 // the verdict is liveness-only — the pre-#851 behaviour. Every real caller
 // passes one; the fallback keeps the function usable from a context that has
-// no config and makes the added parameter non-breaking.
-async function stagingNeedsRebuild(session, { config = null } = {}) {
+// no config and makes the added parameter non-breaking. `headSha` is likewise
+// optional: without it (or without a recorded build commit — previews built
+// before the column existed) the commit comparison is skipped, so a caller
+// that only wants liveness, and every pre-existing preview, behave as before.
+async function stagingNeedsRebuild(session, { config = null, headSha = null } = {}) {
   if (!session.staging_url) return true;
+  let state;
   if (session.staging_runtime_kind === 'kubernetes') {
     if (!session.staging_runtime_name) return true;
     const applicationRuntime = require('./application-runtime');
-    const config = {
-      appRuntime: 'kubernetes',
-      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps' },
+    const runtimeConfig = {
+      ...config, appRuntime: 'kubernetes',
+      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps', ...config?.kubernetes },
     };
-    return (await applicationRuntime.status(config, {
-      runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
-    })) !== 'running';
+    try {
+      state = await applicationRuntime.inspect(runtimeConfig, {
+        runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
+      });
+    } catch (_) { return false; } // An API outage is not evidence of a stale preview.
+  } else {
+    if (!session.staging_container_id) return true;
+    const docker = require('./docker');
+    state = await docker.inspectContainer(session.staging_container_id);
   }
-  if (!session.staging_container_id) return true;
-  const docker = require('./docker');
-  const state = await docker.inspectContainer(session.staging_container_id);
   // The inspect could not be PERFORMED (unreachable daemon). Distinct from
   // 'not_found', which means the container is genuinely gone and is handled
   // below by the status check. Leave the preview strictly alone here: a docker
@@ -64,17 +168,42 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
   // Covers 'not_found' (shape 2 — the container is gone) as well as
   // exited/dead/created.
   if (state.status !== 'running') return true;
+  if (previewIsOfAnotherCommit(session, headSha)) return true;
   if (!config) return false;
 
   const stagingEnv = require('./staging-env');
   const expected = stagingEnv.expectedStagingFingerprint(config);
-  const actual = state.labels[stagingEnv.LABEL_ENV_FP] || null;
+  const actual = state.labels?.[stagingEnv.LABEL_ENV_FP] || null;
   if (actual === expected) return false;
 
   log.info('staging-recovery', 'Preview env is stale — rebuild needed', {
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// Shape 4 above. Only a KNOWN mismatch counts: a missing build commit (a
+// preview from before the column) or a missing head is "cannot tell", which
+// keeps the old answer rather than sweeping every legacy preview at once.
+function previewIsOfAnotherCommit(session, headSha) {
+  const built = typeof session.staging_commit_sha === 'string' ? session.staging_commit_sha.trim().toLowerCase() : '';
+  const head = typeof headSha === 'string' ? headSha.trim().toLowerCase() : '';
+  if (!built || !head || built === head) return false;
+  log.info('staging-recovery', 'Preview is of another commit than the head — rebuild needed', {
+    sessionId: session.id, built, head,
+  });
+  return true;
+}
+
+// The commit a recheck is about to judge, from the row's own pins: the
+// imported head for an imported row, otherwise the checks pin (which a clean
+// sync carries forward to the sync commit — exactly the case where the
+// preview is a commit behind). No GitHub read: the pin is what the votes and
+// the verdict describe, and a recheck is asked to judge that.
+function recheckHeadSha(session) {
+  if (!session) return null;
+  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  return session.checks_commit_sha || session.handoff_head_sha || session.reviewed_head_sha || null;
 }
 
 // Recovery's own `reason` strings name the CODE PATH; visuals.CHECK_TRIGGERS
@@ -97,6 +226,14 @@ const CHECK_TRIGGER_BY_REASON = {
   dangling_tail: 'boot-reconcile',
   heal: 'stuck-sweep',
   'stuck-checks-sweep': 'stuck-sweep',
+  // A verdict that was deferred while the head conflicted with main, run
+  // now that it merges cleanly (services/check-admission.js).
+  'conflict-resolved': 'conflict-resolved',
+  // A run whose launching process died with nothing left to read — the
+  // Job never started, failed outright, or was already garbage-collected
+  // (services/check-harvest.js). Re-driven the moment it is found rather
+  // than when the stale sweeper would have got to it.
+  'orphaned-run': 'boot-reconcile',
 };
 function checkTriggerForReason(reason) {
   return CHECK_TRIGGER_BY_REASON[reason] || 'stuck-sweep';
@@ -525,8 +662,14 @@ async function recordChecksSkipped({
 // only on the first failure of a streak (check_error_notified_at gate), which
 // setChecksPending clears when a new commit is pushed.
 async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
+  if (require('./preview-lifecycle').isCancelled(err) || err?.previewFailureHandled) return;
   const visuals = require('./visuals');
+  const { bootFailureIsInfrastructure } = require('./deploy-failure');
   const detail = visuals.summarizeBootFailure(err);
+  // #1771: the shared Postgres refusing this container a connection is not
+  // a fact about this proposal. summarizeBootFailure already says so in the
+  // detail; this decides who gets told.
+  const infrastructure = bootFailureIsInfrastructure(err);
 
   const stored = await visuals.storeChecks(
     pool, session.id, commitHash, { state: 'error', results: [] }, detail
@@ -555,6 +698,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   log.warn('staging-recovery', 'Staging preview failed to boot — recorded checks error', {
     sessionId: session.id,
     failures: row ? row.consecutive_check_failures : null,
+    infrastructure: infrastructure || undefined,
     detail,
   });
 
@@ -566,6 +710,26 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     `UPDATE chat_sessions SET check_error_notified_at = NOW() WHERE id = $1`,
     [session.id]
   ).catch(() => {});
+
+  // #1771: the checks row, the retry schedule and the card's detail are all
+  // still written above — the proposal is still blocked and still says why.
+  // What is skipped here is the part addressed to the AUTHOR: a thread post
+  // and a notification asking them to look at a build that failed because
+  // the fleet was out of database connections. There is nothing in their
+  // diff to find, the retry that fixes it is already scheduled, and the
+  // person who can act on it is the platform owner, who gets the escalation
+  // the 'error' state already carries. The stamp above still runs, so the
+  // backoff retries stay quiet either way.
+  if (infrastructure) {
+    log.warn('staging-recovery', 'Boot failure is infrastructure — author not nudged', {
+      sessionId: session.id, detail,
+    });
+    try {
+      const { broadcastGlobal } = require('./ws');
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+    } catch { /* narration only */ }
+    return;
+  }
 
   // Visible-in-thread record of why the preview won't come up.
   //
@@ -633,7 +797,9 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
       }));
     visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason));
   }
-  if (await stagingNeedsRebuild(session, { config })) {
+  // The head this run is about to judge rides along, so a preview that is
+  // still of the pre-sync commit is rebuilt rather than tested against.
+  if (await stagingNeedsRebuild(session, { config, headSha: recheckHeadSha(session) })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').
     return rebuildSessionStaging({ config, pool, session, reason });
@@ -659,7 +825,14 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
 }
 
 module.exports = {
+  DEFAULT_CHECKS_STALE_MS,
+  checksStaleMs,
+  checkRunOverdue,
+  isStuckCheckRecoveryScope,
+  findStuckCheckSessions,
   stagingNeedsRebuild,
+  previewIsOfAnotherCommit,
+  recheckHeadSha,
   rebuildSessionStaging,
   recheckSessionChecks,
   // Exported for tests + so the client-facing wording has one owner.

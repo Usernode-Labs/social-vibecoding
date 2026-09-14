@@ -443,7 +443,7 @@ test('staging seeds a layout for every capture identity', () => {
   assert.match(seed, /usernode-capture', 'usernode-capture-admin'/);
   assert.match(seed, /widget:create/, 'the create widget is seeded unconditionally');
   // Idempotent: a rebuild must not clobber a reviewer's own drags.
-  assert.match(seed, /SELECT 1 FROM user_home_layout WHERE user_id = \$1 LIMIT 1/);
+  assert.match(seed, /NOT EXISTS \(SELECT 1 FROM user_home_layout existing WHERE existing\.user_id = u\.id\)/);
   assert.match(seed, /ON CONFLICT DO NOTHING/);
 });
 

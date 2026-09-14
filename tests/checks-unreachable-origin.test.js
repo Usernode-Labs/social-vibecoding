@@ -97,7 +97,12 @@ function visualsSource() {
 }
 
 test('the override runs against container rows only, before the result is stored', () => {
-  const src = visualsSource();
+  const source = visualsSource();
+  // Failure-publication helpers also call storeChecks; inspect the actual
+  // capture's classification/persistence order, not the entire module. That
+  // order lives in settleCaptureRun — the settlement half captureForSession
+  // and the check harvester share (services/check-harvest.js).
+  const src = source.slice(source.indexOf('async function settleCaptureRun('));
   const override = src.indexOf('unreachableOriginDetail(containerRows');
   assert.ok(override > 0, 'the capture run must apply the override');
   // Synthesized rows (the over-ceiling guard, the unit suite) never load a

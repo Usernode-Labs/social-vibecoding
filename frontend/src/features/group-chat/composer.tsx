@@ -34,6 +34,7 @@
  */
 
 import { Button } from '@/components/ui/button';
+import { ArrowUpIcon, PaperClipIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import {
@@ -187,6 +188,43 @@ export interface ComposerFormProps {
 
 export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFormProps) {
   const ids = IDS[scope];
+  // THE CARD. The two full-height composers — the Discussion's and a topic
+  // thread's — are the same card Messages draws at the foot of its sheet: a
+  // white surface with bare glyphs, a borderless field at reading size and
+  // the round accent send disc. The boxed thread (`fill` false, inside a
+  // board card) keeps its compact bordered row: it sits inside a card
+  // already, and a card in a card is the thing the language avoids.
+  if (fill) {
+    return (
+      <form id={ids.form} className="gc-composer-card flex items-end gap-1.5">
+        <button
+          type="button"
+          id={ids.attach}
+          title="Attach files"
+          aria-label="Attach files"
+          className="gc-composer-glyph shrink-0"
+        >
+          <PaperClipIcon aria-hidden="true" />
+        </button>
+        <input type="file" id={ids.file} className="hidden" multiple />
+        <Textarea
+          id={ids.input}
+          maxLength={maxLength}
+          rows={1}
+          autoComplete="off"
+          placeholder={placeholder}
+          lead="composer"
+          width="flex"
+          box="composerCard"
+          hint="muted"
+          ring="bare"
+        />
+        <button type="submit" className="gc-send shrink-0" aria-label="Send" title="Send">
+          <ArrowUpIcon aria-hidden="true" />
+        </button>
+      </form>
+    );
+  }
   return (
     <form id={ids.form} className="flex gap-2 items-end">
       <button
@@ -194,20 +232,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         id={ids.attach}
         title="Attach files"
         aria-label="Attach files"
-        className={`shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${
-          fill ? 'py-2' : 'py-1.5'
-        } text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors`}
+        className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors"
       >
         📎
       </button>
       <input type="file" id={ids.file} className="hidden" multiple />
-      {/*
-          Through the primitives, and the rendered class attribute does not
-          move: `lead` and the two `composer` boxes were added to
-          @/components/ui/input's table in the order this string was written,
-          and `<Button>`'s trailing `shrink-0` arrives through className, which
-          cva emits last — which is where the hand-written string had it.
-      */}
       <Textarea
         id={ids.input}
         maxLength={maxLength}
@@ -216,11 +245,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         placeholder={placeholder}
         lead="composer"
         width="flex"
-        box={fill ? 'composer' : 'composerTight'}
+        box="composerTight"
         hint="muted"
         ring="seamless"
       />
-      <Button type="submit" size={fill ? 'default' : 'sm'} className="shrink-0">
+      <Button type="submit" size="sm" className="shrink-0">
         Send
       </Button>
     </form>

@@ -105,12 +105,52 @@ test('opening an app writes its clean path before asynchronous loading', () => {
   'the address changes before AppView.open starts');
 });
 
+test('a notification arriving during app startup waits and keeps its target', async () => {
+  const { App, AppView, releaseOpen } = loadApp();
+  const rendered = [];
+  App.ImproveStatus = { setAppOpen() {} };
+  App.switchTab = async (tab, ref, subTab) => {
+    assert.ok(AppView.appData, 'routing waits for the app metadata');
+    rendered.push({ tab, ref, subTab });
+  };
+  const boot = App.navigateToApp('notes', 'dev', null, 'forum');
+  const tap = App.openAppTab('notes', 'dev', {
+    subTab: 'topic', ref: { kind: 'issue', id: 1804 },
+  });
+  assert.equal(rendered.length, 0);
+  AppView.appData = { slug: 'notes' };
+  releaseOpen();
+  await Promise.all([boot, tap]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rendered.at(-1))), {
+    tab: 'dev', ref: { kind: 'issue', id: 1804 }, subTab: 'topic',
+  });
+});
+
+test('opening a notification waits for its destination render', async () => {
+  const { App, AppView, releaseOpen } = loadApp();
+  App.ImproveStatus = { setAppOpen() {} };
+  let finishRender;
+  const render = new Promise(resolve => { finishRender = resolve; });
+  App.switchTab = () => render;
+  let completed = false;
+  const tap = Promise.resolve(App.openAppTab('notes', 'dev', {
+    subTab: 'sessions', sessionId: 42,
+  })).then(() => { completed = true; });
+  AppView.appData = { slug: 'notes' };
+  releaseOpen();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false, 'a pending render must not acknowledge a tap');
+  finishRender();
+  await tap;
+  assert.equal(completed, true);
+});
+
 test('the serializer covers clean app, board, topic, and chromeless URLs', () => {
   const { App } = loadApp({ search: '?token=abc&shot=one' });
   assert.equal(App._appUrl('notes-9206f8', 'app'),
     '/app/notes-9206f8?token=abc&shot=one');
-  assert.equal(App._appUrl('notes-9206f8', 'dev', null, 'forum', { boardView: 'feed' }),
-    '/app/notes-9206f8/activity?token=abc&shot=one');
+  assert.equal(App._appUrl('notes-9206f8', 'dev', null, 'forum', { boardView: 'workshop' }),
+    '/app/notes-9206f8/workshop?token=abc&shot=one');
   assert.equal(App._appUrl('notes-9206f8', 'dev', { kind: 'proposal', id: 42 }, 'topic'),
     '/app/notes-9206f8/dev/proposals/42?token=abc&shot=one');
   assert.equal(App._appUrl('notes-9206f8', 'app', null, null, {
@@ -152,8 +192,19 @@ test('clean pathname parsing is narrow and legacy hashes remain router inputs', 
 test('interaction-gated app shots survive legacy-hash normalization', () => {
   assert.doesNotMatch(appViewSource, /location\.hash[^\n]*includes\(`app\/\$\{slug\}`\)/,
     'shot hooks must not depend on the legacy app fragment after it self-heals');
-  assert.match(appViewSource, /if \(App\.currentApp !== slug\) return;[\s\S]*?dev-plus-btn/,
+  // The plus-menu hook RETRIES now — its button moved into the Workshop's
+  // pane and no longer exists at a fixed 300ms — so the app-state guard is
+  // folded into the tick's bail-out rather than standing alone. What this
+  // asserts is the thing that matters: the hook keys off the ROUTED app
+  // state, not the legacy hash, whatever statement shape it wears.
+  const plusHook = appViewSource.slice(
+    appViewSource.indexOf("if (shot === 'plus-menu')"),
+    appViewSource.indexOf("if (shot === 'card-menu')"));
+  assert.ok(plusHook.length > 0, 'the plus-menu hook exists');
+  assert.match(plusHook, /App\.currentApp !== slug/,
     'the plus-menu shot follows the routed app state');
+  assert.match(plusHook, /dev-plus-btn/);
+  assert.ok(!/location\.hash/.test(plusHook), 'and never the legacy fragment');
   assert.match(appViewSource, /if \(App\.currentApp === slug\) \{\s*AppView\.showPreviewLoaderShot/,
     'preview shots follow the routed app state');
 });

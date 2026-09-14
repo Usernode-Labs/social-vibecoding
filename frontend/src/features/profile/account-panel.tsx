@@ -1,5 +1,5 @@
 /**
- * The account group on the Profile screen — the two native rows.
+ * The account group on the Profile screen — native status and logout.
  *
  * ── What it used to hold, and where that went ─────────────────────────
  *
@@ -24,14 +24,40 @@
  * the catch-all hamburger, so they stay on the screen that is already about
  * the viewer.
  *
- * Both ship hidden and their stores reveal them when the bridge reports the
- * capability, so on the web this section is its heading and nothing else.
+ * Both native rows ship hidden until the bridge reports the capability.
+ * Logout is available on every surface through the shared Settings flow.
  */
 
+import { useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { ensureSettings } from '../settings/facade.js';
 import { NodePillRow } from '../header/node-pill-row';
 import { WalletRow } from '../header/wallet-row';
 
 export function AccountPanel() {
+  const pending = useRef(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [error, setError] = useState('');
+
+  async function logout() {
+    if (pending.current) return;
+    pending.current = true;
+    setLoggingOut(true);
+    setError('');
+    try {
+      const settings = await ensureSettings();
+      if (!settings) throw new Error('Settings unavailable');
+      const result = await settings.logout();
+      // Success leaves this document, including native WebView teardown.
+      // Only a failed logout should make this control usable again.
+      if (result !== false) return;
+    } catch {
+      setError('Could not sign out. Check your connection and try again.');
+    }
+    pending.current = false;
+    setLoggingOut(false);
+  }
+
   return (
     <section id="profile-account" className="mt-6">
       <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
@@ -39,11 +65,24 @@ export function AccountPanel() {
       </div>
       {/*
           Native only — both ship hidden and their stores reveal them when the
-          bridge reports the capability. On the web this renders nothing, so on
-          the web this whole section is its heading and nothing else.
+          bridge reports the capability.
       */}
       <NodePillRow />
       <WalletRow />
+      <Button
+        type="button"
+        layout="full"
+        variant="pillDanger"
+        size="none"
+        ink="dangerTint"
+        className="mt-2 min-h-[44px] px-4 py-2.5 text-[17px] font-semibold disabled:opacity-50"
+        disabled={loggingOut}
+        aria-busy={loggingOut}
+        onClick={() => { void logout(); }}
+      >
+        {loggingOut ? 'Logging out…' : 'Log out'}
+      </Button>
+      {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
     </section>
   );
 }

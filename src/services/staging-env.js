@@ -77,7 +77,7 @@ const VALUE_EXEMPT = new Set(['USERNODE_APP_ID']);
 // its own domain / GitHub org instead of the canonical Usernode-Labs
 // defaults. Lives here (rather than inline in staging.js) so the fingerprint
 // is computed from the same list that is injected.
-const INHERITED_KEYS = ['USERNODE_DOMAIN', 'USERNODE_PLATFORM_REPO'];
+const INHERITED_KEYS = ['USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN', 'USERNODE_PLATFORM_REPO'];
 
 /**
  * The platform-owned half of a staging container's environment: everything

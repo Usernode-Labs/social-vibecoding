@@ -6,9 +6,10 @@ const kubernetes = require('./kubernetes');
 const log = require('./logger');
 
 const execFileAsync = promisify(execFile);
+const isPreview = () => process.env.USERNODE_ENV === 'staging';
 
 async function listDockerContainers(config) {
-  if (applicationRuntime.mode(config) !== 'docker') return [];
+  if (isPreview() || applicationRuntime.mode(config) !== 'docker') return [];
   try {
     const { stdout } = await execFileAsync('docker', [
       'ps', '-a',
@@ -29,7 +30,7 @@ async function listDockerContainers(config) {
 }
 
 async function getDockerStats(config) {
-  if (applicationRuntime.mode(config) !== 'docker') return {};
+  if (isPreview() || applicationRuntime.mode(config) !== 'docker') return {};
   try {
     const { stdout } = await execFileAsync('docker', [
       'stats', '--no-stream',
@@ -47,7 +48,7 @@ async function getDockerStats(config) {
 }
 
 async function inspectDockerStarted(name, config) {
-  if (applicationRuntime.mode(config) !== 'docker') return null;
+  if (isPreview() || applicationRuntime.mode(config) !== 'docker') return null;
   try {
     const { stdout } = await execFileAsync('docker', [
       'inspect', '--format', '{{.State.StartedAt}}', name,
@@ -72,6 +73,13 @@ function dockerHostCapacity() {
 }
 
 async function snapshot(config) {
+  // A self-preview serves cloned app data. It has neither a Docker socket
+  // nor authority to inventory the parent's cluster. Absence of an inventory
+  // is not evidence that the cloned fleet's containers disappeared.
+  if (isPreview()) return {
+    runtimeKind: 'preview', available: false,
+    resources: [], stats: {}, host: null, namespaceCapacity: [],
+  };
   const runtimeKind = applicationRuntime.mode(config);
   if (runtimeKind === 'kubernetes') {
     const [resources, namespaceCapacity] = await Promise.all([

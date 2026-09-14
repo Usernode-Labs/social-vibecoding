@@ -1,3 +1,4 @@
+const { withBuildUse } = require('./build-retention-guard');
 const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
@@ -60,6 +61,18 @@ async function createApp(config, appRow) {
   }
 
   try {
+    // A fork with no repository has not finished copying its source yet.
+    // Treating it as an ordinary create here would enter the fresh-app branch
+    // below and seed the starter template, permanently changing what the
+    // user asked to copy. Fork retries are dispatched through app-forker, but
+    // keep this guard at the template boundary so a future caller cannot
+    // silently reintroduce that data-loss bug.
+    if (appRow.forked_from && !appRow.repo_url) {
+      throw new Error(
+        'This fork has not copied its source repository yet. Retry the fork from its source app.'
+      );
+    }
+
     log.info('app-creator', 'Starting app creation', { appId, slug });
 
     await updateStatus(pool, appId, 'creating');
@@ -96,14 +109,14 @@ async function createApp(config, appRow) {
         // SAME slug, so the repo already exists on the bot account and a
         // plain create would 422 "name already exists" on every retry.
         const repo = await github.createRepo(botUsername, slug, {
-          description: `${name}: built on Usernode Social Vibecoding`,
+          description: `${name}: built on Homeroom`,
           adoptExisting: true,
         });
         repoUrl = repo.html_url;
 
         const files = getTemplateFiles(name, slug, dbUrl);
         await github.pushFiles(botUsername, slug, files, {
-          message: `Initialize ${name} from Usernode template`,
+          message: `Initialize ${name} from Homeroom template`,
         });
 
         await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
@@ -143,7 +156,7 @@ async function createApp(config, appRow) {
             parsed.owner, parsed.repo, '.claude/settings.json', 'main');
           if (existing === null) {
             await github.pushFiles(parsed.owner, parsed.repo, getConnectorScaffoldFiles(), {
-              message: 'Add Usernode connector permissions',
+              message: 'Add Homeroom connector permissions',
             });
             log.info('app-creator', 'Added connector scaffold to imported repo',
                      { appId, slug, repoUrl });
@@ -242,12 +255,10 @@ async function createApp(config, appRow) {
 }
 
 // Shared deploy tail used by BOTH createApp and app-forker.forkApp.
-// Note that means a FORK also reports the 'build' and 'deploy' phases
-// (never 'database'/'repository' — the forker stages those itself). That
-// is inert today: the fork dialog still closes on its 201, and the
-// progress store only records broadcasts for the slug it was explicitly
-// pointed at. It is deliberately left that way rather than gated, so
-// giving fork-app.tsx the same progress view is a frontend-only change.
+// A fork reports its own 'database' and 'repository' phases before it gets
+// here; this helper reports the shared 'build' and 'deploy' phases. Both the
+// create and fork dialogs follow the same progress store, so the full
+// operation remains visible even though provisioning is asynchronous.
 // Preconditions: the app's working tree is on disk at `tempDir`, its
 // per-app Postgres DB exists and `dbUrl` connects to it, and (for a
 // fork) any copied non-private secrets are already in app_secrets. This
@@ -255,7 +266,11 @@ async function createApp(config, appRow) {
 // on missing required secrets, then builds + runs + health-checks the
 // production container and flips the row to `running`. Cleans up
 // `tempDir` on every exit path.
-async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
+async function finalizeDeploy(config, options) {
+  return withBuildUse(config, () => finalizeDeployInner(config, options));
+}
+
+async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
   const pool = getPool(config);
   const containerName = `usernode-app-${slug}`;
   const imageName = `usernode-app-${slug}:latest`;
@@ -415,4 +430,4 @@ async function recordFailure(pool, appId, failure) {
   }
 }
 
-module.exports = { createApp, finalizeDeploy };
+module.exports = { createApp, finalizeDeploy, reportPhase, endPhases };

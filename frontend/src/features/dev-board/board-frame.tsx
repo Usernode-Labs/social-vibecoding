@@ -60,16 +60,24 @@
 
 import { useRef } from 'react';
 
-import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
+import type { ReactNode } from 'react';
 
+import {
+  AppWindowIcon, ChatIcon, ChevronRightIcon, GitHubIcon, KeyIcon,
+  PencilSquareIcon, UserGroupIcon,
+} from '@/components/ui/icons';
+
+import { DevActionsRow } from './actions-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
-import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
+import { lockedNoticeStore, lockedNoticeText, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
+  illustrationApp?: any;
+  canManageIllustration?: boolean;
   /** `AppView.appData?.self_hosted` — gates the "Dev" caption and several rows. */
   selfHosted: boolean;
   /** `AppView.readOnly`. */
@@ -84,43 +92,6 @@ export interface DevBoardFrameProps {
   cardHoverCls: string;
 }
 
-/**
- * `AppView._plusMenuHeading(label, key, divider)`, as JSX.
- *
- * Still a `<div>`, not a `<button>`, and for the same reason the template said
- * so: `_wirePlusMenu` collects `button[data-plus]` for the touch action sheet,
- * so anything that is not an action must not be a button or it would arrive in
- * that sheet as a tappable row that does nothing. It does carry
- * `data-plus-group`, which is how the sheet picks headings up in DOM order.
- */
-function PlusMenuHeading({
-  label,
-  groupKey,
-  divider,
-}: {
-  label: string;
-  groupKey: string;
-  divider: boolean;
-}) {
-  return (
-    <div
-      data-plus-group={groupKey}
-      className={
-        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
-        (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
-      }
-    >
-      {label}
-    </div>
-  );
-}
-
-/** The shared row shell for every `data-plus` action. */
-const PLUS_ROW_CLS =
-  'w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
-const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
-const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
 
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
@@ -146,12 +117,11 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * between them is frozen at mount rather than followed live. A view toggle
  * does not re-pick: by then the real board owns the node.
  *
- * The second node the feed form used to carry — `#gc-merged`, the Completed
- * block — is gone: completed work is ordinary activity in the Feed's own
- * stream now (see `AppView._feedItems`), and the kanban Done column renders
- * its own.
+ * The list form is the Workshop's (`#dev-workshop`, features/dev-board/
+ * workshop/workshop.tsx), which replaced the Activity feed as the Dev
+ * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_FEED_INITIAL = { __html: '<div id="dev-feed">' + skeletonListHtml(3) + '</div>' };
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**
@@ -170,7 +140,7 @@ function useBodyInitial(): { __html: string } {
   const mode = useDevViewMode();
   const chosen = useRef<{ __html: string } | null>(null);
   if (!chosen.current) {
-    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_FEED_INITIAL;
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
   }
   return chosen.current;
 }
@@ -185,14 +155,12 @@ function useBodyInitial(): { __html: string } {
  * chat: the board's recency stream took the name, and the screen it displaced
  * was left reachable only from a notification.
  *
- * It draws on the KANBAN only, because the Feed draws the same fact better.
- * A feed is a stream of what just happened and a conversation is one of the
- * things that just happened, so there it is an ordinary activity row sorted by
- * its latest message (`AppView._discussionCardModel`); a pinned tile above
- * that stream would be saying the discussion is not activity, immediately
- * above the row proving it is. The kanban is a prioritised worklist with no
- * such slot, so there the card is chrome above the columns — which is exactly
- * what it always was.
+ * It draws on the KANBAN only. The Workshop draws the same fact as one of its
+ * own rows (`AppView._discussionCardModel`), in its own place between the
+ * strips and the themes, so a second copy above the host would be the
+ * discussion twice. The kanban is a prioritised worklist with no such slot,
+ * so there the card is chrome above the columns — which is exactly what it
+ * always was.
  *
  * ── An anchor ──────────────────────────────────────────────────────────
  *
@@ -241,6 +209,8 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
 }
 
 export function DevBoardFrame({
+  illustrationApp,
+  canManageIllustration,
   selfHosted,
   readOnly,
   canCollaborate,
@@ -248,10 +218,22 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
-  const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  const { locked, inviteOnly } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  // The toolbar's home depends on the surface — see the DevActionsRow render
+  // below. Subscribing the frame to the mode is safe for the one node this
+  // file hands to the module: `#dev-body`'s `dangerouslySetInnerHTML` object
+  // is ref-stable (useBodyInitial), so a re-render never rewrites it.
+  const mode = useDevViewMode();
   const bodyInitial = useBodyInitial();
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          THE BOARD IS THE STRIP. The dev area is drawn on the lift ladder the
+          session view already uses (`.dc-lift` in app.css): this column is
+          the frosted strip on the wallpaper, and a topic or the Discussion
+          opens as the sheet rising on it (./topic-frame.tsx, ./chat-frame.tsx).
+          Nothing inside the column changes.
+      */}
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
@@ -275,132 +257,23 @@ export function DevBoardFrame({
           around each repaint would be a race waiting to happen. Keeping BOTH
           the filter host and the button up here means the row is stable, React
           never reconciles inside the host, and the module never writes outside
-          it. `_renderKanbanFilterBar()` fills it on kanban and
-          `_clearKanbanFilterBar()` empties it on the feed, which has no filters.
+          it. `_renderKanbanFilterBar()` fills the shared Board/Activity strip.
       */}
-      <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
-        {/*
-            Legacy innerHTML host for the filter chips. Ships EMPTY and is
-            filled by AppView._renderKanbanFilterBar(); `empty:hidden` keeps it
-            from claiming the row's width on the feed, where it stays empty.
-        */}
-        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
-        {/*
-            `ml-auto` is load-bearing on the FEED: the filter host above is
-            `empty:hidden` there, so it stops claiming the row's width and
-            without the margin the "+" (the row's only remaining item) would
-            collapse to the LEFT edge — where its `right-0` dropdown then
-            opens off the left side of the viewport. On kanban the host's
-            `flex-1` already fills the row, so the auto margin is a no-op.
-        */}
-        <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
-          <button
-            id="dev-plus-btn"
-            aria-haspopup="true"
-            aria-expanded="false"
-            className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
-            title={
-              readOnly
-                ? 'Fork this app'
-                : 'Propose a change, file an issue, or manage this app'
-            }
-          >
-            +
-          </button>
-          <div
-            id="dev-plus-menu"
-            className="hidden absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
-          >
-            {readOnly ? null : (
-              <>
-                <PlusMenuHeading label="Build a change" groupKey="build" divider={false} />
-                <button data-plus="proposal" className={PLUS_ROW_CLS}>
-                  <span className={PLUS_TITLE_CLS}>Propose a change</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Start a dev session. You pick where it is built, and can change that
-                    any time
-                  </span>
-                </button>
-                {canCollaborate ? (
-                  <button
-                    data-plus="import-pr"
-                    className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}
-                  >
-                    <span className={PLUS_TITLE_CLS}>Import Feature from a PR</span>
-                    <span className={PLUS_SUB_CLS}>
-                      Your computer &middot; your own tools. You have already built it, so
-                      there is no chat for this one
-                    </span>
-                  </button>
-                ) : null}
-                <button data-plus="issue" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className={PLUS_TITLE_CLS}>New issue</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Report a problem or idea without building it yourself
-                  </span>
-                </button>
-                <PlusMenuHeading
-                  label="Settings &amp; rules"
-                  groupKey="settings"
-                  divider={true}
-                />
-                {showsMembers ? (
-                  <button data-plus="members" className={PLUS_ROW_CLS}>
-                    {selfHosted ? (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Proposal approvals</span>
-                        <span className={PLUS_SUB_CLS}>
-                          Who approves proposals and how many approvals are needed
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Members &amp; visibility</span>
-                        <span className={PLUS_SUB_CLS}>Who can build and see this app</span>
-                      </>
-                    )}
-                  </button>
-                ) : null}
-                <button
-                  data-plus="rename"
-                  className={PLUS_ROW_CLS + (showsMembers ? PLUS_ROW_DIVIDER_CLS : '')}
-                >
-                  <span className={PLUS_TITLE_CLS}>App display name</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Renames are proposals, applied once voted in
-                  </span>
-                </button>
-                <button data-plus="secrets" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {selfHosted ? 'Platform variables' : 'App secrets'}
-                    {/* Filled by AppView.refreshDevChatSecretsState() — a
-                        legacy-owned leaf, so it renders empty and React never
-                        writes its text again. */}
-                    <span
-                      id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
-                    ></span>
-                  </span>
-                  <span className={PLUS_SUB_CLS}>
-                    {selfHosted
-                      ? "The platform's own env, applied on its next deploy"
-                      : 'Set or update secret values'}
-                  </span>
-                </button>
-              </>
-            )}
-            {selfHosted ? null : (
-              <button
-                data-plus="fork"
-                className={PLUS_ROW_CLS + (readOnly ? '' : PLUS_ROW_DIVIDER_CLS)}
-              >
-                <span className={PLUS_TITLE_CLS}>Fork this app</span>
-                <span className={PLUS_SUB_CLS}>Stand up your own independent copy</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* The toolbar. On the WORKSHOP it renders inside that surface's own
+          pane, directly above its By category / By stage tabs and sticky with
+          them — see ./workshop/workshop.tsx — so this row would be an empty
+          strip of chrome here. Rendering exactly one of the two is also what
+          keeps #dev-actions / #dev-plus-btn / #dev-plus-menu unique ids. */}
+      {mode === 'workshop' ? null : (
+        <DevActionsRow
+          illustrationApp={illustrationApp}
+          canManageIllustration={canManageIllustration}
+          selfHosted={selfHosted}
+          readOnly={readOnly}
+          canCollaborate={canCollaborate}
+          showsMembers={showsMembers}
+        />
+      )}
 
       {/* The card list: locked notice, general-chat card, session rows, the
           intermixed feed, and the Completed section. */}
@@ -418,16 +291,19 @@ export function DevBoardFrame({
         */}
         <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           {locked ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
-              App is locked. An admin must approve any proposal before it applies.
+            // #1896: who can build here, not a warning. The old amber "locked"
+            // line read as "you cannot build on this app", which was never
+            // true — the lock only adds an admin's approval to the vote.
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              {lockedNoticeText(inviteOnly)}
             </div>
           ) : null}
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
-        {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
-            #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
-            the swap. The wrapper node is stable across tab switches so the
-            delegated card-open handler (bound by the module) survives both. */}
+        {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts
+            #dev-kanban-board. _repaintDevBody() owns the swap. The wrapper
+            node is stable across tab switches so the delegated card-open
+            handler (bound by the module) survives both. */}
         <div
           id="dev-body"
           className="px-3 py-2"

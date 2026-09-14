@@ -124,6 +124,33 @@ test('an app that has never merged anything reads as 0 / null, not undefined', a
   }
 });
 
+test('the app list exposes sole-contributor delete eligibility (#1897)', async () => {
+  let count = 1;
+  poolQueryHandler = async (sql) => {
+    const source = String(sql);
+    if (/WITH contributor_ids AS/.test(source) && /COUNT\(\*\)::int AS cnt/.test(source)) {
+      return { rows: [{ app_id: 1, cnt: count }] };
+    }
+    if (/FROM apps a/.test(source)) {
+      return { rows: [appRow({ created_by: VIEWER.id, is_collaborator: true })] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    let result = await fetchApps(server);
+    assert.equal(result.body.apps[0].contributor_count, 1);
+    assert.equal(result.body.apps[0].can_delete, true);
+
+    count = 2;
+    result = await fetchApps(server);
+    assert.equal(result.body.apps[0].contributor_count, 2);
+    assert.equal(result.body.apps[0].can_delete, false);
+  } finally {
+    server.close();
+  }
+});
+
 test('SQL counts merged sessions, and dates the NULL-merged_at history', async () => {
   capturedQueries = [];
   poolQueryHandler = async () => ({ rows: [] });

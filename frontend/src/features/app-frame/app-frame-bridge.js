@@ -58,6 +58,7 @@ export const appFrameBridge = {
       slug,
       active: true,
       faded: !!faded,
+      background: appFrameStore.get().slug === slug ? appFrameStore.get().background : '',
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
     });
     return !!appFrameRefs.iframe;
@@ -93,7 +94,7 @@ export const appFrameBridge = {
   },
   /** Drop the frame entirely: the app is being left, not parked. */
   unmount() {
-    appFrameStore.set({ slug: '', active: false, faded: true, cover: null });
+    appFrameStore.set({ slug: '', active: false, faded: true, background: '', cover: null });
   },
 
   slug() {
@@ -105,6 +106,12 @@ export const appFrameBridge = {
   },
   hasFrame() {
     return !!appFrameRefs.iframe;
+  },
+
+  /** Paint iOS's iframe overscroll surface without navigating or remounting it. */
+  setBackground(background) {
+    if (!appFrameRefs.iframe) return;
+    appFrameStore.set({ background: background || '' });
   },
 
   /**

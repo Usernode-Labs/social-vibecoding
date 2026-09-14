@@ -84,7 +84,7 @@ function makeAppView() {
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -307,7 +307,7 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
       count: 2,
       chips: [
         { key: 'priority', label: 'High priority' },
-        { key: 'needsVote', label: 'Needs my vote' },
+        { key: 'needsVote', label: 'Waiting on you' },
       ],
     },
   );
@@ -473,7 +473,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -506,7 +506,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
@@ -528,6 +528,35 @@ test('persistence helpers survive a storage-less environment', () => {
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
   AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
+});
+
+test('?q= seeds the search on the first load, and only the first (#2090)', () => {
+  const store = makeMemoryStore();
+  const sandbox = makeCtx({ sessionStorage: store });
+  const AppView = sandbox.__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  // The sandbox has no URL of its own; hand it the deep link.
+  sandbox.location = { search: '?demo=1&q=%20ripple%20' };
+  sandbox.URLSearchParams = URLSearchParams;
+  // A falsy slug never touches storage — and does not spend the seed either.
+  assert.deepEqual(plain(AppView._loadKanbanFilters('')), none);
+  assert.equal(AppView._loadKanbanFilters('my-app').q, 'ripple', 'trimmed, over the stored set');
+  // Written straight to storage, so a surface switch restores it exactly as
+  // it would a typed search…
+  assert.equal(JSON.parse(store.getItem(key)).q, 'ripple');
+  // …and the viewer's clearing of it is the last word, though the URL still
+  // says `?q=ripple` on every one of these loads. Held rather than consumed,
+  // the seed would put the search straight back — #2090 in a new coat.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(AppView._loadKanbanFilters('my-app').q, '', 'a cleared search stays cleared');
+  assert.equal(AppView._loadKanbanFilters('other-app').q, '', 'and no other app inherits it');
+  // Blank is absent: nothing seeded, nothing written.
+  const blank = makeCtx({ sessionStorage: makeMemoryStore() });
+  blank.location = { search: '?q=%20%20' };
+  blank.URLSearchParams = URLSearchParams;
+  assert.deepEqual(plain(blank.__AppView._loadKanbanFilters('my-app')), none);
+  assert.equal(blank.sessionStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
 });
 
 // ── Session cards have only the filters their data supports ─────────────────
@@ -618,7 +647,7 @@ test('priority / category are a VISIBLE no-op on session cards', () => {
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Dev sessions don&#x27;t carry priority, category or assignee/);
+  assert.match(html, /Regular dev sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself keeps the attribute filters as an explicit no-op.
@@ -636,6 +665,50 @@ test('a named person filters sessions by author while Unassigned stays a no-op',
   assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'sam' }), false);
   assert.equal(AppView._devCardMatches('session', session,
     { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), true);
+});
+
+test('an imported Underway PR uses proposal attributes, not regular-session exemptions', () => {
+  const AppView = makeAppView();
+  const imported = {
+    id: 88,
+    source: 'imported',
+    session_title: 'Imported checks work',
+    username: 'maya',
+    priority: { top: 'high', count: 1 },
+    category: { top: 'bug', count: 1 },
+    assignee: { top: 'sam', count: 1 },
+  };
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'high', category: 'bug', assignee: 'sam' }), true);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'low' }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, needsVote: true }), false, 'voting has not started yet');
+});
+
+test('imported Underway cards do not trigger the regular-session filter exception note', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._archivedSessions = [];
+  AppView._sharedSessions = [];
+  AppView._mySessions = [{
+    id: 88, source: 'imported', session_title: 'Imported checks work', status: 'active',
+    priority: { top: 'high', count: 1 },
+    created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z',
+  }];
+  AppView._kanbanFilters = { ...none, priority: 'high' };
+  const html = kanbanHtml(AppView);
+  assert.match(html, /Imported checks work/);
+  assert.doesNotMatch(html, /Regular dev sessions don&#x27;t carry/);
 });
 
 // ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────
@@ -742,7 +815,7 @@ test('a repaint republishes the whole strip: count and chips track the filters',
       { key: 'q', label: 'Search: ripple' },
       { key: 'priority', label: 'High priority' },
       { key: 'assignee', label: 'Unassigned' },
-      { key: 'needsVote', label: 'Needs my vote' },
+      { key: 'needsVote', label: 'Waiting on you' },
     ],
   );
 });

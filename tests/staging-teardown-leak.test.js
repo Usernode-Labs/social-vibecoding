@@ -33,6 +33,7 @@ function stub(id, exports) {
 const ids = {
   logger: require.resolve('../src/services/logger'),
   docker: require.resolve('../src/services/docker'),
+  kubernetes: require.resolve('../src/services/kubernetes'),
   caddy: require.resolve('../src/services/caddy'),
   dbManager: require.resolve('../src/services/db-manager'),
   github: require.resolve('../src/services/github'),
@@ -91,6 +92,12 @@ function nullingQueries() {
 
 function installStubs() {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.kubernetes, {
+    async deleteApplication(_config, name) {
+      fx.stopCalls.push({ nameOrId: name, runtimeKind: 'kubernetes' });
+      if (!fx.removed) throw new Error('Kubernetes API unavailable');
+    },
+  });
   stub(ids.docker, {
     STAGING_STOP_GRACE_SEC: 2,
     STOP_GRACE_SEC: 5,
@@ -296,3 +303,49 @@ test('archiveSession: nulls the columns exactly once on a clean teardown', async
   assert.equal(result.archived, true);
   assert.equal(nullingQueries().length, 1);
 });
+
+for (const action of ['idle-gc', 'archive']) {
+  for (const removed of [true, false]) {
+    test(`Kubernetes ${action}: ${removed ? 'reclaims preview and database' : 'keeps database and reference after removal failure'}`, async () => {
+      setup();
+      fx.removed = removed;
+      Object.assign(fx.sessionRow, {
+        status: 'promoted', staging_container_id: null,
+        staging_runtime_kind: 'kubernetes', staging_runtime_name: 'sv-preview-10-s4242',
+      });
+      const lifecycle = loadLifecycle();
+      if (action === 'archive') {
+        assert.equal((await lifecycle.archiveSession({ pool: fakePool, sessionId: 4242 })).archived, true);
+      } else {
+        assert.equal((await lifecycle.teardownStagingForSession({ pool: fakePool, sessionId: 4242 })).torn, removed);
+      }
+      assert.deepEqual(fx.stopCalls, [{ nameOrId: 'sv-preview-10-s4242', runtimeKind: 'kubernetes' }]);
+      assert.equal(fx.dropCalls.length, removed ? 1 : 0);
+      assert.equal(nullingQueries().length, removed ? 1 : 0);
+      if (action === 'idle-gc') assert.equal(fx.pushes.length, removed ? 1 : 0);
+    });
+  }
+}
+
+for (const removed of [true, false]) {
+  test(`discarding a withdrawn imported Kubernetes preview: ${removed ? 'removes the fresh runtime first' : 'preserves references and database when removal fails'}`, async () => {
+    const staging = setup();
+    fx.removed = removed;
+    const { discardStagingResult } = require('../src/services/pr-import-sync');
+    await discardStagingResult({
+      staging,
+      // This is the object from BEFORE the first build. Only the result
+      // knows the Kubernetes identity, even though the build persisted it.
+      session: { id: 4242, staging_container_id: null, staging_runtime_name: null },
+      app: APP,
+      result: {
+        containerId: null, runtimeKind: 'kubernetes', runtimeName: 'sv-preview-10-s4242',
+        stagingUrl: 'https://x--s4242--abc123.example',
+      },
+    });
+    assert.deepEqual(fx.stopCalls, [{ nameOrId: 'sv-preview-10-s4242', runtimeKind: 'kubernetes' }]);
+    assert.equal(fx.dropCalls.length, removed ? 1 : 0);
+    assert.equal(nullingQueries().length, removed ? 1 : 0);
+    if (removed) assert.equal(fx.dropCalls[0], 'app_tier-lists-abc123_staging_s4242_abc123');
+  });
+}

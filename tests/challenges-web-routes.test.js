@@ -63,6 +63,7 @@ function collapse(sql) {
 function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
+    if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
 
     // optionalSessionAuth's session-cookie resolution.
     if (sql.includes('FROM sessions s JOIN users u')) {

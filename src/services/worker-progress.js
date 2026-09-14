@@ -18,6 +18,7 @@ function set(sessionId, text, { model, backend, provider } = {}) {
     backend: backend || prev?.backend || null,
     provider: provider || prev?.provider || null,
     estimate: prev?.estimate || null,
+    spend: prev?.spend || null,
   });
 }
 
@@ -96,6 +97,17 @@ function clearEstimate(sessionId) {
   prev.estimate = null;
 }
 
+// Same lifetime as the coding progress: retained for reloads, removed by
+// the existing turn cleanup. Contains numbers only, never streamed content.
+function setSpend(sessionId, spend) {
+  if (!sessionId) return;
+  if (!progress.has(sessionId)) {
+    if (!spend) return;
+    set(sessionId, '');
+  }
+  progress.get(sessionId).spend = spend;
+}
+
 function get(sessionId) {
   return progress.get(sessionId) || null;
 }
@@ -108,4 +120,4 @@ function all() {
   return Array.from(progress.entries()).map(([sessionId, p]) => ({ sessionId, ...p }));
 }
 
-module.exports = { set, setEstimate, clearEstimate, get, clear, all };
+module.exports = { setSpend, set, setEstimate, clearEstimate, get, clear, all };

@@ -13,8 +13,9 @@
  * disable-on-click, its refetch and its status reporting, so the component
  * hands it the id and the button and forgets.
  *
- * Markup is like-for-like with the DOM the module built — same classes, same
- * order, same two text nodes.
+ * Credential-row markup is like-for-like with the DOM the module built — same
+ * classes, same order, same two text nodes. The local-agent setup guide lives
+ * beside this host in sections/cli.tsx so it never depends on list state.
  */
 
 import { useStoreState } from '../../lib/use-store-state';

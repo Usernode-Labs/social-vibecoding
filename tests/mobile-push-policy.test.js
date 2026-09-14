@@ -163,13 +163,13 @@ test('each kind renders its own title and body from send-time context', () => {
       '"Fix login redirect loop" finished. Review it while it\'s fresh'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
-      'Take a look. Your vote decides'],
+      '@alice would love your eyes on this'],
     ['check_failed', CONTEXT,
       'Checks failed on "Fix login redirect loop" · MyPage',
       'Needs a fix before it can merge'],
     ['stale_pr', CONTEXT,
-      '"Fix login redirect loop" is waiting for votes · MyPage',
-      'Nudge collaborators or share the preview'],
+      '"Fix login redirect loop" is waiting for eyes · MyPage',
+      'Share the preview or ask a friend to try it'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
@@ -206,14 +206,14 @@ test('a stale proposal names how long it has been waiting when the promotion tim
   }).notification.body;
   assert.equal(
     bodyAfter(3 * day + 60_000),
-    'No votes in 3 days. Nudge collaborators or share the preview'
+    'Nobody has weighed in for 3 days. Share the preview or ask a friend to try it'
   );
   assert.equal(
     bodyAfter(day + 60_000),
-    'No votes in 1 day. Nudge collaborators or share the preview'
+    'Nobody has weighed in for 1 day. Share the preview or ask a friend to try it'
   );
   // Under a day, or promoted_at missing entirely: the nudge stands alone.
-  assert.equal(bodyAfter(60_000), 'Nudge collaborators or share the preview');
+  assert.equal(bodyAfter(60_000), 'Share the preview or ask a friend to try it');
 });
 
 test('machine-generated branch names never appear as a label', () => {
@@ -284,7 +284,7 @@ test('missing context degrades to the generic notification, never a throw', () =
   for (const context of [undefined, {}, { appName: 42, sourceUsername: {} }]) {
     const message = buildMessage({ ...INPUT, kind: 'mention', context });
     assert.deepEqual(message.notification, {
-      title: 'Usernode', body: 'You have new activity',
+      title: 'Homeroom', body: 'You have new activity',
     });
   }
   // System kinds keep their kind-specific title even without app/session data.
@@ -331,4 +331,14 @@ test('enabled delivery requires a matching Firebase project and explicit environ
     firebaseProjectId: 'social-prod',
     firebaseServiceAccountJsonB64: encoded,
   }));
+});
+
+test('test alert uses explicit copy with the normal opaque push envelope', () => {
+  const message = buildMessage({ ...INPUT, kind: 'test_alert' });
+  assert.deepEqual(message.notification, {
+    title: 'Homeroom test alert',
+    body: 'Your phone can receive push notifications from Homeroom.',
+  });
+  assert.equal(message.data.notification_id, '42');
+  assert.equal(message.android.notification.channelId, 'social_activity');
 });

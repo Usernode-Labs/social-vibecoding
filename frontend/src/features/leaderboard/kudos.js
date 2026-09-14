@@ -18,6 +18,8 @@
 // event arrives so any visible button gets its count + state bumped
 // without a panel reload.
 
+import { agoStamp } from '../../lib/timestamp';
+
 const Kudos = {
   // appSlug => Map<sessionId, { count, my_kudos, givers? }>. We cache
   // the giver list per session so re-hovering doesn't refetch.
@@ -177,10 +179,14 @@ const Kudos = {
     }
     const items = entry.givers.map((g) => {
       const who = escapeHtml(g.username || 'someone');
-      const when = relativeTime(g.createdAt);
+      // #1808: the age, with the unelided instant one hover away.
+      const when = agoStamp(g.createdAt);
+      const stamp = when.text
+        ? `<span class="text-zinc-500 dark:text-zinc-400" title="${escapeAttr(when.title)}">${escapeHtml(when.text)}</span>`
+        : '';
       return `<div class="flex items-center justify-between gap-2 py-0.5">
         <span class="font-medium">@${who}</span>
-        <span class="text-zinc-500 dark:text-zinc-400">${when}</span>
+        ${stamp}
       </div>`;
     }).join('');
     popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
@@ -480,16 +486,9 @@ function escapeAttr(str) {
   return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
-function relativeTime(ts) {
-  if (!ts) return '';
-  const then = new Date(ts).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, now - then) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+// `relativeTime` lived here — the fourth hand-rolled copy of the ago ladder,
+// and one that never stopped being relative, so a kudos from last spring read
+// "412d ago". It is `agoStamp` from lib/timestamp.ts now (#1808).
 
 // Still published as a global. This module rides in the React bundle as of
 // #1083 chunk F, but app.js (Budget.init on authed boot, applyLiveUpdate on

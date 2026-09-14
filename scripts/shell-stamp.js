@@ -170,6 +170,74 @@ function readBuildMeta(html) {
   return m ? m[1] : null;
 }
 
+// ── Build-scoped asset URLs ───────────────────────────────────────────
+//
+// The meta above says which build the DOCUMENT is. This is how its assets
+// say it: a deployed document loads every script and stylesheet from
+// `/b/<build sha>/…` instead of `/js/…`, so the URL changes exactly when the
+// build does. That is the property that lets src/services/static-cache.js
+// answer those requests with a year-long `immutable` Cache-Control instead
+// of `no-cache, must-revalidate` — and the reason to want that is not the
+// round trip (the service worker already answers a same-build asset from
+// its cache without one) but V8's compiled-code cache: the browser keeps it
+// only for a response it did not have to revalidate, so under the old
+// policy every load PRODUCED a code cache for the 1.3MB shell bundle and
+// never once consumed it. Measured warm at 4x CPU that was 81ms of the
+// shell's boot, per load, for nothing.
+//
+// `dev` has no build id, so a checkout's document keeps the plain paths and
+// today's policy: an edit to public/js/app.js must still show up on the next
+// reload. Only a document generated with GIT_SHA gets the prefix, and only
+// on the asset kinds a build owns — scripts and stylesheets. The document
+// itself, the manifest and the icons keep their fixed URLs: the document is
+// the one thing that must stay fresh, and the manifest's URL is the
+// installed PWA's identity. /sw.js is excluded by name: its URL is the
+// registration, and a per-build worker URL would register a new worker per
+// deploy instead of updating the one there is.
+//
+// frontend/src/lib/asset-url.ts is the browser-side twin (the prerendered
+// <script> tags at the end of <body> hydrate through it) and must produce
+// byte-identical strings; tests/build-scoped-assets.test.js holds the two
+// to that.
+const BUILD_SCOPED_PREFIX = '/b/';
+const BUILD_SCOPED_PATH_RE = /^\/b\/([0-9a-f]{7,40})(\/.*)$/;
+
+function isBuildScopedAssetPath(pathname) {
+  const p = String(pathname == null ? '' : pathname);
+  if (p === '/sw.js') return false;
+  return /\.(?:js|css)$/i.test(p);
+}
+
+/** `/js/app.js` → `/b/<sha>/js/app.js` for a build; unchanged for `dev` or a non-asset. */
+function buildScopedAssetUrl(pathname, sha) {
+  const id = normalizeBuildSha(sha);
+  if (id === 'dev' || !isBuildScopedAssetPath(pathname)) return pathname;
+  // Already scoped (a document rewritten twice) stays as it is: never /b/x/b/x/.
+  if (parseBuildScopedPath(pathname)) return pathname;
+  return `${BUILD_SCOPED_PREFIX}${id}${pathname}`;
+}
+
+/** `{ build, path }` for a build-scoped pathname, or null for any other. */
+function parseBuildScopedPath(pathname) {
+  const m = BUILD_SCOPED_PATH_RE.exec(String(pathname == null ? '' : pathname));
+  return m ? { build: m[1], path: m[2] } : null;
+}
+
+// Rewrite the local script srcs and stylesheet hrefs of a document for a
+// build. Only same-origin absolute paths, only the asset kinds above, and
+// nothing else in the markup is touched — the head's tags keep their order
+// and every other attribute, which is the whole reason build-shell.mjs
+// carries src/head.html over as a string.
+const ASSET_TAG_RE = /(<(?:script|link)\b[^>]*?\s(?:src|href)=")(\/[^"]*)(")/g;
+
+function prefixShellAssetUrls(html, sha) {
+  const id = normalizeBuildSha(sha);
+  if (id === 'dev') return String(html);
+  return String(html).replace(ASSET_TAG_RE, (match, before, pathname, after) => (
+    isBuildScopedAssetPath(pathname) ? `${before}${buildScopedAssetUrl(pathname, id)}${after}` : match
+  ));
+}
+
 module.exports = {
   ROOT,
   HTML_OUTPUT,
@@ -186,4 +254,9 @@ module.exports = {
   normalizeBuildSha,
   formatBuildMeta,
   readBuildMeta,
+  BUILD_SCOPED_PREFIX,
+  isBuildScopedAssetPath,
+  buildScopedAssetUrl,
+  parseBuildScopedPath,
+  prefixShellAssetUrls,
 };

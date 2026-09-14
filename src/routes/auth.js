@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const https = require('https');
@@ -5,7 +6,20 @@ const http = require('http');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
+const {
+  loginBurstLimiter,
+  loginSustainedLimiter,
+  loginIdentityLimiter,
+  registerLimiter,
+  otpRequestLimiter,
+  otpRequestEmailLimiter,
+  otpVerifyLimiter,
+  passwordResetRequestLimiter,
+  passwordResetRequestEmailLimiter,
+  passwordResetConfirmLimiter,
+  walletAuthLimiter,
+  walletCheckLimiter,
+} = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
@@ -84,6 +98,11 @@ const SIGNUP_COOKIE = 'usernode_signup';
 // though its transaction also revokes the user's older server sessions.
 const SESSION_MINT_PATHS = [
   '/api/auth/login',
+  // Verifying an email code signs an already-established account straight in,
+  // so it mints a session and belongs here. `/api/auth/otp/request` does not:
+  // the wallet-recovery dialog and the mobile wallet-claim flow both request
+  // codes while signed in, and a mint guard there would break claiming.
+  '/api/auth/otp/verify',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
@@ -165,7 +184,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/login', authLimiter, async (req, res) => {
+  router.post('/api/auth/login', loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -220,7 +239,7 @@ function authRoutes(config) {
       let matchedBy = null;
       for (const candidate of candidates) {
         // At most 2 compares (one email match + one username match), so
-        // the cost posture behind authLimiter is unchanged.
+        // the cost posture behind the login limiters is unchanged.
         if (await bcrypt.compare(password, candidate.row.password)) {
           user = candidate.row;
           matchedBy = candidate.matchedBy;
@@ -253,7 +272,7 @@ function authRoutes(config) {
   // narrow, ten-minute continuation in an HttpOnly cookie; password setup
   // consumes it and creates the ordinary web session in one transaction.
   // Browser JavaScript never receives a mobile bearer.
-  router.post('/api/auth/otp/request', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
       await emailSignup.requestCode(pool, config, req.body?.email);
       return res.json({ ok: true });
@@ -266,11 +285,40 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/otp/verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
-      const verified = await emailSignup.verifyCode(pool, req.body?.email, req.body?.code);
+      const verified = await emailSignup.verifyCode(
+        pool,
+        req.body?.email,
+        req.body?.code,
+        { createSession }
+      );
+      if (verified.next === 'signed-in') {
+        // The account already has a password, so there is nothing to set up.
+        // Clear any stale continuation and hand back the ordinary web session,
+        // shaped exactly like /api/auth/login's response.
+        clearSignupCookie(res);
+        createSessionCookie(res, verified.session.token, verified.session.expiresAt);
+        log.info('email-signup', 'Email code signed an existing account in', {
+          userId: verified.userId,
+          next: 'signed-in',
+        });
+        return res.json({
+          ok: true,
+          next: 'signed-in',
+          user: {
+            id: verified.user.id,
+            username: verified.user.username,
+            ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
+          },
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
-      return res.json({ ok: true });
+      log.info('email-signup', 'Email code verified, password setup pending', {
+        userId: verified.userId,
+        next: 'set-password',
+      });
+      return res.json({ ok: true, next: 'set-password' });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
         return res.status(422).json({ error: error.message, code: error.code });
@@ -280,7 +328,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/otp/set-password', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
     const password = req.body?.password;
     if (password !== req.body?.passwordConfirmation) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
@@ -310,7 +358,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/register', authLimiter, async (req, res) => {
+  router.post('/api/auth/register', registerLimiter, async (req, res) => {
     const { code, username, password } = req.body;
 
     if (!code?.trim() || !username?.trim() || !password) {
@@ -421,12 +469,21 @@ function authRoutes(config) {
     // already does one users lookup, and every request paying for a join
     // it never renders would be the wrong trade.
     let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
-    // Derived app-creation affordance: admins always can; everyone else
-    // can iff their live (non-errored) app count is below their quota
-    // (see users.app_quota in schema.sql). Computing the count here keeps
-    // the client contract a single boolean — the home screen reads only
-    // `canCreateApps` and needs no change as the quota feature lands.
-    let canCreateApps = !!req.user.isAdmin;
+    // App-creation quota: the same live (non-errored) app count enforced by
+    // POST /api/apps and /fork. Keep the numbers as well as the derived
+    // boolean so the create dialog can say "N of M used" instead of reducing
+    // the policy to an unexplained locked button. Full admins bypass the
+    // quota; view-only admins do not (the write routes use canAdminWrite too).
+    let allowance = {
+      quota: { used: null, limit: req.user.canAdminWrite ? null : req.user.appQuota, remaining: null },
+      canCreateApps: !!req.user.canAdminWrite,
+      requestedAt: null,
+    };
+    try {
+      allowance = await appAllowance.read(pool, req.user);
+    } catch (err) {
+      log.warn('auth', 'App allowance lookup failed', { message: err.message });
+    }
     // Preferred development flow (#1049). Read here rather than in the
     // per-request session hydration for the same reason as the profile
     // block above: this endpoint already pays for one users lookup, and
@@ -476,16 +533,6 @@ function authRoutes(config) {
       hasApiKey = true;
       keyLast4 = '7f2c';
     }
-    if (!canCreateApps) {
-      try {
-        const { rows: countRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = countRows[0]?.n ?? 0;
-        canCreateApps = (req.user.appQuota ?? 0) > 0 && liveCount < (req.user.appQuota ?? 0);
-      } catch {}
-    }
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
@@ -500,12 +547,13 @@ function authRoutes(config) {
         // string the admin panel / banners render.
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
-        // Derived per-user app-creation affordance: isAdmin || (live app
-        // count < app_quota). The home screen hides the "Create new app"
-        // affordance for anyone who can't create — see the canCreate
-        // helper in frontend/src/features/home/home.js. The numeric quota itself is only
-        // surfaced through the admin API.
-        canCreateApps,
+        // Derived per-user app-creation affordance. Kept for the home-screen
+        // treatment; the numbers below explain that state in the create
+        // dialog. A null used/remaining value means the count query was not
+        // available, never a fabricated zero.
+        canCreateApps: allowance.canCreateApps,
+        appCreationQuota: allowance.quota,
+        appQuotaRequestedAt: allowance.requestedAt,
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
@@ -611,6 +659,20 @@ function authRoutes(config) {
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: the allowance has two windows now, and the row's copy
+        // follows whichever one is binding. The daily cap binds in this
+        // fixture — the weekly one still has room — so the reviewed row
+        // reads exactly as it did before, with the window now stated
+        // rather than assumed.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 1360,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 4820,
         demo: true,
       });
     }
@@ -876,7 +938,7 @@ function authRoutes(config) {
           amount: 1,
           memo,
           confirmTitle: 'Link Wallet',
-          confirmSubtitle: 'Link your Usernode wallet to your Social Vibecoding account.',
+          confirmSubtitle: 'Link your Homeroom wallet to your Homeroom account.',
         },
         expiresAt: expiresAt.toISOString(),
       });
@@ -990,7 +1052,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature } = req.body || {};
     if (!pubkey || !challenge || !signature) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
@@ -1055,7 +1117,7 @@ function authRoutes(config) {
   //     username, so this pre-login endpoint is not a username oracle.
   //   - On success every existing session is deleted (a leaked/old session
   //     must not outlive a reset) and a fresh session is minted.
-  router.post('/api/auth/wallet-reset-verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-reset-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature, newPassword } = req.body || {};
     if (!pubkey || !challenge || !signature) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
@@ -1150,7 +1212,7 @@ function authRoutes(config) {
   //   - A new request overwrites any previous outstanding token (single
   //     outstanding reset per account), and the mail door's per-recipient
   //     throttle bounds how often that can be made to happen.
-  router.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
+  router.post('/api/auth/password-reset/request', passwordResetRequestLimiter, passwordResetRequestEmailLimiter, async (req, res) => {
     const email = String((req.body || {}).email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Email required' });
@@ -1166,12 +1228,15 @@ function authRoutes(config) {
         const token = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-        await pool.query(
+        const issued = await pool.query(
           `UPDATE users SET password_reset_token_hash = $1,
                             password_reset_expires_at = $2
-            WHERE id = $3`,
-          [tokenHash, expiresAt, user.id]
+            WHERE id = $3 AND email = $4 AND email_confirmed = TRUE AND is_admin = FALSE`,
+          [tokenHash, expiresAt, user.id, user.email]
         );
+        // The mailbox may have changed since the lookup. Never issue a
+        // recovery token to the former address after it has been replaced.
+        if (!issued.rowCount) return res.json({ ok: true });
         // Never throws (mail-door contract); a transport failure is logged
         // there and must not turn this into an account oracle.
         await mail.sendPasswordResetMail(config, user.email, token);
@@ -1195,7 +1260,7 @@ function authRoutes(config) {
   //     leaked session must not outlive a reset. No fresh session is minted
   //     — the link may have been opened anywhere; the user signs in with
   //     the password they just chose.
-  router.post('/api/auth/password-reset/confirm', authLimiter, async (req, res) => {
+  router.post('/api/auth/password-reset/confirm', passwordResetConfirmLimiter, async (req, res) => {
     const { token, newPassword } = req.body || {};
     const refuse = () => res.status(401).json({ error: 'Invalid or expired reset link' });
     if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return refuse();
@@ -1320,7 +1385,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-register', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-register', walletAuthLimiter, async (req, res) => {
     const { username, password, pubkey } = req.body || {};
     if (!username?.trim() || !password || !pubkey?.trim()) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
@@ -1376,7 +1441,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-link-login', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-link-login', walletAuthLimiter, async (req, res) => {
     const { username, password, pubkey } = req.body || {};
     if (!username?.trim() || !password || !pubkey?.trim()) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });

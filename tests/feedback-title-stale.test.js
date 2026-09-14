@@ -63,6 +63,11 @@ function makeEl(id) {
     addEventListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); },
     fire(ev, arg) { for (const fn of (listeners[ev] || [])) fn(arg); },
     setAttribute: () => {},
+    // A real element has this; #1603's clearDescriptionError is the first
+    // thing on these flows to call it. Recording is not needed here —
+    // tests/feedback-required-description.test.js is where the attribute
+    // pair is asserted.
+    removeAttribute: () => {},
     hasAttribute: () => false,
     querySelector: () => null,
     querySelectorAll: () => [],

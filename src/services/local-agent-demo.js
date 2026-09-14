@@ -24,6 +24,15 @@ function isStagingDemo(req) {
 // Two machines, because one is indistinguishable from a hardcoded string:
 // the reviewer needs to see that the block is a list, that labels differ, and
 // that a second machine on a different session is a normal state.
+//
+// Both `lastSeenAt` values stay SECONDS old on purpose (#1808). The Settings
+// row stamps that field with the shared relative helper, whose other branch
+// prints a date once the instant is a week back — but a lease is only listed
+// while `expires_at > NOW()`, and every heartbeat sets `expires_at` to
+// `NOW() + ttl`. So a machine in this list was last seen at most one TTL ago,
+// and a fixture with a week-old `lastSeenAt` would be modelling a state the
+// real query cannot return. The date branch is reviewable on the surfaces
+// that can actually reach it (the DM list, notifications, session rows).
 function demoLocalAgents() {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();

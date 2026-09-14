@@ -30,10 +30,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-);
+).replace(/^import \{ agoStamp \}.*$/m, '');
 
 function makeClassList(initial) {
   const classes = new Set(initial);
@@ -124,6 +130,7 @@ function load({ touch = true, fetchImpl } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.agoStamp = agoStamp;
   vm.runInContext(SRC, sandbox);
   const N = sandbox.Notifications;
   // Display/network plumbing outside this contract: the badge writes DOM the

@@ -3,7 +3,7 @@
 // Hosted MCP connector — handing work to the user's own coding agent.
 //
 // The shape of the problem: an app's repository is owned by the platform's
-// GitHub bot and is public, so no Usernode user has push access to it. The
+// GitHub bot and is public, so no Homeroom user has push access to it. The
 // connector cannot therefore say "here is a branch, push to it". What it
 // can do is:
 //
@@ -134,7 +134,7 @@ function agentLabel(agent) {
 //   update_branch    — the author's fork branch was pushed onto the
 //                      proposal's bot-owned branch in the app repository
 //   update_fork_head — the proposal's head already lived in the author's own
-//                      fork, so advancing the head Usernode TRACKS was the
+//                      fork, so advancing the head Homeroom TRACKS was the
 //                      whole write
 const SUBMIT_VIA = Object.freeze([
   'branch', 'branch_head_repo', 'mirror', 'patch', 'pr',
@@ -184,10 +184,10 @@ function stripEnvelope(value) {
 function linkUnavailable() {
   return fail(
     'github_link_unavailable',
-    'This Usernode deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
+    'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
     + 'yours — and work built by your own coding agent is only submitted under a verified account. Ask an admin '
     + 'to set GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel. In the '
-    + 'meantime, start_platform_build has Usernode build the change itself out of your daily Usernode credits — '
+    + 'meantime, start_platform_build has Homeroom build the change itself out of your daily Homeroom credits — '
     + 'that path needs no GitHub link.',
     { retryable: false }
   );
@@ -403,7 +403,7 @@ function buildGuidance({
   if (forkStatus === 'name_conflict') {
     steps.push(
       `Create your own copy of the app's code in one click: ${forkPageUrl} — name it `
-      + `"${forkRepo}", because you already have a repository called "${repo}" that Usernode `
+      + `"${forkRepo}", because you already have a repository called "${repo}" that Homeroom `
       + `never touches, then press "Create fork".${ghNote}`
     );
   } else if (forkStatus === 'missing') {
@@ -436,12 +436,12 @@ function buildGuidance({
   }
 
   steps.push('Paste the work order below into it, exactly as written.');
-  // The coding agent submits for itself now — the Usernode connector is
+  // The coding agent submits for itself now — the Homeroom connector is
   // attached to the user's ACCOUNT, not to this conversation, so a Claude
   // Code session has it too. The human is no longer the courier; they are
   // told what to expect and what to do if it doesn't happen.
   steps.push(
-    'It\'ll submit the change to Usernode itself when it\'s done — ask me any time and I\'ll check. '
+    'It\'ll submit the change to Homeroom itself when it\'s done — ask me any time and I\'ll check. '
     + 'If it says it can\'t submit, come back and tell me.'
   );
   return steps;
@@ -451,7 +451,7 @@ function buildGuidance({
 //
 // One block of text the assistant pastes into Claude Code on the web or
 // into Codex. It has to be complete on its own — the coding agent has no
-// connector, no Usernode credential and no memory of this conversation —
+// connector, no Homeroom credential and no memory of this conversation —
 // and since the platform no longer touches the user's GitHub account, it is
 // also what CREATES the fork and the branch.
 //
@@ -461,7 +461,7 @@ function buildGuidance({
 // with human steps buried inside a block the user was told to paste.
 //
 // `brief` arrives already clipped and already wrapped in the connector's
-// <untrusted-content> envelope by the caller: it is text other Usernode
+// <untrusted-content> envelope by the caller: it is text other Homeroom
 // users wrote, and it is on its way to a second agent that has a shell.
 //
 // NO TRIPLE-BACKTICK FENCES ANYWHERE IN HERE. The host assistant is told to
@@ -475,8 +475,18 @@ const CMD = '    ';
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
-  taskId, agentLabelText, platformRules, targetProposal,
+  taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
 }) {
+  // Where the connector is added, for the agent that finds it has none. The
+  // page carries the connector URL and the click-by-click steps for both
+  // chat products; the work order only has to point at it.
+  const settingsUrl = (() => {
+    try { return webPath ? `${new URL(webPath).origin}/#settings/connectors` : null; } catch { return null; }
+  })();
+  // Rendered as its own indented line, like a command, so a host that
+  // re-wraps prose still leaves the URL intact and copyable.
+  const connectorsPage = settingsUrl ? [`${CMD}${settingsUrl}`] : [];
+
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
   // needs it, and it used to be a footnote below the command it replaces.
@@ -486,7 +496,7 @@ function buildWorkOrder({
       setup.push(
         'FIRST, make the fork. Your GitHub account already has a repository with the',
         'app\'s name that is NOT a fork of it, so the fork needs a different name',
-        '(Usernode never touches that other repository).',
+        '(Homeroom never touches that other repository).',
         '',
         `In one click: open ${forkPageUrl}, change the repository-name field to`,
         `${forkRepo}, and press "Create fork".`,
@@ -495,11 +505,11 @@ function buildWorkOrder({
         `${CMD}gh repo fork ${upstreamSlug} --clone=false --fork-name ${forkRepo}`
       );
     } else if (forkStatus === 'unknown') {
-      // Usernode could not read GitHub, so it does not KNOW whether the
+      // Homeroom could not read GitHub, so it does not KNOW whether the
       // fork exists. Stating "you do not have one yet" as fact is how an
       // earlier run told someone to create a fork they already had.
       setup.push(
-        'FIRST, make sure you have a fork. Usernode could not read GitHub just now,',
+        'FIRST, make sure you have a fork. Homeroom could not read GitHub just now,',
         'so it does not know whether you already have one — the command below is a',
         'no-op if you do.',
         '',
@@ -642,8 +652,8 @@ function buildWorkOrder({
       '',
       'THE STARTING COMMIT IS IN THE APP\'S REPOSITORY, not in your fork — it is the',
       continuing
-        ? 'session\'s own head, on a branch only Usernode writes. Fetch it from upstream'
-        : 'proposal\'s own head, on a branch only Usernode writes. Fetch it from upstream',
+        ? 'session\'s own head, on a branch only Homeroom writes. Fetch it from upstream'
+        : 'proposal\'s own head, on a branch only Homeroom writes. Fetch it from upstream',
       'before you branch:',
       `${CMD}git fetch upstream ${baseSha}`,
       `${CMD}git checkout -b ${branch} ${baseSha}`
@@ -656,10 +666,10 @@ function buildWorkOrder({
 
   const lines = [
     continuing
-      ? `You are CONTINUING work in progress on "${appName}" (Usernode app \`${appSlug}\`).`
+      ? `You are CONTINUING work in progress on "${appName}" (Homeroom app \`${appSlug}\`).`
       : update
-        ? `You are UPDATING a proposal that is already up for a vote on "${appName}" (Usernode app \`${appSlug}\`).`
-        : `You are making a change to "${appName}" (Usernode app \`${appSlug}\`).`,
+        ? `You are UPDATING a proposal that is already up for a vote on "${appName}" (Homeroom app \`${appSlug}\`).`
+        : `You are making a change to "${appName}" (Homeroom app \`${appSlug}\`).`,
     '',
     'WHAT TO BUILD',
     brief || '(no description was supplied — ask the user what they want before writing code)',
@@ -670,8 +680,8 @@ function buildWorkOrder({
     lines.push(
       continuing ? 'THE WORK YOU ARE CONTINUING' : 'THE PROPOSAL YOU ARE UPDATING',
       continuing
-        ? `- Usernode session id:                   ${updateRef}`
-        : `- Usernode proposal id:                  ${updateRef}`,
+        ? `- Homeroom session id:                   ${updateRef}`
+        : `- Homeroom proposal id:                  ${updateRef}`,
       ...(update.title ? [`- Its title:                             ${update.title}`] : []),
       `- Its current commit:                    ${baseSha}`,
       ...(update.webPath
@@ -683,12 +693,12 @@ function buildWorkOrder({
       ...(forkIsHome
         ? [
           'Its code lives on a branch in YOUR OWN fork, so your push IS the update:',
-          `commit on ${branch}, push it, and tell Usernode with the call below.`,
+          `commit on ${branch}, push it, and tell Homeroom with the call below.`,
         ]
         : [
-          'Its code lives on a branch in the app\'s own repository that only Usernode',
+          'Its code lives on a branch in the app\'s own repository that only Homeroom',
           'can write. You do NOT need access to it — push to your fork exactly as you',
-          'would for new work, and Usernode moves the proposal onto your branch.',
+          'would for new work, and Homeroom moves the proposal onto your branch.',
         ]),
       '',
       ...(continuing
@@ -748,8 +758,8 @@ function buildWorkOrder({
   );
   if (hasTask) {
     lines.push(
-      `- Usernode task id:                      ${taskRef}`,
-      `- Usernode app slug:                     ${appSlug}`
+      `- Homeroom task id:                      ${taskRef}`,
+      `- Homeroom app slug:                     ${appSlug}`
     );
   }
 
@@ -760,10 +770,10 @@ function buildWorkOrder({
     '',
     'RULES',
     '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
-    '  the upstream repository — you do not have access to it, and Usernode opens',
+    '  the upstream repository — you do not have access to it, and Homeroom opens',
     '  the pull request for you.',
     '- Create the fork yourself if you do not have one:',
-    '  Usernode has no write access to your GitHub account and will not make it',
+    '  Homeroom has no write access to your GitHub account and will not make it',
     '  for you.',
     '- Any branch name works. A branch name that differs from the suggestion above',
     '  is never a reason to rewrite, rebase or redo a commit you have already',
@@ -787,21 +797,34 @@ function buildWorkOrder({
     // marker used to tell instruction text from appendix text, so this
     // pointer must not read as a second one.
     `- The platform rules ${platformRules ? 'at the end of this work order are' : 'for this app are'} an EXCERPT. Your`,
-    '  Usernode connector has the whole handbook: call',
+    '  Homeroom connector has the whole handbook: call',
     '  `get_platform_conventions` with no arguments for an index of every',
     '  section, then again with a section slug for the full text. Use it rather',
     '  than guessing whenever you need the real rule — how auth works, how to',
     '  declare a secret in dapp.json, how to call the platform\'s LLM proxy or',
     '  file storage, what the centrally hosted native UI kit provides, what the',
-    '  automated checks require. Your sandbox cannot reach the Usernode website;',
-    '  connector traffic does not go through your container, so that call works.'
+    '  automated checks require. Your sandbox cannot reach the Homeroom website;',
+    '  connector traffic does not go through your container, so that call works.',
+    // The account the paste lands in may never have added the connector at
+    // all — a second Claude or ChatGPT account does not inherit the first
+    // one's. Said here, next to the first thing the connector is needed for,
+    // so "I have no Homeroom tools" is a known state with a next step rather
+    // than a dead end; the finishing rules are under WHEN YOU ARE DONE.
+    '- If this session has NO Homeroom tools, the connector was never added to',
+    '  the Claude or ChatGPT account you are running in (it is per account, so a',
+    '  second account does not inherit the first one\'s). That is not a reason to',
+    '  stop: the excerpt below is enough to build with, and step 6 under WHEN',
+    '  YOU ARE DONE says how to finish. The user adds it on Homeroom at',
+    '  Settings → Connectors, which has the connector URL and the click-by-click',
+    '  steps for Claude and for ChatGPT:',
+    ...connectorsPage
   );
 
   if (hasTask) {
     // ── Ownership, stated flatly ─────────────────────────────────────
     //
     // The single most expensive missing sentence in this whole flow. In a
-    // real production run the agent had a live Usernode connector, the
+    // real production run the agent had a live Homeroom connector, the
     // right account, the right scope and this task id one call away — and
     // declined, reasoning that "the task id belongs to the assistant that
     // handed me the work order". It does not. Ownership is per USER:
@@ -816,13 +839,13 @@ function buildWorkOrder({
       '',
       'WHO THIS TASK BELONGS TO',
       `Task ${taskRef} belongs to the USERNODE ACCOUNT that this work order and your`,
-      'Usernode connector are both signed in as — not to the chat that handed you',
+      'Homeroom connector are both signed in as — not to the chat that handed you',
       'this text. Any Claude or ChatGPT session connected as that account,',
       'including yours, can submit it. Submitting it yourself is the expected',
       'path, not an overreach.',
       'The task id is not a secret; only its owner can use it, which is why it is',
       'printed here. If you want to confirm who you are, call `whoami` — one call,',
-      'and it names the Usernode account and the linked GitHub login.',
+      'and it names the Homeroom account and the linked GitHub login.',
       `If \`submit_work\` answers \`unknown_task\`, your connector is signed in as`,
       'somebody else. Say so plainly rather than starting the work over.',
       '',
@@ -839,8 +862,8 @@ function buildWorkOrder({
           ? `Session ${updateRef} belongs to the same account, which is why you can add to`
           : `Proposal ${updateRef} belongs to the same account, which is why you can revise`,
         continuing
-          ? 'it at all: Usernode only advances a session from a fork owned by the GitHub'
-          : 'it at all: Usernode only advances a proposal from a fork owned by the GitHub',
+          ? 'it at all: Homeroom only advances a session from a fork owned by the GitHub'
+          : 'it at all: Homeroom only advances a proposal from a fork owned by the GitHub',
         'account its author linked. Nobody else\'s branch can move it, and yours cannot',
         'move anybody else\'s.'
       );
@@ -899,19 +922,19 @@ function buildWorkOrder({
     // proposal's head is bot-owned — the whole reason this path exists.
     lines.push(
       '',
-      `2. SUBMIT THE UPDATE, through the Usernode connector. Call \`submit_work\``,
+      `2. SUBMIT THE UPDATE, through the Homeroom connector. Call \`submit_work\``,
       `   with proposalId ${updateRef}, branch set to the branch you pushed to your`,
       `   fork${forkIsHome ? ` (${branch})` : ''}, taskId ${taskRef}, agent "${agentValue}", source`,
       '   "work_order", and a short description of what changed for the people who',
       '   have to vote on it again.',
-      '   Usernode checks the branch is in your own fork and sits ON TOP of the',
+      '   Homeroom checks the branch is in your own fork and sits ON TOP of the',
       '   proposal\'s current commit, then moves the proposal onto it. Nothing is',
       '   force-pushed past anybody else\'s work: if the proposal moved in the',
       '   meantime the call is refused rather than overwriting it.',
       '   The proposal keeps the testing routes it was submitted with, and its',
       '   before/after screenshots are reshot for your new commit against those',
       '   same routes.',
-      '   Your sandbox cannot reach the Usernode website, and it does not need to:',
+      '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
       '',
@@ -932,15 +955,35 @@ function buildWorkOrder({
       '   remedy above is the fix; report it and retry once.',
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
-      '   `insufficient_scope` — ask the user to reconnect Usernode and approve',
+      '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
       '   "Propose changes". `github_not_linked` — give them the settings link the',
       '   tool returns. `not_your_proposal` — your connector is signed in as',
       '   somebody else; say so rather than rewriting the change. Anything',
       '   transient, or one authentication failure: retry once.',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, print the branch',
-      '   name you pushed and the proposal id, and tell the user to hand both back',
-      '   to the assistant that started this — it can submit the update for you.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Homeroom at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Homeroom: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button applies the update. Print the branch name',
+          '   and the proposal id so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and the',
+          '   proposal id, and tell the user to give both to the assistant that',
+          '   started this — it can submit the update for you. If they started',
+          '   from the Homeroom tab instead, that tab checks for the pushed branch',
+          '   and its Submit button applies the update.',
+        ]),
       '',
       // Step 7 and the closing line are the two places where "a proposal the
       // group is voting on" and "somebody's work in progress" genuinely differ:
@@ -962,7 +1005,7 @@ function buildWorkOrder({
               '   what moves it.']),
           '',
           'Do not open a pull request — this work is not up for a vote yet; the person',
-          'who started it promotes it from Usernode when it is ready. If they have',
+          'who started it promotes it from Homeroom when it is ready. If they have',
           'ALREADY asked, in their own words, for this change to go to the group\'s',
           'vote, pass `propose: true` on that same submit_work call — the session is',
           'promoted the moment the update lands (a paused one is reopened first).']
@@ -982,18 +1025,34 @@ function buildWorkOrder({
           '   Remember that every submission clears the votes again, so fix everything',
           '   you know about before you submit.',
           '',
-          'Do not open a pull request: this proposal already has one, and Usernode moves',
+          'Do not open a pull request: this proposal already has one, and Homeroom moves',
           'it onto your new commit for you.'])
     );
   } else if (hasTask) {
     lines.push(
       '',
-      '2. SUBMIT IT YOURSELF, through the Usernode connector. Call `submit_work`',
+      '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
       `   with taskId ${taskRef}, branch set to the name you actually pushed,`,
-      `   agent "${agentValue}", source "work_order", and a short title and`,
-      '   description for the people who will vote on it. It answers with a link',
-      '   to the new proposal — give that link to the user and tell them it is up',
-      '   for the group\'s vote.',
+      `   agent "${agentValue}", source "work_order", and a short title, plus`,
+      '   BOTH pieces of prose described next. It answers with a link to the new',
+      '   proposal — give that link to the user and tell them it is up for the',
+      '   group\'s vote.',
+      // The two-audience rule, at the moment it is acted on. An agent that
+      // sends only `description` produces a proposal whose About sheet shows
+      // a non-technical voter nothing but the diff explained in developer
+      // terms — the common case before `summary` existed, and the reason the
+      // sheet has two sections at all. The charter says the same thing; this
+      // is the copy that gets read, because it sits in the step.
+      '   `summary` is the USER-FACING half and the first thing a voter reads:',
+      '   one to three short sentences of plain everyday English saying what',
+      '   changes for somebody USING the app — what looks different, what they',
+      '   can now do, what stops going wrong. No file names, no identifiers, no',
+      '   code, no developer vocabulary.',
+      '   `description` is the TECHNICAL half: it becomes the pull request body',
+      '   and sits behind a collapsed "Technical details" section, so',
+      '   implementation, trade-offs and testing detail belong there and are not',
+      '   lost. Write the summary from what the person voting would NOTICE, not',
+      '   from what you edited. Not every member of the group is a developer.',
       // Without these two, an imported proposal has no testing metadata at
       // all: the capture step falls back to the app's home page, and the
       // people voting get a before/after pair of a screen the change never
@@ -1003,7 +1062,7 @@ function buildWorkOrder({
       '   of in-app routes your change is actually visible on, most important',
       '   first — e.g. ["/board?demo=1", "/settings"] — and `testingSteps` is a',
       '   few short numbered lines telling a person what to click to see it.',
-      '   Usernode shoots a before/after screenshot pair of each route for the',
+      '   Homeroom shoots a before/after screenshot pair of each route for the',
       '   people voting and shows the steps beside the staging preview. Leave',
       '   them out and it can only shoot the app\'s home page, which usually shows',
       '   nothing of what you changed. Point each route at THE SCREEN YOU',
@@ -1014,11 +1073,11 @@ function buildWorkOrder({
       // not use, so a malformed route is caught while the agent is still
       // holding the branch rather than from a boolean minutes later.
       '   READ THE ANSWER: `testingPaths` is what the screenshots will actually',
-      '   be shot on and `testingPathsRejected` names anything Usernode could not',
+      '   be shot on and `testingPathsRejected` names anything Homeroom could not',
       '   use. If a route you meant was rejected, submit once more with the',
       '   proposal id and corrected routes — on the SAME commit that is not a',
       '   second proposal, it only re-shoots the screenshots and clears no votes.',
-      '   Your sandbox cannot reach the Usernode website, and it does not need to:',
+      '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
       '',
@@ -1033,21 +1092,44 @@ function buildWorkOrder({
       '   for this:',
       `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
       `   then call \`submit_work\` with taskId ${taskRef} and that text as`,
-      '   `patch`. Usernode applies it at that exact commit in the app\'s own',
+      '   `patch`. Homeroom applies it at that exact commit in the app\'s own',
       '   repository and opens the pull request itself. Patches over about 250 KB',
       '   are refused — push a branch for anything that large.',
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
-      '   `insufficient_scope` — ask the user to reconnect Usernode and approve',
+      '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
       '   "Propose changes". `github_not_linked` — give them the settings link the',
       '   tool returns. Anything transient, or one authentication failure: retry',
       '   once (access tokens are short-lived and your client refreshes them).',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, save the patch',
-      `   from step 4 to a \`.patch\` file, print the branch name you pushed, and`,
-      '   tell the user to hand it back to the assistant that started this — they',
-      '   can attach the file, or give it the diff text, and it finishes the same',
-      '   way.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Homeroom at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      // How the hand-off started decides who finishes it without a
+      // connector: the browser walkthrough polls for the pushed branch and
+      // its own Submit button does the rest, while a chat assistant has to
+      // be handed the branch (or a patch) back. Both are stated; the one
+      // that applies comes first.
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Homeroom: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button opens the proposal. Print the branch name',
+          '   so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and, in case',
+          '   the push was refused, save the patch from step 4 to a `.patch` file, and',
+          '   tell the user to give both to the assistant that started this — it',
+          '   finishes the same way. If they started from the Homeroom tab instead,',
+          '   that tab checks for the pushed branch and its Submit button does it.',
+        ]),
       '',
       // Submitting is not the finish line: checks GATE MERGE, so a proposal
       // with a failing check cannot land however the vote goes. The agent
@@ -1068,7 +1150,7 @@ function buildWorkOrder({
       '   `capturePaths` names what it did shoot, which is how you tell that apart',
       '   from a change whose own first route is "/".',
       '',
-      'Do not open the pull request yourself in the normal path: Usernode opens it,',
+      'Do not open the pull request yourself in the normal path: Homeroom opens it,',
       'and the change becomes a proposal with a staging preview, automated checks',
       'and a group vote.'
     );
@@ -1076,7 +1158,7 @@ function buildWorkOrder({
     lines.push(
       '',
       '2. Report the branch name you pushed, and stop there. Do not open a pull',
-      '   request: Usernode opens it, and the change becomes a proposal with a',
+      '   request: Homeroom opens it, and the change becomes a proposal with a',
       '   staging preview and a group vote.'
     );
   }
@@ -1085,7 +1167,7 @@ function buildWorkOrder({
     lines.splice(2, 0, `This implements request #${issueNumber}.`, '');
   }
   if (webPath) {
-    lines.push('', `The app on Usernode: ${webPath}`);
+    lines.push('', `The app on Homeroom: ${webPath}`);
   }
 
   // ── The offline appendix ─────────────────────────────────────────────
@@ -1100,25 +1182,43 @@ function buildWorkOrder({
   return lines.join('\n');
 }
 
-// The three centrally hosted files every Usernode app loads, and why an
+// The three centrally hosted files every Homeroom app loads, and why an
 // egress-blocked container seeing them fail is the SANDBOX and not the
 // change. Written out rather than pulled from the conventions doc because
 // the diagnosis ("this is your container, not your code") is specific to an
 // agent working offline and belongs nowhere else.
-const HOSTED_ASSETS = Object.freeze([
-  'https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js',
-  'https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css',
-  'https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js',
+// PATHS, not URLs. This list used to hold three ABSOLUTE URLs on whatever
+// the platform's hostname was when it was written — and once the platform
+// moved, that host stopped answering, so every work order was handing
+// coding agents three dead links and inviting them to write the same dead
+// host into the app they were building. The origin is resolved per
+// deployment instead, the way services/template.js already does it, so a
+// self-hosted fork and a domain move both carry through by themselves.
+const HOSTED_ASSET_PATHS = Object.freeze([
+  '/usernode-bridge/v1/bridge.js',
+  '/usernode-native/v1/native.css',
+  '/usernode-tailwind/v1/tailwind.js',
 ]);
 
+// `webPath` is the platform URL this task was created from, so its origin is
+// the most accurate answer available; USERNODE_DOMAIN is the deployment-wide
+// fallback. Returns null when neither is known rather than inventing a host.
+function platformOriginFrom(webPath) {
+  try { if (webPath) return new URL(webPath).origin; } catch { /* fall through */ }
+  const domain = String(process.env.USERNODE_DOMAIN || '').trim().replace(/\/+$/, '');
+  return domain ? `https://${domain}` : null;
+}
+
+function hostedAssetUrls(origin) {
+  return HOSTED_ASSET_PATHS.map((assetPath) => (origin ? `${origin}${assetPath}` : assetPath));
+}
+
 function hostedAssetWarning(webPath) {
-  const origin = (() => {
-    try { return webPath ? new URL(webPath).origin : null; } catch { return null; }
-  })();
+  const origin = platformOriginFrom(webPath);
   const lines = [
     'ABOUT THE APP\'S HOSTED ASSETS (read before you "fix" the styling)',
-    'Every Usernode app loads three files from the platform, centrally hosted:',
-    ...HOSTED_ASSETS.map((u) => `${CMD}${u}`),
+    'Every Homeroom app loads three files from the platform, centrally hosted:',
+    ...hostedAssetUrls(origin).map((u) => `${CMD}${u}`),
     'Your container may not be able to reach that host. When it cannot, the app',
     'renders unstyled in a local browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
@@ -1128,7 +1228,7 @@ function hostedAssetWarning(webPath) {
     'tag is a different thing — a legacy state many apps are still in, whose checks',
     'pass: do not add one, do not "fix" one as a drive-by, and when migrating IS the',
     'task swap it to the Tailwind URL above (including any copy of that hostname in',
-    'the app\'s sw.js precache list). The staging preview Usernode builds — not a',
+    'the app\'s sw.js precache list). The staging preview Homeroom builds — not a',
     'local screenshot — is the authority on how this change looks.',
   ];
   if (origin) {
@@ -1163,7 +1263,7 @@ function describeTargetProposal(session, user, app, origin) {
     return fail('invalid_request', 'That proposal id is not a proposal.');
   }
   // Not "no_access": the caller asked about a real proposal and the answer is
-  // whose it is. Only the author can move a proposal's head — Usernode
+  // whose it is. Only the author can move a proposal's head — Homeroom
   // advances one from a fork owned by the GitHub account ITS AUTHOR linked,
   // so an update work order for somebody else's proposal could never be
   // submitted and is refused rather than written.
@@ -1207,7 +1307,7 @@ function describeTargetProposal(session, user, app, origin) {
       'session_not_started',
       `Session ${id} has not run a turn yet, so it has no branch to continue from. `
         + 'Ask for a new change on this app instead, or send a message in the session '
-        + 'on Usernode first and then continue it.'
+        + 'on Homeroom first and then continue it.'
     );
   }
   // A proposal whose head is in the author's fork is advanced by pushing to
@@ -1215,20 +1315,20 @@ function describeTargetProposal(session, user, app, origin) {
   // so the work order has to name it, and a name git would reject means the
   // platform cannot describe the work honestly.
   if (branchHome === 'user_fork' && !isValidBranchName(branchName)) {
-    return fail('platform_unavailable', `Usernode cannot read proposal ${id}'s branch. Try again shortly.`);
+    return fail('platform_unavailable', `Homeroom cannot read proposal ${id}'s branch. Try again shortly.`);
   }
   // A native continuation is based at the head of THIS branch and pushed back
   // onto it. Without a usable name there is no base to hand the agent and
   // nowhere for its work to land, so refuse now rather than write a work order
   // whose "Base commit" line is a guess.
   if (branchHome === 'app_repo' && !isValidBranchName(branchName)) {
-    return fail('platform_unavailable', `Usernode cannot read ${targetKind === 'session' ? `session ${id}` : `proposal ${id}`}'s branch. Try again shortly.`);
+    return fail('platform_unavailable', `Homeroom cannot read ${targetKind === 'session' ? `session ${id}` : `proposal ${id}`}'s branch. Try again shortly.`);
   }
   const trackedHead = branchHome === 'user_fork'
     ? String(session.imported_pr_head_sha || '').trim().toLowerCase()
     : null;
   if (branchHome === 'user_fork' && !BASE_SHA_RE.test(trackedHead)) {
-    return fail('platform_unavailable', `Usernode cannot read proposal ${id}'s current commit. Try again shortly.`);
+    return fail('platform_unavailable', `Homeroom cannot read proposal ${id}'s current commit. Try again shortly.`);
   }
 
   return {
@@ -1277,7 +1377,7 @@ function describeTargetProposal(session, user, app, origin) {
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits, prompts } = deps;
   const {
-    user, app, issueNumber, brief, clientId, clientName, origin, restart,
+    user, app, issueNumber, brief, clientId, clientName, origin, restart, originSessionId,
     agent, targetProposal,
   } = params;
 
@@ -1286,7 +1386,7 @@ async function prepareWork(deps, params) {
     return fail('no_repository', 'That app does not have a GitHub repository yet, so there is nothing to build against.');
   }
   if (!gh.isEnabled()) {
-    return fail('platform_unavailable', 'Usernode cannot reach GitHub right now. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom cannot reach GitHub right now. Try again shortly.', { retryable: true });
   }
 
   // Unconfigured deployment vs. unlinked user: two different refusals. Check
@@ -1298,7 +1398,7 @@ async function prepareWork(deps, params) {
   if (!link || !link.linked || !link.login) {
     return fail(
       'github_not_linked',
-      'Connect your GitHub account first: Usernode needs to know which GitHub account is yours before work '
+      'Connect your GitHub account first: Homeroom needs to know which GitHub account is yours before work '
       + 'built by your coding agent can be submitted under your name. It asks for no access to your '
       + 'repositories.',
       { settingsUrl: `${origin}/#settings/connectors` }
@@ -1344,6 +1444,14 @@ async function prepareWork(deps, params) {
   if (!restart) {
     const existing = await findOpenTaskByRequest(pool, user.id, app.id, requestKey);
     if (existing) {
+      // One open task per request is the invariant, and it is NOT relaxed per
+      // session — asking twice for the same thing must not mint a second job.
+      // But the launchpad that just asked is the one that should show it, so
+      // the order MOVES to this session rather than staying visible in the one
+      // it was first prepared in. Typing the same brief in a new session and
+      // being told "you already have this" only helps if you can then see it.
+      const moved = await adoptTaskForSession(pool, existing.id, user.id, originSessionId);
+      if (moved) existing.origin_session_id = moved;
       return renderPreparedTask({
         task: existing, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
@@ -1404,7 +1512,7 @@ async function prepareWork(deps, params) {
     }
   }
   // A value that is not a clean 40-character hex id never reaches a work
-  // order. Refusing here is what makes "Usernode never emits a malformed
+  // order. Refusing here is what makes "Homeroom never emits a malformed
   // commit id" a property rather than an assumption — so a split id seen
   // in a chat message can only have been introduced downstream, and is
   // diagnosed as a transcription error instead of hunted for in here.
@@ -1414,7 +1522,7 @@ async function prepareWork(deps, params) {
     if (baseSha) {
       log.warn('external-agent-tasks', 'base sha is not a 40-char hex id', { app: app.slug });
     }
-    return fail('platform_unavailable', 'Usernode could not read the app\'s current code. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom could not read the app\'s current code. Try again shortly.', { retryable: true });
   }
   // Lowercased from here on, matching how inspectPushedBranch compares it.
   baseSha = String(baseSha).trim().toLowerCase();
@@ -1445,17 +1553,18 @@ async function prepareWork(deps, params) {
       ? update.branchName
       : branchNameFor(app.slug, null, null, `update-${update.proposalId}`))
     : branchNameFor(app.slug, issueNumber);
-  let row;
-  try {
-    // ON CONFLICT DO NOTHING against the partial unique index, so two
-    // connectors racing on the same request cannot both reserve it. Zero
-    // rows back means the other call won — re-select and return theirs as a
-    // reuse rather than failing a caller who did nothing wrong.
+  // ON CONFLICT DO NOTHING against the partial unique index, so two
+  // connectors racing on the same request cannot both reserve it. Zero
+  // rows back means either the other call won — re-select and return theirs
+  // as a reuse rather than failing a caller who did nothing wrong — or an
+  // EXPIRED row is sitting on the key, which the block below deals with.
+  const insertTask = async () => {
     const { rows } = await pool.query(
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
-          base_sha, brief, client_id, request_key, target_session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          base_sha, brief, client_id, request_key, target_session_id,
+          origin_session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
@@ -1467,12 +1576,21 @@ async function prepareWork(deps, params) {
         // submission can be checked against the job it came from rather than
         // trusting the proposal id the caller repeats back.
         update ? update.proposalId : null,
+        // Which launchpad it was prepared in. NULL from the connector, which
+        // has no session — see the column comment in schema.sql for how those
+        // rows are adopted rather than stranded.
+        sessionRef(originSessionId),
       ]
     );
-    row = rows[0] || null;
+    return rows[0] || null;
+  };
+
+  let row;
+  try {
+    row = await insertTask();
   } catch (err) {
     log.error('external-agent-tasks', 'task insert failed', { app: app.slug, err: err.message });
-    return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom could not record this piece of work. Try again shortly.', { retryable: true });
   }
 
   if (!row) {
@@ -1483,7 +1601,30 @@ async function prepareWork(deps, params) {
         prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
-    return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+
+    // Nothing LIVE holds the key, yet the insert still conflicted — so what
+    // blocks it is an expired row. external_agent_tasks_open_request_idx has
+    // no expiry predicate, while every reader that decides whether the caller
+    // still has a live work order does (findOpenTaskByRequest here, the
+    // open-work-order listing behind the cap, and now the walkthrough).
+    // Nothing sweeps the table, so left alone that is PERMANENT: this exact
+    // brief could never be prepared again, and the caller would be told to
+    // "try again shortly" forever. Close the dead row out and insert once more.
+    try {
+      const cleared = await abandonExpiredRequest(pool, user.id, app.id, requestKey);
+      if (cleared) {
+        log.info('external-agent-tasks', 'expired reservation cleared for reuse', {
+          app: app.slug, cleared,
+        });
+        row = await insertTask();
+      }
+    } catch (err) {
+      log.error('external-agent-tasks', 'expired-reservation clear failed', { app: app.slug, err: err.message });
+    }
+
+    if (!row) {
+      return fail('platform_unavailable', 'Homeroom could not record this piece of work. Try again shortly.', { retryable: true });
+    }
   }
 
   return renderPreparedTask({
@@ -1499,6 +1640,7 @@ async function prepareWork(deps, params) {
       brief: trimmedBrief,
       issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
       target_session_id: update ? update.proposalId : null,
+      client_id: clientId || row.client_id || null,
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
@@ -1522,6 +1664,80 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
     // A lookup that fails must not block minting — the worst case is the
     // pre-existing behaviour (a second task), not a refusal.
     log.warn('external-agent-tasks', 'open-task lookup failed', { appId, err: err.message });
+    return null;
+  }
+}
+
+// The open task a SHARED piece of work is sitting on (#1347 + this fix).
+//
+// `share: true` is documented to leave the work order OPEN — the whole point
+// is that the agent keeps committing onto the in-progress card — and it
+// stamps `session_id` on the task on its way past. So after a share, the
+// only handle on that reservation is the session id: the promote that
+// finishes the job is documented as `submit_work({ proposalId, branch,
+// propose: true })` and carries no taskId at all.
+//
+// Without this lookup the closing UPDATE below is guarded by a `task` that is
+// always null on that path, so every share -> promote leaked one of the ten
+// open-work-order slots until its 14-day expiry. Three of them in one
+// afternoon is what surfaced it.
+//
+// `expires_at` is deliberately NOT filtered here, unlike the request lookup
+// above: an expired row no longer counts against the cap, but closing it is
+// still the honest bookkeeping, and the cap is not the only thing that reads
+// `status`.
+async function findOpenTaskBySession(pool, userId, sessionId) {
+  if (!(Number.isInteger(Number(sessionId)) && Number(sessionId) > 0)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM external_agent_tasks
+        WHERE user_id = $1 AND session_id = $2 AND status = 'open'
+        ORDER BY id DESC LIMIT 1`,
+      [userId, Number(sessionId)]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // Advisory, like every other lookup on this path: a submission that has
+    // already landed must never fail over its own bookkeeping.
+    log.warn('external-agent-tasks', 'session task lookup failed', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+// Close the work order a session is carrying, if it still has one open.
+//
+// Called from two places for the two ways a share reaches the vote:
+//   * inside submitProposalUpdate, when the push landed on something already
+//     up for a vote (targetKind 'proposal'); and
+//   * from services/mcp-tools.js, after `propose: true` has promoted an
+//     active session — that promote is a loopback to the session route,
+//     which knows nothing about work orders.
+//
+// Returns the id it closed, or null. Never throws: the caller is always past
+// the point where the work itself has landed.
+async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
+  const task = await findOpenTaskBySession(pool, userId, sessionId);
+  if (!task) return null;
+  try {
+    await pool.query(
+      `UPDATE external_agent_tasks
+          SET status = 'submitted',
+              submitted_branch = COALESCE($4, submitted_branch),
+              submitted_via = COALESCE($5, submitted_via),
+              submitted_source = COALESCE($6, submitted_source),
+              submitted_client_id = COALESCE($7, submitted_client_id)
+        WHERE id = $1 AND session_id = $2 AND user_id = $3 AND status = 'open'`,
+      [
+        task.id, Number(sessionId), userId,
+        fields.branch || null,
+        SUBMIT_VIA.includes(fields.submittedVia) ? fields.submittedVia : null,
+        fields.source ? normalizeSource(fields.source) : null,
+        fields.clientId || null,
+      ]
+    );
+    return task.id;
+  } catch (err) {
+    log.warn('external-agent-tasks', 'session task close failed', { taskId: task.id, err: err.message });
     return null;
   }
 }
@@ -1635,6 +1851,9 @@ function renderPreparedTask({
     agentLabelText: agent,
     platformRules: workOrderEssentials(prompts),
     targetProposal: targetProposal || null,
+    // The browser walkthrough registers its jobs under `usernode-web:<agent>`
+    // (routes/dev-flow.js); everything else is a chat assistant's connector.
+    startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
   });
 
   return {
@@ -1788,19 +2007,216 @@ async function withTaskLock(pool, taskId, fn) {
 // The caller's most recent open task for one app, so `slug` + `branch` works
 // for an agent that has lost its task id. Falls back to task-less submission
 // (with the attribution gate fully applied) when there is none.
-async function loadLatestOpenTaskForSlug(pool, userId, slug) {
+//
+// `unexpiredOnly` is OFF by default and only routes/dev-flow.js's walkthrough
+// passes it, because the two readers want different things from an expired
+// row — the same split findOpenTaskBySession already documents:
+//
+//   submitWork's `slug` + `branch` recovery must keep seeing it. The row is
+//   the only record of the base commit that branch was cut from, and
+//   mirrorForkBranch runs its ancestry check `if (baseSha)` — so hiding an
+//   expired task there would quietly drop the base_mismatch protection from
+//   exactly the long-running job most likely to need it.
+//
+//   The WALKTHROUGH must not. Nothing sweeps expired rows, and every other
+//   reader that decides whether the user still has a live work order already
+//   filters them (findOpenTaskByRequest, and the open-work-order listing that
+//   feeds the cap). Left unfiltered here, one dangling reservation pins the
+//   launchpad to a dead task for good: step 3 renders `done`, its "what should
+//   it build?" field never appears, and "Copy work order" hands the agent a
+//   work order for something finished weeks ago.
+//
+// Two call sites, each with its SQL written out in full, rather than one query
+// with the predicate spliced in. scripts/check-sql.js Parse/Describes every
+// query it can read as a literal against a real PostgreSQL planner; anything
+// assembled at runtime — an interpolated fragment, or even a constant passed by
+// name — falls out of that inventory into the hand-reviewed dynamic baseline.
+// Both shapes of this one are worth keeping under the planner, and the repeated
+// SELECT list is the price of that.
+async function loadLatestOpenTaskForSlug(pool, userId, slug, opts = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-         FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-        WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-        ORDER BY t.id DESC LIMIT 1`,
-      [userId, slug]
-    );
+    const { rows } = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      );
     return rows[0] || null;
   } catch {
     return null;
   }
+}
+
+// "Start over" on the walkthrough (#1049): put ONE open task away by its id.
+//
+// Deliberately not prepareWork's `restart`, which abandons by `request_key`.
+// That is the right key for starting the SAME request over, and the wrong one
+// here: a user who wants to build something else types a different brief, which
+// hashes to a different request_key, so restart's UPDATE matches nothing — the
+// stale row stays open, still holding one of the caller's ten slots and still
+// the newest thing loadLatestOpenTaskForSlug can see.
+//
+// Scoped to the caller's own OPEN rows FOR THIS APP, so a replayed request can
+// reach neither somebody else's reservation nor one of the caller's own under a
+// different app whose slug happens to be in the URL.
+//
+// Returns the id it closed, or null when it matched nothing — which the route
+// turns into `unknown_task`. A database failure THROWS rather than returning
+// null: the two are not the same answer to the user, and collapsing them would
+// paint "Work order put away" over a write that never happened.
+async function discardTask(pool, userId, appId, taskId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE id = $1 AND user_id = $2 AND app_id = $3 AND status = 'open'
+      RETURNING id`,
+    [id, userId, appId]
+  );
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
+// Close out the EXPIRED open rows sitting on one request key.
+//
+// Only ever called after an insert has already conflicted on that key and
+// findOpenTaskByRequest — which filters expiry — has found nothing, so the only
+// rows this can touch are ones no reader still counts as live. Scoped to the
+// caller's own rows for that one app and request, never a blanket sweep: this
+// unblocks a specific insert, it is not garbage collection.
+async function abandonExpiredRequest(pool, userId, appId, requestKey) {
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE user_id = $1 AND app_id = $2 AND request_key = $3
+        AND status = 'open' AND expires_at <= NOW()
+      RETURNING id`,
+    [userId, appId, requestKey]
+  );
+  return rows.length;
+}
+
+// A session id as the database wants it, or null for "no session".
+function sessionRef(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+// Point one task at a session. Returns the id written, or null when there was
+// no session to write (the connector path) or the row was not the caller's.
+async function adoptTaskForSession(pool, taskId, userId, sessionId) {
+  const session = sessionRef(sessionId);
+  if (!session) return null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE external_agent_tasks
+          SET origin_session_id = $3
+        WHERE id = $1 AND user_id = $2 AND status = 'open'
+        RETURNING origin_session_id`,
+      [taskId, userId, session]
+    );
+    return rows[0] ? Number(rows[0].origin_session_id) : null;
+  } catch (err) {
+    // Adoption is an optimisation on a read path: failing it shows the
+    // walkthrough one fewer task, which is recoverable. Failing the REQUEST
+    // over it is not.
+    log.warn('external-agent-tasks', 'task adoption failed', { taskId, err: err.message });
+    return null;
+  }
+}
+
+// THE WALKTHROUGH'S LOOKUP: the caller's open work order for one app AND ONE
+// SESSION.
+//
+// loadLatestOpenTaskForSlug, which this replaces here, is keyed on the app
+// alone — so a single open work order answered for every session in it, and
+// "New change" opened a fresh session already showing somebody's half-finished
+// order for something else. That function stays exactly as it is for
+// submitWork's `slug` + `branch` recovery, which is deliberately NOT
+// session-scoped: an agent that lost its task id knows the app and the branch
+// it pushed, and nothing about the browser session a human minted it in.
+//
+// This session's own order, or none. There is deliberately no fallback.
+//
+// It used to ADOPT the newest order belonging to no session, on the reasoning
+// that an unadopted one would be invisible while still holding a cap slot.
+// That was wrong twice over. Factually: those rows were listed in the Improve
+// panel the whole time, which filters on `session_id` (the shared-session
+// column) and expiry, never on `origin_session_id`. And conceptually: a work
+// order is not a durable thing to keep reachable. It is one ATTEMPT at an
+// issue — active work, finished or abandoned — so an attempt whose session is
+// gone is not a backlog item, it is over. Adopting them turned one permanently
+// stale launchpad into a QUEUE of them: every new change claimed the next
+// orphan off the pile.
+//
+// What was actually missing is the ending. An attempt had a beginning
+// (prepare) and two endings (submit, "Start over") but none for "the session
+// it belonged to is over" — so dead ones leaked. finalizeArchivedSession
+// closes them now, and the backfill in schema.sql closed the ones that had
+// already accumulated.
+//
+// `unexpiredOnly` carries the same meaning it has on the app-wide lookup.
+async function loadOpenTaskForSession(pool, userId, slug, sessionId, opts = {}) {
+  const session = sessionRef(sessionId);
+  if (!session) return null;
+  try {
+    const mine = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id = $3
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug, session]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id = $3
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug, session]
+      );
+    return mine.rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// The ending that was missing: a session is over, so the attempt it was making
+// is over. Called from finalizeArchivedSession, which every archive path
+// funnels through.
+//
+// `session_id IS NULL` is the one exclusion. That column means the work has
+// been SHARED as an in-progress card on the Dev board; the card outlives the
+// chat session it was started from, and closing its reservation would strand
+// a submission the group can already see. Only unshared attempts are closed.
+//
+// Scoped by the session alone, not by user: the caller has already authorised
+// the archive, and a task whose origin_session_id is this session is this
+// session's by construction.
+async function abandonTasksForSession(pool, sessionId) {
+  const session = sessionRef(sessionId);
+  if (!session) return 0;
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE origin_session_id = $1 AND status = 'open' AND session_id IS NULL
+      RETURNING id`,
+    [session]
+  );
+  return rows.length;
 }
 
 // The attribution gate. A proposal opened through this path carries the
@@ -1826,7 +2242,7 @@ function attributionError(pr, expectedLogin) {
   return fail(
     'fork_mismatch',
     `That pull request comes from ${actual ? `${actual}'s` : 'another'} repository, not from your fork. `
-    + 'Usernode only submits work from your own GitHub account under your name — '
+    + 'Homeroom only submits work from your own GitHub account under your name — '
     + 'if you want to bring in someone else\'s pull request, import it from the app\'s Dev page instead.'
   );
 }
@@ -1856,32 +2272,31 @@ async function inspectPushedBranch(task, branchName, forkRepoName) {
 
 // ── The PR-creation ladder ─────────────────────────────────────────────
 //
-// The whole reason this change exists. `submit_work` has never once
-// succeeded in production: three attempts, all reaching one generic
-// `platform_error` that DISCARDED whatever
-// GitHub actually said. The one structural difference between that call and
-// every same-repo `createPR` in this codebase (all of which succeed daily,
-// including several on the platform's own repo the same afternoon these
-// failed) is the cross-fork `head: "<owner>:<branch>"`.
+// Three rungs, and the order is a decision about who owns the head after
+// the submission — see the branch path in submitWorkLocked for the whole
+// argument. In short:
 //
-// So there are three rungs now, cheapest first:
-//
-//   1. the plain cross-fork create, as before;
-//   2. the same call with an explicit `head_repo` — a bare `owner:branch`
+//   1. a MIRROR — copy the verified branch into the app's own repository and
+//      open a plain same-repo pull request. The head is then a branch the
+//      platform can write, so the auto-sync and the conflict resolver keep
+//      the proposal current when main moves (task 153). This is the rung
+//      that runs for every submission the platform can write;
+//   2. the plain cross-fork create, the FALLBACK when the platform cannot
+//      write the app repository just now: a genuine cross-fork PR shows the
+//      fork as the head on GitHub and the group can still vote on it, but
+//      nobody except its author can bring it up to date;
+//   3. the same call with an explicit `head_repo` — a bare `owner:branch`
 //      makes GitHub SEARCH the base's fork network for a repo owned by that
 //      login, which is ambiguous the moment the user owns two repos in the
-//      network, exactly the case CONFLICT_FORK_SUFFIX creates. One extra
-//      request that either fixes the leading hypothesis outright or rules it
-//      out of the log forever;
-//   3. a MIRROR — copy the verified branch into the app's own repository and
-//      open a plain same-repo pull request, the shape that demonstrably
-//      works on this deployment.
+//      network, exactly the case CONFLICT_FORK_SUFFIX creates.
 //
-// Rung 1 is still preferred, not skipped: a genuine cross-fork PR shows the
-// fork as the head on GitHub, which is better provenance and keeps the
-// contributor's name on the commit list. Preferring it costs at most two
-// failed API calls. `submitted_via` records which rung ran, so "did the
-// missing head_repo turn out to be the whole bug?" becomes a SQL query.
+// The mirror used to be the LAST rung, reached only when both cross-fork
+// creates refused — and `submit_work` had never once succeeded in production
+// until the cross-fork error was made legible: three attempts, all reaching
+// one generic `platform_error` that DISCARDED whatever GitHub actually said.
+// `resolvePullRequest` below is rungs 2 and 3, and the error that survives
+// them names the cause. `submitted_via` records which rung ran, so "how
+// often is the platform's own write path unwell?" is a SQL query.
 async function resolvePullRequest(ctx) {
   const {
     gh, owner, repo, forkOwner, forkRepo, branch, prTitle, prBody,
@@ -1942,8 +2357,8 @@ async function resolvePullRequest(ctx) {
       return {
         done: fail(
           'fork_collab_denied',
-          `Usernode asked GitHub to give ${owner}/${repo}'s maintainers write access to ${forkOwner}:${branch}, `
-          + 'and only a collaborator on that fork can grant it. Usernode holds no access to your GitHub account, '
+          `Homeroom asked GitHub to give ${owner}/${repo}'s maintainers write access to ${forkOwner}:${branch}, `
+          + 'and only a collaborator on that fork can grant it. Homeroom holds no access to your GitHub account, '
           + 'so it should never have asked — this is a bug on our side, not a problem with your branch. '
           + 'Report it, or open the pull request yourself and submit it with its number.',
           { retryable: false }
@@ -2014,16 +2429,9 @@ async function resolvePullRequest(ctx) {
 // GitHub's errors[] is where the actual objection lives — "field: head,
 // code: invalid" is the difference between a resolution problem and a
 // repository policy, and `field: fork_collab` is the one that cost three
-// production runs. One reader, shared by the user-facing refusal and the
-// mirror-fallback log line, so the two can never disagree about what
-// GitHub said.
+// production runs. One reader for the user-facing refusal.
 function firstErrorEntry(desc) {
   return desc && desc.data && Array.isArray(desc.data.errors) ? desc.data.errors[0] : null;
-}
-
-function firstErrorField(desc) {
-  const entry = firstErrorEntry(desc);
-  return entry ? entry.field || entry.resource || null : null;
 }
 
 // The typed, self-diagnosing replacement for the old generic refusal, which
@@ -2044,7 +2452,7 @@ function prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch }) {
     `GitHub refused to open the pull request from ${forkOwner}:${branch} into ${owner}/${repo} with `
     + `${status}.${field}${ref}\n\n`
     + `You can open it yourself in one click: ${compareUrl} — then call submit_work again with `
-    + `slug and prNumber, and Usernode picks up from there.`,
+    + `slug and prNumber, and Homeroom picks up from there.`,
     // Two identical attempts minutes apart proved retrying is not the
     // answer; saying "try again" here is how a run loses another hour.
     { retryable: false, compareUrl, githubStatus: (desc && desc.status) || null, requestId: (desc && desc.requestId) || null }
@@ -2073,7 +2481,7 @@ async function submitUpdate(deps, params, proposalId) {
   } = params;
 
   if (typeof updateProposal !== 'function') {
-    return fail('platform_unavailable', 'This Usernode client cannot submit proposal updates. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'This Homeroom client cannot submit proposal updates. Try again shortly.', { retryable: true });
   }
   // A patch is create-only by construction: applyPatch writes a NEW branch in
   // the app's repository and the caller opens a pull request against it, which
@@ -2096,7 +2504,7 @@ async function submitUpdate(deps, params, proposalId) {
   if (!branch) {
     return fail(
       'invalid_request',
-      'Pass `branch` too: the branch in your own fork that carries the new commits. Usernode reads it from GitHub, '
+      'Pass `branch` too: the branch in your own fork that carries the new commits. Homeroom reads it from GitHub, '
       + 'so it has to be pushed first.'
     );
   }
@@ -2136,7 +2544,7 @@ async function submitUpdate(deps, params, proposalId) {
   if (!slug) {
     return fail(
       'invalid_request',
-      `Usernode has no proposal ${proposalId}. Check the id with list_my_proposals — or pass the taskId from the `
+      `Homeroom has no proposal ${proposalId}. Check the id with list_my_proposals — or pass the taskId from the `
       + 'work order, which names both the proposal and its app.'
     );
   }
@@ -2186,7 +2594,7 @@ async function submitUpdate(deps, params, proposalId) {
     return {
       ok: false,
       code: body.error || 'platform_unavailable',
-      message: body.message || 'Usernode could not update that proposal.',
+      message: body.message || 'Homeroom could not update that proposal.',
       ...(body.retryable ? { retryable: true } : {}),
       ...(body.expectedBase ? { expectedBase: body.expectedBase } : {}),
       ...(body.headSha ? { headSha: body.headSha } : {}),
@@ -2217,6 +2625,24 @@ async function submitUpdate(deps, params, proposalId) {
       // submission that has already landed on GitHub.
       log.warn('external-agent-tasks', 'update task stamp failed', { taskId: task.id, err: err.message });
     }
+  } else if (result.targetKind === 'proposal') {
+    // No taskId was passed — which is the DOCUMENTED shape for continuing a
+    // proposal, not an omission — and the push landed on something already up
+    // for the group's vote. If this session is carrying a work order from an
+    // earlier `share: true`, the work it reserved is now in front of the
+    // group and the reservation is finished.
+    //
+    // Only 'proposal'. A push onto an ACTIVE session is the next commit on
+    // work still being built, and share's contract is that the order stays
+    // open across exactly those. The promote that ends that case closes the
+    // order from services/mcp-tools.js instead, because promoting is a
+    // separate route call made after this function has already returned.
+    await closeTaskForSession(pool, user.id, proposalId, {
+      branch,
+      submittedVia: result.submittedVia,
+      source,
+      clientId,
+    });
   }
 
   return {
@@ -2232,6 +2658,11 @@ async function submitUpdate(deps, params, proposalId) {
     headSha: result.headSha || null,
     previousHeadSha: result.previousHeadSha || null,
     votesCleared: Number(result.votesCleared) || 0,
+    // When the tally resets: 'now' (this call), 'on_sync' (the next
+    // pr-import sweep advances a mirrored head — the count is votesAtRisk),
+    // or 'none'. Without this, a 0 on the mirror path read as "votes kept".
+    votesClearing: result.votesClearing || (Number(result.votesCleared) > 0 ? 'now' : 'none'),
+    votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
     checksRerun: result.checksRerun === true,
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT
@@ -2278,6 +2709,22 @@ async function submitUpdate(deps, params, proposalId) {
     // 'proposal' | 'session' | null — what the push actually landed on, as
     // decided under the lock rather than as the work order predicted.
     targetKind: result.targetKind || null,
+    // #2066. services/proposal-update.js computes this on all three of its
+    // tails — the proposal, the active session and the paused one — and the
+    // RESHARE path a few hundred lines above passes it through. This one
+    // dropped it, so an agent that advanced a shared card could not tell
+    // whether a preview build had started and reported the documented
+    // behaviour instead of the actual answer. Somebody then went looking for
+    // a preview that was never built.
+    //
+    // `checksRerun` rides along for the same reason: on a proposal it is the
+    // other half of "what did this push actually set going".
+    previewRebuilding: result.previewRebuilding === true,
+    checksRerun: result.checksRerun === true,
+    // A paused session takes the commit and deliberately does NOT build (it
+    // has no container). Saying so is the difference between "your preview is
+    // coming" and "reopen it when you want one".
+    resumeRequired: result.resumeRequired === true,
     externalAgent: label,
     submittedVia: result.submittedVia || null,
   };
@@ -2335,7 +2782,7 @@ async function submitWorkLocked(deps, params) {
   } = params;
 
   if (!gh.isEnabled()) {
-    return fail('platform_unavailable', 'Usernode cannot reach GitHub right now. Try again shortly.', { retryable: true });
+    return fail('platform_unavailable', 'Homeroom cannot reach GitHub right now. Try again shortly.', { retryable: true });
   }
 
   // Before anything is read: with no OAuth app there is no verified GitHub
@@ -2372,7 +2819,7 @@ async function submitWorkLocked(deps, params) {
 
   let task = taskId ? await loadOpenTask(pool, user.id, taskId) : null;
   if (taskId && !task) {
-    // Telling Usernode twice is no longer an error. Since the coding agent
+    // Telling Homeroom twice is no longer an error. Since the coding agent
     // submits for itself, the user may also relay "it's done" to their chat
     // assistant — and the old answer ("that work does not exist… start again
     // with prepare_work") would have opened a duplicate for work already up
@@ -2436,10 +2883,10 @@ async function submitWorkLocked(deps, params) {
           + 'from — then submit with taskId + the branch you pushed. The branch you already pushed is fine '
           + 'as it is; nothing needs rebuilding.'
         : 'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
-          + 'refused the push — Usernode applies it and opens the pull request itself, no GitHub write access '
+          + 'refused the push — Homeroom applies it and opens the pull request itself, no GitHub write access '
           + 'needed); slug + prNumber for a pull request that is already open; or slug + branch, which '
           + 'recovers an open task whose id you lost. The taskId is printed in the work order you were given, '
-          + 'and it belongs to the user\'s Usernode account — you can submit it yourself.'
+          + 'and it belongs to the user\'s Homeroom account — you can submit it yourself.'
     );
   }
   if (patch && !task) {
@@ -2494,7 +2941,7 @@ async function submitWorkLocked(deps, params) {
     if (typeof params.shareWork !== 'function') {
       return fail(
         'platform_unavailable',
-        'This Usernode client cannot share work to the in-progress area. Try again shortly.',
+        'This Homeroom client cannot share work to the in-progress area. Try again shortly.',
         { retryable: true }
       );
     }
@@ -2521,11 +2968,6 @@ async function submitWorkLocked(deps, params) {
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
-      // Which coding agent wrote it, resolved HERE rather than at the tool
-      // layer: normalizeAgent already folds the self-reported name together
-      // with the connected client's, and the badge on the shared card should
-      // read the same as the badge on a proposal from the same agent.
-      externalAgent: normalizeAgent(agent, clientName),
     };
 
     // Sharing the same task twice pushes onto the SAME card rather than making
@@ -2538,17 +2980,20 @@ async function submitWorkLocked(deps, params) {
       if (typeof params.updateProposal !== 'function') {
         return fail(
           'platform_unavailable',
-          'This Usernode client cannot advance a shared session. Try again shortly.',
+          'This Homeroom client cannot advance a shared session. Try again shortly.',
           { retryable: true }
         );
       }
+      // `payload` AS IS — the badge is deliberately not in it. See the note
+      // on the share call below: this is the update route, and its body
+      // parser is `exactKeys`, so one unknown field refuses the whole call.
       const advanced = await params.updateProposal(slug, existing, payload);
       if (!advanced || !advanced.ok) {
         return {
           ok: false,
           code: 'share_failed',
           message: (advanced && advanced.body && (advanced.body.message || advanced.body.error))
-            || 'Usernode could not advance that shared session.',
+            || 'Homeroom could not advance that shared session.',
           status: advanced ? advanced.status : 0,
           platformResult: advanced,
         };
@@ -2570,13 +3015,31 @@ async function submitWorkLocked(deps, params) {
       };
     }
 
-    const shared = await params.shareWork(slug, payload);
+    // THE BADGE GOES ONLY TO THE CREATE PATH, and that is not a tidy-up.
+    //
+    // These two calls are two different routes with two different body
+    // parsers, and both parsers are `exactKeys` — an unknown field is not
+    // ignored, it refuses the whole request. `externalAgent` is accepted by
+    // share-in-progress and NOT by update-from-fork, so building it into the
+    // one shared payload made every RESHARE fail with `invalid_request`:
+    // sharing a second time onto the same card, the documented way to keep
+    // committing to shared work, could not work at all.
+    //
+    // It belongs here on the merits anyway. The badge is which coding agent
+    // wrote it, resolved in the service rather than at the tool layer so a
+    // shared card reads the same as a proposal from the same agent — and it
+    // is set when the card is CREATED. A reshare advances a card that already
+    // carries it, so there was never anything for the update to say.
+    const shared = await params.shareWork(slug, {
+      ...payload,
+      externalAgent: normalizeAgent(agent, clientName),
+    });
     if (!shared || !shared.ok) {
       return {
         ok: false,
         code: 'share_failed',
         message: (shared && shared.body && (shared.body.message || shared.body.error))
-          || 'Usernode could not share that work to the in-progress area.',
+          || 'Homeroom could not share that work to the in-progress area.',
         status: shared ? shared.status : 0,
         platformResult: shared,
       };
@@ -2678,7 +3141,7 @@ async function submitWorkLocked(deps, params) {
       log.error('external-agent-tasks', 'PR creation failed for an applied patch', {
         owner, repo, taskId: task.id, ...(desc || { message: err && err.message }),
       });
-      return fail('platform_unavailable', 'Usernode applied the patch but could not open the pull request. Try again shortly.', { retryable: true });
+      return fail('platform_unavailable', 'Homeroom applied the patch but could not open the pull request. Try again shortly.', { retryable: true });
     }
   } else {
     // ── The branch path ────────────────────────────────────────────────
@@ -2705,83 +3168,92 @@ async function submitWorkLocked(deps, params) {
     }
 
     if (!pr) {
-      const outcome = await resolvePullRequest({
-        gh, owner, repo, forkOwner, forkRepo, branch,
-        prTitle: prTitleFor({ title, task, slug }),
-        prBody: prBodyFor({ body, task }),
+      // ── Rung 1: the mirror ─────────────────────────────────────────
+      //
+      // Copy the verified fork branch into the app's own repository and
+      // open a plain same-repo pull request from it. This used to be the
+      // last rung, reached only when both cross-fork creates refused — and
+      // for as long as they did, every connector proposal was a mirror
+      // anyway. Making it the FIRST rung is a choice about who owns the
+      // head afterwards: a `usernode/from-…` branch is one the platform can
+      // write, so when main moves under the proposal the auto-sync and the
+      // conflict resolver bring it up to date the way they do for a native
+      // session. A head in the author's fork cannot be written by anyone
+      // but the author, so a fork-tracked proposal sat at "Conflict
+      // resolution failed" until its author came back (task 153).
+      //
+      // Provenance is verified inside mirrorForkBranch BEFORE anything is
+      // copied — that is where the attribution gate lives for a
+      // platform-written head — and it is the mirror's own refusals
+      // (somebody else's fork, a branch not built on the recorded base, a
+      // branch GitHub does not have) that are handed back verbatim: each
+      // names what to fix, and a cross-fork create would fail on the same
+      // fact with a worse sentence. Only a refusal about the PLATFORM —
+      // no write credential, the copy itself failed, the ancestry check
+      // could not be made — falls through to rungs 2 and 3.
+      const prTitle = prTitleFor({ title, task, slug });
+      const prBody = prBodyFor({ body, task });
+      const mirrored = await externalAgentHead.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
+        expectedLogin: link.login,
         baseSha: task ? task.base_sha : null,
         taskId: task ? task.id : null,
-        expectedLogin: link.login,
-        pushedState: pushed,
       });
-      if (outcome.done) return outcome.done;
-      if (outcome.ok) {
-        pr = outcome.pr;
-        via = outcome.via;
+      if (mirrored.ok) {
+        platformOwnedHead = mirrored;
+        via = 'mirror';
+        try {
+          pr = await gh.createPR(owner, repo, { branch: mirrored.branch, title: prTitle, body: prBody });
+        } catch (err) {
+          await mirrored.cleanup();
+          platformOwnedHead = null;
+          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
+          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
+            owner, repo, taskId: task ? task.id : null, ...(desc || { message: err && err.message }),
+          });
+          return prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch });
+        }
+      } else if (mirrored.code !== 'platform_unavailable') {
+        return mirrored;
       } else {
-        // ── Rung 3: the mirror ───────────────────────────────────────
+        // ── Rungs 2 and 3: the cross-fork pull request ─────────────────
         //
-        // Both cross-fork attempts refused. Rather than hand back an
-        // error the user can do nothing with, copy the branch into the
-        // app's own repository and open the plain same-repo pull request
-        // that works. Provenance is verified inside mirrorForkBranch
-        // BEFORE anything is copied — that is where the attribution gate
-        // lives for a platform-written head.
+        // The platform could not write the app repository just now. A
+        // proposal whose head the platform only TRACKS is still a proposal
+        // — the group can review and vote on it, and it merges the same
+        // way — so rather than hand back an error the user can do nothing
+        // with, open the pull request from the fork itself. What is lost
+        // is the automatic sync: the topic page says so, and the author
+        // brings the branch up to date and submits again.
         //
-        // Say out loud that we got here and why. Since cross-fork creates
-        // send `maintainer_can_modify: false`, rung 1 is expected to
-        // succeed and this line should stop appearing entirely — so its
-        // presence is the signal that something new is refusing the fork
-        // head, visible in the log rather than only as a `submitted_via`
-        // value somebody has to go and query.
-        log.info('external-agent-tasks', 'cross-fork create refused — falling back to the mirror', {
+        // Say out loud that we got here and why. With the mirror first this
+        // line should be rare, so its presence in the log is the signal
+        // that the platform's own write path is unwell — visible without
+        // anyone going and querying `submitted_via`.
+        log.warn('external-agent-tasks', 'mirror unavailable — falling back to a cross-fork pull request', {
           owner,
           repo,
           head: `${forkOwner}:${branch}`,
           taskId: task ? task.id : null,
-          // Which rung failed and what GitHub said about it. `desc` is the
-          // describeGithubError shape from the second attempt; the field
-          // GitHub objected to is the part worth reading at a glance.
-          failedRungs: 'branch, branch_head_repo',
-          status: outcome.desc ? outcome.desc.status || null : null,
-          requestId: outcome.desc ? outcome.desc.requestId || null : null,
-          githubField: firstErrorField(outcome.desc),
-          message: outcome.desc ? outcome.desc.message : null,
+          mirrorCode: mirrored.code || null,
+          mirrorMessage: mirrored.message || null,
         });
-        const mirrored = await externalAgentHead.mirrorForkBranch({
-          gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
-          expectedLogin: link.login,
+        const outcome = await resolvePullRequest({
+          gh, owner, repo, forkOwner, forkRepo, branch,
+          prTitle, prBody,
           baseSha: task ? task.base_sha : null,
           taskId: task ? task.id : null,
+          expectedLogin: link.login,
+          pushedState: pushed,
         });
-        if (!mirrored.ok) {
-          // A refusal with a REASON (someone else's fork, a branch built
-          // off a different base) is the mirror's own answer and is more
-          // useful than GitHub's. Anything else falls back to the typed
-          // GitHub error, which now says what actually happened.
-          if (mirrored.code === 'fork_mismatch' || mirrored.code === 'base_mismatch') return mirrored;
+        if (outcome.done) return outcome.done;
+        if (!outcome.ok) {
           return prOpenFailed({
             desc: outcome.desc, owner, repo, forkOwner, forkRepo, branch,
           });
         }
-        platformOwnedHead = mirrored;
-        via = 'mirror';
-        try {
-          pr = await gh.createPR(owner, repo, {
-            branch: mirrored.branch,
-            title: prTitleFor({ title, task, slug }),
-            body: prBodyFor({ body, task }),
-          });
-        } catch (err) {
-          await mirrored.cleanup();
-          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
-          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
-            owner, repo, ...(desc || { message: err && err.message }),
-          });
-          return prOpenFailed({
-            desc: desc || outcome.desc, owner, repo, forkOwner, forkRepo, branch,
-          });
-        }
+        pr = outcome.pr;
+        via = outcome.via;
       }
     }
   }
@@ -2832,7 +3304,7 @@ async function submitWorkLocked(deps, params) {
       ok: false,
       code: 'import_failed',
       message: (imported && imported.body && imported.body.error)
-        || 'Usernode could not turn that pull request into a proposal.',
+        || 'Homeroom could not turn that pull request into a proposal.',
       status: imported ? imported.status : 0,
       prNumber: pr.number,
       prUrl: pr.html_url || null,
@@ -2935,13 +3407,21 @@ function workOrderTitle(brief, issueNumber) {
 // row and a session row hand the panel one shape. `icon_image_id`, NOT
 // `icon_url`: the table stores the id and the server builds the path — see the
 // derivation in routes/apps.js and the longer note at the sessions query.
-async function listOpenWorkOrders(pool, userId) {
+//
+// #1948: a task whose REQUEST has since closed is left out. A work order stays
+// `open` until its own agent submits or shares it, so a request built some
+// other way (a platform session, another agent) closes while the task does
+// not — and the row kept pointing at `dev/issues/<n>`, which the board only
+// resolves for OPEN issues, so tapping it fell back to the card list and
+// looked like a dead row. `fetchOpenIssues` is injectable for tests.
+async function listOpenWorkOrders(pool, userId, { fetchOpenIssues = githubService.fetchPublicIssues } = {}) {
   const id = Number(userId);
   if (!Number.isSafeInteger(id) || id <= 0) return [];
+  let rows;
   try {
-    const { rows } = await pool.query(
+    ({ rows } = await pool.query(
       `SELECT t.id, t.issue_number, t.branch_name, t.brief, t.client_id,
-              t.created_at, a.slug AS app_slug, a.name AS app_name,
+              t.created_at, a.slug AS app_slug, a.name AS app_name, a.repo_url,
               a.icon_emoji AS app_icon_emoji,
               CASE WHEN a.icon_image_id IS NOT NULL
                    THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
@@ -2953,8 +3433,15 @@ async function listOpenWorkOrders(pool, userId) {
           AND t.session_id IS NULL
         ORDER BY t.created_at DESC`,
       [id]
-    );
-    return rows.map((r) => ({
+    ));
+  } catch (err) {
+    // The panel is a read: a failed lookup costs the work-order rows and
+    // leaves the session list alone, rather than failing the whole call.
+    log.warn('external-agent-tasks', 'open work-order lookup failed', { err: err.message });
+    return [];
+  }
+  const live = await withoutClosedRequests(rows, fetchOpenIssues);
+  return live.map((r) => ({
       id: Number(r.id),
       issue_number: r.issue_number == null ? null : Number(r.issue_number),
       title: workOrderTitle(r.brief, r.issue_number),
@@ -2966,13 +3453,46 @@ async function listOpenWorkOrders(pool, userId) {
       created_at: r.created_at,
       app_slug: r.app_slug,
       app_name: r.app_name,
+      // Selected above for the panel's leading tile and, until #1948, dropped
+      // here — so every work-order row fell back to the app's initial.
+      app_icon_emoji: r.app_icon_emoji || null,
+      app_icon_url: r.app_icon_url || null,
     }));
-  } catch (err) {
-    // The panel is a read: a failed lookup costs the work-order rows and
-    // leaves the session list alone, rather than failing the whole call.
-    log.warn('external-agent-tasks', 'open work-order lookup failed', { err: err.message });
-    return [];
+}
+
+// Drop the rows whose issue is no longer open (#1948). One fetch per
+// repository, through github.fetchPublicIssues' cache — the same list the
+// board itself renders from, so "not in it" means exactly "the board cannot
+// open it". Only an AUTHORITATIVE list filters: a note (rate limited, fetch
+// failed, unavailable), a truncated list or a throw keeps every row of that
+// repository, because hiding work somebody handed out on a guess is worse
+// than one stale row. A task with no issue has nothing to check.
+async function withoutClosedRequests(rows, fetchOpenIssues) {
+  const repos = new Map();
+  for (const r of rows) {
+    if (r.issue_number == null) continue;
+    const parsed = githubService.parseGithubUrl(r.repo_url);
+    if (parsed) repos.set(`${parsed.owner}/${parsed.repo}`, parsed);
   }
+  if (!repos.size) return rows;
+
+  const openByRepo = new Map();
+  await Promise.all([...repos].map(async ([key, { owner, repo }]) => {
+    try {
+      const result = await fetchOpenIssues(owner, repo);
+      if (!result || result.note || result.truncatedList || !Array.isArray(result.issues)) return;
+      openByRepo.set(key, new Set(result.issues.map((i) => Number(i.number))));
+    } catch (err) {
+      log.warn('external-agent-tasks', 'open-issue check for work orders failed', { repo: key, err: err.message });
+    }
+  }));
+
+  return rows.filter((r) => {
+    if (r.issue_number == null) return true;
+    const parsed = githubService.parseGithubUrl(r.repo_url);
+    const open = parsed && openByRepo.get(`${parsed.owner}/${parsed.repo}`);
+    return !open || open.has(Number(r.issue_number));
+  });
 }
 
 function linkedIssuesFor(task) {
@@ -3012,7 +3532,9 @@ module.exports = {
   BASE_SHA_RE,
   SUBMIT_VIA,
   SUBMIT_SOURCES,
-  HOSTED_ASSETS,
+  HOSTED_ASSET_PATHS,
+  hostedAssetUrls,
+  platformOriginFrom,
   normalizeAgent,
   normalizeSource,
   agentLabel,
@@ -3040,11 +3562,27 @@ module.exports = {
   attributionError,
   loadOpenTask,
   loadAnyTask,
+  // The share -> promote pair. Both are the fix for work orders that a
+  // shared session left OPEN for the whole 14-day expiry: the lookup is the
+  // only handle on that reservation once the taskId has gone out of scope,
+  // and the close is called from services/mcp-tools.js the moment
+  // `propose: true` puts the session in front of the group.
+  findOpenTaskBySession,
+  closeTaskForSession,
   // Both used by routes/dev-flow.js (#1049) to RE-RENDER a work order the
   // user already has — the in-platform walkthrough is resumable, so
   // reopening the chat must show the same branch and base commit rather
   // than mint a second task.
   loadLatestOpenTaskForSlug,
+  // "Start over" on that same walkthrough: the only way to put a work order
+  // away without submitting it, and the reason a stale one stops being
+  // permanent.
+  discardTask,
+  abandonExpiredRequest,
+  // The walkthrough's own lookup (per session), and the adoption behind it.
+  loadOpenTaskForSession,
+  adoptTaskForSession,
+  abandonTasksForSession,
   renderPreparedTask,
   prepareWork,
   submitWork,

@@ -47,7 +47,7 @@ function headerHtml(state, preview) {
   // The mode switch reads these three off the improve store. Reset every
   // time so one test's preview cannot leak into the next one's rest state.
   m.improveStore.set({
-    previewSessionId: null, previewUrl: null, previewActive: false, ...(preview || {}),
+    previewSessionId: null, previewUrl: null, previewBuildable: false, previewActive: false, ...(preview || {}),
   });
   return renderToHtml(createElement(m.SessionHeader, {}));
 }
@@ -111,7 +111,7 @@ const SESSION = {
 
 // ── 1. The venue button ────────────────────────────────────────────────
 
-test('the venue button is the LAST direct child, with the attributes the check reads', () => {
+test('the venue remains a direct child with the attributes the check reads, at every width', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, agent_backend: 'codex_openrouter' }));
 
@@ -119,10 +119,25 @@ test('the venue button is the LAST direct child, with the attributes the check r
   assert.match(html, /data-venue-change="1"/);
   assert.match(html, /data-venue-current="usernode-openrouter"/);
   assert.match(html, /aria-haspopup="menu"/);
-  assert.match(html, /class="dc-venue-name">Usernode · OpenRouter</);
-  // LAST: nothing is rendered after it. The portal puts these children
-  // directly under `#dc-session-header`, so `>` and `:last-child` both hold.
-  assert.match(html, /<\/button>$/, 'the strip ends with the venue button');
+  assert.match(html, /class="dc-venue-name">Homeroom · OpenRouter</);
+  assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
+  assert.doesNotMatch(html, /data-venue-busy|Thinking…|dc-venue-busy/,
+    'idle keeps the ordinary dropdown affordance');
+  // The venue is a direct child — the contract the declared checks read.
+  // (#1617 hid it below sm behind a Details dialog; #1940 reverted that.)
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const children = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) children.push(Object.fromEntries(token.attrs.map(a => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  const venue = children.filter(c => c.id === 'dc-venue-select');
+  assert.equal(venue.length, 1);
+  assert.doesNotMatch(venue[0].class, /max-sm:hidden/, 'shown at every width');
+  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 0, 'no Details trigger');
   assert.equal(html.indexOf('dc-venue-select') > html.indexOf('New change'), true);
 });
 
@@ -131,8 +146,8 @@ test('the caption sentence is the TOOLTIP, never the label', () => {
   // explanation the old composer caption carried survives only on hover.
   const { view } = makeDevChat();
   const v = view({ ...SESSION, agent_backend: 'codex_openrouter' });
-  assert.match(v.venue.title, /^Building in Usernode · OpenRouter\./);
-  assert.equal(v.venue.label, 'Usernode · OpenRouter');
+  assert.match(v.venue.title, /^Building in Homeroom · OpenRouter\./);
+  assert.equal(v.venue.label, 'Homeroom · OpenRouter');
   assert.doesNotMatch(v.venue.label, /Building in/);
 });
 
@@ -151,12 +166,29 @@ test('an unknown venue renders no button rather than half of one', () => {
   assert.doesNotMatch(headerHtml(v), /dc-venue-select/);
 });
 
-test('mid-turn the venue cannot be changed', () => {
+test('mid-turn the venue is visibly and accessibly locked', () => {
   // A running turn holds the worker, and moving it under itself is the
-  // failure the old `agentSelect.disabled` guarded against.
+  // failure the old `agentSelect.disabled` guarded against. The explicit
+  // status is the touch-visible explanation for why tapping does nothing.
   const { view } = makeDevChat({ isStreaming: true });
   assert.equal(view(SESSION).venue.disabled, true);
-  assert.match(headerHtml(view(SESSION)), /<button[^>]*disabled=""/);
+  const html = headerHtml(view(SESSION));
+  assert.match(html, /<button[^>]*data-venue-busy="1"[^>]*disabled=""/);
+  assert.match(html, /aria-label="[^"].*Unavailable while the agent is thinking\./);
+  assert.match(html, /title="Wait for the current response to finish[^"].*"/);
+  assert.match(html, /class="dc-venue-busy"[^>]*>[\s\S]*Thinking…/);
+  const venueHtml = html.match(/<button[^>]*id="dc-venue-select"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.doesNotMatch(venueHtml, /dc-venue-caret|>▾</,
+    'the dropdown caret does not contradict the locked state');
+});
+
+test('the busy screenshot route paints the same locked venue without faking a live turn', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.location.search = '?shot=busy-drafts';
+
+  assert.equal(DevChat.isStreaming, false, 'the deterministic route does not start a turn');
+  assert.equal(view(SESSION).venue.disabled, true);
+  assert.match(headerHtml(view(SESSION)), /data-venue-busy="1"[\s\S]*Thinking…/);
 });
 
 // ── 2. The rest of the strip ───────────────────────────────────────────
@@ -261,13 +293,25 @@ test('the strip hosts no lifecycle pill — the header chip does', () => {
   );
 });
 
-test('with no preview built yet the strip is the bare Building chip', () => {
+test('with no preview built yet Building is a compact, non-interactive status chip (#1594)', () => {
   const { view } = makeDevChat();
   const rest = headerHtml(view(SESSION));
   assert.doesNotMatch(rest, /dc-mode-chip/, 'absent at rest');
   assert.doesNotMatch(rest, /dc-mode-switch/, 'and no switch — there is nothing to see');
   const busy = headerHtml({ ...view(SESSION), busy: true });
-  assert.match(busy, /id="dc-mode-chip"[^>]*>Building</);
+  const chip = busy.match(/<span id="dc-mode-chip"[^>]*>[\s\S]*?Building<\/span>/)?.[0];
+  assert.ok(chip, 'the activity label is a span, not a button');
+  assert.match(chip, /role="status"/);
+  assert.match(chip, /bg-zinc-100/);
+  assert.match(chip, /dark:bg-zinc-800/);
+  assert.match(chip, /text-zinc-600/);
+  assert.match(chip, /dark:text-zinc-300/);
+  assert.match(chip, /py-0\.5 rounded-md/);
+  assert.match(chip, /cursor-default/);
+  assert.match(chip, /<span[^>]*bg-amber-500[^>]*aria-hidden="true"/,
+    'the decorative activity dot complements the visible status text');
+  assert.doesNotMatch(chip, /<button|tabindex=|aria-pressed=|aria-disabled=|hover:|cursor-pointer|bg-violet-600|text-white|un-touch-target/i,
+    'no button semantics, focus target, hover treatment, or primary-action fill');
   assert.doesNotMatch(busy, /dc-mode-switch/);
 });
 
@@ -303,6 +347,46 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.equal((seeing.match(/bg-violet-600|bg-amber-300/g) || []).length, 1, 'still one fill');
   // Only ONE label at a time — the chip is the current mode, not both.
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
+});
+
+test('a preview that can be BUILT draws the switch too (#2069)', () => {
+  // The control that rebuilds a missing preview used to hide whenever the
+  // preview was missing. ensure-staging rebuilds from the branch's latest
+  // commit and has authorized this since #439 — only this gate had not caught
+  // up, so a shared draft whose preview went to sleep offered no route back.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: null, previewBuildable: true });
+
+  assert.match(html, /id="dc-mode-switch"/, 'the switch is drawn with no live URL');
+  assert.match(html, /id="app-eye-btn"/);
+  // And it says what the click DOES, which is not the same as opening one.
+  assert.match(html, /aria-label="Build a preview of this change"/);
+  assert.match(html, /title="Build a staging preview of this change[^"]*"/);
+});
+
+test('a live preview still says "preview", not "build"', () => {
+  // The new wording must not leak onto the case that already worked.
+  const { view } = makeDevChat();
+  const html = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+  assert.match(html, /aria-label="Preview this change"/);
+  assert.doesNotMatch(html, /aria-label="Build a preview/);
+});
+
+test('with nothing to build the strip still falls back to the status chip', () => {
+  // #1594's rule survives, narrowed: it applies to a session with no commit
+  // to preview, rather than to every session without a live URL.
+  const { view } = makeDevChat();
+  const busy = headerHtml({ ...view(SESSION), busy: true },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(busy, /id="dc-mode-switch"/, 'no switch with nothing to switch to');
+  assert.match(busy, /id="dc-mode-chip"[\s\S]{0,400}?Building/, 'status, not an action');
+
+  const idle = headerHtml({ ...view(SESSION), busy: false },
+    { previewSessionId: null, previewUrl: null, previewBuildable: false });
+  assert.doesNotMatch(idle, /id="dc-mode-switch"/);
+  assert.doesNotMatch(idle, /id="dc-mode-chip"/, 'and idle with nothing to build draws nothing');
 });
 
 test('the label belongs to the THUMB, so both sides carry one', () => {
@@ -387,7 +471,7 @@ test('BuildVenues.selectorHtml is retired, and nothing still calls it', () => {
   assert.doesNotMatch(VENUES_SRC, /selectorHtml: selectorHtml/);
   assert.doesNotMatch(DEV_CHAT_SRC, /BuildVenues\.selectorHtml/);
   // The venue LOOKUP it did is what the model reads instead.
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/);
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/);
   // noteHtml and chipHtml stay strings — their callers still are.
   assert.match(VENUES_SRC, /function noteHtml/);
   assert.match(VENUES_SRC, /function chipHtml/);

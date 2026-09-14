@@ -154,12 +154,18 @@ test('a merged row shows a visible 💬 badge when chat_count > 0', () => {
   assert.doesNotMatch(badge, /\bhidden\b/, 'non-empty badge is visible');
 });
 
-test('a merged row hides the 💬 badge when chat_count is 0', () => {
+test('a merged row draws no 💬 badge when chat_count is 0, and one on its meta line when there are messages', () => {
   const { AppView } = makeAppView();
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  const html = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
-  const badge = html.match(/<span class="dev-chat-badge[^>]*data-count="0"[^>]*>/)[0];
-  assert.match(badge, /\bhidden\b/, 'empty badge is hidden');
+  // A live bump repaints from the model, so a 0 count draws nothing, where
+  // it used to draw a hidden badge for the bump to reveal. A real count is
+  // a fact about the item and rides the meta line with the tags, at both
+  // sizes, rather than a different row at each.
+  const none = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
+  assert.doesNotMatch(none, /dev-chat-badge|dev-card-facts/);
+  const some = mergedCardHtml(AppView, mergedPr({ chat_count: 2 }), 2);
+  assert.match(some, /<div class="dev-card-meta">[^<]*(?:<[^>]*>[^<]*)*?<span class="dev-chat-badge[^>]*data-count="2"[^>]*>[^<]*<\/span><\/div>/, 'the count closes the meta line');
+  assert.doesNotMatch(some, /dev-card-facts/);
 });
 
 test('#dev-body tap opens the proposal topic on a bare merged-row click', async () => {
@@ -193,19 +199,29 @@ test('#dev-body tap opens the proposal topic on a bare merged-row click', async 
   assert.deepEqual(opened, [], 'inner button/link taps do not open the topic');
 });
 
-test('_mountTopicThread mounts a merged proposal with a LIVE editable composer', () => {
+test('the merged change card keeps a LIVE editable discussion in its own tab', () => {
   const threadSlot = makeEl('dev-topic-thread');
   const { AppView, sandbox } = makeAppView({ thread: threadSlot });
   AppView._devTopic = { kind: 'proposal', id: 55 };
   AppView._proposals = [];
   AppView._merged = [mergedPr()];
 
+  let pageHost;
+  AppView._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage: (host) => { pageHost = host; } });
   AppView._mountTopicThread();
-
+  assert.equal(pageHost, threadSlot);
+  assert.equal(AppView._topicViewFor('proposal', AppView._merged[0]).body.discussion, null);
+  const { loadTsx } = require('./lib/render-tsx');
+  const { mountChangeDiscussion } = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
+  const previousWindow = global.window;
+  global.window = { GroupChat: sandbox.GroupChat };
+  try { mountChangeDiscussion(threadSlot, 55, !!AppView.readOnly); }
+  finally { if (previousWindow === undefined) delete global.window; else global.window = previousWindow; }
   const opts = sandbox.__mountOpts;
   assert.ok(opts, 'GroupChat.mountThread was called');
   assert.equal(opts.type, 'session', 'proposal maps to a session thread');
   assert.equal(opts.ref, 55);
+  assert.equal(opts.withHeader, false, 'the change card is not repeated inside the discussion');
   assert.ok(!opts.readOnly, 'no read-only lock on a merged proposal');
   assert.ok(!opts.notice, 'no "voting closed" notice');
 });

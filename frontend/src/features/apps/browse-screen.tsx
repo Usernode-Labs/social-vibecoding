@@ -52,6 +52,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
 import { BrowseRows } from './browse-list';
+import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
 
 const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
@@ -92,6 +93,9 @@ export function BrowseScreen() {
     detail: any;
     showClear?: boolean;
     sort: string;
+    curated: boolean;
+    grouped: boolean;
+    moreExpanded: boolean;
   };
   const onDetail = state.level === 'detail';
 
@@ -115,10 +119,17 @@ export function BrowseScreen() {
           The search bar rides the level: searching the directory is a level-1
           affordance, and on a detail page the field would filter a list
           nobody can see.
+
+          Its fill is the wallpaper's base (--home-ground, set by the body
+          rule that paints the wallpaper on this route — see "The home
+          ground" in app.css), not white: a sticky bar needs an opaque fill
+          for the rows to scroll under, and a white one read as a slab
+          across a cream page. Dark mode reads the same variable, which the
+          body's dark rule points at the inverted ground.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950`}
+        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
@@ -205,8 +216,16 @@ export function BrowseScreen() {
           className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
-            ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>
-            : <BrowseRows rows={state.rows} />}
+            ? (
+              // #1899: the shared error card, spanning the md+ grid; Retry
+              // re-runs the same directory load.
+              <AppsLoadError
+                className="md:col-span-full"
+                title="Couldn't load the app directory"
+                onRetry={() => browse()?._load?.()}
+              />
+            )
+            : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
         <div
           id="browse-empty"

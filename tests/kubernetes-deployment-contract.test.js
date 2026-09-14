@@ -21,7 +21,8 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   const sourceCopy = dockerfile.lastIndexOf('COPY --chown=node:node . .');
   for (const asset of [
     '/build/public/index.html ./public/index.html',
-    '/build/public/shell/assets/shell.js ./public/shell/assets/shell.js',
+    // The directory: every lazy chunk the React build emits, not the entry alone.
+    '/build/public/shell/assets/ ./public/shell/assets/',
     '/build/public/css/tailwind.css ./public/css/tailwind.css',
   ]) {
     const assetCopy = dockerfile.lastIndexOf(asset);
@@ -47,7 +48,7 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
-test('Kubernetes workflow publishes all three SHA-addressable images', () => {
+test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   for (const component of ['platform', 'worker', 'capture']) {
     assert.match(workflow, new RegExp(`component: ${component}`));
@@ -58,6 +59,11 @@ test('Kubernetes workflow publishes all three SHA-addressable images', () => {
   assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /steps\.build\.outputs\.digest/);
+  assert.match(workflow, /if: steps\.reuse\.outputs\.digest == ''/);
+  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
+  assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
+  assert.match(workflow, /pull: true/);
+  assert.match(workflow, /needs: build/);
 });
 
 test('migration command validates the target database identifier', () => {
@@ -73,12 +79,35 @@ test('Kubernetes workloads receive the canonical repository and release revision
   assert.match(migrationJob, /name: CLI_CANONICAL_ORIGIN, value: \{\{ printf "https:\/\/%s" \.Values\.config\.domain \| quote \}\}/);
   assert.match(migrationJob, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(migrationJob, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
+  assert.match(migrationJob, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
+  assert.match(migrationJob, /name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: \{\{ \.Values\.config\.nativeSessionV2TestnetChainId \| quote \}\}/);
   assert.match(platform, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(platform, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
   assert.match(platform, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_UPSTREAM, value: \{\{ \.Values\.config\.explorerUpstream \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_UPSTREAM_BASE, value: \{\{ \.Values\.config\.explorerUpstreamBase \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_USE_HTTP, value: \{\{ \.Values\.config\.explorerUseHttp \| quote \}\}/);
+});
+
+test('Kubernetes chart supplies the canonical native testnet ChainId', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"/);
+});
+
+test('Kubernetes chart preserves both social account-linking credential pairs', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
+  const readme = read('deploy/helm/social-vibecoding-platform/README.md');
+  for (const provider of [
+    { value: 'githubLink', env: 'GITHUB_LINK', callback: 'github' },
+    { value: 'xLink', env: 'X_LINK', callback: 'x' },
+  ]) {
+    assert.match(values, new RegExp(`${provider.value}ClientId: ""`));
+    assert.match(values, new RegExp(`${provider.value}ClientSecret: ""`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
+    assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
+  }
 });
 
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {

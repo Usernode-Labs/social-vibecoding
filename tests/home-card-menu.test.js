@@ -2,14 +2,15 @@
 // frontend/src/features/home/home.js.
 //
 // Contract pinned here:
-//   - renderAppCard emits exactly one `.card-menu-btn` trigger and none
+//   - launcher cards emit no `.card-menu-btn` badge and none
 //     of the old corner buttons (star / lock / delete / check-updates);
 //   - the inline Retry button appears ONLY on errored cards, for the
 //     creator or a full admin (canAdminWrite — view-only admins are
 //     excluded, issue #311);
 //   - menuItemsFor gates each item exactly like the old corner buttons
 //     did: favorite-toggle on every app (everyone gets ≥1 item),
-//     check-updates/lock/delete behind canAdminWrite, retry behind
+//     check-updates/lock behind canAdminWrite, delete behind can_delete
+//     (with a full-admin compatibility fallback), retry behind
 //     errored + creator-or-admin. #618: member apps get a working
 //     Remove/Add pair driven by the per-user your_apps_hidden flag
 //     (display-only opt-out; membership/access untouched).
@@ -163,7 +164,7 @@ test('card-menu shot retries after the initial empty home paint', () => {
   const button = { dataset: { slug: 'demo-app' } };
   const populated = {
     offsetParent: {},
-    querySelector: (selector) => (selector === '.card-menu-btn' ? button : null),
+    querySelector: (selector) => (selector === '.app-card[data-slug]' ? button : null),
   };
   Home._apps = [baseApp()];
   Home._maybeOpenShotMenu(populated);
@@ -174,13 +175,10 @@ test('card-menu shot retries after the initial empty home paint', () => {
 
 // ── Compact card markup ───────────────────────────────────────────
 
-test('card: one hamburger trigger, none of the old corner buttons', () => {
+test('card: no hamburger or old corner buttons on launcher tiles', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const html = Home.renderAppCard(baseApp());
-  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
-  // The trigger is a hamburger SVG (three horizontal lines), not the
-  // old "⋯" glyph.
-  assert.match(html, /card-menu-btn[\s\S]*?M4 6h16M4 12h16M4 18h16/, 'hamburger icon path');
+  assert.doesNotMatch(html, /card-menu-btn|M4 6h16M4 12h16M4 18h16/);
   assert.doesNotMatch(html, /⋯/, 'no ⋯ glyph anywhere on the card');
   assert.doesNotMatch(html, /star-btn/, 'no inline star');
   assert.doesNotMatch(html, /lock-btn/, 'no inline lock');
@@ -223,21 +221,12 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: icon first with the hamburger badged on its corner, title below', () => {
+test('card layout: unobstructed icon first, title below', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
   assert.match(html, /w-14 h-14/, 'large icon');
-  // The hamburger badge lives inside the icon wrapper, overlapping its
-  // top-right corner — so in markup order: icon initial → menu button
-  // → title name.
-  const iconIdx = html.indexOf('app-icon-tile');
-  const menuIdx = html.indexOf('card-menu-btn');
-  const nameIdx = html.indexOf('Demo App');
-  assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
-    'icon → hamburger badge → title order');
-  assert.match(html, /card-menu-btn[^"]*absolute -top-1\.5 -right-1\.5/,
-    'badge overlaps the icon corner');
-  assert.match(html, /card-menu-btn[^"]*rounded-full/, 'badge is round');
+  assert.ok(html.indexOf('app-icon-tile') < html.indexOf('Demo App'));
+  assert.doesNotMatch(html, /card-menu-btn/);
   // The old measured-slot machinery is gone from the markup.
   assert.doesNotMatch(html, /card-actions/, 'no floating actions block');
   assert.doesNotMatch(html, /card-footer/, 'no footer row');
@@ -260,11 +249,11 @@ test('card layout: centered launcher tile, no visible border, capped title width
     `no border classes on the card element (got: ${cardCls})`);
 });
 
-test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
+test('card: Retry remains available on errored cards', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
   assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
-  assert.match(html, /card-menu-btn/, 'hamburger badge still present');
+  assert.doesNotMatch(html, /card-menu-btn/, 'launcher badge removed');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
@@ -500,6 +489,21 @@ test('menu: member toggle sends the explicit desired value, not !is_favorited (#
   );
 });
 
+test('menu: the favorite entry IS toggleAdded now, so the menu paints like the rails (#1567)', () => {
+  // Two implementations of one write is how the menu and the Discover rails
+  // came to disagree about how fast "Your apps" updates. This one delegates,
+  // so the optimistic flip, the immediate repaint and the revert-on-failure
+  // are the same code from every entry point.
+  const Home = makeHome({ id: ME });
+  const calls = [];
+  Home.toggleAdded = (slug, desired) => { calls.push([slug, desired]); };
+  Home._menuToggleFavorite(baseApp({ slug: 'plain' }), true);
+  Home._menuToggleFavorite(baseApp({ slug: 'mine', is_collaborator: true }), false);
+  // The !is_favorited fallback for a legacy caller that passes no value.
+  Home._menuToggleFavorite(baseApp({ slug: 'starred', is_favorited: true }));
+  assert.deepEqual(calls, [['plain', true], ['mine', false], ['starred', false]]);
+});
+
 // ── App details ───────────────────────────────────────────────────
 //
 // The menu's way to the app's own page — the SAME destination a row in
@@ -578,6 +582,32 @@ test('menu: full admin on a running repo app gets check-updates, lock and delete
     ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
+});
+
+test('menu: a sole contributor gets Delete app without admin-only controls (#1897)', () => {
+  const Home = makeHome({ id: ME });
+  const items = Home.menuItemsFor(baseApp({
+    created_by: ME,
+    contributor_count: 1,
+    can_delete: true,
+  }));
+  assert.ok(keys(items).includes('delete'));
+  assert.ok(!keys(items).includes('lock'), 'sole contributor is not made an admin');
+  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+});
+
+test('menu: an ineligible creator or app admin gets no Delete app action (#1897)', () => {
+  const Home = makeHome({ id: ME });
+  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    created_by: ME,
+    contributor_count: 2,
+    can_delete: false,
+  }))).includes('delete'));
+  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    created_by: OTHER,
+    can_manage: true,
+    can_delete: false,
+  }))).includes('delete'), 'general app management does not grant deletion');
 });
 
 test('menu: locked app offers Unlock', () => {
@@ -686,7 +716,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   const widgetItems = Home.menuItemsFor(baseApp({ is_collaborator: true }));
   const shortcutItem = widgetItems.find((i) => i.key === 'add-to-homescreen');
   assert.ok(shortcutItem, 'item present for widget mechanism');
-  assert.equal(shortcutItem.label, 'Add to Usernode widget');
+  assert.equal(shortcutItem.label, 'Add to Homeroom widget');
   assert.ok(!shortcutItem.disabled, 'actionable when not yet in the widget');
 });
 
@@ -714,7 +744,7 @@ test('menu: shortcut item only offered on "Your apps"', () => {
   );
 });
 
-test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
+test('menu: shortcut item becomes "Edit in Homeroom widget" once added', () => {
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: true };
   Home._widgetItems = [
@@ -726,7 +756,7 @@ test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
   const item = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
   assert.ok(item, 'item still renders');
-  assert.equal(item.label, 'Edit in Usernode widget');
+  assert.equal(item.label, 'Edit in Homeroom widget');
   assert.ok(!item.disabled, 'stays actionable — it opens the section');
   // Running it reveals the management section.
   item.run();
@@ -734,10 +764,10 @@ test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
   // An app not yet in the widget keeps the add label.
   const other = Home.menuItemsFor(baseApp({ slug: 'other-app', is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
-  assert.equal(other.label, 'Add to Usernode widget');
+  assert.equal(other.label, 'Add to Homeroom widget');
 });
 
-// ── Usernode widget section ───────────────────────────────────────
+// ── Homeroom widget section ───────────────────────────────────────
 //
 // The iOS-only strip above "Your apps". It must render nothing unless BOTH
 // the bridge reported mechanism 'widget' AND the registry fetch succeeded
@@ -768,7 +798,7 @@ test('widget section: hidden unless revealed + widget mechanism + registry', () 
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
   ];
   // Everything supported and fetched, but the user hasn't clicked
-  // "Add to Usernode widget" yet → still hidden by default.
+  // "Add to Homeroom widget" yet → still hidden by default.
   assert.equal(sectionHtml(Home), '', 'hidden until revealed');
   Home._widgetSectionVisible = true;
   assert.match(sectionHtml(Home), /id="widget-strip"/, 'revealed');
@@ -826,7 +856,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
     { id: 'w2', name: 'Other Dapp', url: 'https://elsewhere.test/thing' },
   ];
   const html = sectionHtml(Home);
-  assert.match(html, /Usernode widget/, 'section header');
+  assert.match(html, /Homeroom widget/, 'section header');
   assert.match(html, /id="widget-section-close"/, 'header has a Done/close button');
   assert.match(html, /id="widget-strip"/);
   assert.equal((html.match(/class="widget-tile /g) || []).length, 2);
@@ -2162,4 +2192,332 @@ test('widget-icon diagnostics carry the pinned address and the launcher log (#14
   assert.equal(ios.pinLog, null);
   assert.equal(ios.entries[0].url, 'https://sv.test/app/weather/full');
   assert.equal(ios.entries[0].urlOk, true);
+});
+
+function holdHarness({ yours = false, demo = false, placement = false } = {}) {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const timers = new Map();
+  const listeners = new Map();
+  const cardListeners = new Map();
+  const opened = [];
+  let seq = 0;
+  sandbox.setTimeout = (fn, ms) => { timers.set(++seq, { fn, ms }); return seq; };
+  sandbox.clearTimeout = (id) => timers.delete(id);
+  sandbox.addEventListener = (name, fn) => listeners.set(name, fn);
+  sandbox.removeEventListener = (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name); };
+  sandbox.PlatformUI = { gestures: () => ({ claim: () => true }) };
+  Home._placementHandle = placement ? {} : null;
+  Home.openCardMenu = (slug, anchor) => { opened.push({ slug, anchor }); };
+  Home.closeCardMenu = () => { opened.push('closed'); };
+  const card = {
+    dataset: { slug: 'demo-app' },
+    hasAttribute: (key) => key === 'data-yours' ? yours : key === 'data-demo' && demo,
+    addEventListener: (name, fn) => cardListeners.set(name, fn),
+    removeEventListener: (name) => cardListeners.delete(name),
+  };
+  const dispose = Home._wireCardLongPressMenu(card);
+  const event = { pointerId: 1, pointerType: 'touch', button: 0, clientX: 20, clientY: 20, target: { closest: () => null } };
+  const fire = (name, extra = {}) => (cardListeners.get(name) || listeners.get(name))?.({ ...event, type: name, ...extra });
+  const tick = (ms) => {
+    for (const [id, timer] of [...timers]) {
+      if (timer.ms <= ms) { timers.delete(id); timer.fn(); }
+    }
+  };
+  return { Home, card, opened, fire, tick, dispose, timers, listeners };
+}
+
+test('long hold anchors to its tile and suppresses launch until release', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.tick(400);
+  assert.equal(h.opened[0].anchor, h.card);
+  h.tick(5000);
+  assert.equal(h.Home._suppressClick, true, 'a prolonged hold cannot expire the click guard');
+  h.fire('pointerup');
+  assert.equal(h.Home._suppressClick, true, 'the release click is still guarded');
+  h.tick(0);
+  assert.equal(h.Home._suppressClick, false, 'later taps are available');
+  assert.equal(h.listeners.size, 0);
+});
+
+test('short tap, scrolling, cancellation and unmount never open a held menu', () => {
+  for (const action of ['pointerup', 'pointermove', 'pointercancel', 'unmount']) {
+    const h = holdHarness();
+    h.fire('pointerdown');
+    if (action === 'unmount') h.dispose();
+    else h.fire(action, { clientY: 45 });
+    h.tick(400);
+    assert.deepEqual(h.opened, [], action);
+    assert.equal(h.listeners.size, 0, action);
+  }
+});
+
+test('another pointer cannot cancel a hold; cancelled open menus dismiss', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.fire('pointerup', { pointerId: 2 });
+  h.tick(400);
+  assert.equal(h.opened.length, 1);
+  h.fire('pointercancel');
+  assert.equal(h.opened[1], 'closed');
+});
+
+test('placed touch tiles leave long press to the placement recognizer', () => {
+  const h = holdHarness({ yours: true, placement: true });
+  h.fire('pointerdown');
+  h.tick(400);
+  assert.deepEqual(h.opened, []);
+  const pen = holdHarness({ yours: true, placement: true });
+  pen.fire('pointerdown', { pointerType: 'pen' });
+  pen.tick(400);
+  assert.equal(pen.opened.length, 1, 'pens still get the context menu');
+  pen.dispose();
+});
+
+test('app menus use an anchored popover even on touch', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home._apps = [baseApp()];
+  Home.renderMenuHeaderHtml = () => 'Demo App';
+  sandbox.document.createElement = () => ({});
+  let options;
+  sandbox.PlatformUI = { popover: (opts) => { options = opts; return Promise.resolve(null); } };
+  const anchor = { getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }) };
+  Home.openCardMenu('demo-app', anchor);
+  assert.equal(options.anchorEl, anchor);
+  assert.equal(options.headerEl.className, 'card-menu-header');
+  assert.ok(options.items.length > 0);
+});
+
+test('movement dismissing an open search menu still suppresses the release click', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.tick(400);
+  h.fire('pointermove', { clientY: 50 });
+  h.tick(5000);
+  assert.equal(h.opened[1], 'closed');
+  assert.equal(h.Home._suppressClick, true);
+  h.fire('pointerup', { clientY: 50 });
+  h.tick(0);
+  assert.equal(h.Home._suppressClick, false);
+});
+
+// ── #1838: the two MOUSE entry points ─────────────────────────────
+//
+// A stationary mouse hold on a tile used to be a total no-op:
+// _wireCardLongPressMenu discarded `pointerType === 'mouse'` on its first
+// line, and the kit's own mouse path only ever arms a DRAG (it lifts after
+// REORDER_SLOP of movement and has no hold timer). So nothing anywhere
+// recognised a held mouse button, which is the "can no longer hold press"
+// evan reported on desktop.
+//
+// The recognizer needs a controllable clock and real window listeners, so
+// these patch the makeHomeEnv sandbox rather than adding a second harness.
+
+function gestureEnv(user = { id: ME, canAdminWrite: true }) {
+  const env = makeHomeEnv(user);
+  const { sandbox } = env;
+  const timers = [];
+  const winListeners = Object.create(null);
+  const docListeners = Object.create(null);
+
+  sandbox.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  sandbox.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; };
+  sandbox.addEventListener = (type, fn) => {
+    (winListeners[type] || (winListeners[type] = [])).push(fn);
+  };
+  sandbox.removeEventListener = (type, fn) => {
+    const a = winListeners[type] || [];
+    const i = a.indexOf(fn);
+    if (i >= 0) a.splice(i, 1);
+  };
+  sandbox.document.addEventListener = (type, fn) => {
+    (docListeners[type] || (docListeners[type] = [])).push(fn);
+  };
+  sandbox.PlatformUI = { gestures: () => ({ claim: () => true, release: () => {} }) };
+  // The shared stub's `innerHTML` is getter-only (it exists to assert
+  // escaping); openCardMenu builds its header by writing one.
+  sandbox.document.createElement = () => ({ className: '', innerHTML: '' });
+
+  return {
+    ...env,
+    timers,
+    // Run every live timer armed for exactly `ms`, in order.
+    run: (ms) => {
+      timers.filter((t) => !t.cancelled && !t.done && t.ms === ms)
+        .forEach((t) => { t.done = true; t.fn(); });
+    },
+    pending: (ms) => timers.filter((t) => !t.cancelled && !t.done && t.ms === ms).length,
+    win: (type, ev) => (winListeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })),
+    doc: (type, ev) => (docListeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })),
+  };
+}
+
+function makeCard(over = {}) {
+  const attrs = over.attrs || {};
+  const listeners = Object.create(null);
+  return {
+    nodeType: 1,
+    dataset: { slug: over.slug || 'demo-app' },
+    hasAttribute: (n) => Object.prototype.hasOwnProperty.call(attrs, n),
+    getBoundingClientRect: () => ({
+      left: 10, top: 20, width: 60, height: 60, right: 70, bottom: 80,
+    }),
+    addEventListener(t, fn) { (listeners[t] || (listeners[t] = [])).push(fn); },
+    removeEventListener(t, fn) {
+      const a = listeners[t] || [];
+      const i = a.indexOf(fn);
+      if (i >= 0) a.splice(i, 1);
+    },
+    fire(type, ev) { (listeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })); },
+  };
+}
+
+const press = (over = {}) => ({
+  pointerType: 'mouse',
+  button: 0,
+  isPrimary: true,
+  pointerId: 3,
+  clientX: 40,
+  clientY: 50,
+  target: { closest: () => null },
+  ...over,
+});
+
+test('mouse: a stationary press-and-hold opens the tile menu (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug, anchor) => { opened.push([slug, anchor]); };
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  assert.deepEqual(opened, [], 'nothing opens on the press itself');
+  env.run(400);
+  assert.deepEqual(opened, [['demo-app', card]],
+    'a held left mouse button opens the menu anchored to the tile');
+  assert.equal(env.Home._suppressClick, true,
+    'the click that follows the release must be eaten');
+});
+
+test('mouse: a press that MOVES becomes a drag, never a menu (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug) => { opened.push(slug); };
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  // The kit arms a mouse drag at REORDER_SLOP (6px), so movement must give
+  // the drag precedence — the movement bail is what does that.
+  env.win('pointermove', { pointerId: 3, clientX: 40, clientY: 90 });
+  env.run(400);
+  assert.deepEqual(opened, [], 'a moved press is a rearrange, not a menu');
+});
+
+test('mouse: the release leaves the click guard armed for onClick (#1838)', () => {
+  const env = gestureEnv();
+  env.Home.openCardMenu = () => {};
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  env.run(400);
+  env.win('pointerup', { pointerId: 3 });
+
+  assert.equal(env.Home._suppressClick, true,
+    'a mouse `click` follows its pointerup in the SAME task — clearing the'
+    + ' guard at release means the released hold also opens the app');
+  assert.equal(env.pending(0), 0, 'no 0ms reset on the mouse path');
+  assert.equal(env.pending(700), 1, 'a single ~700ms safety net instead');
+  env.run(700);
+  assert.equal(env.Home._suppressClick, false,
+    'a hold released off the tile fires no click, so the guard must expire');
+});
+
+test('touch: release timing and the kit hand-off are unchanged (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug) => { opened.push(slug); };
+
+  // A plain (search / demo) tile: this recognizer still does the hold, and
+  // still clears the click guard on the next task.
+  const plain = makeCard();
+  env.Home._wireCardLongPressMenu(plain);
+  plain.fire('pointerdown', press({ pointerType: 'touch' }));
+  env.run(400);
+  assert.deepEqual(opened, ['demo-app']);
+  env.win('pointerup', { pointerId: 3 });
+  assert.equal(env.pending(0), 1, 'touch keeps its 0ms release reset');
+  assert.equal(env.pending(700), 0, 'and gains no mouse safety timer');
+
+  // A PLACED tile: the kit's own lift callback owns the touch, so only one
+  // recognizer may claim it.
+  opened.length = 0;
+  env.Home._placementHandle = { detach: () => {} };
+  const placed = makeCard({ attrs: { 'data-yours': true } });
+  env.Home._wireCardLongPressMenu(placed);
+  placed.fire('pointerdown', press({ pointerType: 'touch' }));
+  env.run(400);
+  assert.deepEqual(opened, [], 'a placed touch tile still defers to the kit');
+
+  // ...but the MOUSE always comes through here, because the kit's mouse
+  // path has no hold. This is the whole of #1838.
+  placed.fire('pointerdown', press());
+  env.run(400);
+  assert.deepEqual(opened, ['demo-app'],
+    'a mouse hold on a placed tile must NOT defer to the kit');
+});
+
+test('openCardMenu records the tile it anchored to; closeCardMenu clears it (#1838)', () => {
+  const env = gestureEnv();
+  const { Home, sandbox } = env;
+  Home._apps = [baseApp()];
+  let dismissed = 0;
+  let settle;
+  sandbox.PlatformUI.popover = () => {
+    const p = new Promise((r) => { settle = r; });
+    p.dismiss = () => { dismissed += 1; settle(null); };
+    return p;
+  };
+
+  const card = makeCard();
+  Home.openCardMenu('demo-app', card);
+  assert.equal(Home._menuAnchor, card,
+    'the right-click toggle can only tell "close this" from "move to that"'
+    + ' by comparing anchors');
+
+  Home.closeCardMenu();
+  assert.equal(dismissed, 1);
+  assert.equal(Home._menu, null);
+  assert.equal(Home._menuAnchor, null);
+});
+
+test('the anchor snapshot survives the kit dismissing on pointerdown (#1838)', async () => {
+  const env = gestureEnv();
+  const { Home, sandbox } = env;
+  Home._apps = [baseApp()];
+  let settle;
+  sandbox.PlatformUI.popover = () => {
+    const p = new Promise((r) => { settle = r; });
+    p.dismiss = () => settle(null);
+    return p;
+  };
+  // Installed once, by the tile wiring, so it runs BEFORE the popover's own
+  // document listener and sees the anchor while it is still true.
+  Home._wireCardLongPressMenu(makeCard());
+
+  const card = makeCard();
+  Home.openCardMenu('demo-app', card);
+  env.doc('pointerdown');
+  assert.equal(Home._menuAnchorAtPress, card,
+    'a right-click on the open tile must still be recognisable as a toggle'
+    + ' after the kit has dismissed the menu');
+
+  // The snapshot is re-taken on EVERY press, so a menu closed some other way
+  // (Escape) leaves a null snapshot and the next right-click opens.
+  settle(null);
+  await Promise.resolve();
+  assert.equal(Home._menuAnchor, null);
+  env.doc('pointerdown');
+  assert.equal(Home._menuAnchorAtPress, null);
 });

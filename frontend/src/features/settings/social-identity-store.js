@@ -32,6 +32,7 @@
  *             name: string, provider: string }} DiagnosticsView
  * @typedef {{
  *   provider: 'github'|'x', name: string, heading: string,
+ *   badge: { text: string, tone: 'emerald'|'amber' }|null,
  *   state: { text: string, tone: 'amber'|'emerald'|'muted' },
  *   linkedAt: string|null, noToken: string|null,
  *   connect: { label: string, href: string|null }|null,

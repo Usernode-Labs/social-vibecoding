@@ -8,11 +8,24 @@ const source = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'social-push.js'),
   'utf8'
 );
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const notificationsSource = fs.readFileSync(
   // #1079 chunk B: same module, now inside the React bundle.
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-);
+).replace(/^import \{ agoStamp \}.*$/m, '');
+
+// Evaluate that source with the helper in scope, standing in for the bundle's
+// module graph.
+function runNotifications(sandbox) {
+  sandbox.agoStamp = agoStamp;
+  vm.runInContext(notificationsSource, sandbox);
+}
 const settingsSource = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
@@ -970,6 +983,107 @@ test('missing native capabilities make the coordinator a no-op', async () => {
   assert.deepEqual(loaded.calls, []);
 });
 
+test('a tap received before web sign-in drains when authenticated boot finishes', async () => {
+  const loaded = loadCoordinator({ claims: [{ notificationId: 42 }] });
+  loaded.sandbox.App.user = null;
+  loaded.fire('usernode:social-push-pending');
+  await settle();
+  assert.equal(loaded.calls.some(([name]) => name === 'claim'), false);
+  loaded.sandbox.App.user = { id: 7 };
+  loaded.fireDocument('sv:authed');
+  await settle();
+  assert.ok(loaded.calls.some(([name, id]) => name === 'ack' && id === 42));
+});
+
+test('a restored page drains a retained tap without another native event', async () => {
+  const loaded = loadCoordinator({ claims: [{ notificationId: 42 }] });
+  loaded.fire('pagehide');
+  loaded.fire('usernode:social-push-pending');
+  await settle();
+  assert.equal(loaded.calls.some(([name]) => name === 'claim'), false);
+  loaded.fire('pageshow');
+  await settle();
+  assert.ok(loaded.calls.some(([name, id]) => name === 'ack' && id === 42));
+});
+
+test('a transient open failure retries the retained tap without an online event', async () => {
+  let attempts = 0;
+  const loaded = loadCoordinator({
+    claims: [{ notificationId: 42 }, { notificationId: 42 }],
+    openImpl() { return ++attempts > 1; },
+    timeoutScale: 0.001,
+  });
+  await loaded.sandbox.SocialPush.drainPending();
+  assert.equal(loaded.calls.some(([name]) => name === 'ack'), false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(attempts, 2);
+  assert.deepEqual(loaded.calls.filter(([name]) => name === 'ack'), [['ack', 42]]);
+});
+
+test('tap retries are bounded and pagehide cancels a scheduled retry', async () => {
+  const loaded = loadCoordinator({
+    claims: Array.from({ length: 10 }, () => ({ notificationId: 42 })),
+    openResult: false,
+    timeoutScale: 0.0001,
+  });
+  await loaded.sandbox.SocialPush.drainPending();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(loaded.calls.filter(([name]) => name === 'open').length, 6);
+  assert.equal(loaded.sandbox.SocialPush._tapRetryTimer, null);
+  await loaded.sandbox.SocialPush.drainPending();
+  loaded.fire('pagehide');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(loaded.calls.filter(([name]) => name === 'open').length, 7);
+});
+
+test('an admission change during navigation cannot acknowledge the old tap', async () => {
+  let finish;
+  const loaded = loadCoordinator({
+    claims: [{ notificationId: 42 }],
+    openImpl() { return new Promise(resolve => { finish = resolve; }); },
+  });
+  const draining = loaded.sandbox.SocialPush.drainPending();
+  await settle();
+  loaded.fire('usernode:native-session-admission', { admitted: false });
+  finish(true);
+  await draining;
+  assert.equal(loaded.calls.some(([name]) => name === 'ack'), false);
+  loaded.fire('pagehide');
+});
+
+test('native exact opens await the real item router and preserve failed navigation', async () => {
+  const loaded = loadCoordinator();
+  loaded.sandbox.location = { search: '', hash: '' };
+  loaded.sandbox.URLSearchParams = URLSearchParams;
+  runNotifications(loaded.sandbox);
+  const notifications = loaded.sandbox.Notifications;
+  notifications._markOneRead = () => {};
+  notifications._dismissSheetForNav = () => {};
+  const items = [
+    { id: 41, kind: 'mention', appSlug: 'notes', threadType: 'issue', threadRef: 1804 },
+    { id: 42, kind: 'pr_proposed', appSlug: 'notes', sessionId: 3952 },
+    { id: 43, kind: 'session_done', appSlug: 'notes', sessionId: 3955 },
+  ];
+  notifications.items = items;
+  for (const item of items) {
+    let finish;
+    let completed = false;
+    loaded.sandbox.App.openAppTab = () => new Promise(resolve => { finish = resolve; });
+    const opened = notifications.openById(item.id).then(result => {
+      completed = true;
+      return result;
+    });
+    await settle();
+    assert.equal(completed, false, item.kind);
+    finish();
+    assert.equal(await opened, true);
+  }
+  loaded.sandbox.App.openAppTab = async () => { throw new Error('offline'); };
+  assert.equal(await notifications.openById(42), false);
+  loaded.sandbox.App.openAppTab = async () => false;
+  assert.equal(await notifications.openById(42), false);
+});
+
 test('settings consumes live native push state', () => {
   assert.match(
     settingsSource,
@@ -1028,7 +1142,7 @@ test('opaque id lookup reuses the existing notification click router', async () 
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(notificationsSource, sandbox);
+  runNotifications(sandbox);
   sandbox.Notifications.unread = 1;
 
   const opened = await sandbox.Notifications.openById(42);
@@ -1076,7 +1190,7 @@ test('native invalidation refresh bypasses the service-worker API cache',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     assert.equal(sandbox.Notifications.nativeInvalidationRefreshVersion, 1);
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
@@ -1124,7 +1238,7 @@ test('an older ordinary refresh cannot overwrite a newer invalidation result',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const ordinary = sandbox.Notifications.refresh();
     const invalidation = sandbox.Notifications.refreshAfterInvalidation();
@@ -1178,7 +1292,7 @@ test('later ordinary refreshes cannot fall below a native freshness floor',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
     assert.equal(sandbox.Notifications.items[0].id, 2);
@@ -1224,7 +1338,7 @@ test('an overlapping ordinary refresh inherits the native freshness floor',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const invalidation = sandbox.Notifications.refreshAfterInvalidation();
     const ordinary = sandbox.Notifications.refresh();
@@ -1312,7 +1426,7 @@ test('a hung native invalidation fetch aborts so a later retry can run',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();
     timers.shift()();
@@ -1383,7 +1497,7 @@ test('a stalled invalidation response body is covered by the same deadline',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();
     await Promise.resolve();

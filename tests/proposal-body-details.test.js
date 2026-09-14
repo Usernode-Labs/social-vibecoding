@@ -1,5 +1,7 @@
-// The focused proposal view exposes the complete GitHub PR description in a
-// collapsed disclosure. Compact cards keep using the short generated summary.
+// The focused proposal view splits About into two labelled halves: the
+// user-facing summary, then the complete GitHub PR description behind a
+// collapsed "Technical details" disclosure. Compact cards keep using the
+// short generated summary and render neither label.
 //
 // Run with: node --test tests/proposal-body-details.test.js
 
@@ -8,7 +10,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalBodyHtml, proposalCardHtml } = require('./lib/dev-card-html');
+const {
+  detailsHtml, proposalBodyHtml, proposalCardHtml,
+} = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8'
@@ -86,6 +90,58 @@ test('both live and completed proposal rows include the full PR body', () => {
   );
 });
 
+test('an imported Underway topic reuses proposal details without opening voting', () => {
+  const AppView = makeAppView((md) => `<safe-markdown>${md}</safe-markdown>`);
+  const item = {
+    id: 88,
+    status: 'active',
+    source: 'imported',
+    username: 'bruno',
+    imported_pr_author: 'contributor',
+    pr_url: 'https://github.example/pull/88',
+    check_state: 'failing',
+    checks_checked_at: '2026-09-04T12:00:00Z',
+    test_results: [{
+      name: 'Imported proposal details',
+      path: '/app/demo/dev',
+      status: 'fail',
+      failureReason: 'assignee chip was missing',
+    }],
+  };
+  const view = AppView._proposalDetailsView(item);
+  assert.equal(view.help, false);
+  assert.equal(view.helpHint, false);
+  assert.equal(view.roster, null);
+  assert.equal(view.lockedNote, null);
+
+  const html = detailsHtml(AppView, item);
+  // The GitHub link is the card's meta line's last word now (`_topicCard`),
+  // not a line under the card; the model still carries it.
+  assert.equal(view.meta[0].href, 'https://github.example/pull/88');
+  assert.doesNotMatch(html, /View PR on GitHub/);
+  assert.match(html, /authored by.*contributor/);
+  assert.match(html, /checks and proposal details are available now/);
+  assert.match(html, /voting begins only after it is put up for vote/);
+  assert.match(html, /Imported proposal details/);
+  assert.match(html, /assignee chip was missing/);
+  assert.doesNotMatch(html, /How voting works|Who can vote/);
+
+  const promoted = AppView._proposalDetailsView({ ...item, status: 'promoted' });
+  assert.equal(promoted.help, true);
+  assert.equal(promoted.roster.phase, 'loading');
+});
+
+test('every underway session topic renders summary, PR body and check details in order', () => {
+  const sessionBranch = APP_VIEW_SRC.slice(
+    APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')"),
+    APP_VIEW_SRC.indexOf('\n    } else {', APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')") + 1)
+  );
+  assert.match(sessionBranch,
+    /body = \{[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
+  assert.doesNotMatch(sessionBranch, /castVote|_cardVoteButtonSpecs|voteButtonsHtml/,
+    'metadata reuse must not pull voting controls into Underway');
+});
+
 test('the proposal staging fixture carries a reviewable full body', () => {
   const fixture = MIGRATE_SRC.slice(
     MIGRATE_SRC.indexOf('async function seedStagingExternalAgentProposal'),
@@ -133,7 +189,7 @@ test('a full PR body is collapsed and rendered through the Markdown pipeline', (
     'reviewer screenshots use the Markdown renderer\'s sanitized image mode');
   assert.match(html, /^<details /);
   assert.doesNotMatch(html, /^<details[^>]* open(?: |>|=)/, 'closed by default');
-  assert.match(html, />Full proposal details<\/summary>/);
+  assert.match(html, />Technical details<\/summary>/);
   assert.match(html, /<safe-markdown># Why\n\nMore context\.<\/safe-markdown>/);
   // The toggle is an onToggle closure now, not an `ontoggle` attribute, so
   // what the markup can carry is the id it reports back with.
@@ -179,7 +235,7 @@ test('compact proposal cards do not render the full body', () => {
     created_at: '2026-08-21T00:00:00Z',
   });
 
-  assert.doesNotMatch(html, /Full proposal details/);
+  assert.doesNotMatch(html, /Technical details/);
   assert.doesNotMatch(html, /UNIQUE FULL BODY COPY/);
 });
 
@@ -258,14 +314,21 @@ test('#1442 — the ?demo=1 proposals cover the same four states', () => {
   assert.match(mocks, /checks_base_verdict: 'superseded'/);
 });
 
-test('#1442 — every promoted row is serialized with its freshness snapshot', () => {
+test('#1442/#2038 — every promoted row is serialized with its measurement blocks', () => {
   assert.match(
     VOTES_SRC,
-    /for \(const row of rows\) row\.freshness = freshnessSvc\.readFreshness\(row\);/,
+    /row\.freshness = freshnessSvc\.readFreshness\(row\);/,
     'the client reads one nested block, not twelve loose columns'
   );
-  // Both list routes select the columns that block reads.
-  for (const col of ['cs.mergeability', 'cs.freshness_behind_by', 'cs.checks_base_verdict']) {
+  assert.match(
+    VOTES_SRC,
+    /row\.integration = integrationSvc\.readIntegration\(row\);/,
+    '#2038: and one block for where the proposal stands against main, '
+    + 'carrying its own measuredAt so the card can say how old the answer is'
+  );
+  // Both list routes select the columns those blocks read.
+  for (const col of ['cs.mergeability', 'cs.freshness_behind_by', 'cs.checks_base_verdict',
+    'cs.integration_behind_by', 'cs.integration_block_reason', 'cs.approval_epoch']) {
     assert.ok(VOTES_SRC.includes(col), `${col} is selected`);
   }
 });

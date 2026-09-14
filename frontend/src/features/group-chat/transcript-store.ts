@@ -121,11 +121,19 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
-  /** Rendered clock time — formatted by the module, whose locale rules these are. */
+  /**
+   * Rendered stamp — formatted by the module, whose locale rules these are.
+   * The time of day alone for today's messages, prefixed with the date once
+   * it is not today's (#1808).
+   */
   time: string;
+  /** The same instant with nothing elided, for `title`. */
+  timeTitle: string;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
   systemText: string;
+  /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
+  repeat?: number;
   mine: boolean;
   /** Full timestamp for the "edited" marker's tooltip, or null if never edited. */
   editedTitle: string | null;

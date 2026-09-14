@@ -76,6 +76,11 @@ declare global {
         id?: number;
         username?: string;
         avatarUrl?: string | null;
+        appCreationQuota?: {
+          used: number | null;
+          limit: number | null;
+          remaining: number | null;
+        };
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
@@ -86,6 +91,16 @@ declare global {
       _rootUrl?(hash?: string): string;
       setBackIcon?(mode: 'home' | 'arrow', href?: string): void;
       setHeaderTitle?(title: string): void;
+      /**
+       * Paints the platform build into #platform-version-pill-slot, the host
+       * Settings → About renders for it. Declared rather than left to the
+       * index signature below, which types a lookup as `unknown` and so makes
+       * the call itself an error — and that pane calls it on mount, to paint
+       * an answer that arrived before the host existed.
+       */
+      renderPlatformVersionPill?(info: unknown): void;
+      /** app.js's last /api/version answer; null until the first one lands. */
+      _lastVersionInfo?: unknown;
       [key: string]: unknown;
     };
     /**
@@ -218,6 +233,8 @@ declare global {
     /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */
     DevChat?: {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
+      dismissReturnHint(): void;
+      _importOwnToolsPr(): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

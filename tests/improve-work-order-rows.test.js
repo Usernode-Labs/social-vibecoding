@@ -13,8 +13,9 @@
 //   1. A work order costs no worker, no container and no branch, so it must
 //      not be counted in the session budget the caps are denominators for.
 //   2. It is never `busy`: its agent runs on the user's own machine, where
-//      the platform cannot see whether a turn is in flight. A pulsing dot
-//      there would be an invention.
+//      the platform cannot see whether a turn is in flight. A spinner
+//      turning there would be an invention (#1597 made it a spinner; it
+//      was a pulsing dot when this was written).
 //   3. It points at the REQUEST. There is no transcript to open, and a row
 //      that navigates into a dead end is worse than one that admits what it
 //      is — which is why the destination travels ON the row rather than
@@ -28,6 +29,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+
+const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const svc = require('../src/services/external-agent-tasks');
 
@@ -42,6 +46,33 @@ const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
 // navigation and its work. This file used to read app-context-rows.tsx.
 const SHEET_TSX = read('frontend/src/features/improve/improve-panel.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
+
+function loadImproveController(fetch) {
+  const store = makeStoreStub({
+    slug: 'demo', name: 'Demo app', sessions: [], otherSessions: [],
+    sessionsLoaded: true, loadingSessions: false,
+  });
+  const sandbox = {
+    console, Promise, setTimeout, clearTimeout, fetch,
+    location: { search: '', hash: '' },
+    URLSearchParams,
+    document: { getElementById: () => null, addEventListener() {} },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
+    imports: {
+      '../apps/app-card.js': { iconViewFor: (app) => ({ kind: 'letter', letter: app.name[0] }) },
+      '../../lib/kit-surface': { adoptKitSurface: () => null },
+      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      './improve-store.js': { improveStore: store },
+      '../../lib/shell-snapshot': { saveShellSnapshot() {} },
+    },
+    tail: 'window.__improve = Improve;',
+  });
+  return { Improve: sandbox.__improve, store };
+}
 
 // A pool that answers one query and records what it was asked, so a test
 // states the shape it expects rather than an ordering.
@@ -59,7 +90,7 @@ const ROW = {
   id: 7, issue_number: 1417, branch_name: 'usernode/x',
   brief: '<untrusted-content>Show work orders in the panel</untrusted-content>\n\nbody',
   client_id: 'claude-code', created_at: '2026-08-25T10:00:00Z',
-  app_slug: 'usernode-2d5619', app_name: 'Usernode',
+  app_slug: 'usernode-2d5619', app_name: 'Homeroom',
 };
 
 // ── The read ───────────────────────────────────────────────────────────
@@ -162,6 +193,35 @@ test('the session lists are fetched before the panel is opened', () => {
     /if \(!improveStore\.get\(\)\.sessionsLoaded\) improveStore\.set\(\{ loadingSessions: true \}\)/);
 });
 
+test('a just-created session is immediate and survives an older preload', async () => {
+  let releasePreload;
+  const preloadResponse = new Promise((resolve) => { releasePreload = resolve; });
+  const { Improve, store } = loadImproveController(() => preloadResponse);
+
+  const staleLoad = Improve.loadSessions();
+  Improve.onSessionCreated({
+    id: 1596,
+    status: 'active',
+    created_at: '2026-09-04T10:00:00.000Z',
+  }, 'demo');
+
+  assert.equal(store.state.sessions.length, 1,
+    'the first panel open can render the new session without another request');
+  assert.equal(store.state.sessions[0].id, 1596);
+  assert.equal(store.state.sessions[0].appSlug, 'demo');
+  assert.equal(store.state.loadingSessions, false);
+
+  releasePreload({
+    ok: true,
+    json: async () => ({ sessions: [], externalTasks: [] }),
+  });
+  await staleLoad;
+
+  assert.equal(store.state.sessions.length, 1,
+    'a response issued before creation cannot erase the optimistic row');
+  assert.equal(store.state.sessions[0].id, 1596);
+});
+
 test('a work order is NOT counted against the session budget', () => {
   const handler = ROUTE.slice(ROUTE.indexOf("router.get('/api/me/active-sessions'"));
   const body = handler.slice(0, handler.indexOf('\n  });'));
@@ -205,7 +265,7 @@ test('a work order row points at its request, not at a session page', () => {
   // prepare_work accepts a bare brief with no request behind it.
   assert.match(fn, /: `#app\/\$\{task\.app_slug\}\/dev`/, 'and a fallback for one without');
   assert.match(fn, /busy: false/,
-    'the agent runs where the platform cannot see it; a pulsing dot would be invented');
+    'the agent runs where the platform cannot see it; a spinner would be invented');
   assert.match(fn, /kind: 'task'/);
 });
 
@@ -264,4 +324,85 @@ test('the service, not the route, owns the external_agent_tasks query', () => {
   assert.doesNotMatch(handler.slice(0, handler.indexOf('\n  });')),
     /FROM external_agent_tasks/,
     'the table has one owner; a second copy of the filter drifts from it');
+});
+
+// ── #1948: a work order whose request has closed is not listed ─────────
+//
+// A work order stays `open` for its full 14 days unless the agent submits or
+// shares through THAT task. When the request is built some other way — a
+// platform session, another agent, a second work order — the issue closes
+// and the task does not. The row still said "Handed off" and still pointed at
+// `#app/<slug>/dev/issues/<n>`; the board only resolves OPEN issues, so the
+// route fell back to the card list and the tap appeared to do nothing
+// (reproduced on production with a puzzlechain task whose request had shipped
+// two days earlier). The list now drops a task whose issue is no longer in the
+// repo's open-issue list — but ONLY when that list is authoritative: a
+// rate-limited, truncated or failed fetch keeps every row, because hiding
+// work someone handed out on a guess is worse than a stale row.
+
+const REPO_ROW = (over) => ({
+  ...ROW,
+  repo_url: 'https://github.com/Usernode-Labs/puzzlechain',
+  app_slug: 'puzzlechain-6cf8ff', app_name: 'Game Corner',
+  ...over,
+});
+
+function openIssues(numbers, extra = {}) {
+  const calls = [];
+  const fetchOpenIssues = async (owner, repo) => {
+    calls.push(`${owner}/${repo}`);
+    return { issues: numbers.map((number) => ({ number })), truncatedList: false, ...extra };
+  };
+  return { calls, fetchOpenIssues };
+}
+
+test('#1948: a task whose request has closed is dropped; an open one stays', async () => {
+  const { calls, fetchOpenIssues } = openIssues([186]);
+  const rows = await svc.listOpenWorkOrders(fakePool([
+    REPO_ROW({ id: 1, issue_number: 185 }),
+    REPO_ROW({ id: 2, issue_number: 186 }),
+  ]), 42, { fetchOpenIssues });
+  assert.deepEqual(rows.map((r) => r.id), [2], 'the closed request\'s row is gone');
+  assert.deepEqual(calls, ['Usernode-Labs/puzzlechain'], 'one fetch per repository, not per task');
+});
+
+test('#1948: a task with no request behind it is never filtered', async () => {
+  const { calls, fetchOpenIssues } = openIssues([]);
+  const rows = await svc.listOpenWorkOrders(fakePool([
+    REPO_ROW({ id: 3, issue_number: null, brief: 'a bare brief' }),
+  ]), 42, { fetchOpenIssues });
+  assert.deepEqual(rows.map((r) => r.id), [3]);
+  assert.equal(calls.length, 0, 'nothing to check, so GitHub is not asked');
+});
+
+test('#1948: an unauthoritative issue list keeps every row', async () => {
+  for (const extra of [{ note: 'rate limited' }, { note: 'fetch failed' }, { truncatedList: true }]) {
+    const { fetchOpenIssues } = openIssues([], extra);
+    const rows = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ id: 4, issue_number: 185 })]), 42,
+      { fetchOpenIssues });
+    assert.deepEqual(rows.map((r) => r.id), [4], `kept under ${JSON.stringify(extra)}`);
+  }
+  const throwing = async () => { throw new Error('boom'); };
+  const rows = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ id: 5, issue_number: 185 })]), 42,
+    { fetchOpenIssues: throwing });
+  assert.deepEqual(rows.map((r) => r.id), [5], 'a throwing fetch keeps the row too');
+});
+
+test('#1948: the repository is read with the task, and never leaks into the row', async () => {
+  const queries = [];
+  const { fetchOpenIssues } = openIssues([185]);
+  const [row] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 185 })], queries), 42,
+    { fetchOpenIssues });
+  assert.match(queries[0].sql, /a\.repo_url/);
+  assert.equal(row.repo_url, undefined, 'the panel needs the destination, not the repository');
+});
+
+test('#1948: the row carries the app artwork the query already selects', async () => {
+  const { fetchOpenIssues } = openIssues([1417]);
+  const [emoji] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 1417, app_icon_emoji: '🧩' })]), 42,
+    { fetchOpenIssues });
+  assert.equal(emoji.app_icon_emoji, '🧩');
+  const [image] = await svc.listOpenWorkOrders(fakePool([REPO_ROW({ issue_number: 1417, app_icon_url: '/app-icons/9' })]), 42,
+    { fetchOpenIssues });
+  assert.equal(image.app_icon_url, '/app-icons/9');
 });

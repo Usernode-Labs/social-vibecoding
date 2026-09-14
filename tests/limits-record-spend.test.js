@@ -236,3 +236,59 @@ test('recordSystemSpend swallows DB errors', async () => {
   const pool = makePool({ fail: true });
   await assert.doesNotReject(() => limits.recordSystemSpend(pool, 10));
 });
+
+// ── #1788: the weekly window reads the same rows recordSpend writes ──────
+//
+// There is deliberately NO second ledger and no change to recordSpend: the
+// day rows above ARE the week, summed from the Monday. What that buys is
+// that a spend recorded once counts against both caps, and it is worth
+// pinning because the alternative (a `llm_usage_weekly` table, or a
+// running counter) is the obvious design and would drift.
+
+test('a recorded spend needs no weekly counterpart — the day row is the unit', async () => {
+  const pool = makePool();
+  await limits.recordSpend(pool, 7, 12.5);
+  assert.equal(pool.calls.length, 1, 'one statement, exactly as before');
+  assert.doesNotMatch(pool.calls[0].sql, /week/i,
+    'nothing weekly is written; the week is derived at read time');
+});
+
+test('the weekly read sums the capped column of the day rows, from the Monday', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [{ total: '412.75' }] };
+    },
+  };
+  const spent = await limits.getWeeklySpentCents(
+    pool, 7, { now: new Date('2026-09-10T09:00:00.000Z') }
+  );
+  assert.equal(spent, 412.75, 'fractional cents survive, same as the day read');
+  assert.equal(calls.length, 1);
+  const { sql, params } = calls[0];
+  assert.match(sql, /FROM llm_usage/);
+  assert.match(sql, /SUM\(total_cost_cents\)/,
+    'the capped column — BYOK spend is display-only and must not consume a cap');
+  assert.doesNotMatch(sql, /byok_cost_cents/);
+  assert.match(sql, /user_id = \$1/, 'one user, not the platform pool');
+  assert.deepEqual(params, [7, '2026-09-07'], 'the Monday of that Thursday, inclusive');
+});
+
+test('BYOK spend never lands in the column the weekly cap reads', async () => {
+  const pool = makePool();
+  await limits.recordSpend(pool, 7, 50, { byok: true });
+  assert.match(pool.calls[0].sql, /byok_cost_cents/);
+  assert.doesNotMatch(pool.calls[0].sql, /total_cost_cents/,
+    'so a user on their own key can spend all week without touching the allowance');
+});
+
+test('an empty week reads as zero rather than NULL', async () => {
+  // COALESCE, not a bare SUM: a user with no rows since Monday would
+  // otherwise come back NULL and compare falsely against the cap.
+  const pool = { async query() { return { rows: [{ total: 0 }] }; } };
+  assert.equal(await limits.getWeeklySpentCents(pool, 7), 0);
+  const empty = { async query() { return { rows: [] }; } };
+  assert.equal(await limits.getWeeklySpentCents(empty, 7), 0,
+    'and a missing row is zero too, not NaN');
+});

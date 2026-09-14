@@ -21,10 +21,11 @@
  * ── Two owners, and the seam between them ──────────────────────────────
  *
  * Like every pane here this component is STATIC (see ./index.tsx): no state,
- * no props, no effects. The two rows with legacy owners keep them —
+ * no props, no effects. The row with a legacy owner keeps it —
  * `App.renderPlatformVersionPill` fills #platform-version-pill-slot by
- * innerHTML, and the app row is written by settings.js — so this file renders
- * the boxes and nothing else.
+ * innerHTML — so this file renders the boxes and not what goes in them.
+ * <PlatformVersionRow/> is a component only so that it can ask that owner to
+ * paint on mount; it still renders an empty host and never the pill.
  *
  * <NativeAppVersionRow/> is the exception and stays a store-fed island: it
  * comes from the native bridge, and a version arriving late should repaint one
@@ -38,6 +39,7 @@
 
 import { SectionHeading } from '@/components/ui/field';
 
+import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { useStoreState } from '../../../lib/use-store-state';
 import { improveStore } from '../../improve/improve-store.js';
 import { NativeAppVersionRow } from '../../header/native-app-version-row';
@@ -78,6 +80,44 @@ function AppVersionRow() {
   );
 }
 
+/**
+ * The commit this deployment was built from. Filled by
+ * App.renderPlatformVersionPill, which also names the update state the Improve
+ * panel and button read — so this row and those two are readers of one fact,
+ * not of each other.
+ *
+ * The slot's CONTENT stays app.js's: this renders the empty host and asks its
+ * owner to fill it on mount. That ask is what makes the row deterministic.
+ * app.js paints from /api/version — once at boot, then on a 10s timer — and
+ * since #1504 mounted the panes on first reveal, the boot answer can land
+ * before this host is in the document. It did: the paint went nowhere and the
+ * row stayed blank until the next tick, for up to ten seconds. Lazy-loading
+ * the module widened that window enough to lose the race every time, which is
+ * how it was found, but the race is older than the chunk.
+ *
+ * `_lastVersionInfo` is the answer app.js already has, painted the same way
+ * its own prefetch-settled repaint does (see _ensureShellPrefetch). Null only
+ * before the first answer arrives, and that paints this host itself.
+ */
+function PlatformVersionRow() {
+  useIsomorphicLayoutEffect(() => {
+    const App = window.App;
+    if (App?._lastVersionInfo) App.renderPlatformVersionPill?.(App._lastVersionInfo);
+  }, []);
+  return (
+    <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
+      <span className="drawer-ver-label">
+        Platform version
+      </span>
+      <span
+        id="platform-version-pill-slot"
+        className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+      >
+      </span>
+    </div>
+  );
+}
+
 export function AboutSection() {
   return (
     <div data-settings-section="about" className="hidden">
@@ -88,20 +128,7 @@ export function AboutSection() {
 
         <AppVersionRow />
 
-        {/* The commit this deployment was built from. Filled by
-            App.renderPlatformVersionPill, which also names the update state
-            the Improve panel and button read — so this row and those two are
-            readers of one fact, not of each other. */}
-        <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-          <span className="drawer-ver-label">
-            Platform version
-          </span>
-          <span
-            id="platform-version-pill-slot"
-            className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
-          >
-          </span>
-        </div>
+        <PlatformVersionRow />
 
         {/* The installed Flutter release (#1101) — version/build, e.g.
             0.4.0/1223. Independent of the platform commit above and never the

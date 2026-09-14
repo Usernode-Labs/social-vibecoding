@@ -115,8 +115,8 @@ test('archiveSession posts rejection-specific chat copy for reason=auto-rejected
     const res = await archiveSession({ pool, sessionId: 7, reason: 'auto-rejected' });
     assert.equal(res.archived, true);
     assert.equal(messages.length, 1);
-    assert.match(messages[0], /closed by the group \(more No than Yes/);
-    assert.doesNotMatch(messages[0], /withdrew|no vote activity/);
+    assert.match(messages[0], /set aside for now \(more No than Yes/);
+    assert.doesNotMatch(messages[0], /withdrew|went quiet/);
   } finally {
     for (const [k, id] of Object.entries(ids)) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];

@@ -285,7 +285,7 @@ test('an oversized payload sheds passing rows before failures', () => {
 });
 
 test('the result ceiling is at least the manifest ceiling', () => {
-  // classifyTests slices frames to TEST_MAX_RESULTS. If that were below
+  // Legacy classifyTests slices frames to TEST_MAX_RESULTS. If that were below
   // MAX_DECLARED_TESTS, the reader's cap would just have moved downstream —
   // the tail checks would run and then be thrown away, which is the exact
   // bug #1019 set out to remove.

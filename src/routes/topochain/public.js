@@ -62,6 +62,8 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
+const { loadOnboarding, visibleChallenges, challengeCategory } =
+  require('../../services/topochain/challenge-onboarding');
 const events = require('../../services/events');
 
 // Fire-and-forget tally behind POST /app-version/check, so the admin screen
@@ -629,6 +631,7 @@ function topochainPublicRoutes(config) {
                 c.goal, c.task, c.reward, c.description, c.requirements,
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,
+                c.metric_type, c.metric_target, c.metric_label,
                 ${TEMPLATE_JOIN_COLUMNS_SQL}
            FROM challenges c
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
@@ -636,14 +639,37 @@ function topochainPublicRoutes(config) {
           ORDER BY c.display_order ASC, c.id ASC`,
         [id]
       );
+      // The EFFECTIVE metric — the challenge row's override over the
+      // template's, the same merge Home's panel and /challenges-api apply.
+      // `activity_type` is the template alone by contract, so the challenge
+      // card would otherwise count toward a target the organiser overrode.
+      const eff = (r, key) => (r[key] != null ? r[key] : r[`t_${key}`]);
+      const metricOf = (r) => {
+        const kind = eff(r, 'metric_type');
+        if (!kind) return null;
+        const target = eff(r, 'metric_target');
+        return { kind, target: target == null ? null : Number(target), label: eff(r, 'metric_label') ?? null };
+      };
 
       // SPEC 1197: the source 500s on a deleted activity type; guard by
       // skipping any row whose template join came back empty instead
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
-      const data = rows.filter((r) => r.t_id != null).map(buildChallengeListItem);
+      const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
+      const data = visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+        .map((r) => {
+          const item = buildChallengeListItem(r);
+          item.metric = metricOf(r);
+          const category = challengeCategory(item.id, item.activity_type.category, onboarding);
+          item.activity_type.category = category;
+          item.card_preview.label = (category || '').toUpperCase();
+          if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+          return item;
+        });
 
-      return ok(res, { data });
+      // This list now carries the signed-in viewer's onboarding state.
+      res.set('Cache-Control', 'private, no-store');
+      return ok(res, { data, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

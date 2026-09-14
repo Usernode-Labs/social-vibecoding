@@ -150,8 +150,20 @@ test('_renderGovCard: threads the qualified fields into the pill and buttons', (
   // The advisory surplus rides INSIDE the composite pill as a muted "+N"
   // suffix now, rather than as a separate chip beside it.
   assert.match(html, /gc-vote-count-suffix[^>]*>\+2</);
-  assert.match(html, /Yes \(0✓ \+2\)/);
-  assert.match(html, /No \(0✓\)/);
+  // The Yes/No pair is one vote button on the card now (round three); the
+  // qualified tallies ride in the model's labels and in the button's tooltip.
+  const model = AppView._govCardModel({
+    id: 9, kind: 'secret_change', title: 'Set FOO_KEY',
+    payload: { key: 'FOO_KEY', action: 'set', hasValue: true },
+    created_by: 2, created_by_username: 'alice',
+    created_at: new Date().toISOString(),
+    up_count: 2, down_count: 0, my_vote: null, chat_count: 0,
+    qualified_yes_count: 0, qualified_no_count: 0,
+    approval_policy: 'invited', approvals_required: 1, votes_required: 1,
+    contested: false,
+  }, {});
+  assert.equal(model.actions.map((a) => a.label).join('|'), 'Yes (0✓ +2)|No (0✓)');
+  assert.match(html, /dev-vote-btn[^>]*title="Cast your vote · Yes 0✓ \+2 · No 0✓"/);
 });
 
 // ── _loadVoteRoster ──────────────────────────────────────────────────

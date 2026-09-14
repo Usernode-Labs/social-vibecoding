@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const lifecycle = require('../src/services/turn-lifecycle');
 
-function makeDb(initial = null) {
+function makeDb(initial = null, sessionStatus = 'active') {
   let activeTurn = initial;
   const calls = [];
   return {
@@ -76,6 +76,13 @@ function makeDb(initial = null) {
           byokCents: Number(activeTurn.byokCents || 0) + Number(params[0]),
         };
         return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+      }
+      if (/SET active_turn = NULL/.test(text) && /active_turn = \$2::jsonb/.test(text)) {
+        assert.match(text, /status IN \('archived', 'merged'\)/);
+        if (!['archived', 'merged'].includes(sessionStatus)
+          || JSON.stringify(activeTurn) !== params[1]) return { rowCount: 0 };
+        activeTurn = null;
+        return { rowCount: 1 };
       }
       if (/SET active_turn = NULL/.test(text)) {
         const same = activeTurn && (
@@ -323,4 +330,32 @@ test('a stopped turn is still a RECOVERABLE phase', () => {
   assert.equal(lifecycle.RECOVERABLE_PHASES.has('executing'), true);
   assert.equal(lifecycle.RECOVERABLE_PHASES.has('tail_pending'), true);
   assert.equal(lifecycle.RECOVERABLE_PHASES.has('quarantined'), false);
+});
+
+
+for (const status of ['archived', 'merged', 'active', 'paused']) {
+  test(`obsolete turn cleanup requires a closed session: ${status}`, async () => {
+    const turn = { journal: '/legacy-turn.log', startedAt: '2026-06-16T00:00:00Z' };
+    const db = makeDb(turn, status);
+    const cleared = await lifecycle.clearClosedSessionTurn(db, { sessionId: 42, activeTurn: turn });
+    assert.equal(cleared, ['archived', 'merged'].includes(status));
+    assert.deepEqual(db.activeTurn, cleared ? null : turn);
+  });
+}
+
+test('closed-session cleanup preserves a replaced or transitioned turn', async () => {
+  const snapshot = { turnId: 'same-turn', journal: '/legacy-turn.log', phase: 'executing' };
+  for (const current of [{ ...snapshot, turnId: 'new-turn' }, { ...snapshot, phase: 'tail_pending' }]) {
+    const db = makeDb(current, 'archived');
+    assert.equal(await lifecycle.clearClosedSessionTurn(db, { sessionId: 42, activeTurn: snapshot }), false);
+    assert.deepEqual(db.activeTurn, current);
+  }
+});
+
+test('closed-session cleanup preserves quarantine and ignores empty records', async () => {
+  const turn = { turnId: 'turn', phase: 'quarantined' };
+  const db = makeDb(turn, 'merged');
+  assert.equal(await lifecycle.clearClosedSessionTurn(db, { sessionId: 42, activeTurn: turn }), false);
+  assert.equal(await lifecycle.clearClosedSessionTurn(db, { sessionId: 42, activeTurn: null }), false);
+  assert.equal(db.calls.length, 0);
 });

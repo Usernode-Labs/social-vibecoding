@@ -49,6 +49,21 @@ export interface DiscoverTileView {
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
   icon: IconView;
+  /**
+   * The featured illustration: its image, how it is framed inside the art
+   * block, and — when its author chose one — the card colour it sits on: a
+   * tone name, or one of the legacy tint numbers saved before the tones
+   * existed. An absent `tint` means the slug's own hash, which is what every
+   * card without an illustration wears.
+   */
+  illustration?: { url: string; darkUrl?: string | null; zoom: number; x: number; y: number; tint?: string | number | null } | null;
+  /**
+   * The app's own one-line description, from its manifest — null when it
+   * declares none, which is most apps. The card draws nothing in its place.
+   */
+  blurb: string | null;
+  /** How many people built it. 0 hides the line rather than printing "0". */
+  contributors: number;
 }
 
 export interface DiscoverView {
@@ -76,13 +91,25 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
+  /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
+  icon: string | null;
   goal: string;
-  /** The task, folded into the row's tooltip — the one place it still shows. */
-  tip: string;
   done: boolean;
-  reward: string;
-  /** NEVER null: every row draws a track, so no row reserves space for one. */
-  meter: ChallengeMeterView;
+  reward: string | null;
+  /** The shared rail (features/leaderboard/challenge-card.tsx). */
+  state: 'new' | 'progress' | 'done';
+  stateLabel: string;
+  fill: number | null;
+  /** A target above one: the rail draws its count and bar from zero. */
+  counted: boolean;
+  /**
+   * "5d left" on the meta line under the title, beside the reward — the
+   * challenge's own end, else its event's, else the season's; null on a
+   * finished or not-open challenge, or with no end in the future.
+   */
+  deadline: string | null;
+  /** "Earned N pts" on a finished challenge the viewer scored on. */
+  earned: string | null;
 }
 
 /** The ring at the top of the card — how far through the season you are. */
@@ -93,10 +120,21 @@ export interface SeasonView {
   fraction: string;
   /** "3,900 pts left" — what is still on the table, or the count if none. */
   lead: string;
-  /** "1 of 6 challenges done", or null when `lead` already says it. */
+  /**
+   * "1 of 6 challenges done", or null when `lead` already says it. When no
+   * card on screen shows a deadline, challengesView adds the season's to it
+   * ("1 of 6 challenges done · 3d left", or "3d left" alone).
+   */
   sub: string | null;
   /** The whole fact in one string, for the ring's accessible name. */
   label: string;
+  /**
+   * "7d left" — how long the SEASON has to run, or null between seasons
+   * and when the payload carries no end date. Each open card says its own
+   * deadline (ChallengeRowView.deadline), so the ring adds this to `sub` only
+   * when no card on screen shows one.
+   */
+  deadline: string | null;
 }
 
 export interface ChallengesView {
@@ -108,9 +146,24 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
+  onboardingNote?: string | null;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
+  /** How many challenges are OPEN — what "See all N challenges" counts. */
   total: number;
+  /**
+   * How many rows an expansion would draw: the open ones plus the season's
+   * finished and out-of-window ones. `total` cannot tell a full-but-short
+   * list from a short list with finished challenges behind it.
+   */
+  allTotal?: number;
+  /**
+   * Whether the footer draws its expand toggle at all — false when the rows
+   * on screen already ARE every challenge there is, which is the "See all 3
+   * challenges" under three challenges of #1824. Always true once expanded:
+   * that is the way back to "Show less".
+   */
+  expandable?: boolean;
   expanded: boolean;
   rows: ChallengeRowView[];
 }
@@ -120,7 +173,7 @@ export interface ChallengesView {
 export interface CreateView {
   key: string;
   canCreate: boolean;
-  /** The ask-an-admin sentence — tooltip, tap toast and ⋮ note share it. */
+  /** The compact ask-an-admin sentence shared by the tooltip and ⋮ note. */
   hint: string;
 }
 

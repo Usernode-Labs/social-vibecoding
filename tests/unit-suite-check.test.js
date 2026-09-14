@@ -215,3 +215,32 @@ test('earned gating: graduated unit-suite failure blocks like the over-ceiling r
   assert.equal(out.state, 'failing');
   assert.equal(out.blockingCount, 1);
 });
+
+
+for (const failed of [false, true]) {
+  test(`Kubernetes unit-suite dispatch ${failed ? 'fails closed with TAP details' : 'uses the pinned runtime and records final TAP summary'}`, async (t) => {
+    const github = require('../src/services/github');
+    const kubernetes = require('../src/services/kubernetes');
+    const docker = require('../src/services/docker');
+    const history = require('../src/services/check-history');
+    t.mock.method(github, 'isEnabled', () => true);
+    t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+    t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+    t.mock.method(history, 'loadGraduated', async () => new Set());
+    t.mock.method(docker, 'runOneShot', async () => { assert.fail('Docker must not run'); });
+    t.mock.method(kubernetes, 'runUnitSuiteJob', async (config, options) => {
+      assert.equal(config.workerRuntime, 'kubernetes');
+      assert.equal(options.sessionId, 3994);
+      assert.equal(options.env.GIT_REF, 'a'.repeat(40));
+      assert.equal(typeof options.onStdoutLine, 'function');
+      const stdout = `${SENTINEL}\n# tests 2\n# pass ${failed ? 1 : 2}\n# fail ${failed ? 1 : 0}\n`;
+      if (failed) throw Object.assign(new Error('exit 1'), { stdout: stdout + 'not ok 2 - regression\n', code: 1 });
+      return { stdout };
+    });
+    const out = await unitSuite.maybeRunUnitSuite({ config: { workerRuntime: 'kubernetes' }, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 3994, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
+    assert.equal(out.row.status, failed ? 'fail' : 'pass');
+    assert.equal(out.row.summary.tests, 2);
+    assert.equal(out.row.summary.fail, failed ? 1 : 0);
+    if (failed) assert.match(out.row.failureReason, /not ok 2 - regression/);
+  });
+}

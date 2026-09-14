@@ -28,7 +28,7 @@ function stub(id, exports) {
 // with a configurable async delay so tests can force overlap windows.
 // Returns an event log of ['start'|'clone'|'end', sessionId, commit] plus
 // a live counter of in-flight inner builds per session.
-function loadStaging({ cloneDelayMs = 20, buildImageImpl = null } = {}) {
+function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = null, existsImpl = async () => false, dropImpl = null } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
@@ -80,7 +80,7 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null } = {}) {
   stub(ids.docker, {
     execFileAsync: async () => ({ stdout: '' }),
     buildImage: buildImageImpl || (async () => {}),
-    runContainer: async () => 'cid123',
+    runContainer: async () => { events.push(['deploy']); return 'cid123'; },
     waitForHealthy: async () => {},
     stopAndRemove: async () => {},
     getHostPort: async () => null,
@@ -89,15 +89,19 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null } = {}) {
   stub(ids.dbManager, {
     appDbName: (slug) => `app_${slug}`,
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${hash.substring(0, 6)}`,
+    databaseExists: existsImpl,
+    dropDatabase: async (name) => { events.push(['drop', name]); if (dropImpl) await dropImpl(name); },
     cloneDatabase: async (sourceDb, targetDb) => {
       // The slow, kill-sensitive step. Extract sessionId back out of the
       // target name (staging_s<id>_<hash>) for the event log.
       const sid = Number(/staging_s(\d+)_/.exec(targetDb)?.[1] || 0);
       events.push(['clone', sid, targetDb]);
       bump(sid, +1);
-      await new Promise((r) => setTimeout(r, cloneDelayMs));
-      bump(sid, -1);
-      return { password: 'pw' };
+      try {
+        if (cloneImpl) return await cloneImpl(sourceDb, targetDb);
+        await new Promise((r) => setTimeout(r, cloneDelayMs));
+        return { password: 'pw' };
+      } finally { bump(sid, -1); }
     },
     connectionUrl: () => 'postgres://x',
   });
@@ -199,7 +203,8 @@ test('a failed build does not block the next queued build for the session', asyn
     assert.match(rA.reason.message, /docker build failed/);
     assert.equal(rB.status, 'fulfilled', 'the follow-up build ran and succeeded');
     const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 1, 'only the successful build reached the clone step');
+    assert.equal(clones.length, 2, 'both builds started their independent clones');
+    assert.equal(events.filter(e => e[0] === 'drop').length, 1, 'failed build clone was cleaned up');
   } finally {
     restore();
   }
@@ -218,3 +223,75 @@ test('sequential (non-overlapping) builds are independent — the chain self-cle
     restore();
   }
 });
+
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+test('image and clone overlap, and deploy waits for both', { timeout: 5000 }, async () => {
+  const imageStarted = deferred(), cloneStarted = deferred(), imageDone = deferred(), cloneDone = deferred();
+  const { subject, events, restore } = loadStaging({
+    buildImageImpl: async () => { imageStarted.resolve(); await imageDone.promise; },
+    cloneImpl: async () => { cloneStarted.resolve(); return cloneDone.promise; },
+  });
+  try {
+    const result = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1');
+    await Promise.all([imageStarted.promise, cloneStarted.promise]);
+    imageDone.resolve();
+    await new Promise(r => setImmediate(r));
+    assert.equal(events.some(e => e[0] === 'deploy'), false);
+    cloneDone.resolve({ password: 'pw', via: 'template' });
+    const deployed = await result;
+    assert.equal(events.filter(e => e[0] === 'deploy').length, 1);
+    assert.equal(deployed.timings.cloneVia, 'template');
+    assert.ok(Number.isFinite(deployed.timings.imageBuildMs));
+    assert.ok(Number.isFinite(deployed.timings.cloneMs));
+    assert.equal(events.some(e => e[0] === 'drop'), false);
+  } finally { imageDone.resolve(); cloneDone.resolve({ password: 'pw' }); restore(); }
+});
+
+for (const fails of ['image', 'clone', 'both']) {
+  test(`preparation failure (${fails}) settles both tasks before cleanup`, { timeout: 5000 }, async () => {
+    const imageStarted = deferred(), cloneStarted = deferred(), imageDone = deferred(), cloneDone = deferred();
+    const { subject, events, restore } = loadStaging({
+      buildImageImpl: async () => { imageStarted.resolve(); return imageDone.promise; },
+      cloneImpl: async () => { cloneStarted.resolve(); return cloneDone.promise; },
+      dropImpl: async () => { throw new Error('cleanup failed'); },
+    });
+    try {
+      const result = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1');
+      const checked = assert.rejects(result, fails === 'clone' ? /clone failed/ : /image failed/);
+      await Promise.all([imageStarted.promise, cloneStarted.promise]);
+      if (fails === 'clone') cloneDone.reject(new Error('clone failed'));
+      else imageDone.reject(new Error('image failed'));
+      await new Promise(r => setImmediate(r));
+      assert.equal(events.some(e => e[0] === 'drop'), false, 'no cleanup while the sibling still runs');
+      if (fails === 'clone') imageDone.resolve();
+      else if (fails === 'both') cloneDone.reject(new Error('clone failed'));
+      else cloneDone.resolve({ password: 'pw' });
+      await checked;
+      assert.equal(events.filter(e => e[0] === 'drop').length, 1);
+      assert.equal(events.some(e => e[0] === 'deploy'), false);
+    } finally { imageDone.resolve(); cloneDone.resolve({ password: 'pw' }); restore(); }
+  });
+}
+
+for (const lookup of ['existing', 'failed']) {
+  test(`${lookup} database lookup preserves image-before-clone ordering`, async () => {
+    const { subject, events, restore } = loadStaging({
+      existsImpl: async (name, opts) => {
+        assert.equal(opts.strict, true);
+        if (lookup === 'failed') throw new Error('unavailable');
+        return true;
+      },
+      buildImageImpl: async () => { throw new Error('image failed'); },
+    });
+    try {
+      await assert.rejects(subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1'), /image failed/);
+      assert.equal(events.some(e => ['clone', 'drop'].includes(e[0])), false);
+    } finally { restore(); }
+  });
+}

@@ -135,6 +135,25 @@ test('payload includes the vote-tally subqueries and computed majority', async (
   }
 });
 
+test('managed CLI session payload carries the promotion preflight state (#1650)', async () => {
+  sessionRow = baseRow({
+    status: 'active', source: 'cli_handoff',
+    handoff_base_sha: 'a'.repeat(40),
+    handoff_head_sha: 'b'.repeat(40),
+    checks_commit_sha: 'b'.repeat(40),
+    staging_url: 'https://staging.example.test',
+    check_state: 'passing',
+  });
+  const server = await startServer();
+  try {
+    const { res, body } = await getSession(server, 42);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.session.proposal_state, 'ready');
+  } finally {
+    server.close();
+  }
+});
+
 test('majority falls back to 1 when the stats lookup throws', async () => {
   capturedQueries = [];
   sessionRow = baseRow({ yes_count: 1 });

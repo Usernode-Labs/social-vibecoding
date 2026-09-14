@@ -111,6 +111,7 @@ function boot(opts) {
     // resolution is still pending but the event loop has already resolved"
     // — cancelling every later test in the file with it.
     setTimeout, clearTimeout,
+    setInterval() {},
     fetch() { return Promise.reject(new Error('unexpected fetch')); },
   };
   sandbox.window = sandbox;
@@ -381,7 +382,7 @@ test('pressing Skip records first-run done however fast it happens', async () =>
   assert.equal(stored[MARKER], '1');
 });
 
-// ── Completing the grant (shared with Settings → Usernode app) ─────────
+// ── Completing the grant (shared with Settings → Homeroom app) ─────────
 
 test('settleIosPushGrant polls past a lagging status and kicks push registration', async () => {
   const { sandbox } = boot({ permissions: IOS_PERMS });

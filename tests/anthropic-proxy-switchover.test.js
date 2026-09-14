@@ -47,6 +47,12 @@ function stubModule(id, exports) {
 function makePool({
   userLimit = 2500,
   userSpent = 0,
+  // #1788: the weekly layer. Defaulted OFF (0 = "this cap does not
+  // apply", per limits.resolveCaps), so every pre-existing case below
+  // still describes a daily-only account and behaves exactly as it did.
+  weeklyLimit = 0,
+  weeklySpent = 0,
+  weeklyOverride = null,
   globalLimit = 20000,
   globalSpent = 0,
   systemSpent = 0,
@@ -73,16 +79,22 @@ function makePool({
       if (/SELECT user_id FROM chat_sessions/.test(sql)) {
         return { rows: [{ user_id: USER_ID }] };
       }
-      if (/SELECT daily_limit_cents FROM users/.test(sql)) {
-        return { rows: [{ daily_limit_cents: userLimit }] };
+      if (/SELECT daily_limit_cents(?:, weekly_limit_cents)? FROM users/.test(sql)) {
+        return { rows: [{ daily_limit_cents: userLimit, weekly_limit_cents: weeklyOverride }] };
       }
       if (/SELECT value FROM platform_settings/.test(sql)) {
         const value = params[0] === limits.KEY_GLOBAL ? globalLimit
-          : params[0] === limits.KEY_SYSTEM ? 2500 : userLimit;
+          : params[0] === limits.KEY_SYSTEM ? 2500
+          : params[0] === limits.KEY_WEEKLY ? weeklyLimit : userLimit;
         return { rows: [{ value: String(value) }] };
       }
       if (/SELECT total_cost_cents FROM llm_usage/.test(sql)) {
         return { rows: [{ total_cost_cents: userSpent }] };
+      }
+      // Week-to-date for one user. Matched BEFORE the global sum below,
+      // which is the same aggregate without the user predicate.
+      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+        return { rows: [{ total: weeklySpent }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
@@ -427,5 +439,147 @@ test('mid-stream kill suppressed for key-holders on the boundary call, active fo
     assert.equal(kill(1, 'claude-test'), null, 'under-cap streaming is untouched');
   } finally {
     keyless.restore();
+  }
+});
+
+// ── #1788: the weekly cap is a second ceiling on the same gate ──────────
+//
+// Every case above describes a daily-only account (makePool defaults
+// weeklyLimit to 0, which resolveCaps reads as "does not apply") and none
+// of them changed. These cover the new axis: it refuses, it spills onto a
+// BYOK key with its own copy, it kills mid-stream, and it stays entirely
+// out of the way of sync turns.
+
+test('weekly cap exhausted + NO key → 429 naming the WEEK, not the day', async () => {
+  // Nothing spent today, so the daily cap has full headroom. Only the
+  // week-to-date sum refuses this call.
+  const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 429);
+    assert.equal(r.body.code, 'budget_exceeded');
+    assert.equal(r.body.message, 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.',
+      'the refusal names the boundary the user actually has to wait for');
+    assert.equal(p.state.forwards.length, 0);
+    assert.ok(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/),
+      'and it got there by reading the week, not by inferring it from today');
+  } finally {
+    p.restore();
+  }
+});
+
+test('a weekly cap with headroom left costs one read and then gets out of the way', async () => {
+  const pool = makePool({ userSpent: 100, weeklyLimit: 17500, weeklySpent: 900 });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200);
+    assert.equal(p.state.forwards[0].apiKey, PLATFORM_KEY);
+  } finally {
+    p.restore();
+  }
+});
+
+test('no weekly cap → the weekly ledger is never queried at all', async () => {
+  const pool = makePool({ userSpent: 100 });
+  const p = loadProxy(pool);
+  try {
+    await p.call();
+    assert.equal(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/), false,
+      'an account with the weekly layer switched off pays nothing for it');
+  } finally {
+    p.restore();
+  }
+});
+
+test('weekly cap exhausted + key on file → spills onto the user key with the WEEKLY notice', async () => {
+  const pool = makePool({
+    userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500, keyEnc: GOOD_KEY_ENC,
+  });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200, 'a key-holder is never 429d by a cap they can spill past');
+    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
+    assert.equal(p.state.forwards[0].shouldKill, null);
+    assert.equal(pool.notices.length, 1);
+    assert.match(pool.notices[0].text, /free weekly AI credits ran out/);
+    assert.match(pool.notices[0].text, /Credits reset Monday 00:00 UTC\./,
+      'telling a weekly-capped user to wait for midnight would be wrong');
+    assert.doesNotMatch(pool.notices[0].text, /reset at midnight/);
+  } finally {
+    p.restore();
+  }
+});
+
+// Fails closed: an account an admin has switched both caps off for has no
+// allowance to draw down, so it is refused rather than handed the
+// platform key.
+test('both caps switched off → 429, and the copy points at the admin console', async () => {
+  const pool = makePool({ userLimit: 0, weeklyLimit: 0, weeklyOverride: 0 });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 429);
+    assert.equal(r.body.code, 'budget_exceeded');
+    assert.match(r.body.message, /No AI allowance is configured for this account/);
+    assert.match(r.body.message, /admin can set a daily or weekly cap/);
+    assert.doesNotMatch(r.body.message, /Resets/,
+      'there is no window to wait for — waiting fixes nothing here');
+    assert.equal(p.state.forwards.length, 0);
+  } finally {
+    p.restore();
+  }
+});
+
+test('sync turns bill the system bucket and never consult a weekly cap', async () => {
+  const pool = makePool({ systemSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
+  const p = loadProxy(pool, { turnMode: 'sync' });
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200, 'the user’s weekly cap is not the payer here');
+    assert.equal(p.state.forwards[0].apiKey, PLATFORM_KEY);
+    assert.equal(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/), false);
+  } finally {
+    p.restore();
+  }
+});
+
+test('mid-stream: a weekly crossing kills a keyless call, same as a daily one', async () => {
+  // $1 of weekly room left, and plenty of daily room — so only the weekly
+  // bucket can cross while the response streams.
+  const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17400 });
+  const p = loadProxy(pool);
+  try {
+    await p.call();
+    const kill = p.state.forwards[0].shouldKill;
+    assert.ok(kill, 'platform-billed calls carry the hook');
+    assert.equal(kill(500, 'claude-test'), 'over_budget',
+      'the running cost pushed week-to-date past the weekly cap');
+    assert.equal(kill(1, 'claude-test'), null, 'under both caps, streaming is untouched');
+  } finally {
+    p.restore();
+  }
+});
+
+// The gate's whole purpose is refusing spend, so a bookkeeping read that
+// fails must not be what does the refusing.
+test('a weekly ledger read that throws fails OPEN', async () => {
+  const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
+  const inner = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+      throw new Error('weekly read boom');
+    }
+    return inner(sql, params);
+  };
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200, 'a broken read is treated as zero spend, not as an exhausted cap');
+    assert.equal(p.state.forwards[0].apiKey, PLATFORM_KEY);
+  } finally {
+    p.restore();
   }
 });

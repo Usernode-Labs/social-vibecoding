@@ -60,12 +60,16 @@
     return (n / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  function relTimeSafe(ts) {
-    if (!ts) return '';
-    if (typeof relTime === 'function') {
-      try { return relTime(ts); } catch { /* fall through */ }
+  // #1808: the age AND the unelided stamp behind it. `relStamp` is a global
+  // function declaration in app-view.js, which is a sibling classic script —
+  // the `typeof` probe is because this file also renders on pages that load
+  // it without app-view.js, where a missing stamp beats a ReferenceError.
+  function relStampSafe(ts) {
+    if (!ts) return { text: '', title: '' };
+    if (typeof relStamp === 'function') {
+      try { return relStamp(ts); } catch { /* fall through */ }
     }
-    return '';
+    return { text: '', title: '' };
   }
 
   // Attachment chips: NAME ONLY, and deliberately a <span>, not an <a>.
@@ -153,11 +157,13 @@
     const isUser = msg.role === 'user';
     const who = isUser ? (ownerName || 'them') : 'AI';
     const cls = isUser ? 'dc-msg-user' : 'dc-msg-assistant';
-    const when = relTimeSafe(msg.created_at);
+    const when = relStampSafe(msg.created_at);
     return '<div class="dc-msg ' + cls + ' st-msg">'
       + '<div class="dc-msg-header">'
       + '<span class="st-msg-who">' + esc(who) + '</span>'
-      + (when ? '<span class="st-msg-when">' + esc(when) + '</span>' : '')
+      + (when.text
+        ? '<span class="st-msg-when" title="' + esc(when.title) + '">' + esc(when.text) + '</span>'
+        : '')
       + '</div>'
       + '<div class="dc-msg-content">' + md(msg.content || '') + '</div>'
       + attachmentsHtml(msg)

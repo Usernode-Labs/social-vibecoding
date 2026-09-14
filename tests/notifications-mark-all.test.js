@@ -77,9 +77,13 @@ test('markRead() with neither id nor all is a no-op returning 0', async () => {
   assert.equal(pool.calls.length, 0);
 });
 
-// Kind scoping for the split drawers (header cog vs bell): the cog's
-// mark-all clears only the session-related kinds; the bell's clears
-// everything EXCEPT them.
+// Kind scoping on the SERVICE. It was built for the split drawers (the
+// header cog's mark-all cleared only the session kinds, the bell's cleared
+// everything except them) and both callers are gone — #1610 dropped the last
+// one when the bell took over the session kinds. The capability stays and
+// stays pinned: `kinds` / `excludeKinds` are how any future scoped clear is
+// expressed, and an unpinned SQL builder is how one silently starts clearing
+// the wrong rows.
 
 test('markRead({all, kinds}) scopes the clear to the listed kinds', async () => {
   const pool = stubPool(3);
@@ -138,9 +142,13 @@ function methodBody(name) {
   return m[1];
 }
 
-// The session-related kinds live in the header cog's drawer now, so the
-// bell's mark-all must (a) send the exclusion server-side and (b) leave
-// those items unread locally.
+// #1610: mark-all clears EVERYTHING the bell counts. It used to send
+// `exclude_kinds: [...SESSION_NOTIF_KINDS]` and skip those items locally,
+// because the session kinds had a second surface with a mark-all of its own.
+// That surface is gone and its count is part of the bell's number, so an
+// exclusion here would leave a count nothing in the drawer could dismiss.
+// Both stubs stay wired because the extracted body is built with them in
+// scope; nothing should reach for either any more.
 const SESSION_KINDS = new Set(['session_done', 'auto_solve_done', 'stale_pr', 'check_failed']);
 const isSessionNotifStub = (n) => !!n && SESSION_KINDS.has(n.kind);
 
@@ -152,7 +160,7 @@ function buildMarkAllRead(body) {
   );
 }
 
-test('markAllRead marks bell items read, re-renders, and reconciles chat dots', async () => {
+test('markAllRead marks every item read, re-renders, and reconciles chat dots', async () => {
   const body = methodBody('async markAllRead');
 
   const rendered = { badge: 0, list: 0 };
@@ -162,13 +170,9 @@ test('markAllRead marks bell items read, re-renders, and reconciles chat dots', 
       { id: 1, kind: 'mention', readAt: null },
       { id: 2, kind: 'reply', readAt: null },
       { id: 3, kind: 'kudos', readAt: '2026-01-01T00:00:00Z' },
-      // Session-related: belongs to the cog drawer — must survive unread.
+      // Session-related. It is the bell's now, so mark-all clears it too.
       { id: 4, kind: 'session_done', readAt: null },
     ],
-    _bellUnread() {
-      const sessionUnread = N.items.filter((n) => isSessionNotifStub(n) && !n.readAt).length;
-      return Math.max(0, N.unread - sessionUnread);
-    },
     _reconcileCompletionTitle() {},
     _renderBadge() { rendered.badge++; },
     _renderList() { rendered.list++; },
@@ -177,7 +181,7 @@ test('markAllRead marks bell items read, re-renders, and reconciles chat dots', 
   const fetchCalls = [];
   const fetchStub = (url, opts) => {
     fetchCalls.push({ url, opts });
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ unread: 1, cleared: 2 }) });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ unread: 0, cleared: 3 }) });
   };
 
   let dotReconciles = 0;
@@ -190,32 +194,20 @@ test('markAllRead marks bell items read, re-renders, and reconciles chat dots', 
 
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, '/api/notifications/read');
-  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), {
-    all: true,
-    exclude_kinds: [...SESSION_KINDS],
-  });
+  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), { all: true },
+    'no exclude_kinds: the session kinds are the bell\'s to clear now');
 
-  assert.equal(N.unread, 1, 'server-reported unread (the surviving session notif) adopted');
-  assert.ok(N.items.filter((n) => !isSessionNotifStub(n)).every((n) => n.readAt),
-    'every bell item is marked read locally');
-  assert.equal(N.items[3].readAt, null, 'the session-related item stays unread for the cog drawer');
+  assert.equal(N.unread, 0, 'server-reported unread adopted');
+  assert.ok(N.items.every((n) => n.readAt), 'every item is marked read locally');
+  assert.ok(N.items[3].readAt, 'the session-related item included (#1610)');
   assert.equal(N.items[2].readAt, '2026-01-01T00:00:00Z', 'already-read timestamps preserved');
   assert.ok(rendered.badge >= 1 && rendered.list >= 1, 'badge and list re-rendered');
   assert.equal(dotReconciles, 1, 'in-chat unread dots reconciled without waiting for WS');
 });
 
-test('markAllRead early-returns when the bell itself has nothing unread', async () => {
+test('markAllRead early-returns when nothing is unread at all', async () => {
   const body = methodBody('async markAllRead');
-  // One unread notification exists, but it's session-related (cog-drawer
-  // territory) — the bell's button must not clear it.
-  const N = {
-    unread: 1,
-    items: [{ id: 4, kind: 'session_done', readAt: null }],
-    _bellUnread() {
-      const sessionUnread = N.items.filter((n) => isSessionNotifStub(n) && !n.readAt).length;
-      return Math.max(0, N.unread - sessionUnread);
-    },
-  };
+  const N = { unread: 0, items: [{ id: 4, kind: 'session_done', readAt: '2026-01-01T00:00:00Z' }] };
   let fetched = 0;
   const markAllRead = buildMarkAllRead(body);
   await markAllRead(
@@ -224,4 +216,32 @@ test('markAllRead early-returns when the bell itself has nothing unread', async 
     {}, console, SESSION_KINDS, isSessionNotifStub
   );
   assert.equal(fetched, 0);
+});
+
+test('a lone unread session notification is enough to send mark-all', async () => {
+  // The regression guard for #1610. Under the old exclusion this case
+  // early-returned: the only unread item was session-related, so the bell
+  // counted itself empty, and the number on #improve-btn had nothing anywhere
+  // that could clear it.
+  const body = methodBody('async markAllRead');
+  const N = {
+    unread: 1,
+    items: [{ id: 4, kind: 'session_done', readAt: null }],
+    _reconcileCompletionTitle() {},
+    _renderBadge() {},
+    _renderList() {},
+  };
+  const calls = [];
+  const markAllRead = buildMarkAllRead(body);
+  await markAllRead(
+    N,
+    (url, opts) => {
+      calls.push({ url, opts });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ unread: 0, cleared: 1 }) });
+    },
+    {}, console, SESSION_KINDS, isSessionNotifStub
+  );
+  assert.equal(calls.length, 1, 'the request is sent');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { all: true });
+  assert.ok(N.items[0].readAt, 'and the completion is cleared locally');
 });

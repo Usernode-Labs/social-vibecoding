@@ -130,11 +130,36 @@ test('boot distinguishes "server said no" from "server said nothing"', () => {
   assert.match(init, /enterAuthed\(snap\.user\)/);
 });
 
+test('only 401/403 mean the session is over — a 500 says nothing about it (#1608)', () => {
+  // The reported dead end starts here. middleware/auth.js answers a failed
+  // session lookup with 500, and boot read every non-ok answer as a
+  // sign-out: the cached trace was dropped and the sign-in screen painted
+  // over a cookie the server still honours. The credentials typed into it
+  // then hit the session-mint boundary's 409 with no way out.
+  const predicate = appMethod('_answeredSignedOut');
+  assert.match(predicate, /res\.status === 401 \|\| res\.status === 403/);
+
+  const init = appMethod('init');
+  assert.match(init, /else if \(App\._answeredSignedOut\(res\)\) \{\s*\/\/[\s\S]{0,300}?App\._dropCachedSession\(\);/,
+    'the authoritative "no" is the only branch that drops the cache');
+
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
+    APP.indexOf('// ── Staged boot'));
+  const unsure = rec.slice(rec.indexOf('if (!res.ok && !App._answeredSignedOut(res))'));
+  assert.ok(unsure.startsWith('if (!res.ok && !App._answeredSignedOut(res))'),
+    'reconciling has an "answered, but not about the session" branch');
+  const unsureBranch = unsure.slice(0, unsure.indexOf('\n    if (!res.ok) {'));
+  assert.match(unsureBranch, /_publishBootSession\(\{ unknown: true \}\)/,
+    'a joiner is told we could not tell, exactly as for no answer at all');
+  assert.ok(!/_dropCachedSession|location\.reload/.test(unsureBranch),
+    'a signed-in reload that meets a 500 stays signed in');
+});
+
 test('the boot session check has a deadline', () => {
   // Without it, a stalled-but-open socket holds boot forever — the white
   // screen half of the bug — even when a snapshot is sitting right there.
   assert.match(APP, /BOOT_SESSION_TIMEOUT_MS:\s*\d+/);
-  const body = appMethod('_fetchSession');
+  const body = appMethod('_fetchWebSession');
   assert.match(body, /AbortController/);
   assert.match(body, /BOOT_SESSION_TIMEOUT_MS/);
   assert.match(body, /clearTimeout/);
@@ -420,13 +445,20 @@ test('reconnecting reconciles the snapshot against the real session', () => {
 test('every way out of a session clears the snapshot', () => {
   // Leaving it behind would let the next offline boot paint a signed-in
   // shell for an account that logged out — a worse bug than the original.
-  assert.match(SETTINGS, /clearSessionSnapshot/);
+  //
+  // Both sign-out paths reach it through _dropCachedSession now (#1524),
+  // which clears the snapshot AND the rest of the remembered session: the
+  // shell chrome snapshot and the Improve target, which main.tsx re-applies
+  // unconditionally at boot and which would otherwise paint the previous
+  // account's header on the landing page they were just sent to.
+  assert.match(APP, /_dropCachedSession\(\) \{\s*\n\s*App\.clearSessionSnapshot\(\);/);
+  assert.match(SETTINGS, /window\.App\?\._dropCachedSession\?\.\(\)/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.
   // That screen is React now (#1080 chunk C), so its own fallback path is
   // where the call has to be.
   const waitingLogout = AUTH_WAITING_TSX.slice(AUTH_WAITING_TSX.indexOf('const onLogout'));
-  assert.match(waitingLogout.slice(0, 800), /clearSessionSnapshot/);
+  assert.match(waitingLogout.slice(0, 800), /_dropCachedSession/);
 });
 
 // ── The visible offline state ────────────────────────────────────────
@@ -521,11 +553,12 @@ test('every credential exchange refuses to submit while offline', () => {
 });
 
 test('home says "offline", not "failed", when the feed cannot load', () => {
-  const cat = HOME.slice(HOME.indexOf('Failed to load apps') - 1500);
+  const cat = HOME.slice(HOME.indexOf("Couldn't load your apps") - 1500);
   assert.match(cat, /Offline\.isOffline\(\)/);
   assert.match(cat, /You're offline/);
-  // The generic red failure copy is still there for real failures.
-  assert.match(HOME, /Failed to load apps/);
+  // The failure state is still there for real failures (#1899: the grid
+  // draws it as the shared error card with a Retry).
+  assert.match(HOME, /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────
