@@ -53,6 +53,7 @@ const BRIDGE = read('frontend/src/features/app-frame/app-frame-bridge.js');
 const MOUNT = read('frontend/src/features/app-frame/mount.ts');
 const MAIN = read('frontend/src/main.tsx');
 const SHELL = read('frontend/src/Shell.tsx');
+const DAPP = JSON.parse(read('dapp.json'));
 
 const SLUG = 'usernode-2d5619';
 const APP_URL = 'https://usernode-2d5619.example';
@@ -888,6 +889,11 @@ test('#2154: the settled launch screenshot reproduces the status/detail race', a
     'the synthetic state does not navigate to the platform origin');
   assert.equal(bridge.frame().getAttribute('sandbox'), '',
     'its blank document stays fully restricted');
+
+  const declaredCheck = DAPP.tests.find((check) =>
+    check.path === '/?shot=app-launching&settle=1');
+  assert.equal(declaredCheck?.expectSelector, '#app-iframe[sandbox=""]:not([src])',
+    'the staging check requires the same source-less, fully restricted frame');
 });
 
 test('the app-frame URL policy allows only absolute cross-origin HTTP(S) targets', async () => {
