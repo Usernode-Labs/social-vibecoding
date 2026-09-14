@@ -627,7 +627,7 @@ test('the settings screen names the platform allowance the key carries, from the
   const weekly = settingsHarness(issued('weekly', 175, 174.25));
   await weekly.Settings._refreshOpenRouter();
   assert.equal(weekly.el('settings-openrouter-key-info').textContent,
-    'Usernode-managed · Weekly limit: $175 · Remaining: $174.25');
+    'Homeroom-managed · Weekly limit: $175 · Remaining: $174.25');
   assert.match(weekly.el('settings-openrouter-managed-message').textContent,
     /key is active with the platform's \$175\.00 weekly allowance\. Admins can block or remove it/);
 
@@ -635,7 +635,7 @@ test('the settings screen names the platform allowance the key carries, from the
   const legacy = settingsHarness(issued('daily', 1, 1));
   await legacy.Settings._refreshOpenRouter();
   assert.equal(legacy.el('settings-openrouter-key-info').textContent,
-    'Usernode-managed · Daily limit: $1 · Remaining: $1');
+    'Homeroom-managed · Daily limit: $1 · Remaining: $1');
   assert.match(legacy.el('settings-openrouter-managed-message').textContent,
     /active with a \$1\.00 daily limit until it is moved to the platform's weekly allowance\./);
 

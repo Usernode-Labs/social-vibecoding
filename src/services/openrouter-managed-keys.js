@@ -166,7 +166,7 @@ async function provision({ pool, userId, config }) {
       403,
       'no_allowance',
       allowance.identityGated
-        ? 'Connect GitHub or X in Settings to unlock included Usernode credits before claiming a company OpenRouter key.'
+        ? 'Connect GitHub or X in Settings to unlock included Homeroom credits before claiming a company OpenRouter key.'
         : 'This account has no included weekly allowance, so there is no company OpenRouter key to create. Add a personal OpenRouter key in Settings instead.',
     );
   }
