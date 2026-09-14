@@ -573,6 +573,18 @@ test('guidance names the actual web UI of the client that called it', async () =
   assert.ok(codex.guidance[2].includes('someuser/recipe-box'));
   assert.equal(codex.guidance.length, 5);
 
+  // #1892: the last step's "if it says it can't submit" names the remedy for
+  // the product. Claude: add the connector on claude.ai, new session. Codex:
+  // nothing can be added today, so the branch name comes back by hand.
+  const claudeLast = claude.guidance[claude.guidance.length - 1];
+  assert.match(claudeLast, /add the connector on claude\.ai \(Settings → Connectors on Homeroom shows how\) and start a new session/);
+  assert.doesNotMatch(claudeLast, /paste back the branch name/);
+  const codexLast = codex.guidance[codex.guidance.length - 1];
+  assert.match(codexLast, /Codex can't add the Homeroom connector today/);
+  assert.match(codexLast, /paste back the branch name it prints and I'll submit it/);
+  assert.doesNotMatch(codexLast, /claude\.ai/);
+  for (const step of [claudeLast, codexLast]) assert.doesNotMatch(step, /—/, 'no em dash in the new step');
+
   // An unrecognised client gets the one thing true everywhere — and is the
   // only variant where a terminal is likely enough to mention the CLI.
   const other = await prepareWith({ clientName: 'some-cli/0.1' }, FORK_MISSING);
@@ -2293,10 +2305,49 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   assert.match(walkthrough, /its Submit button opens the proposal/);
   assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
 
-  // No origin, no URL — the page is still named.
+  // No origin, no URL — the page is still named, and so is each product's
+  // remedy, minus the one value that needs an origin.
   const noOrigin = fullOrder({ webPath: '' });
   assert.doesNotMatch(noOrigin, /#settings\/connectors/);
-  assert.match(noOrigin, /Settings → Connectors,\n {3}which has the connector URL/);
+  assert.doesNotMatch(noOrigin, /^ {4}\S*\/mcp$/m, 'no origin, no connector URL line');
+  assert.match(noOrigin, /Settings → Connectors on Homeroom has the click-by-click steps:/);
+  assert.match(noOrigin, /Claude Code on the web: on claude\.ai, add a custom connector/);
+});
+
+test('#1892: a session with no Homeroom tools is told the remedy for ITS product, not just the settings page', () => {
+  // "The user adds it at Settings → Connectors" was the whole answer, and it
+  // is the same answer for a product where it works (Claude Code on the web
+  // picks up a connector added on claude.ai, in a NEW session) and one where
+  // nothing can be added today (Codex on the web has no custom MCP setting;
+  // the Codex CLI's sign-in callback is refused by the hosted connector, per
+  // the Codex block on Settings → Connectors). The work order now says which
+  // is which, in the RULES bullet and again under step 6, with the connector
+  // URL derived from the same origin as the settings page.
+  const order = fullOrder();
+  // The connector URL is its own indented line, like the settings URL, and
+  // appears in both places.
+  assert.equal(order.split('\n').filter((l) => l === '    https://usernode.example/mcp').length, 2,
+    'the connector URL is on its own indented line, in the rules and in step 6');
+  // RULES bullet: per product.
+  assert.match(order, /For Claude Code on the web, the user\n {2}adds it on claude\.ai as a custom connector named `homeroom` with the URL\n {2}below, and a NEW Claude Code session picks it up \(this one will not\)\./);
+  assert.match(order, /Codex cannot add it today: Codex on the web has no custom MCP setting,\n {2}and the Codex CLI's sign-in uses a localhost callback the hosted\n {2}connector refuses\./);
+  // Step 6: the same two remedies, then the settings page, then the retry.
+  const step6 = order.slice(order.indexOf('6. IF THE USERNODE TOOLS ARE NOT AVAILABLE'), order.indexOf('Once they have, retry'));
+  assert.match(step6, /How the user adds it depends on the product you are:/);
+  assert.match(step6, /- Claude Code on the web: on claude\.ai, add a custom connector named\n {5}`homeroom` with the URL below, then start a NEW Claude Code session;\n {5}this one will not pick it up\./);
+  assert.match(step6, /^ {4}https:\/\/usernode\.example\/mcp$/m);
+  assert.match(step6, /- Codex: there is no way to add it today\. Codex on the web has no custom\n {5}MCP setting, and the Codex CLI's sign-in uses a localhost callback the\n {5}hosted connector refuses, so hand the branch back as below\./);
+  assert.match(step6, /Settings → Connectors on Homeroom has the click-by-click steps:\n {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
+  // The new lines carry no em dash (platform convention); the lines around
+  // them predate the rule and are not rewritten here.
+  for (const line of step6.split('\n').slice(4)) {
+    if (/Once they have/.test(line)) break;
+    assert.doesNotMatch(line, /—/, `no em dash: ${line}`);
+  }
+  // Both work-order variants share the block.
+  const update = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } });
+  assert.match(update, /How the user adds it depends on the product you are:/);
+  assert.equal(update.split('\n').filter((l) => l === '    https://usernode.example/mcp').length, 2);
 });
 
 test('the update work order says the same for a missing connector, in its own terms', async () => {
