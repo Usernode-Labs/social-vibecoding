@@ -54,6 +54,9 @@
 // the user goes — nobody wants "I set Opus here, but the next app
 // reset me back to Sonnet".
 const MODEL_STORAGE_KEY = 'usernode:dc:model';
+const OPENROUTER_MODEL_PREFIX = 'openrouter:';
+const ANTHROPIC_MODEL_PREFIX = 'anthropic:';
+const OPENROUTER_MORE_VALUE = `${OPENROUTER_MODEL_PREFIX}__add_more__`;
 
 // A `?shot=` screenshot-state deep link names a SURFACE, not a moment, so
 // the open is held up for a window rather than attempted once — see
@@ -226,6 +229,14 @@ const DevChat = {
   // default so the two stay aligned.
   _defaultModel: 'claude-opus-5',
 
+  // The lightweight data behind the composer's unified picker. It is loaded
+  // once per page rather than every time the composer republishes (which can
+  // be every keystroke). The full catalog remains in the existing dialog;
+  // this cache is used only to build its saved/favorite shortlist.
+  _modelPickerData: null,
+  _modelPickerDataPromise: null,
+  _modelPickerChanging: false,
+
   // Fetch the authoritative model allowlist from the server. Replaces
   // the inline MODELS map so adding/removing a model on the server
   // (src/services/models.js) automatically flows to the dropdown
@@ -272,111 +283,201 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  /** Load the saved OpenRouter choice and its key-visible model shortlist. */
+  async _ensureModelPickerData({ forceRefresh = false } = {}) {
+    if (!DevChat.currentSession) return null;
+    const venue = DevChat._currentVenueId();
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
+    if (DevChat._modelPickerData && !forceRefresh) return DevChat._modelPickerData;
+    if (DevChat._modelPickerDataPromise && !forceRefresh) {
+      return DevChat._modelPickerDataPromise;
+    }
+
+    const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
+    DevChat._modelPickerDataPromise = request;
+    try {
+      const data = await request;
+      DevChat._modelPickerData = data;
+      DevChat._publishComposer();
+      return data;
+    } finally {
+      if (DevChat._modelPickerDataPromise === request) {
+        DevChat._modelPickerDataPromise = null;
+      }
+    }
+  },
+
   /**
-   * The chat-model picker, as data. Null on every venue that has none.
+   * The one in-composer model picker, as grouped data. Null off-platform.
    *
-   * TWO SURFACES, and the split is what #1589 found. A native select's
-   * closed control shows the selected option's own text, so
-   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
-   * coding") set the control's width: 276px of a 344px strip on a phone,
-   * which pushed the label above it and the credit meter below it — three
-   * lines for a row that holds two things. Names brought it to 89px.
-   *
-   * That finding was about the CLOSED control, and `selectedLabel` still
-   * honours it. The picker is the kit's anchored menu now rather than a
-   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
-   * so the blurb comes back on `options`, where it costs nothing and answers
-   * the only question this control is ever asked: which one for what.
-   *
-   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
-   * name ("Opus 5: general coding work") and the row already opens with it,
-   * so the sheet joins the two itself. The Generate-proposal picker — the one
-   * a first-timer meets, in a dialog, with a caption under each option —
-   * still renders `modelOptionText`, which is untouched.
+   * OpenRouter comes first. Its shortlist is the user's saved model (or the
+   * server's recommended GLM when there is no saved choice), the model pinned
+   * to this session, and favorites added through the full catalog dialog.
+   * Anthropic's direct models come second. Every option repeats its key source
+   * because native optgroup headings disappear when a select is closed — this
+   * keeps an Anthropic-authored model reached through OpenRouter from looking
+   * like it will use the Anthropic key.
    */
   _modelPickerView() {
-    if (DevChat._currentVenueId() !== 'usernode-claude') return null;
-    const selected = DevChat.selectedModel;
-    const label = (id) => {
-      const meta = DevChat.MODELS[id];
-      return (meta && meta.label) || id;
-    };
-    return {
-      options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-        id,
-        label: (meta && meta.label) || id,
-        // Optional on the wire — loadModels() carries changeSize through
-        // only when the server sends it, and a server that omits it leaves
-        // the sheet rendering plain names.
-        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
-      })),
-      selected,
-      selectedLabel: label(selected),
-    };
-  },
+    const venue = DevChat._currentVenueId();
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
 
-  /**
-   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
-   *
-   * The venue control at the top of the session opens the kit's adaptive
-   * menu (a bottom action sheet on touch, an anchored popover on desktop).
-   * This was the only native <select> left beside it, and the two are the
-   * same question asked at different scopes: where this is built, and by
-   * whom. They should not answer in two different idioms.
-   *
-   * The kit sets row labels with textContent, so the blurb and the tick ride
-   * IN the label — the same constraint build-venues.js states at its own
-   * call. The tick trails the row, as it does there, so the two sheets mark
-   * "you are here" the same way.
-   *
-   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
-   * with the shell (public/usernode-native/v1), so this is the "someone
-   * stripped native.js" case, not a route we serve.
-   */
-  openModelSheet(anchorEl) {
-    const view = DevChat._modelPickerView();
-    if (!view || !view.options.length) return Promise.resolve(null);
-    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
-    if (!kit || !kit.hasKit()) return Promise.resolve(null);
-    DevChat._closeSessionOptions();
-    return kit.menu({
-      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
-      title: 'Which model should write this change?',
-      items: view.options.map((o) => ({
-        label: o.label
-          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
-          + (o.id === view.selected ? ' \u2713' : ''),
-        handler: () => {
-          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
-        },
-      })),
+    const data = DevChat._modelPickerData;
+    const catalog = Array.isArray(data?.models) ? data.models : [];
+    const byId = new Map(catalog.map((model) => [model.id, model]));
+    const savedId = String(data?.backends?.codex_openrouter?.model || '').trim();
+    const recommendedId = byId.has(data?.recommendedModelId)
+      ? data.recommendedModelId
+      : (catalog.find((model) => model?.isRecommended)?.id
+        || catalog.find((model) => model?.compatibility === 'verified')?.id
+        || catalog[0]?.id
+        || '');
+    // A stale saved id is not an option. The server recommendation is GLM by
+    // default, so this is also the first-use fallback the user asked for.
+    const preferredId = byId.has(savedId) ? savedId : recommendedId;
+    const openRouterSession = DevChat._isOpenRouterSession();
+    const currentOpenRouterId = openRouterSession
+      ? String(DevChat.currentSession?.agent_model || '').trim()
+      : '';
+
+    const shortlistIds = [];
+    const addShortlistId = (id) => {
+      if (id && !shortlistIds.includes(id)) shortlistIds.push(id);
+    };
+    // Keep the active session truthful first, then the saved/GLM default,
+    // then any extra models the user starred in the dialog.
+    addShortlistId(currentOpenRouterId);
+    addShortlistId(preferredId);
+    addShortlistId(recommendedId);
+    for (const model of DevChat._openRouterModelsForPicker(catalog, { favoritesOnly: true })) {
+      addShortlistId(model.id);
+    }
+
+    const openRouterOptions = shortlistIds.map((id) => {
+      const model = byId.get(id);
+      return {
+        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
+        label: `OpenRouter key · ${model?.name || id}`,
+      };
     });
-  },
+    let selectedOpenRouterId = currentOpenRouterId || preferredId;
+    if (openRouterSession && !selectedOpenRouterId) {
+      // Old/incomplete rows should say that they are still loading rather
+      // than make the select visually fall into Anthropic's first option.
+      selectedOpenRouterId = '__loading__';
+      openRouterOptions.unshift({
+        value: `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`,
+        label: 'OpenRouter key · Loading model',
+        disabled: true,
+      });
+    }
 
-  /** The picker's `change`, which used to be an addEventListener per render. */
-  _onModelPicked(value) {
-    DevChat.selectedModel = value;
-    // Persist across refreshes + new sessions (fixes #31). Wrapped in
-    // try/catch so private-mode browsers or quota errors don't break the
-    // selector.
-    try { localStorage.setItem(MODEL_STORAGE_KEY, value); } catch {}
-    DevChat._publishComposer();
-  },
+    const groups = [];
+    // Before the async read lands, keep the catalog door available. Once the
+    // capability response says OpenRouter is unavailable, omit a dead group
+    // unless this is an existing OpenRouter session that must remain visible.
+    if (!data || data.codexAvailable || data.loadError || openRouterSession) {
+      groups.push({
+        id: 'openrouter',
+        label: 'OpenRouter key',
+        options: [
+          ...openRouterOptions,
+          { value: OPENROUTER_MORE_VALUE, label: 'Add more OpenRouter models…' },
+        ],
+      });
+    }
+    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => ({
+      value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+      label: `Anthropic key · ${(meta && meta.label) || id}`,
+    }));
+    groups.push({ id: 'anthropic', label: 'Anthropic key', options: directOptions });
 
-  /** The OpenRouter row's "Browse models", likewise. */
-  _onOpenRouterModelChange() {
-    DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
-  },
-
-  /** The OpenRouter row, as data. Null on every venue that has none. */
-  _openRouterRowView() {
-    if (DevChat._currentVenueId() !== 'usernode-openrouter') return null;
-    const model = String(DevChat.currentSession?.agent_model || '').trim();
+    const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
+      ? DevChat.selectedModel
+      : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
+        ? DevChat._defaultModel
+        : (Object.keys(DevChat.MODELS)[0] || ''));
     return {
-      model: model || 'No model is pinned',
-      changeDisabled: !!DevChat._composerBusy,
-      note: DevChat._agentBillingNote(DevChat.currentSession),
+      groups,
+      selected: openRouterSession
+        ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
+        : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
+      changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
     };
+  },
+
+  /** Dispatch a grouped native-select value to its provider. */
+  async _onModelPicked(value) {
+    if (DevChat._modelPickerChanging) return;
+    if (value === OPENROUTER_MORE_VALUE) {
+      await DevChat._onOpenRouterModelChange();
+      return;
+    }
+    if (String(value).startsWith(ANTHROPIC_MODEL_PREFIX)) {
+      const model = String(value).slice(ANTHROPIC_MODEL_PREFIX.length);
+      if (!Object.prototype.hasOwnProperty.call(DevChat.MODELS, model)) return;
+      DevChat.selectedModel = model;
+      // Direct Anthropic selection is a global per-browser preference, as it
+      // was before this control learned about OpenRouter.
+      try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
+      if (DevChat._isOpenRouterSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else {
+        DevChat._publishComposer();
+      }
+      return;
+    }
+    if (!String(value).startsWith(OPENROUTER_MODEL_PREFIX)) return;
+    const model = String(value).slice(OPENROUTER_MODEL_PREFIX.length);
+    if (!model || model === '__loading__') return;
+    const data = DevChat._modelPickerData;
+    const meta = Array.isArray(data?.models)
+      ? data.models.find((item) => item?.id === model)
+      : null;
+    const saved = data?.backends?.codex_openrouter || {};
+    const currentEffort = DevChat._isOpenRouterSession()
+      && DevChat.currentSession?.agent_model === model
+      ? DevChat.currentSession?.agent_reasoning_effort
+      : null;
+    const reasoningEffort = meta && meta.supportsReasoning !== true
+      ? null
+      : (currentEffort || saved.reasoningEffort || null);
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent({
+        backend: 'codex_openrouter', model, reasoningEffort,
+      });
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
+  },
+
+  /** The unified select's final row opens the existing full catalog. */
+  async _onOpenRouterModelChange() {
+    if (DevChat._modelPickerChanging) return;
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+      // Favorite stars can change even when the dialog is cancelled. Re-read
+      // the decorated catalog so additions/removals reach the shortlist.
+      DevChat._modelPickerData = null;
+      await DevChat._ensureModelPickerData();
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -704,22 +805,6 @@ const DevChat = {
       const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
       if (cached) cached.build_venue = data.session.build_venue;
     } catch { /* see above: a lost choice degrades to the derivation */ }
-  },
-
-  // What an OpenRouter session bills, in one sentence — the model is the
-  // user's and so is the invoice, and none of that spend passes through the
-  // platform meter, so nothing else on the composer can state it.
-  //
-  // A Homeroom · Claude session had a sentence here too and no longer does
-  // (#1353): "Chat and coding use Homeroom · Claude and its normal credit
-  // rules" sat under a meter counting those very credits, beside a picker
-  // labelled Chat model, in a session whose header names the venue. Four
-  // ways of saying the same thing, on the surface with the least room for
-  // any of them. Empty string for every venue that is not OpenRouter.
-  _agentBillingNote(session) {
-    if (DevChat._agentBackend(session) !== 'codex_openrouter') return '';
-    const model = String(session?.agent_model || '').trim();
-    return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
   },
 
   _busyComposerPlaceholder() {
@@ -1292,8 +1377,8 @@ const DevChat = {
   // `explicit` is a {backend, model, reasoningEffort} the caller already
   // has — the venue sheet picked it, so re-asking through the old modal
   // would be asking the same question twice. Omitted, this still opens the
-  // detail chooser, which is what the OpenRouter row needs (a backend is
-  // not a complete answer there: it wants a model and an effort too).
+  // detail chooser, which is what the unified select's "Add more" action
+  // needs (a backend is not a complete answer: it wants a model and effort).
   async _switchCurrentCodingAgent(explicit, { fixedBackend = null } = {}) {
     const session = DevChat.currentSession;
     if (!session || DevChat.isStreaming) return;
@@ -5162,9 +5247,9 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    // The OpenRouter row's "Browse models" is guarded by the same rule and
-    // rides in on the publish above — it used to be a `disabled` written by
-    // hand here, which is a write React would clobber on its next paint.
+    // The grouped model selector is guarded by the same rule and rides in on
+    // the publish above — its old OpenRouter-only control received a
+    // `disabled` write here that React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -8602,7 +8687,6 @@ const DevChat = {
       venueNoteHtml: DevChat._venueNoteForRender || '',
       hidden: !!DevChat._launchpadVenue(),
       models: DevChat._modelPickerView(),
-      openRouter: DevChat._openRouterRowView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
       placeholder: DevChat._composerBusy
@@ -8841,6 +8925,10 @@ const DevChat = {
     // is what starts the elapsed heartbeat and wires the quick-reply bar.
     DevChat._renderSessionHeader();
     DevChat._renderComposer();
+    // The first paint can already name the current model. This background
+    // read adds the saved/GLM OpenRouter default and favorite shortlist,
+    // then republishes only the composer when it lands.
+    DevChat._ensureModelPickerData();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
@@ -8911,11 +8999,9 @@ const DevChat = {
     // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
-    // The chat-model picker's `change` and the OpenRouter row's "Change
-    // model" were two addEventListener calls here, re-bound on every render
-    // because the elements were new each time. They are the component's
-    // onChange / onClick now, dispatching into `_onModelPicked` and
-    // `_onOpenRouterModelChange` by name.
+    // The grouped model select owns its `change` now and dispatches into
+    // `_onModelPicked` by name. Its "Add more OpenRouter models" option
+    // reaches the existing catalog through `_onOpenRouterModelChange`.
 
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
     // `revealPrCard()` and `leaveSession()` above are what they call.
