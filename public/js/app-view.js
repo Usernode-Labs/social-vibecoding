@@ -1409,11 +1409,12 @@ const AppView = {
       url = new URL(AppView.pendingInnerPath || '/', appUrl);
       if (url.origin !== new URL(appUrl).origin) url = new URL(appUrl);
     } catch {
-      try { url = new URL(appUrl); } catch { return appUrl; }
+      try { url = new URL(appUrl); } catch { return null; }
     }
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
     if (token) url.searchParams.set('token', token);
-    return url.toString();
+    const src = url.toString();
+    return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
 
   startTokenRefresh() {
@@ -1595,21 +1596,43 @@ const AppView = {
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
     if (rec.status !== 'running' || !rec.url) return false;
+    if (!AppView._isSafeAppIframeSrc(resolveDevHost(rec.url))) return false;
     return true;
   },
 
-  // The one place the sandboxed-iframe attribute contract is written.
-  // NOTE: when `src` is null the attribute is OMITTED entirely — `src=""`
-  // resolves against the parent document, which would load the platform
-  // shell inside its own app frame.
-  _appIframeHtml({ src = null, hidden = false } = {}) {
-    const srcAttr = src ? `\n        src="${src}"` : '';
+  // A production app receives this sandbox only after its URL passes the
+  // cross-origin policy below. Until then the blank frame renders sandbox="":
+  // no permission is granted to the same-origin initial document, so browsers
+  // have no escapable allow-scripts + allow-same-origin pair to warn about.
+  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+
+  // Absolute HTTP(S), and never the platform's own origin. App URLs are built
+  // server-side, but this is the last boundary before untrusted app code enters
+  // the shell; a proxy or deployment regression must fail closed here.
+  _isSafeAppIframeSrc(src, platformOrigin = location.origin) {
+    if (!src || !platformOrigin) return false;
+    try {
+      const target = new URL(src);
+      const platform = new URL(platformOrigin);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+      if (platform.protocol !== 'http:' && platform.protocol !== 'https:') return false;
+      return target.origin !== platform.origin;
+    } catch {
+      return false;
+    }
+  },
+
+  // The DOM-only fallback mounts the same fully restricted pending frame as
+  // React. setSrc applies _appIframeSandbox immediately before a safe
+  // navigation. There is deliberately no src option here: src="" would load
+  // the platform shell inside its own app frame.
+  _appIframeHtml({ hidden = false } = {}) {
     const styleAttr = hidden ? '\n        style="opacity:0"' : '';
     return `
       <iframe
-        id="app-iframe"${srcAttr}${styleAttr}
+        id="app-iframe"${styleAttr}
         class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        sandbox=""
         allow="clipboard-write; pointer-lock; geolocation"
       ></iframe>`;
   },
@@ -1704,7 +1727,8 @@ const AppView = {
     },
     setSrc(src) {
       const el = AppView._appFrameDom._el('app-iframe');
-      if (!el || !src) return false;
+      if (!el || !AppView._isSafeAppIframeSrc(src)) return false;
+      el.setAttribute('sandbox', AppView._appIframeSandbox);
       el.src = src;
       return true;
     },
@@ -2051,11 +2075,15 @@ const AppView = {
       url: null,
       self_hosted: false,
     });
-    // Keep the fixture on a tiny same-origin document, not the platform SPA
-    // nested inside itself. The assertion is about replacing the placeholder
-    // with a frame, not about depending on a live user app.
-    AppView.pendingInnerPath = '/health';
-    AppView.renderAppTab();
+    // The assertion is about replacing the placeholder with a frame, not
+    // about depending on a live user app. Mount the fully restricted pending
+    // frame directly so this synthetic state preserves the production rule:
+    // no same-origin document ever enters #app-iframe.
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    AppView._appFrame().mount({ slug, faded: false });
+    AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
   },
@@ -2088,11 +2116,20 @@ const AppView = {
       url: location.origin,
       self_hosted: false,
     };
-    // buildAppIframeSrc resolves the inner path against the app origin, so
-    // this is what keeps the frame off the shell's own SPA root — which would
-    // otherwise load the whole platform inside itself.
+    // The old fixture navigated the production frame to same-origin /health.
+    // A ready shot now mounts the fully restricted pending frame directly:
+    // the visual contract is "a frame exists", and no synthetic document has
+    // to weaken the real app-origin invariant to demonstrate it.
     AppView.pendingInnerPath = '/health';
-    AppView.renderAppTab();
+    if (ready) {
+      AppView._teardownDevRoots();
+      AppView._teardownLaunch();
+      AppView._issueStateSource = null;
+      AppView._appFrame().mount({ slug, faded: false });
+      AppView._setSurface('app');
+    } else {
+      AppView.renderAppTab();
+    }
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
     // The back slot is setBackIcon's alone now (see App.setBackIcon and
@@ -2247,6 +2284,22 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
     const frame = AppView._appFrame();
+
+    // A production app must never share the shell's origin. Refuse before a
+    // frame is mounted, and make a bad deployment actionable instead of
+    // leaving a blank frame under the launch cover.
+    if (!iframeSrc) {
+      AppView._teardownLaunch();
+      AppView._unmountAppFrame();
+      AppView._paintAppStatus(content, {
+        dot: 'error',
+        message: 'This app cannot open safely.',
+        detail: 'Its address is not isolated from Homeroom.',
+        action: null,
+      });
+      AppView._setSurface('platform');
+      return;
+    }
 
     // Offline (or a mint that failed) leaves the src token-less — see
     // _armTokenlessReconnect. Armed BEFORE the keeps() early return below,
