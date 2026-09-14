@@ -947,6 +947,15 @@ const AppView = {
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
       }
+      // `?shot=mine-session` unfolds the viewer's own session in "What you
+      // are working on" — the state the #1887 check reads: a card about your
+      // own session opens as the CARD, with the session a link inside it,
+      // rather than as the session. Only that strip has the row and only an
+      // unfolded row has the link, so this is the URL that reaches it (see
+      // _workshopView's autoExpand).
+      if (shot === 'mine-session') {
+        AppView._workshopShot = 'mine-session';
+      }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
       // own handler, with the delegated open handler above standing aside.
@@ -6561,6 +6570,15 @@ const AppView = {
       // folded — which is the state the lanes check is about.
       const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
       if (first) autoExpand = { theme: first.id, key: '' };
+    } else if (AppView._workshopShot === 'mine-session') {
+      // The viewer's own session in "What you are working on", unfolded
+      // (#1887). `theme` is the row's SCOPE, and the strip's is `mine` — the
+      // key the Workshop's toggleRow files it under. Among the rows the strip
+      // draws before "N more of yours", so the link cannot name a row that
+      // is not on screen.
+      const r = mine.rows.slice(0, mine.shown)
+        .find((row) => row.t === 'card' && row.card.attrs && row.card.attrs['data-session-chip']);
+      if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
     const emptyNote = entries.length
@@ -7927,8 +7945,12 @@ const AppView = {
   },
 
   // One of the viewer's own session cards, as a MODEL (card/model.ts).
-  // The whole card is the tap target — it opens the owner's dev chat —
-  // so the inner controls stay real buttons inside a role="button" div.
+  // The whole card is the tap target — it opens the CARD: unfolded in place
+  // inside a fold (card/fold.tsx), or the change's page from the delegated
+  // #dev-body handler — so the inner controls stay real buttons inside a
+  // role="button" div. The owner's dev chat is a link INSIDE the open card
+  // ("Open session", fold.tsx `sessionHref`) and the change page's Build
+  // tab, never where the tap itself lands (#1887).
   _mySessionCardModel(s) {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
@@ -7948,10 +7970,11 @@ const AppView = {
         ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
         : 'Only you can see this');
 
-    // "Open chat" is GONE as a pill. Tapping this card opens the owner's dev
-    // chat — its working surface, and its canonical destination; the public
-    // discussion of a shared session is one ⋯ row rather than a competing
-    // affordance on the card face.
+    // "Open chat" is GONE as a pill. Tapping this card opens the card itself
+    // (see above); the dev chat — its working surface — is the "Open session"
+    // link inside the open card, and the public discussion of a shared
+    // session is one ⋯ row rather than a competing affordance on the card
+    // face.
     //
     // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
     // one thing you do to your own session card, the subtitle right above it
@@ -8066,7 +8089,7 @@ const AppView = {
       actions,
       actionPreview: null,
       // `preview` goes to the rail, not the action band. The chevron rides
-      // with it: tapping the card opens the owner's dev chat.
+      // with it: a tap on the card opens it (the fold draws its own mark).
       rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, menu), chevron: true, preview },
       extra: [],
       dense: true,

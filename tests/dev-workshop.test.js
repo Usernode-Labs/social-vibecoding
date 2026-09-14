@@ -30,6 +30,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
+const { loadTsx } = require('./lib/render-tsx');
 const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
@@ -1567,6 +1568,106 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // would hide the one thing on this screen you cannot find another way.
   AppView._kanbanFilters = { ...AppView._kanbanFilters, q: 'nothing matches this' };
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
+});
+
+test('#1887: a card about your own session opens the CARD, with the session a link inside it', () => {
+  // Opening a card about your own session used to navigate to the session
+  // — the row's page link and the delegated #dev-body handler both went to
+  // /dev/sessions/<id>. It is a card like every other now: the row unfolds
+  // it in place, the change's page is the open card's pill (#1886), and the
+  // session is a link INSIDE the open card — the one line under the sheet.
+  const mine = { id: 51, session_title: 'Bottom tabs', status: 'active', pr_number: null, linked_issues: [],
+    created_at: at(1), last_activity_at: at(0) };
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [{ ...mine }];
+  const v = AppView._workshopView();
+  const row = v.mine.rows.find((r) => r.t === 'card' && r.card.attrs['data-session-chip'] === '51');
+  assert.ok(row, 'the session is on the lander, carrying the hook the checks name it by');
+  assert.equal(row.key, 'mine:my-session:51');
+
+  // Folded, it is a disclosure like every other row: no destination of its
+  // own, and nothing on the lander links to the session.
+  const folded = workshopHtml(AppView);
+  assert.match(folded, /class="dev-ws-row[^"]*"[^>]*aria-expanded="false"[^>]*data-ws-row="mine:my-session:51"[^>]*data-session-chip="51"/);
+  assert.ok(!folded.includes('/dev/sessions/51'), 'folded, the session is linked from nowhere');
+  assert.ok(!folded.includes('dev-ws-sheet-actions'), 'and there is no line under a row to carry a link');
+
+  // Unfolded — through the deep link the declared check uses — it is the
+  // card: its pill in the action band, and under the sheet one line, the
+  // session's.
+  AppView._workshopShot = 'mine-session';
+  assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 'mine', key: 'mine:my-session:51' });
+  const open = workshopHtml(AppView);
+  assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
+    'the open card, hook intact');
+  // The change's page is the pill's, not a line under the sheet (#1886):
+  // "Open card" opens the card's sections here, and once they are open the
+  // same pill is "Open page ›", the link to the change's page.
+  assert.match(open, /<button type="button" class="gc-vote-btn dev-ws-open-btn" aria-expanded="false" data-ws-open-card="mine:my-session:51">Open card<\/button>/,
+    'the open card carries the pill');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'and open, the pill is the page link');
+  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
+  // Under the sheet, the session — alone. #2030's point was that two
+  // controls both reading "Open" confused; the session is a different
+  // destination from the page the pill opens, so it keeps its own link,
+  // and it is the one thing the line holds: no separator, nothing beside it.
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div><\/div>/,
+    'the session link is the line under the sheet, and the last thing in it');
+  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
+  assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
+  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
+    'the separator went with the second link');
+  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
+    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
+
+  // The helpers, from the bundle: the card's page is the change's, and only
+  // a hook for one of YOUR sessions names a session — an imported PR of
+  // yours has no dev chat, and nobody else's session is yours to open.
+  const { openHref, sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(openHref('demo-app', row.card), '#app/demo-app/dev/proposals/51');
+  assert.equal(sessionHref('demo-app', row.card), '#app/demo-app/dev/sessions/51');
+  for (const hook of ['data-shared-session-row', 'data-proposal-row', 'data-issue-row', 'data-gov-row']) {
+    assert.equal(sessionHref('demo-app', { attrs: { [hook]: '51' } }), null, `${hook} is not a session of yours`);
+  }
+  assert.equal(sessionHref('', row.card), null, 'and no app, no route');
+
+  // A tap outside a fold — the delegated #dev-body handler — opens the
+  // change's page too, never the session (#2020). The session's own route
+  // stays for the links that hold it: the one above, and a bookmark.
+  const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("const sessionChip = e.target.closest('[data-session-chip]');"));
+  assert.match(click.slice(0, 400), /AppView\.openTopic\('proposal', parseInt\(sessionChip\.dataset\.sessionChip, 10\)\);/);
+  assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
+    'no card hook navigates to the session any more');
+
+  // On the Board the open card's "Open card" is the change's page as well,
+  // and there is no line under the card: that page carries the workspace.
+  const board = makeAppView({ location: { search: '?cards=open', hash: '', href: 'http://localhost/?cards=open' } });
+  seed(board);
+  board._mySessions = [{ ...mine }];
+  const bh = kanbanHtml(board);
+  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
+  assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
+
+  // Declared: the deep link, on the Workshop, reaching the link. RETARGETED
+  // from the text-only board check that owned the busy mock row rather than
+  // added: the manifest sits at its ceiling (services/app-manifest.js keeps
+  // 20 slots clear of MAX_DECLARED_TESTS), so one check owns that row before
+  // and after — as the card it opens into, with the session inside it. The
+  // selector walks the markup above: the lane, the open wrapper, the sheet,
+  // the card by its hook, and the line under it — a later sibling of the
+  // card, past the thread — holding the session link alone (the page link
+  // it once had to pass on the way is the pill's now, #1886).
+  const check = dapp.tests.find((t) => /#1887/.test(t.name));
+  assert.ok(check, 'a declared check pins it');
+  assert.equal(check.path, '/?demo=1&shot=mine-session#app/usernode-2d5619/workshop');
+  assert.equal(check.expectSelector,
+    '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
+  assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');
+  assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
+  assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,
+    'the shot is read where the other Workshop shots are');
 });
 
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {

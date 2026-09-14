@@ -2141,8 +2141,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "Busy own session card renders (working state, two-row layout)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
+      "path": "/?demo=1&shot=mine-session#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
     {
