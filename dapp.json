@@ -3437,6 +3437,12 @@
       "expectText": "Homeroom · Claude"
     },
     {
+      "name": "The session descriptor is one compact row: py-1, wrapping only below sm, the venue still beside the name (#1941)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-view > #dc-session-header.py-1.flex-wrap.sm\\:flex-nowrap:not(.py-2) > .dc-session-title ~ button#dc-venue-select[data-venue-change]",
+      "expectText": "Homeroom · Claude"
+    },
+    {
       "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
       "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
