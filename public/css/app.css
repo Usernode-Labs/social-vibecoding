@@ -1072,6 +1072,38 @@ html.un-kb .platform-safe-sheet {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #1955 — the one "+" and the two named rows it opens. The wrapper is the
+   positioning context AND the outside-press boundary, so the menu has to
+   live inside it rather than beside the button. */
+.messages-composer-add { position: relative; flex: 0 0 auto; }
+.messages-composer-menu {
+  position: absolute;
+  z-index: 25;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 176px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+  box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
+}
+.messages-composer-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* 40px tall: this is a phone target, and the control it replaced was two
+     36px circles the width of a fingertip apart. */
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+  white-space: nowrap;
+}
+.messages-composer-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
+.messages-composer-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-composer-menu button:disabled { opacity: .35; }
 .messages-send {
   display: inline-flex;
   align-items: center;
