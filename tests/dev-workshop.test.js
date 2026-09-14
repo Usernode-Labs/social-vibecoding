@@ -59,7 +59,7 @@ function makeAppView(over) {
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
-    App: { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum' },
+    App: o.App || { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum' },
     Kudos: { renderButton: () => '', attach: () => {} },
     document: o.document || {
       getElementById: () => null,
@@ -100,11 +100,19 @@ function makeAppView(over) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  vm.runInContext(`Date.now = () => ${FIXED_NOW};`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
   return AppView;
 }
 
+// #2176: the dashboard counts CALENDAR weeks (Monday 00:00 UTC), so a
+// fixture "two days ago" would land in last week on a Monday and in this
+// week on a Wednesday. The clock is held at a Wednesday noon for the whole
+// file, in the host (these helpers) and in every sandbox (makeAppView), so
+// the fixtures mean the same thing whatever day the suite runs on.
+const FIXED_NOW = Date.parse('2026-09-16T12:00:00Z');
+Date.now = () => FIXED_NOW;
 const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 
 // Values built inside the vm realm carry that realm's prototypes, which trips
@@ -435,7 +443,7 @@ test('the numbers are tiles, and the pane always has a sentence under them', () 
   // Four integers read out as prose is the slowest form they can take, so
   // they are tiles.
   assert.match(html, /data-ws-dash-cell="open"><b>3<\/b>open items/);
-  assert.match(html, /data-ws-dash-cell="shipped"><b>1<\/b>shipped this week/);
+  assert.match(html, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>shipped this week/);
   assert.match(html, /data-ws-dash-cell="votes"><b>1<\/b>waiting on a vote/);
   assert.match(html, /data-ws-dash-cell="unclaimed"><b>2<\/b>with nobody on them/);
 
@@ -485,7 +493,8 @@ test('a paged merge history states a floor and no rate at all', () => {
   // With the whole history in hand the comparison is real, and stands.
   AppView._mergedHasMore = false;
   const whole = workshopHtml(AppView);
-  assert.match(whole, /data-ws-dash-cell="shipped"><b>1<\/b>/, 'no marker');
+  assert.match(whole, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>/, 'no marker');
+  assert.ok(!whole.includes('title="At least this many'), 'and no floor tooltip');
   assert.match(whole, /1 change landed this week, the first in a fortnight\./);
 });
 
@@ -1012,10 +1021,14 @@ test('no comment in app.css closes early, and no rule has prose for a selector',
 test('the dashboard reads a rate, not just a count, and says when it is a floor', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // #2176: the weeks are calendar weeks (Monday 00:00 UTC), so the fixtures
+  // sit relative to this week's Monday rather than to today.
+  const monday = AppView._weekStart(Date.now());
+  const iso = (ms) => new Date(ms).toISOString();
   AppView._merged = [
-    { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: at(2), created_at: at(2), row_type: 'pr' },
-    { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: at(5), created_at: at(5), row_type: 'pr' },
-    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: at(10), created_at: at(10), row_type: 'pr' },
+    { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: iso(monday + 3600000), created_at: iso(monday + 3600000), row_type: 'pr' },
+    { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: iso(monday + 7200000), created_at: iso(monday + 7200000), row_type: 'pr' },
+    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 3 * 86400000), created_at: iso(monday - 3 * 86400000), row_type: 'pr' },
   ];
   const d = AppView._workshopView().dashboard;
   assert.equal(d.shippedWeek, 2);
@@ -3683,4 +3696,69 @@ test('the selection slides between tabs instead of snapping', () => {
   // would cover the labels.
   assert.match(CSS, /\.dev-ws-tab \{ position: relative; z-index: 1; \}/);
   assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?z-index: 0;/);
+});
+
+// ── #2176: the tiles count calendar weeks ────────────────────────────
+
+test('#2176: "shipped this week" is the calendar week from Monday 00:00 UTC, not a trailing seven days', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const monday = AppView._weekStart(Date.now());
+  assert.equal(new Date(monday).getUTCDay(), 1, 'the week starts on a Monday');
+  assert.equal(monday % 86400000, 0, 'at midnight UTC');
+  const iso = (ms) => new Date(ms).toISOString();
+  const row = (id, ms) => ({
+    id, pr_number: id, pr_title: `Merge ${id}`, status: 'merged', username: 'alice',
+    merged_at: iso(ms), created_at: iso(ms), row_type: 'pr',
+  });
+  AppView._merged = [
+    row(1, monday + 3600000),              // this week
+    row(2, monday - 1000),                 // one second before Monday: last week
+    row(3, monday - 7 * 86400000 + 1000),  // the first second of last week
+    row(4, monday - 7 * 86400000 - 1000),  // the week before that: neither
+  ];
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 1, 'only what landed since Monday');
+  assert.equal(d.shippedPrevWeek, 2, 'the whole seven days before that Monday');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-dash-cell="shipped" title="This calendar week, counted from Monday 00:00 UTC\."/,
+    'the tile says which week it means');
+});
+
+// ── #2182: the viewer's strip stays on screen when it is empty ───────
+
+test('#2182: "What you are working on" stays on screen with nothing in it, and says so', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  // Nothing of the viewer's: no session, and the proposal is somebody else's.
+  AppView._mySessions = [];
+  for (const p of AppView._proposals) p.user_id = 999;
+  const v = AppView._workshopView();
+  assert.equal(v.mine.viewer, true);
+  assert.equal(v.mine.rows.length, 0);
+  const html = workshopHtml(AppView);
+  assert.ok(html.includes('data-ws-mine=""'), 'the strip is drawn');
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item below, or start something from the \+ button\.<\/p>/,
+    'with the note in the lane');
+  assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'), 'in its usual place');
+  // The declared check reaches this state through ?shot=mine-empty, whatever
+  // the demo seeded for the viewer.
+  const Seeded = makeAppView();
+  seed(Seeded);
+  Seeded._mySessions = [{ id: 51, session_title: 'Bottom tabs', pr_number: null, last_activity_at: at(0) }];
+  assert.ok(Seeded._workshopView().mine.rows.length > 0, 'the viewer has work');
+  Seeded._workshopShot = 'mine-empty';
+  assert.equal(Seeded._workshopView().mine.rows.length, 0);
+  assert.ok(workshopHtml(Seeded).includes('data-ws-mine-empty=""'));
+});
+
+test('#2182: a guest has no strip to keep', () => {
+  const AppView = makeAppView({ App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const v = AppView._workshopView();
+  assert.equal(v.mine.viewer, false);
+  assert.ok(!workshopHtml(AppView).includes('data-ws-mine='), 'no empty strip for a reader with no work to have');
 });

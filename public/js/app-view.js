@@ -1036,6 +1036,13 @@ const AppView = {
       if (shot === 'mine-session') {
         AppView._workshopShot = 'mine-session';
       }
+      // `?shot=mine-empty` draws "What you are working on" with nothing in
+      // it — the state #2182 keeps on screen — whatever sessions the viewer
+      // has. The demo seeds one busy session of the viewer's, so without
+      // this no URL could reach the empty strip.
+      if (shot === 'mine-empty') {
+        AppView._workshopShot = 'mine-empty';
+      }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
       // own handler, with the delegated open handler above standing aside.
@@ -6432,10 +6439,16 @@ const AppView = {
         && String(x.item.user_id) === String(meId))
         .map((x) => ({ kind: 'proposal', item: x.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    // #2182: the strip stays on screen when there is nothing in it, so the
+    // pane's shape does not change with the viewer's workload. `viewer` is
+    // what the empty strip is drawn on: a guest has no work to have none of.
+    // `?shot=mine-empty` empties it on purpose, for the declared check.
+    const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
     const mine = {
-      count: mineItems.length,
+      viewer: meId != null,
+      count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
-      rows: mineItems.map(({ kind, item }) => {
+      rows: mineList.map(({ kind, item }) => {
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : AppView._proposalCardModel(item);
@@ -6621,6 +6634,11 @@ const AppView = {
     // and these numbers are the answer anyway.
     const nowMs = Date.now();
     const WEEK = 7 * 86400000;
+    // #2176: the calendar week, Monday 00:00 UTC — the same Monday the
+    // digest weeks below (_weekStart) and the server's counts (#1922,
+    // weekStartUtc) use — rather than a trailing seven days, which moved
+    // every day and matched no week anybody talks about.
+    const weekStartMs = AppView._weekStart(nowMs);
     const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
     const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
     const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
@@ -6645,14 +6663,14 @@ const AppView = {
       votesWaiting: buckets.inReview.length,
       shippedWeek: serverShipped
         ? serverShipped.week
-        : allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+        : allMerged.filter((m) => mergedAtOf(m) >= weekStartMs).length,
       // The week before, for a rate rather than a count. Same source as the
       // week above so the two are comparable.
       shippedPrevWeek: serverShipped
         ? serverShipped.prevWeek
         : allMerged.filter((m) => {
           const t = mergedAtOf(m);
-          return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+          return t < weekStartMs && t >= weekStartMs - WEEK;
         }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
