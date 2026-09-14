@@ -1219,6 +1219,9 @@ function appRoutes(config) {
         url,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
+        // The whole-tree verdict under direct merges (services/main-watch.js):
+        // is main green, and are this app's merges paused because it is not?
+        mainCheck: require('../services/main-watch').describe(appRow),
         ...accessFlags(appRow, req.user, isCollaborator,
           await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
       };
@@ -2122,6 +2125,30 @@ function appRoutes(config) {
       res.json({ ok: true, locked: app.locked });
     } catch (err) {
       log.error('apps', 'Lock toggle failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Resume merges while main's unit suite is red (services/main-watch.js).
+  // The pause is the safety net under direct merges — a merge commit whose
+  // suite failed stops every further merge on the app until a fix lands.
+  // This is the admin's "I know, let them through": it applies to exactly
+  // the red sha the app is paused on, so the next red is a new pause. The
+  // cheaper way out is still to merge the fix; this is for when the red is
+  // a flake, an unrelated breakage, or the fix IS the proposal waiting.
+  router.post('/api/apps/:slug/main-check/resume', drainGuard, async (req, res) => {
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
+    try {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const mainWatch = require('../services/main-watch');
+      const resumed = await mainWatch.resume(config, pool, rows[0].id, { by: req.user });
+      if (!resumed) {
+        return res.status(409).json({ error: 'Merges are not paused for this app' });
+      }
+      res.json({ ok: true, mainCheck: resumed });
+    } catch (err) {
+      log.error('apps', 'Main-check resume failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
