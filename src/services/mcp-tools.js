@@ -619,6 +619,36 @@ function shapeBranch(session) {
   };
 }
 
+// ── How a proposal is named in prose (#2136) ───────────────────────────
+//
+// A proposal has two numbers, and only one of them is findable. `proposalId`
+// is the platform's session id: the argument every write tool takes, and the
+// last number in `webPath` — which is the only place a person ever sees it.
+// `prNumber` is its pull request's number: on GitHub, on the Dev board's
+// card and in the proposal's heading. A sentence that said "proposal 4223"
+// sent a person looking for a number they could not find, so every answer
+// that names a proposal in prose leads with the pull request number and
+// keeps the id beside it — the agent relaying it quotes what the person can
+// look up, and still has the argument its next call needs. (Requests need
+// no such rule: a request's number IS its GitHub issue number.)
+//
+// A card with no pull request yet — a shared in-progress session, or a
+// proposal whose promote has not opened one — is named by the number it has.
+// Empty when neither is known, so a caller drops the clause rather than
+// printing "proposal null".
+function proposalRef(proposalId, prNumber) {
+  const id = Number(proposalId) > 0 ? `proposal ${Number(proposalId)}` : '';
+  const pr = Number(prNumber) > 0 ? `PR #${Number(prNumber)}` : '';
+  if (pr && id) return `${pr} (${id})`;
+  return pr || id;
+}
+
+// The same, opening a sentence.
+function proposalRefSentence(proposalId, prNumber) {
+  const ref = proposalRef(proposalId, prNumber);
+  return ref ? ref.charAt(0).toUpperCase() + ref.slice(1) : 'This proposal';
+}
+
 // The two stages a 'pending' run can be in, in the words the web card has
 // used since #1144. They have very different expected durations, which is the
 // entire reason an agent wants to know which one it is waiting on.
@@ -636,7 +666,7 @@ const PHASE_CAPTION = {
 // made `total: 0` unreadable: an agent could not tell "no test has reported
 // yet" from "this proposal has no checks", so it could not tell a wedged run
 // from a healthy one.
-function pendingNextStep(checks) {
+function pendingNextStep(checks, ref) {
   const caption = PHASE_CAPTION[checks.phase]
     || 'a checks run is in flight, at a stage this proposal did not record';
   const started = checks.checkedAt ? ` This run started at ${checks.checkedAt}.` : '';
@@ -647,7 +677,7 @@ function pendingNextStep(checks) {
   const previous = (checks.failing && checks.failing.length)
     ? ' The failing tests listed here are from the PREVIOUS run and may not reflect this commit.'
     : '';
-  return `Checks have not reported a verdict yet — ${caption}.${started}${why}${previous} `
+  return `Checks have not reported a verdict yet for ${ref} — ${caption}.${started}${why}${previous} `
     + 'Poll get_proposal rather than pushing again: a new commit restarts the run from the beginning, and if you '
     + 'submit_work it also clears the votes collected so far. A `total` of 0 here means no test has reported yet, '
     + 'not that this proposal has no checks.';
@@ -711,7 +741,9 @@ function deferredNextStep(session, checks, branch) {
       + `the conflict, push, and call submit_work with proposalId ${session.id} and that branch`
     : 'merge main into this change on a branch in your OWN fork (or rebase onto it), resolve the conflict, push, '
       + `and call submit_work with proposalId ${session.id} and that branch: ${whyYouCannotPush(branch)}`;
-  return 'Checks are DEFERRED, not running: this proposal\'s head conflicts with main, so the platform built the '
+  const ref = proposalRef(session.id, session.pr_number) || 'this proposal';
+  return `Checks on ${ref} are DEFERRED, not running: this proposal's head `
+    + 'conflicts with main, so the platform built the '
     + 'staging preview but did not run the verdict — it would judge a tree that cannot merge as it stands — and '
     + `nothing runs until the head merges cleanly.${where}${when}${previous}${platform} To move it yourself, ${how}. The `
     + 'checks then run against the synced head. Do not open a second proposal.';
@@ -724,6 +756,10 @@ function deferredNextStep(session, checks, branch) {
 // submit_work is called with its id.
 function shapeNextStep(session, checks) {
   const branch = shapeBranch(session);
+  // #2136: every sentence below that names this proposal names it by its
+  // pull request number first — see proposalRef. The `proposalId N` clauses
+  // stay exactly as they are: those spell the ARGUMENT the next call takes.
+  const ref = proposalRef(session.id, session.pr_number) || 'this proposal';
   // #1258: the stored verdict is 'failing', never 'fail', so the state half of
   // this test had never once matched — the failing path was reached only via
   // the results array. A run that ERRORED (the build broke, no test ever ran)
@@ -738,15 +774,15 @@ function shapeNextStep(session, checks) {
     || (checks.failing && checks.failing.length > 0);
   const isOpen = session.status === 'promoted';
   if (!isOpen) {
-    return `This proposal is ${session.status || 'no longer open'}, so its code is frozen — anything further is a new `
-      + 'change through prepare_work.';
+    return `${proposalRefSentence(session.id, session.pr_number)} is ${session.status || 'no longer open'}, so its `
+      + 'code is frozen — anything further is a new change through prepare_work.';
   }
   // Before either verdict: a run still in flight is not a verdict at all,
   // and a deferred one (#2137) is not even in flight.
   if (checks.state === 'pending') {
     return checks.phase === 'deferred'
       ? deferredNextStep(session, checks, branch)
-      : pendingNextStep(checks);
+      : pendingNextStep(checks, ref);
   }
   if (!failing) {
     // A verdict for a commit that is no longer the head is not a verdict for
@@ -756,10 +792,10 @@ function shapeNextStep(session, checks) {
         + 'superseded code — a fresh run should follow on its own; poll get_proposal. '
       : '';
     return branch.youCanPush
-      ? `${stale}Checks are not reporting a failure. If you revise this proposal anyway, push to `
+      ? `${stale}Checks on ${ref} are not reporting a failure. If you revise this proposal anyway, push to `
         + `${branch.name || 'its branch'} in your fork and call submit_work with proposalId and that branch — every `
         + 'submission clears the votes it has collected, so only do it for a change worth re-reviewing.'
-      : `${stale}Checks are not reporting a failure. If you revise this proposal anyway, push to a branch in your `
+      : `${stale}Checks on ${ref} are not reporting a failure. If you revise this proposal anyway, push to a branch in your `
         + 'own fork and call submit_work with proposalId and that branch — every submission clears the votes it has '
         + 'collected, so only do it for a change worth re-reviewing.';
   }
@@ -768,7 +804,7 @@ function shapeNextStep(session, checks) {
   // between fixing a test and fixing a Dockerfile.
   if (errored && !(checks.failing && checks.failing.length)) {
     const detail = checks.error ? ` What broke: ${checks.error}` : '';
-    return 'The checks run ERRORED before any test reported — the staging build or the preview itself failed, so '
+    return `The checks run for ${ref} ERRORED before any test reported — the staging build or the preview itself failed, so `
       + 'there is no failing test to fix and this cannot merge however the vote goes.'
       + `${detail} Fix the build, then push a new commit to `
       + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
@@ -777,11 +813,11 @@ function shapeNextStep(session, checks) {
   // The failing-checks path. Checks GATE MERGE, so this is the one answer the
   // agent most needs to be exactly right.
   return branch.youCanPush
-    ? 'Checks are failing and they gate merge — this cannot land however the vote goes. Fix the named tests, commit '
+    ? `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests, commit `
       + `on ${branch.name || 'this proposal\'s branch'} in your own fork, push, and call submit_work with `
       + `proposalId ${session.id} and that branch so the checks re-run against your new commit now. Do not open a `
       + 'second proposal.'
-    : 'Checks are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push '
+    : `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push `
       + 'to a branch in your OWN fork, then call submit_work with proposalId '
       + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
 }
@@ -2070,20 +2106,70 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── A proposal by its pull request number (#2136) ─────────────────────
+  //
+  // The number a person can find is the pull request's (see proposalRef);
+  // the session route wants the id. This turns one into the other by reading
+  // the same list list_my_proposals reads — the caller's OWN sessions,
+  // through their own token, imported rows included — so the universe is
+  // exactly "the user's proposals" by construction rather than by a second
+  // access rule. Nothing outside it resolves: somebody else's pull request,
+  // or one this account has no open proposal for, is refused with the list
+  // to check rather than answered with a row the session route would refuse
+  // anyway. Two matches are possible in principle — the same number is a
+  // different pull request on every app — and that is what `slug` is for.
+  const resolveProposalByPr = async (prNumber, slug) => {
+    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1');
+    if (!result.ok) return { error: platformError(result) };
+    const sessions = Array.isArray(result.body && result.body.sessions) ? result.body.sessions : [];
+    const matches = sessions.filter((s) => Number(s.pr_number) === prNumber && (!slug || s.app_slug === slug));
+    if (!matches.length) {
+      return {
+        error: toolError(
+          'no_access',
+          `PR #${prNumber} is not one of the user's open proposals${slug ? ` on ${slug}` : ''}. list_my_proposals `
+          + 'names theirs with each pull request number. Somebody else\'s pull request is not reachable this way, '
+          + 'and neither is a proposal that has merged or closed — one of the user\'s own that is no longer open '
+          + 'still answers to its proposalId, the last number in its webPath.'
+        ),
+      };
+    }
+    if (matches.length > 1) {
+      const where = matches.map((s) => `${s.app_slug}: proposal ${Number(s.id)}`).join('; ');
+      return {
+        error: toolError(
+          'invalid_request',
+          `PR #${prNumber} is a pull request on more than one of the user's apps (${where}). Pass slug to say `
+          + 'which app, or proposalId.'
+        ),
+      };
+    }
+    return { proposalId: Number(matches[0].id) };
+  };
+
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal: its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and how many votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `branch.youCanPush` and `nextStep` state the same thing in one line; follow `nextStep`. A proposal you opened with submit_work is usually 'app_repo' even though the work came from your fork — Homeroom copies the fork branch into the app repository — so its branch name exists only there, and revising it always goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which is how you tell that apart from a change whose own first route is '/'. Fix either by calling submit_work with this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes. A `checks.state` of 'pending' is NOT a verdict and not a reason to push again — read `checks.phase`, `checks.checkedAt` and `checks.stale`, and `baseSha` before writing any code; each output field describes itself.",
-    inputSchema: { proposalId: z.number().int().positive().describe('The proposal id returned by list_my_proposals.') },
+    description: "Status of one proposal, by `proposalId` or by `prNumber` — its pull request number, the one a person sees on GitHub and the one to quote to them; the answer carries both, name it \"PR #2151 (proposal 4223)\". Its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and the votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. A proposal you opened with submit_work is usually 'app_repo' — Homeroom copies the fork branch into the app repository — so revising it goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which tells that apart from a change whose own first route is '/'. Fix either with submit_work, this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes. `checks.state` 'pending' is NOT a verdict and not a reason to push again — read `checks.phase`, `checks.checkedAt` and `checks.stale`, and `baseSha` before writing any code; each output field describes itself.",
+    inputSchema: {
+      proposalId: z.number().int().positive().optional()
+        .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
+      prNumber: z.number().int().positive().optional()
+        .describe('The pull request number instead — the number a person sees on GitHub and on the app\'s Dev board, and the one to quote back to them. Resolved across the user\'s own open proposals, the same set list_my_proposals lists, so a pull request that is somebody else\'s proposal, or one that has merged or closed, is refused with the list to check. Pass slug too when the same number could be a pull request on more than one of their apps.'),
+      slug: z.string().optional()
+        .describe('The app slug, as returned by list_apps — only to say which app a prNumber belongs to. Not needed with proposalId.'),
+    },
     outputSchema: {
-      proposalId: z.number(),
+      proposalId: z.number()
+        .describe('Homeroom\'s own id for the proposal: the argument submit_work, prepare_work and update_proposal_issues take, and the last number in webPath. Quote it beside the pull request number, never instead of it.'),
       appSlug: z.string().nullable(),
       title: z.string(),
       description: z.string().nullable()
         .describe('The description the group is voting on, as last written through submit_work or the panel. Null on a proposal whose body predates the mirror.'),
       status: z.string().nullable(),
       linkedIssues: z.array(z.number()),
-      prNumber: z.number().nullable(),
+      prNumber: z.number().nullable()
+        .describe('Its pull request number — the number a person finds on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a card that has no pull request yet.'),
       prUrl: z.string().nullable(),
       stagingUrl: z.string().nullable(),
       checkState: z.string().nullable(),
@@ -2217,12 +2303,42 @@ function registerTools(server, ctx) {
       webPath: z.string().nullable(),
     },
     annotations: readAnnotations,
-  }, async ({ proposalId }) => {
+  }, async ({ proposalId, prNumber, slug }) => {
     const guard = scopeGuard(READ_SCOPE);
     if (guard) return guard;
-    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${proposalId}`);
+    const byId = Number.isInteger(proposalId) && proposalId > 0;
+    const byPr = Number.isInteger(prNumber) && prNumber > 0;
+    if (!byId && !byPr) {
+      return toolError(
+        'invalid_request',
+        'Pass proposalId (the id list_my_proposals, prepare_work and submit_work report — the last number in a '
+        + 'proposal\'s webPath) or prNumber (its pull request number, as a person sees it on GitHub), with slug '
+        + 'when the same PR number could be a pull request on more than one of the user\'s apps.'
+      );
+    }
+    // Validated when it IS passed, so a malformed slug is named as such rather
+    // than silently matching nothing.
+    if (slug !== undefined && !requireSlug(slug)) {
+      return toolError('invalid_request', 'slug must be a valid app slug — or omit it.');
+    }
+    let id = proposalId;
+    if (!byId) {
+      const resolved = await resolveProposalByPr(prNumber, slug);
+      if (resolved.error) return resolved.error;
+      id = resolved.proposalId;
+    }
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${id}`);
     if (!result.ok) return platformError(result);
     const session = (result.body && result.body.session) || {};
+    // Both keys, naming two different proposals: answering about either would
+    // be answering a question the caller did not ask.
+    if (byId && byPr && Number(session.pr_number) > 0 && Number(session.pr_number) !== prNumber) {
+      return toolError(
+        'invalid_request',
+        `Proposal ${proposalId} is PR #${Number(session.pr_number)}, not PR #${prNumber}. Pass one key or the `
+        + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
+      );
+    }
     return readResult('get_proposal', shapeProposal(session, origin));
   });
 
@@ -2295,15 +2411,17 @@ function registerTools(server, ctx) {
   // ── list_my_proposals ────────────────────────────────────────────────
   server.registerTool('list_my_proposals', {
     title: 'List your open proposals',
-    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, and 'app_repo' proposals — which is what a proposal opened through submit_work normally is — are advanced by calling submit_work with the proposal id. Includes proposals imported from a pull request, which is how every connector submission is recorded. Call get_proposal for the checks and the exact next step.",
+    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. Each row carries both of a proposal's numbers: `prNumber`, the pull request number a person sees on GitHub and on the Dev board — lead with it whenever you name a proposal to them, as \"PR #2151 (proposal 4223)\" — and `proposalId`, the id the write tools take; get_proposal accepts either. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, and 'app_repo' proposals — which is what a proposal opened through submit_work normally is — are advanced by calling submit_work with the proposal id. Includes proposals imported from a pull request, which is how every connector submission is recorded. Call get_proposal for the checks and the exact next step.",
     inputSchema: {},
     outputSchema: {
       proposals: z.array(z.object({
-        proposalId: z.number(),
+        proposalId: z.number()
+          .describe('Homeroom\'s id for the proposal — what submit_work, prepare_work and update_proposal_issues take, and the last number in webPath.'),
         appSlug: z.string().nullable(),
         title: z.string(),
         status: z.string().nullable(),
-        prNumber: z.number().nullable(),
+        prNumber: z.number().nullable()
+          .describe('Its pull request number — the number a person finds on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a card with no pull request yet.'),
         // Where the head lives, so a caller can tell which proposals its own
         // agent can revise without a second call each (#1054).
         branchHome: z.enum(['app_repo', 'user_fork']),
@@ -2425,14 +2543,18 @@ function registerTools(server, ctx) {
   // Nothing user-written is interpolated into it. The names and titles behind
   // these ids are other people's writing on its way into an instruction, and
   // they ride in `openProposals` under the <untrusted-content> envelope
-  // instead; ids and `mine` carry everything this sentence has to say.
+  // instead; the two numbers and `mine` carry everything this sentence has to
+  // say. Each is named by its pull request first (#2136): the id is what
+  // prepare_work takes, the PR number is what the user will recognise.
   const duplicateWarning = (result) => {
     const open = Array.isArray(result.openProposals) ? result.openProposals : [];
     if (!open.length) return '';
     const mine = open.filter((p) => p.mine);
-    const ids = open.map((p) => `${p.proposalId}${p.mine ? ' (the user\'s own)' : ''}`);
-    return `THIS REQUEST IS ALREADY UP FOR A VOTE — proposal${open.length === 1 ? '' : 's'} `
-      + `${ids.join(', ')}. Say so before the user pastes anything, because a second proposal for `
+    const ids = open.map((p) => (Number(p.prNumber) > 0
+      ? `PR #${Number(p.prNumber)} (proposal ${p.proposalId}${p.mine ? ', the user\'s own' : ''})`
+      : `proposal ${p.proposalId}${p.mine ? ' (the user\'s own)' : ''}`));
+    return `THIS REQUEST IS ALREADY UP FOR A VOTE — ${ids.join(', ')}. `
+      + 'Say so before the user pastes anything, because a second proposal for '
       + 'work that is already built and waiting on the group is the failure this warning exists to '
       + 'stop. '
       + (mine.length
@@ -2531,6 +2653,11 @@ function registerTools(server, ctx) {
       // Set only when this work order REVISES a proposal (#1054): its id, and
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
+      // ...and its pull request number (#2136), which is how the person the
+      // agent reports to will know it. Null whenever proposalId is, and on a
+      // continued session that has no pull request yet.
+      prNumber: z.number().nullable()
+        .describe('The pull request number of the proposal this work order revises — name it to the user as "PR #2151 (proposal 4223)". Null when this work order opens a new proposal, or when the continued session has no pull request yet.'),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
       // Only when the caller passed headSha. Null otherwise — which means
       // "not asked", never "fine": a caller that supplies nothing gets the
@@ -2556,7 +2683,8 @@ function registerTools(server, ctx) {
         proposalId: z.number(),
         title: z.string(),
         status: z.string(),
-        prNumber: z.number().nullable(),
+        prNumber: z.number().nullable()
+          .describe('Its pull request number — the number a person finds on GitHub; name it "PR #2151 (proposal 4223)". Null on a card with no pull request yet.'),
         // Only the author can update a proposal — so `mine: false` means the
         // options are commenting on theirs or a rival approach, not a revision.
         mine: z.boolean(),
@@ -2717,6 +2845,12 @@ function registerTools(server, ctx) {
     // a bad paste is fixed from this same result, never by calling
     // prepare_work again (that holds another work-order slot and opens a
     // new task).
+    // #2136: the revised proposal's pull request number, read off the row the
+    // update target came from — the number the agent quotes to the user, beside
+    // the id it passes to submit_work.
+    const revisedPr = result.proposalId && targetProposal && Number(targetProposal.pr_number) > 0
+      ? Number(targetProposal.pr_number)
+      : null;
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
@@ -2729,6 +2863,7 @@ function registerTools(server, ctx) {
       guidance: result.guidance,
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
+      prNumber: revisedPr,
       branchHome: result.branchHome || null,
       checkout,
       claimedRequest,
@@ -2744,7 +2879,7 @@ function registerTools(server, ctx) {
       nextStep: staleCheckoutWarning(checkout)
         + duplicateWarning(result)
         + (result.proposalId
-        ? `This work order REVISES proposal ${result.proposalId}, and it starts at that proposal's own current `
+        ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
           + `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `
           + 'submitting it clears the votes that proposal has already collected and asks its reviewers to look '
@@ -2811,11 +2946,13 @@ function registerTools(server, ctx) {
         .describe('Which coding agent wrote it. Inferred from the connected chat product when omitted.'),
     },
     outputSchema: {
-      proposalId: z.number().nullable(),
+      proposalId: z.number().nullable()
+        .describe('Homeroom\'s id for the proposal — the argument a later submit_work, prepare_work or get_proposal takes. Quote it beside the pull request number, never instead of it.'),
       appSlug: z.string(),
       // Nullable: an `already_submitted` answer resolves the proposal from
       // the task row, which records the session but not the PR number.
-      prNumber: z.number().nullable(),
+      prNumber: z.number().nullable()
+        .describe('Its pull request number — the number a person sees on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a shared in-progress card, which has no pull request until it is proposed.'),
       prUrl: z.string().nullable(),
       externalAgent: z.string(),
       webPath: z.string(),
@@ -3026,13 +3163,15 @@ function registerTools(server, ctx) {
       // A resubmit that moved no commit is reported by what it DID, not by
       // what it did not (#1199) — three outcomes, and the agent acts on a
       // different one in each.
+      // Named by its pull request first, wherever the sentence names it (#2136).
+      const named = proposalRefSentence(result.proposalId, result.prNumber);
       const resubmitStep = result.testingUpdated
-        ? 'The proposal was already at that commit, so no code moved and no votes were affected — but the testing '
+        ? `${named} was already at that commit, so no code moved and no votes were affected — but the testing `
           + `routes you passed were different, so they are now this proposal's.${shotOn}`
           + (result.captureRerun
             ? ' Its checks and screenshots are being re-shot against them right now; use get_proposal to follow them.'
             : ' It is paused, so the new screenshots are taken when it is reopened.')
-        : 'The proposal was already at that commit and the testing routes you passed are the ones it already had, '
+        : `${named} was already at that commit and the testing routes you passed are the ones it already had, `
           + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
           + 'push first, then submit again.';
 
@@ -3101,7 +3240,7 @@ function registerTools(server, ctx) {
         }
       }
       const proposeNote = proposed === true
-        ? ` And it is now UP FOR THE GROUP'S VOTE${result.prNumber ? ` as PR #${result.prNumber}` : ''} — checks and the staging preview build automatically; follow them with get_proposal.`
+        ? ` And it is now UP FOR THE GROUP'S VOTE${result.prNumber ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''} — checks and the staging preview build automatically; follow them with get_proposal.`
         : proposed === false
           ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with propose: true (the same commit is fine), or propose it from the session page.`
           : (propose === true ? ' propose: true had nothing to do — this target is already up for the group\'s vote.' : '');
@@ -3109,7 +3248,7 @@ function registerTools(server, ctx) {
       // proposed session's PR carries the title, and the note above names it.
       const titleNote = result.titleUpdated === true && proposed !== true
         ? (result.prNumber
-          ? ` The proposal (PR #${result.prNumber}) now carries your title.`
+          ? ` ${named} now carries your title.`
           : ' Your title is stored and will name the pull request created when the session is proposed.')
         // #1319. A refused title has to be SAID. Silence here reads as
         // success, and the proposal then goes to the vote under a name its
@@ -3144,7 +3283,7 @@ function registerTools(server, ctx) {
       const landedStep = result.targetKind === 'session'
         ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
           + `collected.${buildNote}${shotOn}`
-        : `The proposal now points at your new commit.${cleared > 0
+        : `${named} now points at your new commit.${cleared > 0
           ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
           : ' Any votes it had collected were cleared, because they were cast on the old code'}`
           + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
@@ -3258,7 +3397,9 @@ function registerTools(server, ctx) {
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
-          + 'its own connector. Nothing was duplicated. It is up for the group\'s vote; use get_proposal to follow it.',
+          + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
+          + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}; `
+          + 'use get_proposal to follow it.',
       });
     }
 
@@ -3291,7 +3432,9 @@ function registerTools(server, ctx) {
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,
-      nextStep: 'It is now up for a vote. Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+      nextStep: 'It is now up for a vote'
+        + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
+        + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
         + testingRouteNote(testing, false),
     });
   });
@@ -3516,15 +3659,16 @@ function registerTools(server, ctx) {
     const promoted = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${clone.id}/promote`);
     if (!promoted.ok) return platformError(promoted);
 
+    const prNumber = (promoted.body && promoted.body.prNumber) || null;
     return toolResult({
       proposalId: clone.id,
       appSlug: session.app_slug || null,
-      prNumber: (promoted.body && promoted.body.prNumber) || null,
+      prNumber,
       prUrl: (promoted.body && promoted.body.prUrl) || null,
       webPath: session.app_slug
         ? `${origin}/#app/${session.app_slug}/dev/sessions/${clone.id}`
         : `${origin}/#`,
-      nextStep: 'It is up for a vote now. Use get_proposal to follow its checks and tally.',
+      nextStep: `It is up for a vote now as ${proposalRef(clone.id, prNumber)}. Use get_proposal to follow its checks and tally.`,
     });
   });
 }
@@ -3563,6 +3707,7 @@ module.exports = {
   decodeRequestCursor,
   pageRequests,
   shapeProposal,
+  proposalRef,
   shapeChecks,
   shapeTestingNotes,
   testingRouteNote,

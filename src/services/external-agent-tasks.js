@@ -342,9 +342,15 @@ function buildDuplicateNotice({ issueNumber, openProposals }) {
 
   const lead = list.find((p) => p.mine) || list[0];
   const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
+  // The pull request number leads when there is one (#2136): it is the number
+  // the person can find on GitHub, and the proposal id stays beside it because
+  // it is what the continuation is asked for by.
+  const named = Number(lead.prNumber) > 0
+    ? `PR #${Number(lead.prNumber)} (proposal ${lead.proposalId})`
+    : `proposal ${lead.proposalId}`;
   const head = lead.mine
-    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — proposal ${lead.proposalId}.`
-    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — proposal ${lead.proposalId}, opened${who}.`;
+    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — ${named}.`
+    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — ${named}, opened${who}.`;
   const tail = lead.mine
     ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
     : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';

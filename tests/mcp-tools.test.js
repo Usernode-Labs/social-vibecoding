@@ -1088,7 +1088,8 @@ test('a proposal update keeps its own wording', async () => {
   }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   try {
     const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
-    assert.match(res.structuredContent.nextStep, /The proposal now points at your new commit/);
+    // Named by its pull request first (#2136), with the id the next call takes beside it.
+    assert.match(res.structuredContent.nextStep, /^PR #52 \(proposal 3140\) now points at your new commit/);
     assert.match(res.structuredContent.nextStep, /2 votes it had collected were cleared/);
     assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
   } finally {
@@ -1133,7 +1134,7 @@ test('a revision whose title and description landed is told so, not that another
     assert.equal(own.structuredContent.descriptionUpdated, true);
     assert.equal(own.structuredContent.descriptionRejected, null);
     const step = own.structuredContent.nextStep;
-    assert.match(step, /\(PR #91\) now carries your title/);
+    assert.match(step, /PR #91 \(proposal 4208\) now carries your title/);
     assert.match(step, /description now reads as you submitted it/);
     assert.doesNotMatch(step, /another GitHub account|belongs to that author|NOT applied/,
       'the sentence every connector-opened revision used to read back');
@@ -3197,4 +3198,377 @@ test('#2137 — who makes the sync follows the branch home', () => {
   const building = tools.shapeProposal({ ...DEFERRED_ROW, check_phase: 'building' }, ORIGIN).nextStep;
   assert.match(building, /Checks have not reported a verdict yet/);
   assert.ok(!/DEFERRED/.test(building));
+});
+
+// ── #2136: a proposal is named by its pull request number ────────────────
+//
+// A proposal has two numbers. The connector led with the platform's session
+// id — "call submit_work with proposalId 4223", "This proposal is merged" —
+// and a person hearing "proposal 4223" went looking for it on GitHub, where
+// the same change is PR #2151. The pull request number is the one a person
+// can find; the session id is the argument the write tools take. Every answer
+// now carries both, its prose leads with the PR number, and get_proposal
+// accepts either key.
+
+test('#2136 — a proposal is named PR-first, and a card with no PR is named by what it has', () => {
+  assert.equal(tools.proposalRef(4223, 2151), 'PR #2151 (proposal 4223)');
+  assert.equal(tools.proposalRef(4223, null), 'proposal 4223');
+  assert.equal(tools.proposalRef(null, 2151), 'PR #2151');
+  assert.equal(tools.proposalRef(null, null), '', 'nothing known, nothing printed — never "proposal null"');
+  assert.equal(tools.proposalRef('4223', '2151'), 'PR #2151 (proposal 4223)', 'a row\'s strings count too');
+});
+
+test('#2136 — every nextStep for a proposal with a pull request names it as PR #n', () => {
+  const row = (over) => ({
+    id: 58, app_slug: 'recipe-box', status: 'promoted', pr_number: 41, test_results: [], ...over,
+  });
+  const cases = {
+    failing: row({ check_state: 'failing', test_results: [{ name: 'Board loads', status: 'fail' }] }),
+    failingForkHosted: row({
+      check_state: 'failing', test_results: [{ name: 'Board loads', status: 'fail' }],
+      source: 'imported', branch_name: 'feature/snap', imported_pr_head_sha: 'a'.repeat(40),
+    }),
+    passing: row({ check_state: 'passing' }),
+    errored: row({ check_state: 'error', check_error_detail: 'build broke' }),
+    pending: row({ check_state: 'pending', check_phase: 'building' }),
+    deferred: { ...DEFERRED_ROW, id: 58, pr_number: 41 },
+    merged: row({ status: 'merged' }),
+  };
+  for (const [name, session] of Object.entries(cases)) {
+    const step = tools.shapeProposal(session, ORIGIN).nextStep;
+    assert.match(step, /PR #41 \(proposal 58\)/, `${name}: ${step}`);
+  }
+  // The argument the next call needs is still spelled as the argument: the
+  // PR number is what the person reads, proposalId is what submit_work takes.
+  assert.match(tools.shapeProposal(cases.failing, ORIGIN).nextStep, /submit_work with proposalId 58 and that branch/);
+  assert.match(tools.shapeProposal(cases.deferred, ORIGIN).nextStep, /submit_work with proposalId 58 and that branch/);
+  // And the sentences the older tests pin are intact around the name.
+  assert.match(tools.shapeProposal(cases.pending, ORIGIN).nextStep, /Checks have not reported a verdict yet/);
+  assert.match(tools.shapeProposal(cases.deferred, ORIGIN).nextStep, /DEFERRED, not running/);
+  assert.match(tools.shapeProposal(cases.passing, ORIGIN).nextStep, /not reporting a failure/);
+  assert.match(tools.shapeProposal(cases.merged, ORIGIN).nextStep, /^PR #41 \(proposal 58\) is merged, so its code is frozen/);
+});
+
+test('#2136 — a card with no pull request yet reads by its session id, never as "PR #null"', () => {
+  for (const status of ['promoted', 'active', 'paused']) {
+    const shaped = tools.shapeProposal({
+      id: 9, app_slug: 'recipe-box', status, check_state: 'failing',
+      test_results: [{ name: 'Board loads', status: 'fail' }],
+    }, ORIGIN);
+    assert.equal(shaped.prNumber, null);
+    assert.doesNotMatch(shaped.nextStep, /PR #|null|undefined/, shaped.nextStep);
+    assert.match(shaped.nextStep, /proposal 9/i);
+  }
+});
+
+// A session-route answer, and the same row as the cross-app list reports it.
+const PR_ROW = {
+  id: 4223, app_slug: 'recipe-box', status: 'promoted', pr_number: 2151,
+  pr_url: 'https://github.com/o/r/pull/2151', pr_title: 'Snap cards to the grid',
+  source: 'imported', branch_name: 'feature/snap', imported_pr_head_sha: 'a'.repeat(40),
+  check_state: 'passing', test_results: [{ name: 'Home loads', status: 'pass' }],
+};
+
+// The two reads a PR-number lookup makes: the caller's own session list, then
+// the session route — exactly what list_my_proposals and get_proposal by id
+// already read, and nothing else.
+function platformWithProposals(rows) {
+  return (method, pathname) => {
+    assert.equal(method, 'GET');
+    if (pathname === '/api/me/active-sessions?include_imported=1') return { sessions: rows };
+    const m = /^\/api\/sessions\/(\d+)$/.exec(pathname);
+    if (m) {
+      const found = rows.find((r) => r.id === Number(m[1]));
+      return found
+        ? { session: found }
+        : { __http: { ok: false, status: 404, body: { error: 'Session not found' } } };
+    }
+    throw new Error(`unexpected platform call: ${pathname}`);
+  };
+}
+
+test('#2136 — get_proposal by prNumber answers exactly as by proposalId', async () => {
+  const c = connector(platformWithProposals([
+    PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app', pr_number: 9 },
+  ]));
+  try {
+    const byId = await c.handlers.get('get_proposal')({ proposalId: 4223 });
+    const byPr = await c.handlers.get('get_proposal')({ prNumber: 2151 });
+    assert.ok(!byId.isError && !byPr.isError, 'both keys answer');
+    // Identical, but for the timestamp of the read itself.
+    const strip = (r) => {
+      const out = JSON.parse(JSON.stringify(r.structuredContent));
+      delete out.asOf.readAt;
+      return out;
+    };
+    assert.deepEqual(strip(byPr), strip(byId));
+    assert.equal(byPr.structuredContent.proposalId, 4223);
+    assert.equal(byPr.structuredContent.prNumber, 2151);
+    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/4223`,
+      'the human-facing route is unchanged');
+    assert.ok(validateOutput(c.specs.get('get_proposal'), byPr).success);
+    // Resolved through the same list list_my_proposals reads — the user's own
+    // sessions, under their own token — then read through the session route
+    // exactly as an id is. No new route, no new access rule.
+    assert.deepEqual(c.calls.map((x) => x.pathname), [
+      '/api/sessions/4223',
+      '/api/me/active-sessions?include_imported=1', '/api/sessions/4223',
+    ]);
+    // With the slug too, when the caller has it.
+    const scoped = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'recipe-box' });
+    assert.equal(scoped.structuredContent.proposalId, 4223);
+  } finally { c.restore(); }
+});
+
+test('#2136 — a pull request that is not one of the user\'s proposals is refused, and says where to look', async () => {
+  const c = connector(platformWithProposals([PR_ROW]));
+  try {
+    const unknown = await c.handlers.get('get_proposal')({ prNumber: 999 });
+    assert.equal(unknown.isError, true);
+    assert.equal(unknown.structuredContent.code, 'no_access');
+    assert.match(unknown.structuredContent.message, /PR #999 is not one of the user's open proposals\./);
+    assert.match(unknown.structuredContent.message, /list_my_proposals/);
+    assert.match(unknown.structuredContent.message, /proposalId/,
+      'a closed proposal of their own is still reachable by its id');
+    // Never reaches the session route on a guess.
+    assert.ok(!c.calls.some((x) => x.pathname.startsWith('/api/sessions/')));
+
+    // The right number on the wrong app is the same refusal, naming the app.
+    const wrongApp = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'other-app' });
+    assert.equal(wrongApp.isError, true);
+    assert.match(wrongApp.structuredContent.message, /PR #2151 is not one of the user's open proposals on other-app\./);
+
+    // Neither key is refused before any platform call, naming both keys.
+    const before = c.calls.length;
+    const neither = await c.handlers.get('get_proposal')({});
+    assert.equal(neither.isError, true);
+    assert.equal(neither.structuredContent.code, 'invalid_request');
+    assert.match(neither.structuredContent.message, /proposalId/);
+    assert.match(neither.structuredContent.message, /prNumber/);
+    const badSlug = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'Not A Slug' });
+    assert.equal(badSlug.isError, true);
+    assert.equal(badSlug.structuredContent.code, 'invalid_request');
+    assert.equal(c.calls.length, before, 'refused before the platform was asked anything');
+  } finally { c.restore(); }
+});
+
+test('#2136 — the same PR number on two apps asks for the slug; two keys that disagree are refused', async () => {
+  const c = connector(platformWithProposals([PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app' }]));
+  try {
+    const ambiguous = await c.handlers.get('get_proposal')({ prNumber: 2151 });
+    assert.equal(ambiguous.isError, true);
+    assert.equal(ambiguous.structuredContent.code, 'invalid_request');
+    assert.match(ambiguous.structuredContent.message, /recipe-box: proposal 4223/);
+    assert.match(ambiguous.structuredContent.message, /other-app: proposal 4300/);
+    assert.match(ambiguous.structuredContent.message, /Pass slug/);
+    const scoped = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'other-app' });
+    assert.equal(scoped.structuredContent.proposalId, 4300);
+
+    // proposalId wins when both are given — and a pair that names two
+    // different proposals is a question with no right answer.
+    const agree = await c.handlers.get('get_proposal')({ proposalId: 4223, prNumber: 2151 });
+    assert.equal(agree.structuredContent.proposalId, 4223);
+    const disagree = await c.handlers.get('get_proposal')({ proposalId: 4223, prNumber: 77 });
+    assert.equal(disagree.isError, true);
+    assert.match(disagree.structuredContent.message, /Proposal 4223 is PR #2151, not PR #77/);
+  } finally { c.restore(); }
+});
+
+test('#2136 — list_my_proposals rows carry both numbers, and the tool says which to quote', async () => {
+  const c = connector(platformWithProposals([
+    PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app', pr_number: null, status: 'active' },
+  ]));
+  try {
+    const res = await c.handlers.get('list_my_proposals')({});
+    assert.deepEqual(res.structuredContent.proposals.map((r) => [r.proposalId, r.prNumber]), [[4223, 2151]]);
+    const spec = c.specs.get('list_my_proposals');
+    assert.match(spec.description, /`prNumber`/);
+    assert.match(spec.description, /PR #2151 \(proposal 4223\)/);
+    // The field's own docs say what it is for.
+    const shape = z.object(spec.outputSchema).shape.proposals.element.shape;
+    assert.match(shape.prNumber.description, /GitHub/);
+    assert.match(shape.proposalId.description, /webPath/);
+  } finally { c.restore(); }
+});
+
+test('#2136 — get_proposal documents both keys, and the charter carries the naming rule', () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const spec = c.specs.get('get_proposal');
+    assert.match(spec.description, /`prNumber`/);
+    assert.match(spec.description, /GitHub/);
+    assert.match(spec.description, /PR #2151 \(proposal 4223\)/);
+    assert.ok(spec.inputSchema.proposalId.isOptional(), 'proposalId is no longer the only way in');
+    assert.match(spec.inputSchema.prNumber.description, /list_my_proposals/);
+    assert.match(spec.inputSchema.slug.description, /prNumber/);
+    assert.match(spec.inputSchema.proposalId.description, /webPath/);
+    assert.match(spec.outputSchema.prNumber.description, /PR #2151 \(proposal 4223\)/);
+    // The other proposal-shaped answers document the field the same way.
+    assert.match(c.specs.get('submit_work').outputSchema.prNumber.description, /GitHub/);
+    assert.match(c.specs.get('prepare_work').outputSchema.prNumber.description, /revises/);
+    const open = z.object(c.specs.get('prepare_work').outputSchema).shape.openProposals.element.shape;
+    assert.match(open.prNumber.description, /GitHub/);
+  } finally { c.restore(); }
+
+  const charter = require('../src/services/mcp-charter');
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'naming-proposals');
+  assert.ok(section, 'the rule is cross-cutting, so it lives in the charter');
+  assert.ok(!section.brief, 'charter-only: it spends no instruction budget');
+  assert.match(section.text, /PR #2151 \(proposal 4223\)/);
+  assert.match(section.text, /get_proposal takes either key/);
+  assert.match(section.text, /GitHub/);
+  assert.match(section.text, /never quote the proposal id alone/);
+  assert.match(section.text, /`prNumber` is null/, 'and says what a card with no pull request reads as');
+  assert.ok(charter.CHARTER_FULL.includes(section.text));
+});
+
+test('#2136 — a work order that revises a proposal names its pull request, and reports the number', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const svc = require('../src/services/external-agent-tasks');
+  const saved = { gh: gh.isEnabled, link: githubLink.isEnabled, prepare: svc.prepareWork };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  let extra = {};
+  // prepareWork takes (deps, params); the update target rides in the params.
+  svc.prepareWork = async (_deps, { targetProposal }) => ({
+    ok: true, taskId: 88, forkUrl: 'https://github.com/ada/recipe-box',
+    forkPageUrl: 'https://github.com/ada/recipe-box', forkStatus: 'ready',
+    branch: 'usernode/recipe-box-update-4223', baseSha: 'a'.repeat(40), guidance: ['step one'],
+    workOrder: 'WORK ORDER', reused: false,
+    proposalId: targetProposal ? Number(targetProposal.id) : null,
+    branchHome: targetProposal ? 'app_repo' : null,
+    openProposals: [],
+    ...extra,
+  });
+  const run = async (args, rows) => {
+    const c = connector((method, pathname) => {
+      if (pathname === '/api/apps/recipe-box') return { app: { id: 3, slug: 'recipe-box', name: 'Recipe Box' } };
+      const m = /^\/api\/sessions\/(\d+)$/.exec(pathname);
+      if (m) return { session: rows.find((r) => r.id === Number(m[1])) };
+      throw new Error(`unexpected platform call: ${pathname}`);
+    }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('prepare_work')({ slug: 'recipe-box', ...args });
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      const parsed = validateOutput(c.specs.get('prepare_work'), res);
+      assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    const revise = await run({ proposalId: 4223, brief: 'fix the failing test' }, [PR_ROW]);
+    assert.equal(revise.proposalId, 4223);
+    assert.equal(revise.prNumber, 2151, 'the number the person will recognise, beside the id');
+    assert.match(revise.nextStep, /REVISES PR #2151 \(proposal 4223\), and it starts at that proposal's own current/);
+    assert.match(revise.nextStep, /submit_work with proposalId 4223 and the branch you pushed/,
+      'the argument is still spelled as the argument');
+
+    // A continued session has no pull request yet: null, and no "PR #null".
+    const session = await run(
+      { proposalId: 4300, brief: 'more' },
+      [{ ...PR_ROW, id: 4300, pr_number: null, status: 'active' }]
+    );
+    assert.equal(session.proposalId, 4300);
+    assert.equal(session.prNumber, null);
+    assert.match(session.nextStep, /REVISES proposal 4300, and it starts/);
+    assert.doesNotMatch(session.nextStep, /PR #/);
+
+    // A fresh work order revises nothing, and says so in both fields.
+    const fresh = await run({ brief: 'Add dark mode' }, []);
+    assert.equal(fresh.proposalId, null);
+    assert.equal(fresh.prNumber, null);
+    assert.doesNotMatch(fresh.nextStep, /REVISES/);
+
+    // The duplicate warning names each proposal already up for a vote the
+    // same way — PR first, with the id prepare_work takes beside it — and a
+    // card without a pull request by the number it has.
+    extra = {
+      openProposals: [
+        { proposalId: 4223, title: 'Snap cards', status: 'promoted', prNumber: 2151, mine: true, author: 'ada', webPath: null },
+        { proposalId: 4300, title: 'Rival take', status: 'promoted', prNumber: null, mine: false, author: 'dana', webPath: null },
+      ],
+    };
+    const dup = await run({ brief: 'Add dark mode' }, []);
+    assert.match(dup.nextStep,
+      /THIS REQUEST IS ALREADY UP FOR A VOTE — PR #2151 \(proposal 4223, the user's own\), proposal 4300\. /);
+    assert.match(dup.nextStep, /prepare_work again with proposalId 4223/);
+    assert.doesNotMatch(dup.nextStep, /PR #null|#undefined/);
+    assert.deepEqual(dup.openProposals.map((p) => [p.proposalId, p.prNumber]), [[4223, 2151], [4300, null]]);
+  } finally {
+    gh.isEnabled = saved.gh;
+    githubLink.isEnabled = saved.link;
+    svc.prepareWork = saved.prepare;
+  }
+});
+
+test('#2136 — submit_work answers name the proposal by its pull request first', async () => {
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  const answers = [];
+  svc.submitWork = async () => answers.shift();
+  const call = async (args) => {
+    const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('submit_work')(args);
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      const parsed = validateOutput(c.specs.get('submit_work'), res);
+      assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    // (1) A first submission: up for a vote, as the number the person can find.
+    answers.push({
+      ok: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151',
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const first = await call({ taskId: 88, branch: 'my-branch' });
+    assert.equal(first.prNumber, 2151);
+    assert.match(first.nextStep, /^It is now up for a vote as PR #2151 \(proposal 4223\)\. Checks and the staging preview/);
+
+    // (4) An update: the proposal that moved, and whose title changed, both PR-first.
+    answers.push({
+      ok: true, updated: true, proposalId: 4223, prNumber: 2151,
+      prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box',
+      votesCleared: 2, submittedVia: 'update_branch', targetKind: 'proposal',
+      previewRebuilding: true, titleUpdated: true, externalAgent: 'claude_code_web',
+    });
+    const update = await call({ proposalId: 4223, branch: 'my-fix', title: 'Snap cards to the grid' });
+    assert.match(update.nextStep, /^PR #2151 \(proposal 4223\) now points at your new commit\. The 2 votes/);
+    assert.match(update.nextStep, /PR #2151 \(proposal 4223\) now carries your title\./);
+
+    // A resubmit of the same commit is named the same way.
+    answers.push({
+      ok: true, updated: true, unchanged: true, proposalId: 4223, prNumber: 2151,
+      prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box',
+      votesCleared: 0, submittedVia: 'update_branch', targetKind: 'proposal', testingUpdated: false,
+      externalAgent: 'claude_code_web',
+    });
+    const same = await call({ proposalId: 4223, branch: 'my-fix' });
+    assert.match(same.nextStep, /^PR #2151 \(proposal 4223\) was already at that commit/);
+
+    // Already submitted: the task row knows the session but not the pull
+    // request, so the id is all there is to say — and it is said cleanly.
+    answers.push({
+      ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: null, prUrl: null,
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const again = await call({ taskId: 88, branch: 'my-branch' });
+    assert.match(again.nextStep, /It is up for the group's vote as proposal 4223; use get_proposal/);
+    assert.doesNotMatch(again.nextStep, /PR #/);
+
+    // A shared card has no pull request until it is proposed: no PR number
+    // is invented, and the number the next call takes is still there.
+    answers.push({
+      ok: true, shared: true, proposalId: 4158, sessionId: 4158, prNumber: null, prUrl: null,
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const shared = await call({ taskId: 88, branch: 'my-branch', share: true });
+    assert.equal(shared.prNumber, null);
+    assert.doesNotMatch(shared.nextStep, /PR #|null/);
+    assert.match(shared.nextStep, /submit_work with proposalId 4158, the branch, and propose: true/);
+  } finally {
+    svc.submitWork = realSubmit;
+  }
 });

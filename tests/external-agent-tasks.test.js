@@ -2174,6 +2174,31 @@ test('the notice degrades to fit the guidance budget, never overflows it', () =>
   }
 });
 
+// #2136. The line is relayed to a person, and a person finds a proposal by
+// its pull request number — on GitHub, on the Dev board — not by the session
+// id that lives in a URL. So the PR number leads when there is one, with the
+// id (what a continuation is asked for by) beside it.
+test('the notice names the proposal by its pull request when it has one', () => {
+  const mine = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3140, prNumber: 52, mine: true, author: 'evan', webPath: null }],
+  });
+  assert.match(mine, /up for a vote — PR #52 \(proposal 3140\)\./);
+  const theirs = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3141, prNumber: 60, mine: false, author: 'dana', webPath: null }],
+  });
+  assert.match(theirs, /up for a vote — PR #60 \(proposal 3141\), opened by dana\./);
+  // A card that was never proposed has no pull request: the old form, and
+  // never "PR #null".
+  const bare = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3140, prNumber: null, mine: true, author: 'evan', webPath: null }],
+  });
+  assert.match(bare, /up for a vote — proposal 3140\./);
+  assert.doesNotMatch(bare, /PR #/);
+});
+
 // ── The work order's new text ──────────────────────────────────────────
 
 function fullOrder(overrides = {}) {
