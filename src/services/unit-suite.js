@@ -54,8 +54,19 @@ const UNIT_CHECK_INDEX = -3;
 // Override for self-hosters whose worker image is named differently.
 const UNIT_SUITE_IMAGE = process.env.UNIT_SUITE_IMAGE || 'usernode-worker:latest';
 const UNIT_SUITE_TIMEOUT_MS = parseInt(process.env.UNIT_SUITE_TIMEOUT_MS, 10) || 600 * 1000;
-const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '4';
-const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '2g';
+// 4 → 8 CPUs, 2g → 4g. `node --test` fans out one process per file at
+// (available cores − 1), and node 22 reads the container's cgroup quota
+// for that, so the quota IS the concurrency: at 4 CPUs this repo's ~870
+// test files run three at a time and take 140-195s in the check pod. Three
+// processes kept only ~1.9 cores busy locally (86s; the rest is I/O waits
+// and timers), and seven took the same suite to 48s — the speed-up is
+// close to linear because the files are startup-bound, not compute-bound.
+// Memory follows the process count — every test process is a whole node
+// with the app's modules loaded, and an OOM-kill fails the row for a
+// reason that has nothing to do with the tests. 8 is the worker
+// LimitRange's per-container CPU ceiling.
+const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '8';
+const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '4g';
 const UNIT_SUITE_MAX_BUFFER = 32 * 1024 * 1024;
 
 // failureReason rides in test_results inside every proposal payload — keep

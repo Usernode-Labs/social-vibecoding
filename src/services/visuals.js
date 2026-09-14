@@ -153,19 +153,34 @@ const RUN_TIMEOUT_MS = 770 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
-// once. One Chromium page is ~50-80 MiB of renderer, so eight of them plus
-// the browser process needs materially more than the 1g runOneShot default
-// — an OOM-kill there loses the whole run, sentinel included, and reads to
-// the platform as a crashed container.
-const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '4g';
-// Eight browser groups saturated the former four-core quota even on an
-// idle node. Allow one core per default group without reducing suite time.
+// once. One Chromium page is ~50-80 MiB of renderer (80-150 MiB for this
+// repo's own shell), so sixteen of them plus the browser process needs
+// materially more than the 1g runOneShot default — an OOM-kill there loses
+// the whole run, sentinel included, and reads to the platform as a crashed
+// container. 4g → 6g when the pool doubled 8 → 16; the worker LimitRange
+// allows 16Gi per container, and tests/checks-budget.test.js pins the
+// per-page headroom.
+const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '6g';
+// Eight browser groups saturated the former four-core quota even on an idle
+// node — because Chromium was compositing every page on the CPU through
+// SwiftShader (see CHROMIUM_LAUNCH_ARGS in capture/capture.js, which now
+// puts compositing on Skia's software path). A group costs well under a
+// core with that in place, so 8 covers sixteen groups plus the media pass
+// with room. It stays at 8 rather than growing with the pool: the worker
+// LimitRange caps a container there, and memory is the bound on the pool
+// now, not CPU.
 const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '8';
 
 // Suite bounds handed to the container. Kept here rather than left to the
 // image's own defaults so the platform's timeout arithmetic (below) and the
 // container's agree by construction.
-const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
+//
+// 8 → 16 lanes with software compositing: the pool used to be bound by its
+// own container's CPU, and is now bound by the wire (a cold load is ~5-7s
+// whatever runs beside it), so doubling the lanes roughly halves the suite's
+// wall clock — ~186s → ~80-100s for this repo's 169 groups in replay. The
+// sizing is written up on poolSize in capture/capture.js.
+const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '16';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
 // services/app-manifest.js — the two are one decision, and the note on that
@@ -201,6 +216,12 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 620s → 650s with MAX_DECLARED_TESTS 630 → 660 (#1960): ~322s of ideal work
 // for a full suite, so 650s keeps the 2x margin with ~6s to spare, and
 // RUN_TIMEOUT_MS moves 740s → 770s with it.
+//
+// Left at 650s when the pool doubled 8 → 16: the ideal work for a full suite
+// halved to ~161s, so the margin is now 4x rather than 2x. Deliberately not
+// tightened — this deadline only ever binds a suite that is wedged, and a
+// healthy one finishes in a fraction of it either way; what it buys is that
+// the container gets to emit its sentinel rather than being killed.
 const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '650000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
