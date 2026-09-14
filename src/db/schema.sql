@@ -7497,6 +7497,27 @@ COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
   ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);
 
+-- Durable manifest of a checks run whose containers are in flight
+-- (services/check-runs.js). Written just before the capture / unit-suite
+-- Jobs are created, heartbeated by the owning process while they run, and
+-- deleted once the verdict is stored. Its only reader is the harvester
+-- (services/check-harvest.js), which adopts a row whose owner has stopped
+-- heartbeating — a platform rollout replaced the Pod — and settles the run
+-- from the Job's own output instead of starting the suite over. The
+-- manifest holds everything the verdict needs that is not in the log:
+-- the dispatch table, the capture targets, the staging origin, the trigger.
+CREATE TABLE IF NOT EXISTS check_runs (
+  run_id       UUID PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_sha   VARCHAR(40),
+  owner        TEXT NOT NULL,
+  manifest     JSONB NOT NULL,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE check_runs IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
+
 -- ────────────────────────────────────────────────────────────────────
 -- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.
 --

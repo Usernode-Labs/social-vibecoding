@@ -1657,6 +1657,158 @@ async function runCheckJob(config, {
   }
 }
 
+// ── Harvesting a run whose launcher died (services/check-harvest.js) ──
+//
+// runCheckJob above owns a Job for the life of the process that created it.
+// When that process is replaced mid-run — a platform rollout — the Job runs
+// on to completion regardless, and these two functions are how a later
+// process finds it and reads what it produced, without creating or deleting
+// anything. Deletion stays with the Job's own TTL / activeDeadline and with
+// cancelPreviewChecks, which a newer run for the session calls first.
+
+function describeCheckJob(job) {
+  const failedCondition = (job.status?.conditions || []).find(c => c.type === 'Failed' && c.status === 'True');
+  const failed = !!(job.status?.failed || failedCondition);
+  const succeeded = !failed && !!job.status?.succeeded;
+  return {
+    name: job.metadata?.name || '',
+    uid: job.metadata?.uid || null,
+    state: failed ? 'failed' : (succeeded ? 'succeeded' : 'running'),
+    failedReason: failedCondition?.reason || null,
+    startedAt: job.status?.startTime || job.metadata?.creationTimestamp || null,
+  };
+}
+
+// The check Jobs one run created, by kind: `{ capture, unitSuite }`, each
+// a describeCheckJob() summary or null when that Job does not exist (never
+// created, already garbage-collected, or deleted by a newer run). Matched by
+// the preview-run-id label runCheckJob stamps, so a session's OTHER runs are
+// never mistaken for this one.
+async function findCheckJobs(config, { sessionId, previewRunId }) {
+  if (!previewRunId) return { capture: null, unitSuite: null };
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  const found = { capture: null, unitSuite: null };
+  for (const job of jobs.items || []) {
+    const name = job.metadata?.name || '';
+    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.capture = describeCheckJob(job);
+    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`)) found.unitSuite = describeCheckJob(job);
+  }
+  return found;
+}
+
+// Wait for a check Job to end and return its whole output. Same shape a
+// runCheckJob caller sees, minus the throw: `{ state, stdout, stderr,
+// exitCode, timedOut, partial, partialReason }`, where `state` is 'succeeded'
+// | 'failed' | 'gone' (the Job disappeared — a newer run cancelled it, or
+// the TTL collected it) | 'timeout' (our own wait ran out; the Job's
+// activeDeadline should have ended it long before, so this is a stuck
+// cluster rather than a slow suite). A Job that is still running is
+// polled every 2s, and its log is re-read every few ticks so `onStdoutLine`
+// sees the frames as they land — the same cadence runCheckJob's polled path
+// gives, which is what keeps the card's bar moving across the hand-over.
+// Lines are delivered from the START of the log, so an observer rebuilding
+// progress state sees every frame the run ever printed. An aborted `signal`
+// ends the wait with state 'aborted' — the adopter was superseded, and the
+// Job is the successor's to cancel.
+async function collectCheckJob(config, {
+  name, kind, timeoutMs = 20 * 60 * 1000, maxBuffer = 64 * 1024 * 1024, onStdoutLine = null, signal = null,
+}) {
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const unitSuite = kind === 'unit-suite';
+  const PROGRESS_EVERY_TICKS = 3;
+  let podName = null;
+  let consumed = 0;
+  let tick = 0;
+  const findPod = async () => {
+    if (podName) return podName;
+    const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+    podName = pods.items?.[0]?.metadata?.name || null;
+    return podName;
+  };
+  const readLog = async ({ limitBytes }) => {
+    if (!(await findPod())) return '';
+    return String(await core.readNamespacedPodLog({ name: podName, namespace, container: kind, limitBytes }) || '');
+  };
+  const deliverNew = (text) => {
+    if (typeof onStdoutLine !== 'function') return;
+    if (text.length <= consumed) return;
+    const fresh = text.slice(consumed);
+    const lastNl = fresh.lastIndexOf('\n');
+    if (lastNl === -1) return;
+    for (const line of fresh.slice(0, lastNl).split('\n')) {
+      try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+    }
+    consumed += lastNl + 1;
+  };
+  const boundedOutput = text => {
+    const bytes = Buffer.from(text || '', 'utf8');
+    let end = Math.min(bytes.length, maxBuffer);
+    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString('utf8');
+  };
+  const finish = async (job) => {
+    const described = describeCheckJob(job);
+    let raw = '';
+    let logFailed = false;
+    try { raw = await readLog({ limitBytes: unitSuite ? maxBuffer : maxBuffer + 1 }); }
+    catch { logFailed = true; }
+    // Everything the observer has not yet seen, so the progress state the
+    // caller is rebuilding ends level with the verdict it is about to read.
+    deliverNew(raw.endsWith('\n') ? raw : `${raw}\n`);
+    const over = !unitSuite && Buffer.byteLength(raw, 'utf8') > maxBuffer;
+    const stdout = over ? boundedOutput(raw) : raw;
+    let exitCode = null;
+    let terminatedReason = null;
+    try {
+      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      const terminated = pods.items?.[0]?.status?.containerStatuses?.find(c => c.name === kind)?.state?.terminated;
+      if (terminated) { exitCode = terminated.exitCode ?? null; terminatedReason = terminated.reason || null; }
+    } catch { /* the Job's own status is enough */ }
+    const timedOut = described.failedReason === 'DeadlineExceeded' || terminatedReason === 'OOMKilled';
+    const partial = described.state === 'failed' || over || logFailed;
+    return {
+      state: described.state,
+      stdout,
+      stderr: [described.failedReason, terminatedReason].filter(Boolean).join(': '),
+      exitCode,
+      timedOut,
+      partial,
+      partialReason: !partial ? ''
+        : over ? 'output over maxBuffer'
+          : logFailed ? 'capture log unavailable'
+            : terminatedReason === 'OOMKilled' ? 'capture OOM killed'
+              : timedOut ? 'run timed out' : `job ${described.failedReason || 'failed'}`,
+    };
+  };
+  const empty = (state, partialReason) => ({
+    state, stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason,
+  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return empty('aborted', 'harvest superseded');
+    let job;
+    try { job = await batch.readNamespacedJob({ name, namespace }); }
+    catch (err) {
+      if (isNotFound(err)) return empty('gone', 'job gone');
+      throw err;
+    }
+    const described = describeCheckJob(job);
+    if (described.state !== 'running') return finish(job);
+    tick += 1;
+    if (tick % PROGRESS_EVERY_TICKS === 1 && typeof onStdoutLine === 'function') {
+      try { deliverNew(await readLog({ limitBytes: maxBuffer })); } catch { /* progress is best-effort */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  let stdout = '';
+  try { stdout = boundedOutput(await readLog({ limitBytes: maxBuffer })); } catch { /* nothing salvageable */ }
+  return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
+}
+
 // The pod-log follow client: an injected `logs` for tests, else one built
 // on the real kube config. Null where neither exists (a test that injected
 // only the typed API clients), which leaves the polled read in charge.
@@ -1785,7 +1937,8 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, execInWorker, _getClients: getClients,
+  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,

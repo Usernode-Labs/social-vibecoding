@@ -68,9 +68,39 @@ changing the preview. Cancellation is not an app test failure.
 Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
 requests foreground deletion and confirms Job/Pod termination. API errors keep
 replacement blocked; a DELETE acknowledgement alone does not establish that
-the browser stopped. After a platform restart, the next owner stops orphaned
-check Jobs before using the preview. Existing recovery schedules restart work;
-this is not resumption from an arbitrary point inside a capture.
+the browser stopped. After a platform restart, a successor for a NEWER revision
+stops orphaned check Jobs before using the preview; a run for the revision the
+session is still waiting on is harvested instead (below).
+
+## Harvesting check runs across platform rollouts
+
+Every merge to the self-app rolls the platform Deployment, and every checks
+run in flight at that moment loses the process that was streaming its capture
+and unit-suite Jobs. The Jobs themselves belong to the cluster and finish
+regardless. `services/check-harvest.js` reads them rather than starting over.
+
+Each run writes a manifest row to `check_runs` (session, commit, owner
+`hostname:pid`, launch context) before its Jobs are created and heartbeats it
+every `CHECK_RUN_HEARTBEAT_MS` (15s). A row with no heartbeat for
+`CHECK_RUN_ORPHAN_MS` (60s) is an orphan. The leader sweeps once at boot —
+before the stuck-checks reconcile, so a harvestable run is never re-driven as
+stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
+`CHECK_HARVEST_CONCURRENCY` (3) adoptions at a time. An orphan is:
+
+- **settled** when its Jobs are found by the `preview-run-id` label: a finished
+  Job's log is read, a running one is waited on with progress re-published to
+  the proposal card, and the output goes through the same settlement a live
+  run ends with (same parse, verdict, stores, commit guards, broadcasts);
+- **re-driven immediately** when there is nothing to read — the process died
+  before creating the Jobs, or the Jobs are gone (TTL, or cancelled);
+- **moot** when the session no longer wants the run — decided meanwhile, head
+  moved, session closed, or (under the preview lifecycle) a newer run owns it.
+
+Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
+`preview_operations` row first and writes through the same ownership check a
+live run does; a request for a newer revision aborts the harvest. Outside the
+Kubernetes capture runtime the harvester is a no-op. The stale sweep
+(`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before

@@ -229,6 +229,11 @@ const CHECK_TRIGGER_BY_REASON = {
   // A verdict that was deferred while the head conflicted with main, run
   // now that it merges cleanly (services/check-admission.js).
   'conflict-resolved': 'conflict-resolved',
+  // A run whose launching process died with nothing left to read — the
+  // Job never started, failed outright, or was already garbage-collected
+  // (services/check-harvest.js). Re-driven the moment it is found rather
+  // than when the stale sweeper would have got to it.
+  'orphaned-run': 'boot-reconcile',
 };
 function checkTriggerForReason(reason) {
   return CHECK_TRIGGER_BY_REASON[reason] || 'stuck-sweep';

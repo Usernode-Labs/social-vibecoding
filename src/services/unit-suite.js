@@ -343,6 +343,14 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
   });
 
+  return shapeOutcome({ passed, reason, graduated, summary });
+}
+
+// The unit-suite check as the checks pipeline consumes it: one extraRows
+// entry plus its check-history record. Shared by the live run above and the
+// harvest path below so the two can never drift in shape.
+function shapeOutcome({ passed, reason, graduated, summary }) {
+  const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
   return {
     row: {
       index: UNIT_CHECK_INDEX,
@@ -360,11 +368,44 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   };
 }
 
+// Harvest path (services/check-harvest.js): the suite's Job ran to an end
+// without the process that launched it, and this shapes the same outcome
+// from the Job's final output. `succeeded` is the Job's own verdict (exit
+// code 0), `graduated` the flag the launching run recorded in its manifest —
+// the history has not moved since. A caller that streamed the log while the
+// Job was still running passes its `tracker`; the summary counters are
+// re-fed regardless, which is idempotent (they replace, never add).
+async function outcomeFromLog({
+  pool, appId, sessionId, succeeded, stdout, stderr = '', timedOut = false,
+  graduated = false, tracker = null,
+}) {
+  const t = tracker || makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
+  for (const line of String(stdout || '').split('\n')) {
+    if (/^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) t.feed(line);
+  }
+  const passed = !!succeeded;
+  let reason = '';
+  if (!passed) {
+    reason = failureDetail(stdout, stderr, { timedOut });
+    if (!reason) reason = timedOut ? 'npm test timed out' : 'npm test failed';
+  }
+  const finalSnap = t.finish(passed);
+  const summary = finalSnap.summary || null;
+  if (summary && Number.isInteger(summary.tests)) await storeExpectedTests(pool, appId, summary.tests);
+  log.info('unit-suite', 'Unit suite outcome read from its finished Job', {
+    sessionId, appId, passed, graduated, tests: summary ? summary.tests : undefined,
+  });
+  return shapeOutcome({ passed, reason, graduated, summary });
+}
+
 module.exports = {
   maybeRunUnitSuite,
+  outcomeFromLog,
   makeUnitSuiteTracker,
   loadExpectedTests,
   storeExpectedTests,
+  UNIT_SUITE_TIMEOUT_MS,
+  UNIT_SUITE_MAX_BUFFER,
   // Exported for tests.
   hasRunnableTestScript,
   failureDetail,
