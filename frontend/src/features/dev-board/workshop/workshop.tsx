@@ -1519,7 +1519,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
               sheet from the floor on a phone, a popover on this button on a
               wide window (app.css). Decide later closes it. */}
           {row.kind === 'vote' && sheet === 'vote' ? (
-            <div className="dev-ws-sheet dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask}>
+            <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask}>
               <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
@@ -1558,7 +1558,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           composer is the dev session's own (`.dc-card`), as far as this pane
           needs it — see the note on `sendBtn`. */}
       {row && sheet === 'ask' ? (
-      <div className="dev-ws-sheet dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item">
+      <div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item">
       <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
       <section className="dev-ws-ask dev-ws-sheet-card" data-ws-ask="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
@@ -1641,7 +1641,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           slot is the legacy filler's host, pointed at this sheet when it
           opens. */}
       {row && sheet === 'comments' ? (
-      <div className="dev-ws-sheet dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments">
+      <div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments">
       <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
       <section className="dev-ws-sheet-card" data-ws-comments="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
