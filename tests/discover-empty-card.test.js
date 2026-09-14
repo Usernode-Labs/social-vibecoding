@@ -1,7 +1,11 @@
 'use strict';
 
-// #1913: with nothing featured, Discover shows a card — the rail's tinted
+// #1913: with nothing to discover, Discover shows a card — the rail's tinted
 // plate — that links on to the directory, instead of a grey 12px caption.
+//
+// The block is one flat lane now, so the note is the WHOLE block's empty
+// state: it draws only when both halves of the lane are empty, and its
+// wording says "discover" rather than "featured".
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,25 +16,44 @@ const { renderComponent } = require('./lib/render-tsx');
 const CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
 const ENTRY = 'frontend/src/features/home/panels/discover.tsx';
 
-function render(featured) {
+function render(featured, popular) {
   return renderComponent(ENTRY, 'DiscoverPanel', {
-    view: { key: 'discover', featured, popular: [] },
+    view: { key: 'discover', featured, popular: popular || [] },
   });
 }
 
-test('nothing featured renders one card that links to the directory', () => {
+test('nothing to discover renders one card that links to the directory', () => {
   const html = render([]);
   const m = html.match(/<a href="#apps" class="([^"]*home-discover-empty[^"]*)"[^>]*>([\s\S]*?)<\/a>/);
   assert.ok(m, 'the empty state is an anchor to #apps');
   const classes = m[1].split(/\s+/);
   assert.ok(classes.includes('home-discover-lane'), 'it still fills the lane');
   assert.ok(classes.some((c) => /^home-tint-[1-5]$/.test(c)), 'in the rail\'s tint language');
-  assert.match(m[2], /Nothing featured right now/, 'the wording the declared check reads');
+  assert.match(m[2], /Nothing to discover right now/, 'the wording the declared check reads');
   assert.match(m[2], /Browse the directory/);
   assert.match(m[2], /<svg/, 'with a chevron');
 });
 
-// The featured branch (no empty card) is covered by
+test('a popular card alone is enough to keep the note away', () => {
+  // Two rails ago this drew the note directly above the popular cards. One
+  // lane makes that a contradiction, so the note is now all-or-nothing.
+  const html = render([], [{
+    slug: 'pop',
+    name: 'Pop',
+    status: 'running',
+    demo: false,
+    added: false,
+    icon: { kind: 'letter', letter: 'P' },
+    illustration: null,
+    blurb: null,
+    contributors: 0,
+  }]);
+  assert.doesNotMatch(html, /home-discover-empty/);
+  assert.doesNotMatch(html, /Nothing to discover/);
+  assert.match(html, /home-discover-rail/, 'the lane draws instead');
+});
+
+// The populated branch (no empty card) is covered by
 // tests/home-panels-render.test.js, which renders the block with a full tile
 // model.
 

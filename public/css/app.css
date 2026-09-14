@@ -2788,8 +2788,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
    The lane is a rail of cards (see `.home-discover-rail` below) and the block
    is a section that grows to its content, so none of that arithmetic has
-   anything left to constrain. What survives is the lane wrapper, the
-   "Popular" divider between the two rails and the empty note.
+   anything left to constrain. What survives is the lane wrapper and the
+   empty note.
 
    The NAME keeps its class and loses its clamp: on a 152px card a real name
    has room to be read on one line, and the second line would only ever be
@@ -2797,21 +2797,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* The "Popular" caption sits on its own hairline row between the two rails. */
-.home-discover-divider {
-  position: relative;
-  min-height: 1.125rem; /* 18px */
-}
-.home-discover-divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0.625rem;
-  right: 0;
-  height: 1px;
-  background: var(--border-light);
-  pointer-events: none;
-}
+/* `.home-discover-divider` is RETIRED. It drew the hairline row that carried
+   the "Popular" caption between the block's two rails. Discover is one
+   category and one rail now — the curated apps and the most-used ones flow
+   as a single continuous set of cards — so there is no sub-group left to
+   label and no seam left to draw. */
 /* The empty state: no rail at all, one centred line in its place, so the
    block reads as a compact strip rather than a mostly-blank box. */
 /* #1913: a card now, in the rail's card language (the tint vars come from
