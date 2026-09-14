@@ -45,6 +45,7 @@ const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/
 // #1191 slice 6 conversion 7 split the challenges pane the same way conversion
 // 5 split the standings pane: chJs decides, this renders.
 const chTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
+const chCardTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenge-card.tsx'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 // The bar's MARKUP moved to a component in #1191; topochain-event-context.js
 // keeps the data, the picks and the subscription, and pushes a view model.
@@ -425,7 +426,15 @@ test('the challenges grid summarises and groups the completed set', () => {
     'the subheading is gated on BOTH groups being non-empty');
   assert.match(chJs, /done: TopochainChallenges\._isDone\(c\)/,
     'the card descriptor carries the completed flag');
-  assert.match(chTsx, /opacity-60/, 'and completed cards are dimmed');
+  // ITERATION 03 retired the dimming: a finished card is marked on its
+  // progress rail and stays at full strength, so the pin moved from the
+  // card's opacity to the rail's done recipe.
+  assert.doesNotMatch(chTsx, /opacity-60/, 'completed cards are no longer dimmed');
+  assert.match(chCardTsx,
+    /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
+    'completed cards carry the done rail instead');
+  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+    'and the rail names the state in the board\'s word for it');
 });
 
 test('the standings pane cross-links to the challenges tab without ever painting an error', () => {

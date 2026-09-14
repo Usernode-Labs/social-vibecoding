@@ -285,6 +285,17 @@ test('buildChallengeRow: the challenge row overrides the template per field', ()
   assert.deepEqual(built.progress, { done: false, current: 2, target: 4 });
   assert.equal(built.earned_points, 400);
   assert.deepEqual(built.cta, { label: 'Get Started', link: 'https://example.invalid/go' });
+  assert.equal(built.ends_at, null, 'no end of its own and no event end: the card uses the season end');
+  assert.equal(built.open, true, 'a row without is_open is one of the collapsed panel’s open rows');
+  assert.equal(buildChallengeRow(row({ event_ends_at: '2026-09-25T00:00:00.000Z' })).ends_at,
+    '2026-09-25T00:00:00.000Z', 'the event’s end — the date the Challenges tab falls back to');
+  assert.equal(buildChallengeRow(row({
+    t_schedule_end: '2026-09-20T00:00:00.000Z', event_ends_at: '2026-09-25T00:00:00.000Z',
+  })).ends_at, '2026-09-20T00:00:00.000Z', 'the template end over the event end');
+  assert.equal(buildChallengeRow(row({
+    schedule_end: '2026-09-17T00:00:00.000Z', t_schedule_end: '2026-09-20T00:00:00.000Z',
+  })).ends_at, '2026-09-17T00:00:00.000Z', 'and the challenge override over both, like the open-row filter');
+  assert.equal(buildChallengeRow(row({ is_open: false })).open, false, 'an expanded-list row that is not open');
 });
 
 test('buildChallengeRow: no cta_link means no cta, and a missing category is OTHER', () => {
@@ -331,11 +342,23 @@ test('GET /api/home-panels: the open-challenge filter is in the SQL, both querie
   for (const q of challengeQueries) {
     assert.match(q.sql, /se\.internal = FALSE/);
     assert.match(q.sql, /c\.enabled = TRUE/);
-    assert.match(q.sql, /c\.completed = FALSE/);
-    assert.match(q.sql, /COALESCE\(c\.schedule_start, ct\.schedule_start/);
-    assert.match(q.sql, /COALESCE\(c\.schedule_end, ct\.schedule_end/);
     assert.match(q.sql, /se\.season_id = \$2/);
   }
+  // The open predicate is judged where each query NARROWS by it: the row
+  // query's WHERE (its SELECT list also carries the predicate, as `is_open`,
+  // so a match anywhere in its text would pass without the filter) and the
+  // totals query's FILTERs (its outer WHERE is the expanded scope).
+  const rowQuery = challengeQueries.find((q) => /LIMIT \$3/.test(q.sql));
+  const totalsQuery = challengeQueries.find((q) => q !== rowQuery);
+  const rowWhere = rowQuery.sql.slice(rowQuery.sql.lastIndexOf('WHERE se.season_id'));
+  const totalsFilters = totalsQuery.sql.slice(0, totalsQuery.sql.lastIndexOf('WHERE se.season_id'));
+  for (const narrowing of [rowWhere, totalsFilters]) {
+    assert.match(narrowing, /c\.completed = FALSE/);
+    assert.match(narrowing, /COALESCE\(c\.schedule_start, ct\.schedule_start/);
+    assert.match(narrowing, /COALESCE\(c\.schedule_end, ct\.schedule_end/);
+  }
+  assert.match(rowQuery.sql, /se\.ends_at AS event_ends_at/, 'each row carries its event’s end for the card deadline');
+  assert.match(rowQuery.sql, /\(\s*c\.completed = FALSE[\s\S]*?\) AS is_open/, 'and whether it is open now');
 });
 
 test('GET /api/home-panels: rows are capped and totals report the real count', async () => {
@@ -592,21 +615,41 @@ test('GET ?expand=challenges drops the not-completed/in-window filters', async (
     // Still scoped to the season's PUBLIC events and organiser-enabled…
     assert.match(q.sql, /se\.internal = FALSE/);
     assert.match(q.sql, /c\.enabled = TRUE/);
-    // …but the two filters that define "open" are gone, which is how the
-    // expanded list can show finished challenges and their ✓ marks.
-    assert.doesNotMatch(q.sql, /c\.completed = FALSE/);
-    assert.doesNotMatch(q.sql, /COALESCE\(c\.schedule_start/);
+  }
+  // …but the two filters that define "open" are gone, which is how the
+  // expanded list can show finished challenges and their ✓ marks. The row
+  // query is judged on its WHERE clause (its SELECT list carries the open
+  // predicate as `is_open`); the totals query, whose FILTERs would otherwise
+  // narrow `total` and `done` back to open rows, is judged whole.
+  const rowQuery = queries.find((c) => c.sql.includes('LIMIT $3'));
+  const totalsQuery = queries.find((c) => c !== rowQuery);
+  for (const sql of [rowQuery.sql.slice(rowQuery.sql.lastIndexOf('WHERE se.season_id')), totalsQuery.sql]) {
+    assert.doesNotMatch(sql, /c\.completed = FALSE/);
+    assert.doesNotMatch(sql, /COALESCE\(c\.schedule_start/);
   }
   // And the row cap lifts.
-  const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
   assert.equal(rowQuery.params[2], 40);
+  // Each row still says whether it is open, so a closed one shows no countdown.
+  assert.match(rowQuery.sql, /\) AS is_open/);
 });
+
+// Where each collapsed-mode query NARROWS by the open predicate: the row
+// query's WHERE clause and the totals query's FILTERs. Matching a query's
+// whole text would pass on the row query's `is_open` column alone.
+const openNarrowing = (calls) => {
+  const queries = calls.filter((c) => c.sql.includes('FROM challenges c'));
+  const rowQuery = queries.find((c) => c.sql.includes('LIMIT $3'));
+  const totalsQuery = queries.find((c) => c !== rowQuery);
+  return [
+    rowQuery.sql.slice(rowQuery.sql.lastIndexOf('WHERE se.season_id')),
+    totalsQuery.sql.slice(0, totalsQuery.sql.lastIndexOf('WHERE se.season_id')),
+  ];
+};
 
 test('GET without expand keeps the strict open filter and the 4-row cap', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
-  const queries = calls.filter((c) => c.sql.includes('FROM challenges c'));
-  for (const q of queries) assert.match(q.sql, /c\.completed = FALSE/);
+  for (const sql of openNarrowing(calls)) assert.match(sql, /c\.completed = FALSE/);
   assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 4);
   assert.equal(body.panels[0].expanded, false);
 });
@@ -615,9 +658,7 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels?expand=not-a-panel');
   assert.equal(body.panels[0].expanded, false);
-  for (const q of calls.filter((c) => c.sql.includes('FROM challenges c'))) {
-    assert.match(q.sql, /c\.completed = FALSE/);
-  }
+  for (const sql of openNarrowing(calls)) assert.match(sql, /c\.completed = FALSE/);
 });
 
 // ─── Drag position ────────────────────────────────────────────────────
@@ -804,7 +845,7 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
 
   // The #911 check must keep running unchanged: four challenges leave no room
   // to fill, so that payload's markup is untouched by this change.
-  assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-panel-bar-fill/.test(t.expectSelector)),
+  assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-challenge-card \[role=progressbar\]/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
 
   // #1824, both directions. The `few` route shows every challenge it has, so
