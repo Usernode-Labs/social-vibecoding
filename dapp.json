@@ -3396,6 +3396,18 @@
       "expectText": "openai/gpt-5.3-codex"
     },
     {
+      "name": "An OpenRouter session's composer says what is left on its key (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "$0.86 left today"
+    },
+    {
+      "name": "An OpenRouter session's composer says what the turn cost (#2118)",
+      "path": "/?shot=openrouter-spend#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-budget > span[title]",
+      "expectText": "this turn ~$0.12"
+    },
+    {
       "name": "A venue you did not get is explained rather than silently swapped (#1086)",
       "path": "/?shot=venue-fallback&reason=flag_off#app/usernode-2d5619/dev/sessions/990410",
       "expectSelector": "#dc-venue-slot .dc-venue-note",
