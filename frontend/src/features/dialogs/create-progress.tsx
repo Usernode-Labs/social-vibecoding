@@ -42,6 +42,14 @@ export interface CreateProgressProps {
   appName: string;
   /** Which verb to use while the asynchronous provisioning is pending. */
   mode: 'new' | 'import' | 'fork';
+  /**
+   * Which ground the view is drawn on. `card` (the default) is the fork
+   * dialog's white card, where the steps sit bare and the next-steps block
+   * is a bordered inset. `pane` is the create dialog's grey pane ground
+   * (#1910), where both become white cards floating on it and the actions
+   * are pills, matching the form view that preceded them.
+   */
+  surface?: 'card' | 'pane';
   progress: CreationProgressState;
   onOpenApp: () => void;
   onRetry: () => void;
@@ -121,9 +129,40 @@ const NEXT_STEPS = [
   'Collaborators vote it in, and it goes live.',
 ];
 
+/**
+ * The two surfaces, keyed by `surface`. Every string a complete literal, for
+ * the extractor. The pane's cards are `dark:bg-zinc-800` for the reason
+ * create-app.tsx gives: the pane ground is darker than the page ground in
+ * dark mode, and the language's zinc-900 card did not separate from it.
+ */
+const SURFACES = {
+  card: {
+    title: 'text-lg font-bold',
+    steps: 'space-y-2.5',
+    // The dialog card is `bg-white dark:bg-zinc-900`, so an inset block
+    // must not reach for that same dark tone — it would be invisible
+    // against the card. This is the treatment the dialog's own segmented
+    // pills used.
+    next: 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3',
+    actions: 'flex gap-3',
+    close: 'flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
+    primary: {} as const,
+  },
+  pane: {
+    title: 'text-[17px] font-semibold text-zinc-900 dark:text-zinc-100',
+    steps: 'space-y-2.5 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
+    next: 'rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
+    actions: 'flex gap-2 pt-1',
+    close: 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
+      + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors',
+    primary: { variant: 'pillAccent', size: 'pill' } as const,
+  },
+} as const;
+
 export function CreateProgress({
   appName,
   mode,
+  surface = 'card',
   progress,
   onOpenApp,
   onRetry,
@@ -132,14 +171,15 @@ export function CreateProgress({
 }: CreateProgressProps) {
   const outcome = outcomeOf(progress.status);
   const states = stepStates(progress);
+  const look = SURFACES[surface];
 
   return (
     <div id="create-progress" className="space-y-4">
-      <h2 id="create-progress-title" className="text-lg font-bold">
+      <h2 id="create-progress-title" className={look.title}>
         {headline(outcome, mode, appName)}
       </h2>
 
-      <ol id="create-progress-steps" className="space-y-2.5">
+      <ol id="create-progress-steps" className={look.steps}>
         {CREATION_STEPS.map((step, i) => (
           <li
             key={step.key}
@@ -177,14 +217,7 @@ export function CreateProgress({
           Retry button below.
       */}
       {outcome === 'failed' ? null : (
-        <div
-          id="create-progress-next"
-          // The dialog card is `bg-white dark:bg-zinc-900`, so an inset
-          // block must not reach for that same dark tone — it would be
-          // invisible against the card. This is the treatment the
-          // dialog's own segmented pills already use.
-          className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3"
-        >
+        <div id="create-progress-next" className={look.next}>
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">
             What happens next
           </p>
@@ -199,27 +232,27 @@ export function CreateProgress({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className={look.actions}>
         <button
           type="button"
           id="create-progress-close"
-          className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+          className={look.close}
           onClick={onClose}
         >
           {outcome === 'pending' ? 'Close' : 'Done'}
         </button>
         {outcome === 'live' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onOpenApp}>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onOpenApp}>
             Open app
           </Button>
         ) : null}
         {outcome === 'needs-secrets' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onSetSecrets}>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onSetSecrets}>
             Set secrets
           </Button>
         ) : null}
         {outcome === 'failed' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onRetry}>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onRetry}>
             Retry
           </Button>
         ) : null}

@@ -120,16 +120,26 @@ export function BrowseScreen() {
           affordance, and on a detail page the field would filter a list
           nobody can see.
 
-          Its fill is the wallpaper's base (--home-ground, set by the body
-          rule that paints the wallpaper on this route — see "The home
-          ground" in app.css), not white: a sticky bar needs an opaque fill
-          for the rows to scroll under, and a white one read as a slab
+          At md and up its fill is the wallpaper's base (--home-ground, set
+          by the body rule that paints the wallpaper on this route — see "The
+          home ground" in app.css), not white: a sticky bar needs an opaque
+          fill for the rows to scroll under, and a white one read as a slab
           across a cream page. Dark mode reads the same variable, which the
           body's dark rule points at the inverted ground.
+
+          ON A PHONE it is the HEAD of a pane (#1919): the search, the sort
+          and the list they narrow wear the Workshop's working-pane
+          treatment — one frosted sheet, a 22px radius, a hairline ring —
+          with the head pinned at the top and the rows sliding under its
+          frost. The pane is `browse-pane-head` / `browse-pane-body` /
+          `browse-pane-note` in app.css, next to the .browse-row rules, so
+          the phone padding and fill live there and only the md+ utilities
+          stay here. Page-scoped classes rather than the Workshop's own, so
+          the two panes can move independently.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)]`}
+        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-3 md:pb-2 md:bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
@@ -207,13 +217,14 @@ export function BrowseScreen() {
           // order the rows below were actually built with, which a screenshot
           // of a <select> cannot be asserted on.
           data-sort={state.sort}
-          // Phone: ONE white card holding hairline-separated rows — the
-          // language's grouped list, and the shape Settings and the home
-          // panels already draw. The rows used to run full-bleed on the grey
-          // page ground with no surface under them at all. At md+ nothing
-          // changes: every row is its own box in the grid (app.css), so the
-          // card classes are scoped to below that breakpoint.
-          className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+          // Phone: the BODY of the pane whose head is the search bar above
+          // (#1919) — one frosted sheet holding the hairline-separated rows,
+          // continuing the head's ring and closing its radius. It used to be
+          // a plain white rounded-2xl card under a wallpaper-coloured bar;
+          // the pane treatment is `browse-pane-body` in app.css, scoped to
+          // below md. At md+ nothing changes: every row is its own box in the
+          // grid (app.css), so only the grid utilities live here.
+          className="browse-pane-body md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
             ? (
@@ -227,11 +238,17 @@ export function BrowseScreen() {
             )
             : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
+        {/*
+            The nothing-to-show line. On a phone it stands in for the list as
+            the pane's body (`browse-pane-note`, app.css): the list above it
+            is empty and collapsed then, and without this the head would end
+            on two square corners over a bare page.
+        */}
         <div
           id="browse-empty"
           className={state.empty
-            ? 'px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
-            : 'hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
+            ? 'browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
+            : 'hidden browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
         >{state.empty}</div>
       </div>
       {/*
