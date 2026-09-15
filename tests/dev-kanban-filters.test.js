@@ -84,7 +84,7 @@ function makeAppView() {
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -473,7 +473,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, createdByMe: false });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -506,7 +506,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
@@ -910,4 +910,81 @@ test('_kanbanMatchFilters asks the server once per query and folds the answer in
   AppView._kanbanFilters = { ...none, q: '' };
   assert.equal(AppView._kanbanMatchFilters().commentHits, null);
   assert.equal(AppView._kanbanCommentHits, null);
+});
+
+
+// ─── #1935: "Assigned to you" / "Created by you" quick toggles ─────────────
+
+test('Created by you keeps what the viewer authored, on every kind (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  const f = { ...none, createdByMe: true };
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('merged', merged({ username: 'kim' }), f), false);
+  assert.equal(AppView._devCardMatches('session', { username: 'evan' }, f), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'sam' }, f), false);
+});
+
+test('Assigned to you reads the voted assignee on issues, authorship where nothing is assignable (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  const f = { ...none, assignedToMe: true };
+  // Issues: the community-voted assignee, not who filed it.
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'sam', assignee: { top: 'evan' } }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan', assignee: { top: 'sam' } }), f), false);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), f), false,
+    'filing an issue does not assign it to you');
+  // A proposal or session has no assignee: whoever opened it is doing it.
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('session', { username: 'evan' }, f), true);
+  // Governance rows are never assigned.
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), f), false);
+});
+
+test('signed out, a persisted quick toggle matches nothing and the strip hides both (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = null;
+  assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'evan' } }), { ...none, assignedToMe: true }), false);
+  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, createdByMe: true }), false);
+  assert.equal(AppView._kanbanFilterView().quick, null);
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  assert.deepEqual(plain(AppView._kanbanFilterView().quick), { assignedToMe: false, createdByMe: false });
+});
+
+test('a quick toggle flips, counts as an active filter, and persists like the rest (#1935)', () => {
+  const store = makeMemoryStore();
+  const sandbox = makeCtx({ sessionStorage: store });
+  const AppView = sandbox.__AppView;
+  sandbox.App.user = { id: 1, username: 'evan' };
+  sandbox.App.currentApp = 'my-app';
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; AppView._saveKanbanFilters('my-app'); };
+  AppView._toggleKanbanQuickFilter('createdByMe');
+  assert.equal(AppView._kanbanFilters.createdByMe, true);
+  assert.equal(AppView._kanbanFiltersActive(), true);
+  assert.equal(repaints, 1);
+  assert.equal(AppView._loadKanbanFilters('my-app').createdByMe, true, 'it survives a reload of the surface');
+  AppView._toggleKanbanQuickFilter('createdByMe');
+  assert.equal(AppView._kanbanFiltersActive(), false);
+  AppView._toggleKanbanQuickFilter('priority');
+  assert.equal(AppView._kanbanFilters.priority, null, 'only the two quick keys toggle');
+});
+
+test('the strip draws the two quick toggles as pressed chips, only with a viewer (#1935)', () => {
+  const base = { mounted: true, q: '', seq: 0, count: 0, chips: [] };
+  const on = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { ...base, quick: { assignedToMe: true, createdByMe: false } });
+  assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-pressed="true"[^>]*bg-zinc-900 text-white/);
+  assert.match(on, />Assigned to you</);
+  assert.match(on, /data-quick-filter="createdByMe"[^>]*aria-pressed="false"/);
+  assert.match(on, />Created by you</);
+  const anon = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { ...base, quick: null });
+  assert.doesNotMatch(anon, /data-quick-filter/);
 });
