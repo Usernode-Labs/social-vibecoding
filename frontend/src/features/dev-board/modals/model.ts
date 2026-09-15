@@ -61,6 +61,28 @@ export interface CreditOptionsModalView {
   cardHtml: string;
 }
 
+/**
+ * The app-permission prompt (#2219).
+ *
+ * Every string here is RESOLVED: app-view.js has already picked the
+ * sentence, the note and the button label from the catalogue and from
+ * whether this grant needs the app reopened. The card renders them.
+ */
+export interface PermissionConsentModalView {
+  /** Permissions Policy token, e.g. "microphone". Identity, not copy. */
+  capability: string;
+  /** The catalogue's short name for the chip, e.g. "Microphone". */
+  label: string;
+  /** The whole question, e.g. "Allow Notes to record audio from your microphone?" */
+  title: string;
+  /** The app's own one-line reason from its dapp.json, in quotes. */
+  reason: string | null;
+  /** What granting means: scope, how to undo it, and any reopen to come. */
+  note: string;
+  /** "Allow", or "Allow and reopen" when the frame must re-navigate. */
+  confirmLabel: string;
+}
+
 export interface LlmConsentModalView {
   appName: string;
   /** The app's own one-line reason, in quotes. */

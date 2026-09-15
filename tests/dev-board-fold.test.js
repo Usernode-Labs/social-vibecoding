@@ -547,7 +547,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 642.
   // 642 → 643: #838 adds one check on Spend limits, pinning the three
   // per-tier weekly cap fields (unverified, GitHub and X, zkPassport).
-  assert.equal(DAPP.tests.length, 643);
+  // 642 → 646: independently on main, #2219's four checks land on top of the
+  // same 642. Two photograph the app-permission prompt through
+  // `?shot=app-permission` — the dialog an embedded app opens by calling
+  // usernode.requestPermission(), which no plain route can reach because it
+  // needs a running app that asks; two read the new Settings pane behind
+  // `?demo=1#settings/app-permissions`, one for the rows and one for the copy
+  // that must NOT promise a revoke lands while the app is still open.
+  // 643 → 647, 646 → 647: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 642 → 643
+  // alone, with the #838 check above; main independently took the SAME 642 →
+  // 646 with the #2219 checks above. One +1 and one +4 against a shared 642
+  // is 647.
+  assert.equal(DAPP.tests.length, 647);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

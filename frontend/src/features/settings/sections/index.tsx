@@ -40,6 +40,7 @@ import { AgentFilesSection } from './agent-files';
 import { AlertsSection } from './alerts';
 import { ApiKeySection } from './api-key';
 import { AppAiSection } from './app-ai';
+import { AppPermissionsSection } from './app-permissions';
 import { CliSection } from './cli';
 import { ConnectorsSection } from './connectors';
 import { DevConsoleSection } from './dev-console';
@@ -74,6 +75,7 @@ export function SettingsSections() {
       <ConnectorsSection />
       <OpenRouterSection />
       <AppAiSection />
+      <AppPermissionsSection />
       <AgentFilesSection />
       <UsernameSection />
       <EmailSection />

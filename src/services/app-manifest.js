@@ -58,6 +58,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const usernames = require('./usernames');
+const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
@@ -173,7 +174,19 @@ const MANIFEST_FILENAME = 'dapp.json';
 // promised: 690 checks at ~3.9s over 16 pages is ~168s of ideal work, still
 // under a quarter of the 650s TESTS_DEADLINE_MS, so neither the deadline nor
 // RUN_TIMEOUT_MS moves. The step buys 29 slots over the 641 declared here.
-const MAX_DECLARED_TESTS = 690;
+//
+// Raised 690 → 710 by #2219, whose four checks put the manifest at 646
+// against the 690 floor, landing on main's own growth from #2201 above —
+// this branch was cut before that merged, so its own count (643 against a
+// 640 floor) is superseded by the merged total.
+//
+// STILL NOT A COUPLED MOVE, same reason as before: the pool is 16, so 710
+// checks at ~3.9s over 16 is ~173s, and the UNCHANGED 650s deadline clears
+// the 2x margin by ~304s. So the deadline and the run timeout stay exactly
+// where #1960 left them. The next few bumps are free on the same arithmetic
+// — tests/checks-budget.test.js says so from the other side, and it is the
+// assertion that will stop being satisfied first if that ever changes.
+const MAX_DECLARED_TESTS = 710;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -697,6 +710,64 @@ function readLlm(parsed) {
   return out;
 }
 
+// Bound on a permission's reason line, same budget as the LLM consent
+// dialog's purpose above: one short sentence, not a paragraph.
+const MAX_PERMISSION_REASON_LENGTH = 140;
+
+// Normalize the optional top-level `permissions` block (#2219) — the
+// browser capabilities this app may ASK the platform for:
+//   "permissions": [
+//     "geolocation",
+//     { "capability": "microphone", "reason": "Records your voice notes" }
+//   ]
+// A bare string and the object form mean the same thing; `reason` is the
+// app's own one-line explanation, shown in the platform's permission
+// prompt exactly as `llm.purpose` is shown in the AI one.
+//
+// DECLARING IS NOT BEING GRANTED. This list only bounds what the app is
+// allowed to ask for: services/app-permissions.js gates the capability
+// itself on a per-user grant, and an undeclared capability is refused
+// before any prompt is shown. That is deliberate — it is what puts the
+// set of capabilities an app can ever reach into its own diff, where the
+// group reviewing a proposal can see it.
+//
+// Lenient like every other reader here: unknown capability names (a typo,
+// or a Permissions Policy feature the platform does not gate) are dropped
+// rather than thrown, a non-array block resolves to [] and duplicates
+// collapse. normalizeCapabilities settles the ordering, so the stored
+// snapshot is stable regardless of how the manifest listed them.
+function readPermissions(parsed) {
+  const raw = parsed?.permissions;
+  if (!Array.isArray(raw)) {
+    if (raw != null) log.warn('app-manifest', 'Ignoring non-array permissions block');
+    return [];
+  }
+  const reasons = new Map();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const name = entry.capability;
+    if (typeof name !== 'string') continue;
+    const reason = typeof entry.reason === 'string' && entry.reason.trim()
+      ? entry.reason.trim().slice(0, MAX_PERMISSION_REASON_LENGTH)
+      : null;
+    if (reason != null) reasons.set(name, reason);
+  }
+  const names = appPermissions.normalizeCapabilities(raw);
+  // Count what the catalogue actually REFUSED, not what collapsing
+  // duplicates removed — a manifest listing one capability twice is
+  // untidy, not a misconfiguration worth a warning.
+  const dropped = raw.filter((entry) => !appPermissions.isGatedCapability(
+    typeof entry === 'string' ? entry : (entry && typeof entry === 'object' ? entry.capability : null)
+  )).length;
+  if (dropped > 0) {
+    log.warn('app-manifest', 'Dropped unrecognized permission entries', { dropped });
+  }
+  return names.map((capability) => ({
+    capability,
+    reason: reasons.get(capability) || null,
+  }));
+}
+
 // Allowed device-scale values for the optional top-level `screenshot`
 // block (issue #360). The platform's before/after preview screenshots
 // default to 2× (HiDPI/retina); an app declares `1` to opt its previews
@@ -810,9 +881,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -820,7 +891,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -873,6 +944,7 @@ function read(cloneDir) {
     name: readName(parsed),
     secrets,
     llm: readLlm(parsed),
+    permissions: readPermissions(parsed),
     visibility: readVisibility(parsed),
     governance: readGovernance(parsed),
     screenshot: readScreenshot(parsed),

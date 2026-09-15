@@ -595,7 +595,9 @@ test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
   assert.equal(dom.els.get('app-iframe').getAttribute('sandbox'),
     'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
     'the app sandbox is installed immediately before its safe navigation');
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation"/);
+  // #2219: the UNGATED BASE. `geolocation` left this constant when it became
+  // a per-user, per-app grant; a frame with no grants delegates exactly this.
+  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock"/);
 });
 
 test('a non-running render retires the launch generation', () => {
@@ -604,6 +606,116 @@ test('a non-running render retires the launch generation', () => {
   AppView.renderAppTab();
   assert.ok(AppView._launchId > before, 'pending launch callbacks go inert');
   assert.equal(AppView._launchAdopt, null);
+});
+
+// ── 5b. The permission policy rides the mint (#2219) ─────────────────────
+//
+// A frame's Permissions Policy is computed from `allow` when it NAVIGATES,
+// so the granted set has to be in hand on the line before `src` is assigned.
+// That is why it comes back from the token mint rather than from a second
+// fetch, and these pin the plumbing end to end: mint answer → held state →
+// the attribute a browser actually reads.
+
+const tokenWithPermissions = (effective, token = 'tok-1') => async (url) => {
+  if (url.startsWith('/api/iframe-token')) {
+    return {
+      ok: true,
+      json: async () => ({
+        token,
+        permissions: { declared: effective.map((c) => ({ capability: c, reason: null })), granted: effective, effective },
+      }),
+    };
+  }
+  return { ok: true, json: async () => ({ app: { ...RUNNING } }) };
+};
+
+test('a granted capability reaches the frame allow attribute', async () => {
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['camera', 'geolocation']) });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; pointer-lock; geolocation; camera'
+  );
+});
+
+test('an app with no grants gets the ungated base and nothing else', async () => {
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions([]) });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; pointer-lock'
+  );
+});
+
+test('a mint that answers no permissions at all delegates only the base', async () => {
+  // A platform that predates the field, or the best-effort read failing
+  // server-side. Failing closed is the whole point.
+  const { AppView, dom } = makeAppView({ fetchImpl: okToken() });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; pointer-lock'
+  );
+});
+
+test('one app’s grants never ride another app’s navigation', async () => {
+  // The held permissions are slug-checked exactly like the held token. A
+  // camera grant for `notes` must not be delegated to `other` just because
+  // it is the value still sitting in memory.
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['camera']) });
+  await AppView.refreshToken('notes');
+  assert.deepEqual([...AppView.grantedForSlug('notes')], ['camera']);
+  assert.deepEqual([...AppView.grantedForSlug('other')], []);
+
+  AppView.appData = { ...RUNNING, slug: 'other', url: 'https://other.example' };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; pointer-lock',
+    'the other app navigates with the base only'
+  );
+});
+
+test('a failed mint drops the held permissions with the token', async () => {
+  const { AppView } = makeAppView({
+    fetchImpl: async (url) => (url.startsWith('/api/iframe-token')
+      ? { ok: false, json: async () => ({}) }
+      : { ok: true, json: async () => ({ app: { ...RUNNING } }) }),
+  });
+  AppView.iframePermissions = { declared: [], granted: [], effective: ['camera'] };
+  AppView.iframePermissionsSlug = 'notes';
+  await AppView.refreshToken('notes');
+  assert.equal(AppView.iframePermissions, null);
+  assert.deepEqual([...AppView.grantedForSlug('notes')], []);
+});
+
+test('the eager launch path delegates the prewarmed grant set', async () => {
+  // beginLaunch assigns src synchronously off the freshness cache. The
+  // permissions were cached by that same mint and must be published on the
+  // same lines, or the tap-launched frame navigates with the base while the
+  // token says the app is fully launched.
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['microphone']) });
+  await AppView._mintToken('notes');
+  assert.ok(AppView.hasFreshToken('notes'), 'the prewarm landed');
+  AppView.beginLaunch('notes');
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; pointer-lock; microphone'
+  );
+});
+
+test('the pending source-less frame delegates the base before it navigates', () => {
+  const { AppView, dom, content } = launchThenRender();
+  AppView.renderAppTab();
+  AppView.renderAppTab();
+  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock"/);
+  assert.ok(dom.els.get('app-iframe'));
 });
 
 // ── 6. AppView.open parallelization ─────────────────────────────────────

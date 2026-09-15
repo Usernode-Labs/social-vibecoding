@@ -127,11 +127,18 @@ function swapViewerFrame(): HTMLIFrameElement | null {
 const ViewerRegion = memo(function ViewerRegion() {
   return (
     <div id="app-viewer" className="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
+      {/*
+          `allow` is the UNGATED BASE and nothing else (#2219). It used to be
+          "geolocation", delegated to every public app a visitor opened here.
+          A gated capability needs a per-user grant, and this viewer serves
+          signed-out visitors, so there is nobody to hold one — see
+          ../app-frame/app-frame-policy.js.
+      */}
       <iframe
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
         title="App"
-        allow="geolocation"
+        allow="clipboard-write; pointer-lock"
       ></iframe>
     </div>
   );
