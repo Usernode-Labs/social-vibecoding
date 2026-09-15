@@ -184,7 +184,14 @@
 // the general chat from the old stylesheet and read as a fix that simply had
 // not worked. The deployed CSS had the new rule the whole time. Bumped here so
 // an installed client is not the next one to report it as unfixed.
-const SW_VERSION = 'v23';
+// v24: the keyboard reservation only half-worked. v23 shipped the column
+// reservation, but `attachKeyboardAvoidance` adds `un-kb-avoid` to the
+// scroller it is given, so the general chat, the topic thread and the dev chat
+// reserved the inset TWICE — and a scroll container cannot shrink below its own
+// padding, so #gc-messages floored at 368px and left the composer 197px behind
+// the keys. app.css again, so the bump belongs here per v10; and per v15, an
+// installed client that took v23 would otherwise keep the half-fix forever.
+const SW_VERSION = 'v24';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
