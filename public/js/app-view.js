@@ -56,7 +56,7 @@ const AppView = {
   // list (with bounty_count/my_bounty) so feed paging and the
   // give-bounty optimistic update can re-render without a refetch.
   _ghIssues: [],
-  _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
+  _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
   // #396: per-issue-number cache of the GitHub comment thread fetched
@@ -5504,7 +5504,10 @@ const AppView = {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed) throw failed.reason;
       const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = results.map((result) => result.value);
-      const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
+      // #2261: the Issues column's answer is read defensively — a degraded
+      // one must not repaint a board that already has a list on it as "no
+      // open issues". See where _ghIssues is stored below.
+      const ghData = (ghRes && ghRes.ok) ? await ghRes.json().catch(() => null) : null;
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
       const mergedData = mergedRes;
@@ -5519,13 +5522,38 @@ const AppView = {
         issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
         review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
       };
-      AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
-      AppView._ghIssuesMeta = {
-        truncatedList: !!ghData.truncatedList,
-        note: ghData.note || null,
-        repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
-        myRemaining: typeof ghData.myRemaining === 'number' ? ghData.myRemaining : null,
-      };
+      // #2261: a degraded /github-issues answer — the request failed
+      // outright, its body did not parse, or the server could not read
+      // GitHub and says so with `note` beside an empty list — keeps the
+      // list already on the board. That list feeds BOTH the Issues column
+      // and the issue cards in Underway, and repainting on an empty answer
+      // emptied both for as long as GitHub was unreachable, on every
+      // WS-driven refresh. The server serves its own last-known list in
+      // that case (services/github.js degradedIssuesResult), so this is
+      // the fallback for the answers it cannot help with: its cache is
+      // cold, or the request never reached it. A clean empty list — no
+      // note — still clears the board: that is GitHub saying there are
+      // none. Nothing is kept before the first successful load, because
+      // there is nothing to keep.
+      const ghIssues = (ghData && Array.isArray(ghData.issues)) ? ghData.issues : null;
+      const ghDegraded = !ghIssues || (!ghIssues.length && !!ghData.note);
+      if (ghDegraded && AppView._devDataReady) {
+        AppView._ghIssuesMeta = {
+          ...(AppView._ghIssuesMeta || {}),
+          note: (ghData && ghData.note) || 'fetch failed',
+          stale: true,
+        };
+      } else {
+        AppView._ghIssues = ghIssues || [];
+        AppView._ghIssuesMeta = {
+          truncatedList: !!(ghData && ghData.truncatedList),
+          note: (ghData && ghData.note) || (ghIssues ? null : 'fetch failed'),
+          // The server's own fallback: the list is its last-known one.
+          stale: !!(ghData && ghData.stale),
+          repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
+          myRemaining: (ghData && typeof ghData.myRemaining === 'number') ? ghData.myRemaining : null,
+        };
+      }
       // GitHub twins of open env-var proposals render as governance
       // cards only — keep their issue rows out of the feed (#131).
       AppView._envIssueNumbers = new Set(

@@ -55,6 +55,19 @@ function publicFetchHeaders() {
 // directly on GitHub.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
+// #2261: a cache entry outlives its TTL as the FALLBACK. An expired entry
+// (or one invalidateIssuesCache has expired on purpose) is refetched on the
+// next read, and when that refetch cannot get a list out of GitHub — rate
+// limited, timed out, a 5xx, an unflagged 403 — the read serves the entry's
+// list, marked `stale`, instead of an empty one. The Dev board's Issues and
+// Underway columns draw from this list, and an empty answer painted them as
+// "no open issues" for as long as GitHub was unreachable. The two constants
+// below bound how long a failed refetch keeps serving the entry before the
+// ordinary read path tries GitHub again (a forced refresh always tries): at
+// least ISSUES_RETRY_AFTER_MS, longer when GitHub's Retry-After or its
+// rate-limit reset says so, never more than ISSUES_RETRY_AFTER_MAX_MS.
+const ISSUES_RETRY_AFTER_MS = 30 * 1000;
+const ISSUES_RETRY_AFTER_MAX_MS = 10 * 60 * 1000;
 const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
 // Per-issue body cap applied ONLY at agent-facing surfaces (the Mayor's
 // list_github_issues tool and the worker's usernode-issues CLI) via
@@ -1725,6 +1738,44 @@ function truncateIssueBodies(result, fullTextHint) {
   };
 }
 
+// #2261: the answer for a read that could not get a fresh list out of
+// GitHub. When the repo has a cache entry — past its TTL, or expired on
+// purpose by invalidateIssuesCache — its list is served with `note` naming
+// the failure and `stale: true`, and the entry is stamped with the moment
+// the ordinary read path may try GitHub again (fetchPublicIssues honours
+// `retryAt`; a forced refresh ignores it). Overlays still apply, so an issue
+// the platform created or closed since the entry was taken is still added
+// or hidden. A repo nothing was ever cached for gets an empty list and the
+// note, as before: there is no better answer to give, and nothing is
+// stamped, so the next read tries GitHub again.
+function degradedIssuesResult(owner, repo, cacheKey, note, retryMs) {
+  const stale = issuesCache.get(cacheKey);
+  if (!stale) {
+    return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note };
+  }
+  issuesCache.set(cacheKey, { ...stale, retryAt: Date.now() + retryMs, failedNote: note });
+  return { ...applyIssueOverlays(owner, repo, stale.result), note, stale: true };
+}
+
+// How long a failed refetch keeps serving the fallback before the ordinary
+// read path asks GitHub again: at least ISSUES_RETRY_AFTER_MS; longer when
+// GitHub says so with Retry-After (secondary rate limits — seconds) or, on
+// an exhausted primary budget, with x-ratelimit-reset (epoch seconds);
+// never past ISSUES_RETRY_AFTER_MAX_MS.
+function retryDelayMs(resp) {
+  let ms = ISSUES_RETRY_AFTER_MS;
+  const get = (name) => (resp && resp.headers && typeof resp.headers.get === 'function'
+    ? resp.headers.get(name)
+    : null);
+  const retryAfter = Number(get('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) ms = Math.max(ms, retryAfter * 1000);
+  const reset = Number(get('x-ratelimit-reset'));
+  if (get('x-ratelimit-remaining') === '0' && Number.isFinite(reset) && reset > 0) {
+    ms = Math.max(ms, reset * 1000 - Date.now());
+  }
+  return Math.min(ms, ISSUES_RETRY_AFTER_MAX_MS);
+}
+
 // Read-only fetch of a PUBLIC repo's OPEN issues (bot-PAT-authenticated
 // when configured, anonymous otherwise — publicFetchHeaders). Powers the
 // `list_github_issues` tool on all three agent surfaces (the Mayor's
@@ -1734,13 +1785,20 @@ function truncateIssueBodies(result, fullTextHint) {
 // NEVER throws and NEVER returns null: every failure mode resolves to a
 // well-formed `{ issues, truncatedList, note }` so callers can hand the
 // result straight back to the model without special-casing. Notes:
-//   - 'rate limited'        rate budget exhausted (returns stale cache
-//                           contents when we have them)
+//   - 'rate limited'        rate budget exhausted
 //   - 'issues unavailable'  404 (private or nonexistent — treated the same
 //                           since we assume public)
-//   - 'fetch failed'        network error / timeout / unexpected payload
-// Success returns `{ issues, truncatedList }` (no note). truncatedList is
-// true when the repo has more open issues than the page ceiling allows.
+//   - 'fetch failed'        network error / timeout / 5xx / unexpected
+//                           payload
+// A 'rate limited' or 'fetch failed' answer carries the LAST list this repo
+// did get — past its TTL or not — with `stale: true` beside the note; only
+// a repo nothing was ever cached for gets an empty list (#2261, see
+// degradedIssuesResult). Consumers that need a POSITIVE answer already
+// treat any note as "not confirmed" (the claim and close paths in
+// routes/issues.js, withoutClosedRequests in external-agent-tasks.js) and
+// are unchanged by that. Success returns `{ issues, truncatedList }` (no
+// note). truncatedList is true when the repo has more open issues than the
+// page ceiling allows.
 //
 // Every exit path runs through applyIssueOverlays (#192/#144): the
 // recently-created overlay is merged in and known-closed suppressions
@@ -1756,6 +1814,17 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
   const cached = issuesCache.get(cacheKey);
   if (!force && cached && cached.expiresAt > Date.now()) {
     return applyIssueOverlays(owner, repo, cached.result);
+  }
+  // #2261: a refetch that just failed is not retried on every read. Until
+  // its retryAt passes, the ordinary read path keeps serving the entry the
+  // failure fell back to — the board refreshes on every WS event, and every
+  // viewer's refresh retrying GitHub during a rate limit only lengthens it.
+  if (!force && cached && cached.retryAt > Date.now()) {
+    return {
+      ...applyIssueOverlays(owner, repo, cached.result),
+      note: cached.failedNote || 'fetch failed',
+      stale: true,
+    };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
@@ -1784,22 +1853,24 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
       // rather than returning an empty list that reads as "no issues".
       if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
         log.warn('github', 'Issue fetch rate-limited', { repo: cacheKey });
-        const stale = issuesCache.get(cacheKey);
-        if (stale) {
-          return { ...applyIssueOverlays(owner, repo, stale.result), note: 'rate limited' };
-        }
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'rate limited' };
+        return degradedIssuesResult(owner, repo, cacheKey, 'rate limited', retryDelayMs(resp));
       }
       if (resp.status === 404) {
         return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'issues unavailable' };
       }
+      // Anything else GitHub refuses — a 5xx, a 401 on a bad token, a 403
+      // that is a secondary rate limit (those keep x-ratelimit-remaining
+      // above zero and say Retry-After instead) — is the same outage from
+      // the board's side as a rate limit, and gets the same fallback (#2261).
       if (!resp.ok) {
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+        log.warn('github', 'Issue fetch refused', { repo: cacheKey, status: resp.status });
+        return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', retryDelayMs(resp));
       }
 
       const batch = await resp.json();
       if (!Array.isArray(batch)) {
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+        log.warn('github', 'Issue fetch returned an unexpected payload', { repo: cacheKey });
+        return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', ISSUES_RETRY_AFTER_MS);
       }
       for (const item of batch) {
         // The /issues endpoint returns PRs too; drop anything carrying a
@@ -1825,7 +1896,7 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
     return applyIssueOverlays(owner, repo, result);
   } catch (err) {
     log.warn('github', 'Issue fetch failed', { repo: cacheKey, err: err.message });
-    return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+    return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', ISSUES_RETRY_AFTER_MS);
   }
 }
 
@@ -1834,11 +1905,12 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
 // covering issues created directly on GitHub (where the platform gets no
 // create signal). Within the cooldown it serves the normal (cached) flow
 // with `refreshed: false`; otherwise it stamps the cooldown FIRST (so a
-// failing repo can't be hammered) and refetches. Deliberately not
-// invalidateIssuesCache()+fetch: deleting the entry would lose the
-// stale-cache fallback the rate-limited path depends on. Same
-// never-throws contract as fetchPublicIssues, plus `refreshed` and
-// `retryInMs` (ms until the next force is allowed).
+// failing repo can't be hammered) and refetches. Deliberately `force`
+// rather than invalidateIssuesCache()+fetch: the entry is the fallback a
+// failed refetch serves (#2261), and a forced read leaves it in place —
+// and skips the read path's failure backoff — until a fresh list replaces
+// it. Same never-throws contract as fetchPublicIssues, plus `refreshed`
+// and `retryInMs` (ms until the next force is allowed).
 async function refreshPublicIssues(owner, repo) {
   const key = normRepoKey(owner, repo);
   const now = Date.now();
@@ -2041,20 +2113,27 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
   return { comments: clipped, truncated: !!wasTruncated || droppedOlder };
 }
 
-// Drop the cached open-issues list for a repo so the next fetchPublicIssues
+// Expire the cached open-issues list for a repo so the next fetchPublicIssues
 // call re-reads from GitHub. Called from the merge path (routes/votes.js
 // checkAndMerge) when a PR that closed one or more issues lands, so the
 // "Open Issues" panel reflects the change on the next refresh instead of
 // waiting out ISSUES_CACHE_TTL_MS. Case-insensitive match on owner/repo
 // because GitHub treats those as case-insensitive while the cache key
 // preserves whatever casing the caller passed. No-op when the repo has no
-// cache entry. Returns true if an entry was deleted.
+// cache entry. Returns true if an entry was expired.
 function invalidateIssuesCache(owner, repo) {
   if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase() === target) {
-      issuesCache.delete(key);
+      // Expire, don't delete (#2261). The entry doubles as the fallback a
+      // failed refetch serves, and deleting it here — on every platform
+      // merge — left the next read with nothing to fall back to: one slow
+      // or refused GitHub answer, and the board painted "no open issues".
+      // A fresh object also drops any failure backoff, so the read after
+      // an invalidation always goes to GitHub.
+      const entry = issuesCache.get(key);
+      issuesCache.set(key, { result: entry.result, expiresAt: 0 });
       log.debug('github', 'Invalidated open-issues cache', { repo: key });
       return true;
     }
