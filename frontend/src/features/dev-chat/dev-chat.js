@@ -3576,6 +3576,125 @@ const DevChat = {
     }
   },
 
+  // ── #2241: a change starts when you send, not when you click ────────
+  //
+  // "New change" used to POST /sessions on the click and land the user in
+  // the chat it had just created. #1350 had already taken the BRANCH out of
+  // that POST — no ref is minted until something actually needs one — and
+  // this takes the ROW out of the click for the same reason: most of the
+  // sessions that got created were never used. They still spent a slot from
+  // the per-user active cap, still queued against the global one, still
+  // showed up in the session list and in Improve's "changes in progress",
+  // and the only way to be rid of one was to archive it by hand.
+  //
+  // So the screen comes up against a PLACEHOLDER — a client-only object
+  // that looks enough like a session row for the chat to render — and
+  // `sendMessage` creates the real row on the first send (see
+  // `_materializePendingSession`). Nothing reaches the server until then:
+  // arriving, reading the composer and leaving again writes nothing.
+  //
+  // The placeholder deliberately carries NO `id` and NO `user_id`:
+  //
+  //   * every automatic per-session request in this module already guards
+  //     on the id (the activity heartbeat, the draft reconcile, the
+  //     auto-resume, the status polls), so a null one is silence rather
+  //     than a round of requests against `/api/sessions/null/*`;
+  //   * `_ownsSession` is therefore false, which is what empties the
+  //     strip's ⋯ menu — Pause / Archive / Free worker are all
+  //     owner-scoped calls against a row that does not exist yet.
+  //
+  // `_sessionHeaderView` states the rest of the difference (no venue
+  // dropdown until the server has resolved one, see #1348).
+
+  // The route segment that stands for "a change that has not been sent
+  // yet": /app/<slug>/dev/sessions/new. It is where the ROUTER's session
+  // ref is allowed to be a word instead of an id (see App._normalizeTab,
+  // which holds the only other copy of this literal and is pinned against
+  // this one by tests/dev-new-change.test.js). Giving the screen a real URL
+  // is what lets the session route reach it at all: `switchTab` normalizes
+  // a session sub-tab with no ref straight back to the board.
+  NEW_SESSION_REF: 'new',
+
+  // A creation is in flight. Send and attach both go through
+  // `_materializePendingSession`, and a double-tap on either must not
+  // create two sessions and then talk to the second one.
+  _pendingCreateInFlight: false,
+
+  /** True while the open screen is a change that has not been sent yet. */
+  isPendingSession() {
+    return !!(DevChat.currentSession && DevChat.currentSession.pending);
+  },
+
+  // Put the unsent-change placeholder in `currentSession`. The caller
+  // (AppView.renderDevChatTab) renders the chat view against it exactly as
+  // it would against a freshly-created empty session.
+  //
+  // No `issueNumber`: the issue row's own "Create proposal" still creates up
+  // front, because it stashes its kickoff message as the new session's DRAFT
+  // (#609) and a draft is keyed by session id. Nothing else links a change to
+  // an issue at creation time, so the placeholder has no issue to carry.
+  startPendingSession(appSlug) {
+    DevChat.currentSession = {
+      pending: true,
+      id: null,
+      app_slug: appSlug,
+      status: 'active',
+      created_from_issue_number: null,
+      branch_name: null,
+      pr_number: null,
+      session_title: null,
+      spec_md: '',
+    };
+    DevChat.messages = [];
+    // A placeholder is a fresh start: never inherit the previous session's
+    // hand-off wizard, spec pane or fallback sentence. `_pickedHandoffVenue`
+    // reads `_devFlow`, so a stale one would swap this screen's composer for
+    // a launchpad pointed at a session that does not exist.
+    DevChat._devFlow = null;
+    DevChat._venueFallbackReason = null;
+    DevChat.specViewer.open = false;
+    DevChat.draftContent = '';
+    DevChat.pendingAttachments = [];
+    return DevChat.currentSession;
+  },
+
+  // Turn the placeholder into a real session. Returns true once
+  // `currentSession` is a server row (including when it already was), false
+  // when creation was refused — `createSession` has toasted the reason by
+  // then, so the caller just stands down and leaves the text in the box.
+  //
+  // Single-flight through `_pendingCreateInFlight`.
+  async _materializePendingSession() {
+    const pending = DevChat.currentSession;
+    if (!pending || !pending.pending) return !!pending;
+    if (DevChat._pendingCreateInFlight) return false;
+    DevChat._pendingCreateInFlight = true;
+    try {
+      const session = await DevChat.createSession(pending.app_slug);
+      if (!session) return false;
+      // The viewer can leave the screen while the POST is in flight. The row
+      // exists either way (it is theirs, and the list will show it); it just
+      // must not be adopted as the open session on top of whatever they
+      // navigated to.
+      if (DevChat.currentSession !== pending) return false;
+      DevChat.currentSession = session;
+      // From here the screen IS a session: it earns a URL of its own (in
+      // place of /dev/sessions/new, so Back does not return to an empty
+      // composer), the activity heartbeat, and the header's venue dropdown
+      // — the one thing that can only be stated once the server has
+      // resolved a venue (#1348).
+      if (typeof App !== 'undefined' && App.updateHash) {
+        App.updateHash({ replace: true, ref: session.id });
+      }
+      DevChat._startHeartbeat();
+      DevChat._repaintSessionHeader();
+      DevChat.renderSessionList();
+      return true;
+    } finally {
+      DevChat._pendingCreateInFlight = false;
+    }
+  },
+
   // Re-sync the open session's server-side status and, if it was auto-
   // paused while we held it open, resume it. This closes the stale-client
   // gap behind "Active session not found": the sweeper flips an idle
@@ -4111,6 +4230,20 @@ const DevChat = {
     // uploaded — each carries a server id + objectUrl for image thumbs).
     const sentAttachments = (attachments || []).filter((a) => a && a.id);
     if (!message && !sentAttachments.length) return;
+    // #2241: THIS is the moment a change starts existing. The screen may be
+    // the unsent placeholder `startPendingSession` put up, in which case the
+    // row (and, on the turn it runs, the branch) is created now — after the
+    // "is there anything to send?" checks above, so an empty submit still
+    // creates nothing. A refusal (cap reached, capacity, no repo) has
+    // already been toasted by `createSession`; put the text back and stand
+    // down rather than arming a turn with nowhere to send it.
+    if (DevChat.isPendingSession()) {
+      const started = await DevChat._materializePendingSession();
+      if (!started) {
+        DevChat._restoreComposer(message, { onlyIfEmpty: true });
+        return;
+      }
+    }
     // #138: a send is a user gesture — unlock the AudioContext and lazily
     // request OS-notification permission now, so the completion chime /
     // notification can fire when this turn finishes (browsers only allow
@@ -6981,6 +7114,8 @@ const DevChat = {
       // stays until the first message lands, so it is persistent rather than
       // a toast.
       empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
+      // #2241: …and nothing has been created for it yet.
+      unsent: !!(session && session.pending),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and
@@ -8289,6 +8424,28 @@ const DevChat = {
   _sessionHeaderView() {
     const session = DevChat.currentSession;
     const s = session || {};
+    // #2241: an unsent change has nothing for this strip to state but its
+    // own name. No PR (the "New change" caption is already the resting
+    // state of that slot), no lifecycle pill, no ⋯ menu — every row behind
+    // it is an owner-scoped call against a row that does not exist — and no
+    // venue dropdown: which venue a session builds in is resolved by the
+    // server when the row is created (#1348), and the honest thing to do
+    // before that is say nothing rather than guess. It appears on the paint
+    // straight after the first send, which is where #1348 always put it.
+    if (s.pending) {
+      return {
+        sessionId: null,
+        busy: false,
+        title: 'New change',
+        branch: '',
+        pr: null,
+        prTitle: '',
+        newChangeTitle: 'Nothing is created until you send your first message.',
+        life: null,
+        venue: null,
+        actions: [],
+      };
+    }
     return {
       sessionId: s.id || null,
       // Streamlined Concept: the strip's Building chip. `_composerBusy` is
@@ -8514,13 +8671,21 @@ const DevChat = {
     };
   },
 
-  // Spin up a fresh session (new branch → new PR) for the same app and
-  // open it. Reuses createSession's per-user active-session cap (whatever
-  // the server resolves for this viewer — see `caps`) + error alerting. Intentionally does NOT carry over Claude's memory or
-  // the spec — a new change starts clean on its own branch.
+  // Open a fresh change for the same app. Intentionally does NOT carry over
+  // Claude's memory or the spec — a new change starts clean on its own
+  // branch.
+  //
+  // #2241: it no longer creates the session here either. This banner and
+  // Improve's "New change" row are two doors onto the same act, so they
+  // lead to the same place — /dev/sessions/new, the unsent-change screen —
+  // and the row is created by the first send (see `startPendingSession`).
+  // The per-user cap and its refusal message move with it: they are the
+  // server's answer to the POST, and the POST is the first send now.
   // The button's own busy state. It was `btn.disabled` + `btn.textContent`
   // written onto the element by id — a second author on a node the banners
-  // component renders now, so it is a published flag instead.
+  // component renders now, so it is a published flag instead. It now covers
+  // the navigation rather than a creation round trip — `switchTab` awaits
+  // the destination's own loads, so the button still has something to say.
   _newChangePending: false,
 
   async startNewChange() {
@@ -8529,17 +8694,14 @@ const DevChat = {
     if (!slug) return;
     DevChat._newChangePending = true;
     DevChat._publishBanners();
-    const session = await DevChat.createSession(slug);
-    if (!session) {
+    try {
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', DevChat.NEW_SESSION_REF, 'sessions');
+      }
+    } finally {
       DevChat._newChangePending = false;
       DevChat._publishBanners();
-      return;
     }
-    DevChat._newChangePending = false;
-    await DevChat.openSession(session.id, { userOpened: true });
-    DevChat.renderChatView();
-    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-    if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
   },
 
   // Every path that changes banner-relevant state — a behind_main update, a
@@ -8878,7 +9040,12 @@ const DevChat = {
     return {
       kind: 'session',
       embedded: !!document.getElementById('dc-view')?.dataset?.changeWorkspace,
-      change: window.AppView?._topicViewFor ? {
+      // #2241: an unsent change is not a card yet — there is no row for
+      // `_topicViewFor` to describe, so the embedded workspace's head has
+      // nothing to draw. (The placeholder only ever reaches the full-screen
+      // session route, where `embedded` is false anyway; this keeps the two
+      // from drifting apart if that changes.)
+      change: (!DevChat.currentSession.pending && window.AppView?._topicViewFor) ? {
         item: DevChat.currentSession,
         ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
 
@@ -9333,6 +9500,17 @@ const DevChat = {
   async _addFiles(fileList) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
     DevChat._setAttachError(null);
+    // #2241: an upload is stored against a session row, so an unsent change
+    // has to become one first. This is the ONE thing other than the send
+    // itself that starts a change, and deliberately so: the upload happens
+    // the moment a file is picked (see the upload-before-send note above),
+    // so the alternative is holding the bytes in memory and a second,
+    // parallel upload path. Picking a file is already composing the
+    // message; merely opening the screen still writes nothing.
+    if (DevChat.isPendingSession()) {
+      const started = await DevChat._materializePendingSession();
+      if (!started) return; // createSession has said why
+    }
     const sid = DevChat.currentSession.id;
     const L = DevChat.ATTACH_LIMITS;
     for (const file of Array.from(fileList)) {
