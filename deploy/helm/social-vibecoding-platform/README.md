@@ -118,6 +118,44 @@ optional for chart installation. Register
 updated chart and sync the encrypted values through Argo CD; the existing
 secrets checksum rolls out credential changes.
 
+For GitHub and X waitlist OAuth, merge these fields into the same
+SOPS-encrypted `platform.secrets.sops.yaml` file's existing `secrets` block:
+
+```yaml
+secrets:
+  waitlistGithubClientId: "<GitHub OAuth client ID>"
+  waitlistGithubClientSecret: "<GitHub OAuth client secret>"
+  waitlistXClientId: "<X OAuth client ID>"
+  waitlistXClientSecret: "<X OAuth client secret>"
+```
+
+With `secrets.create: true`, these map to `WAITLIST_GITHUB_CLIENT_ID`,
+`WAITLIST_GITHUB_CLIENT_SECRET`, `WAITLIST_X_CLIENT_ID`, and
+`WAITLIST_X_CLIENT_SECRET` in the platform Secret, imported through the
+Deployment's `envFrom`. Each provider requires both its ID and secret; empty
+defaults leave that provider disabled. Waitlist OAuth does not fall back to
+the account-linking credential fields above. Register
+`https://<config.domain>/waitlist/connect/github/callback` and
+`https://<config.domain>/waitlist/connect/x/callback` on the respective OAuth
+apps. With `secrets.create: false`, provide the environment-variable keys in
+`secrets.existingSecret`. Publish the updated chart and sync the encrypted
+values through Argo CD; the existing secrets checksum rolls out changes to
+chart-managed credentials.
+
+To override the waitlist OAuth callback origin, set this non-secret value in
+the infra repository's plaintext `platform.yaml`:
+
+```yaml
+config:
+  waitlistOauthOrigin: "https://onhomeroom.com"
+```
+
+This maps to `WAITLIST_OAUTH_ORIGIN` in the platform Deployment. The empty
+default preserves the application's canonical-origin fallback. Supply an
+origin including the scheme, with no path or trailing slash; the application
+appends `/waitlist/connect/<provider>/callback`. When overriding it, register
+the resulting callback URLs with the OAuth providers.
+
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
 `OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the

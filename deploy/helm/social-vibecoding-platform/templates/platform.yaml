@@ -102,6 +102,7 @@ spec:
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
+            - {name: WAITLIST_OAUTH_ORIGIN, value: {{ .Values.config.waitlistOauthOrigin | quote }}}
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
             - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
