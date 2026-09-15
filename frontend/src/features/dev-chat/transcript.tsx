@@ -702,6 +702,18 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
     && s.rows.some((r, i) => i > latestAt && r.t === 'msg' && r.who === 'user');
   return (
     <>
+      {/* #1942: what a new session is for, where the conversation will be.
+          Centered in the pane, the way a new chat opens in Claude or
+          ChatGPT, and gone the moment the first message arrives. */}
+      {s.empty ? (
+        <div id="dc-empty-state" className="dc-empty-state">
+          <div className="dc-empty-title">What should this session change?</div>
+          <p className="dc-empty-text">
+            Describe it in the box below. The agent works it out with you, builds it, and
+            gives you a preview to try before anything goes to a vote.
+          </p>
+        </div>
+      ) : null}
       {s.rows.map((r, i) => {
         if (r.t !== 'changes') return <Row key={r.key} r={r} embedded={embedded} />;
         if (i !== latestAt) return <Row key={r.key} r={r} embedded={embedded} historical />;
