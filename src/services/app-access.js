@@ -54,6 +54,10 @@ const NON_SECRET_APP_COLUMNS = [
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
   'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
   'main_check_resumed_sha', 'main_check_paused_sha',
+  // #2253: the per-app database storage cap's state. Operational, not
+  // secret: the admin console shows all of it.
+  'db_size_bytes', 'db_size_measured_at', 'db_storage_cap_bytes',
+  'db_storage_frozen_at', 'db_storage_warned_at', 'db_storage_grace_until',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

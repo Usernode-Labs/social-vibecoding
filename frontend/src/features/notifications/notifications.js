@@ -1795,6 +1795,32 @@ function rowView(n) {
   // screen, which is the thing tests/settings-mobile-push.test.js bars
   // elsewhere for good reason.
   if (n.kind === 'app_health') {
+    // #2253: the app storage cap speaks through this channel too, and its
+    // two tokens carry copy that says what happened and what it means for
+    // the app. The app name leads the line on purpose: this row is only
+    // ever about one app, and "has used most of its storage" with nothing
+    // in front of it reads as the platform talking about itself.
+    const appName = n.appName || 'Your app';
+    if (n.detail === 'storage_warn') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        ...headline('App storage', `${appName} has used most of its storage`),
+      };
+    }
+    if (n.detail === 'storage_full') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: 'App storage',
+        segments: [
+          { t: 'strong', v: `${appName} is out of storage.` },
+          { t: 'text', v: ' New data cannot be saved until an admin raises its limit or allows time to clean up' },
+        ],
+      };
+    }
     const APP_HEALTH_COPY = { deploy_failed: 'a deploy failed' };
     return {
       ...base,

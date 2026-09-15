@@ -1421,6 +1421,102 @@ SELECT n.nspname || '.' || c.relname,
   return { scrubbed };
 }
 
+// ─── Per-app database storage cap (#2253) ───────────────────────────────
+//
+// Uploaded files have had a per-app ceiling since app-files.js grew
+// PER_APP_CAP; each app's own Postgres database had none, and a single app
+// writing rows in a loop could fill the volume every production app and
+// the platform itself share. services/app-storage-cap.js owns the policy
+// (the cap, the warning line, the freeze/thaw hysteresis); these are the
+// only Postgres-touching halves of it, kept here beside the naming scheme
+// and the SAFE_IDENT guard they depend on.
+//
+// Measurement is one catalog query, run as the admin user against the
+// platform's own database: pg_database_size() reads the data directory
+// and needs no connection to the app's database. Staging clones and
+// staging templates come back too, since they share the `app_` prefix,
+// and the sweep is what excludes them (isStagingCloneDb /
+// isStagingTemplateDb), so a preview never counts against the app it was
+// cloned from.
+const APP_DB_SIZES_SQL =
+  "SELECT datname, pg_database_size(datname) FROM pg_database "
+  + "WHERE datname LIKE 'app\\_%' AND NOT datistemplate";
+
+// `-At` output is one `datname|bytes` line per database. Anything that is
+// not exactly that shape (a NOTICE that leaked onto stdout, a blank line, a
+// name SAFE_IDENT would refuse to act on) is dropped rather than turned
+// into a NaN measurement, because a bad row here becomes a freeze decision.
+function parseDatabaseSizes(stdout) {
+  const out = [];
+  for (const line of String(stdout || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('|');
+    if (parts.length !== 2) continue;
+    const [dbName, raw] = parts;
+    if (!SAFE_IDENT.test(dbName) || !/^\d+$/.test(raw)) continue;
+    const bytes = Number(raw);
+    if (!Number.isSafeInteger(bytes)) continue;
+    out.push({ dbName, bytes });
+  }
+  return out;
+}
+
+async function listAppDatabaseSizes({ execute = execInDb } = {}) {
+  const stdout = await execute(APP_DB_SIZES_SQL, { tuplesOnly: true });
+  return parseDatabaseSizes(stdout);
+}
+
+// app_<slug>_stgtmpl — the redacted copy ensureStagingTemplate keeps warm.
+function isStagingTemplateDb(name) {
+  const value = String(name || '');
+  return value.length > STAGING_TEMPLATE_SUFFIX.length && value.endsWith(STAGING_TEMPLATE_SUFFIX);
+}
+
+// Freeze or thaw one app's database by flipping its OWNER ROLE's default
+// transaction mode. Every connection the app opens authenticates as that
+// role (connectionUrl above), so `default_transaction_read_only = on`
+// makes each of its transactions read-only from the first statement:
+// SELECTs keep working, an INSERT/UPDATE/DELETE fails with "cannot execute
+// ... in a read-only transaction". The setting is a role DEFAULT, which a
+// session only picks up when it connects, hence the terminate that
+// follows: pooled connections the app is holding open would otherwise keep
+// writing until they happened to reconnect. The app's pool reconnects on
+// its own; a request in flight at that instant sees one failed query,
+// which the freeze was going to fail anyway.
+//
+// A default, not a privilege: app code that explicitly runs `SET
+// default_transaction_read_only = off` gets its writes back. That is the
+// deliberate trade. This is a fair-use ceiling that stops a runaway app
+// from filling the shared volume, not a security boundary, and a
+// REVOKE-based freeze would have to walk every table the app creates in
+// both directions. The admin console shows who is frozen, and an app that
+// went out of its way to override the setting would be visible there.
+//
+// The name is validated twice on purpose: SAFE_IDENT, as everywhere else in
+// this module, and lowercase, because the role was created unquoted (see
+// createDatabase) and so was folded to lowercase by the server. Quoting it
+// here keeps the statement exact; quoting a mixed-case name would address a
+// role that does not exist.
+async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } = {}) {
+  if (!SAFE_IDENT.test(dbName) || dbName !== dbName.toLowerCase()) {
+    throw new Error(`setAppDatabaseWritable: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  const role = ownerRoleName(dbName);
+  const quoted = `"${role}"`;
+  await execute(writable
+    ? `ALTER ROLE ${quoted} RESET default_transaction_read_only`
+    : `ALTER ROLE ${quoted} SET default_transaction_read_only = on`);
+  await execute(
+    'SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
+    + `WHERE usename = '${role}' AND pid <> pg_backend_pid()`
+  );
+  log.info('db-manager', writable ? 'App database writes restored' : 'App database frozen read-only', {
+    dbName, role,
+  });
+  return { dbName, role, writable: !!writable };
+}
+
 module.exports = {
   appDbName,
   stagingDbName,
@@ -1453,4 +1549,9 @@ module.exports = {
   STAGING_TEMPLATE_MAX_AGE_MS,
   STAGING_TEMPLATE_HARD_MAX_AGE_MS,
   _templateIdleForTest: templateIdle,
+  // Per-app database storage cap (#2253).
+  parseDatabaseSizes,
+  listAppDatabaseSizes,
+  setAppDatabaseWritable,
+  isStagingTemplateDb,
 };

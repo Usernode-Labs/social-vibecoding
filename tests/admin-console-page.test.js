@@ -129,7 +129,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges', 'admin-node',
     'admin-overview', 'admin-push', 'admin-rollover', 'admin-staging-reap',
-    'admin-status', 'admin-topochain', 'admin-users',
+    // #2253: App storage, the per-app database cap's console section.
+    'admin-status', 'admin-storage', 'admin-topochain', 'admin-users',
   ], 'every section module is imported by the island');
 });
 

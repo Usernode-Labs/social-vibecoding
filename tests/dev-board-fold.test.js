@@ -648,7 +648,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // #2266 adds one deterministic check for the password-reset completion
   // state on the login screen. That makes the reviewed total 664.
-  assert.equal(DAPP.tests.length, 664);
+  // 663 → 664: independently on main, #2253 adds one check on the admin
+  // console's App storage section, read through `?demo=1#admin/storage` so
+  // the preview shows the fixed demo rows (one frozen, one nearly full)
+  // rather than a cloned apps table with no figures in it.
+  // 664 → 665: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 663 → 664 alone,
+  // with #2266's check above; main independently took the SAME 663 → 664
+  // with #2253's check above. One +1 and one +1 against a shared 663 is 665.
+  assert.equal(DAPP.tests.length, 665);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
