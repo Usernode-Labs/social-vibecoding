@@ -507,7 +507,9 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
       n: d.shippedWeek,
       label: 'shipped this week',
       cls: d.shippedWeek ? 'dev-ws-dash-good' : undefined,
-      title: d.partial ? 'At least this many: the merged history is longer than the page loaded.' : undefined,
+      title: d.partial
+        ? 'At least this many: the merged history is longer than the page loaded.'
+        : 'This calendar week, counted from Monday 00:00 UTC.',
     },
     {
       key: 'votes',
@@ -2292,12 +2294,20 @@ export function DevWorkshop(): ReactNode {
           doing, what the group needs, what nobody has picked up. A
           half-finished session of theirs was somewhere down inside a theme,
           under a heading about the theme. */}
-      {v.mine && v.mine.rows.length ? (
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What you are working on</span>
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same. */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                You have no work going on. Pick up an open item below, or start something from the + button.
+              </p>
+            ) : null}
             {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
               <CardRowView
                 key={row.key}

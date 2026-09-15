@@ -11244,7 +11244,12 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-radius: 16px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-.dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+/* #2193: the linked-issue rows are flex (chip + one truncating title line),
+   laid out by their own utilities. A `display: block` here outranked the
+   rows' `flex`, so the title's nowrap ran past the card on a phone and
+   scrolled it sideways. Only the wrap for stray long tokens stays. */
+.dev-change-issues { min-width: 0; }
+.dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
 .dev-conversation-tabs {
@@ -13543,6 +13548,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
+/* #1918: the challenge cards (the Challenges tab's grid and Home's
+   Challenges block) are role="button" now, so the kit's scale + dim press
+   reaches them. They sit in scrolled lists too, so on touch they take the
+   same 120ms hold-back as the Dev board above. */
+@media (hover: none) {
+  .tc-se-card[role="button"]:active,
+  .home-challenge-card[role="button"]:active {
+    transition: transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
+.tc-se-card[role="button"]:focus-visible,
+.home-challenge-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
