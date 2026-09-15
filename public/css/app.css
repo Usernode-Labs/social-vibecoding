@@ -3288,6 +3288,88 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row + .browse-row:hover { border-color: var(--accent-light); }
 }
 
+/* ── The phone directory as ONE PANE (#1919) ────────────────────────────
+   Below md the search bar, the Sort control and the list they narrow wear
+   the Workshop's working pane (`.dev-ws-pane`, further down): one frosted
+   sheet (`--dc-sheet-fill` over `--dc-frost`), a 22px radius and a hairline
+   ring, with the head pinned at the top and the rows sliding under its
+   frost. Before this the bar was a wallpaper-coloured strip and the list a
+   plain white rounded-2xl card below it, which is the pre-pane shape every
+   other recent screen has moved off.
+
+   PAGE-SCOPED CLASSES, deliberately not the Workshop's own. The two panes
+   are the same treatment today and should be allowed to move separately;
+   sharing `.dev-ws-pane-*` would also drag the Workshop's sticky offset and
+   its stage-board width rules onto a screen that has neither.
+
+   NO WRAPPER, so no single element to ring. The head (#browse-search-bar)
+   and the body (#browse-list) are siblings under #browse-screen — the head
+   sticks against the SCREEN's scroller, and wrapping both in a pane would
+   put a new ancestor between the head and the thing it sticks in. So the
+   ring is a `border` split across the two parts (the head keeps no bottom
+   edge, the body no top edge) rather than the Workshop's inset box-shadow,
+   which cannot leave one side out. Same margins on both parts is what makes
+   the two half-rings meet as one.
+
+   The parts paint the SAME fill over the SAME backdrop, for the reason the
+   Workshop's note gives: a fill on a wrapper plus a fill on the sticky head
+   stacks 50% on 50% and draws a lighter band across the controls.
+
+   THE NOTE IS THE BODY WHEN THE LIST IS EMPTY. A search that matches nothing
+   leaves #browse-list with no children and #browse-empty with the sentence;
+   the empty list collapses (`:empty`) and the note takes the body's bottom
+   half of the ring instead, so the pane still closes. And while neither is
+   drawn — the directory is still loading, or the load failed and the error
+   card is the body's only child — the head closes itself (`:has`, the same
+   way the shell's body rules already read screen state).
+
+   Written as one max-width query matching the md breakpoint's lower edge
+   (767px), the mirror of the min-width query above — keep the two in step
+   if the container's breakpoint ever moves. */
+@media (max-width: 767px) {
+  #browse-screen .browse-pane-head,
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note {
+    background-color: var(--dc-sheet-fill);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+    border: 1px solid var(--app-sheet-line);
+  }
+  #browse-screen .browse-pane-head {
+    margin: 12px 12px 0;
+    padding: 8px 10px;
+    border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+  }
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note {
+    margin: 0 12px 12px;
+    border-top: 0;
+    border-radius: 0 0 22px 22px;
+    /* The rows' hover fill and the hairlines would otherwise poke out of
+       the bottom corners. Nothing in the body positions itself outside it
+       (the "+" menu the Workshop pane keeps `overflow: visible` for has no
+       counterpart here). */
+    overflow: hidden;
+  }
+  #browse-screen .browse-pane-body:empty { display: none; }
+  #browse-screen .browse-pane-note { padding: 12px 14px 16px; }
+  /* Nothing below the head to close the pane: round it off on its own. */
+  #browse-screen .browse-pane-head:has(+ #browse-list-level > .browse-pane-body:empty + .browse-pane-note.hidden) {
+    border-bottom: 1px solid var(--app-sheet-line);
+    border-radius: 22px;
+  }
+}
+/* Where there is no backdrop-filter the fill is all there is, and 50% white
+   with rows sliding crisply under the pinned head is the rendering fault the
+   frost prevents. All three parts go opaque together, because they must stay
+   the same colour as each other above all. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #browse-screen .browse-pane-head,
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
+}
+
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
    positioned against the trigger rect). Plain CSS rather than
@@ -5341,7 +5423,12 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   text-align: center;
 }
 .dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
-.dc-cc-attached[open] > .dc-cc-attached-summary > .dc-cc-attached-chevron::before {
+/* #1944: a descendant, not a child. The dev chat's card puts the chevron
+   inside its head row (`.dc-cc-head`, since the chips), while the shared
+   transcript page still draws it as the summary's own child. The
+   direct-child form matched only the second, so the dev chat's glyph sat
+   on ▸ whether the card was open or closed and the toggle looked dead. */
+.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-attached-chevron::before {
   content: '\25BE'; /* ▾ */
 }
 .dc-cc-attached-summary:hover .dc-cc-attached-chevron {

@@ -499,7 +499,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the #2161 check above; main independently took the SAME 621 to 625 with
   // the four entries listed above it. One +1 and one +4 against a shared 621
   // is 626.
-  // 626 → 627: challenge illustrations, one check that a Home challenge card
+  // 626 → 627: the #1919 check on the all-apps directory, pinning the phone
+  // pane's two parts — the search head and the list body — as siblings with
+  // the rows inside the body.
+  // 627 → 628: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
   // 627 → 629: #1910 adds two checks on the restyled create-app dialog: the
   // form view on `/#create` (the name card and the segmented rail) and the
@@ -512,12 +515,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 629 → 631: #1962's two checks that sending a saved draft leaves the
   // composer empty, one on the send and one on the screen the drafts list
   // is actually painted on.
-  // 629 → 633: the tallies above were computed on either side of a merge and
-  // cannot be read as one sequence. This branch took 627 → 629 alone, with
-  // the #1910 checks above; main independently took the same 627 → 631 with
-  // the waitlist-link and saved-drafts checks above. One +2 and one +4
-  // against a shared 627 is 633.
-  assert.equal(DAPP.tests.length, 633);
+  // 629 → 631: independently, #1944 adds two checks on the coding-run card
+  // opened through `?shot=cc-log-open` — the chevron still in the head row
+  // of an OPEN card (the flip rule has to reach it there), and the log panel
+  // under it.
+  // 631 → 636: the tallies above were computed on either side of two
+  // independent merges and do not compose into one arithmetic sequence: this
+  // branch's #1910 pair and main's #1944 pair each landed against a slightly
+  // different shared base than the other. The number that matters is what
+  // the merged manifest actually holds, so this entry counts it directly
+  // rather than re-deriving it: 636.
+  assert.equal(DAPP.tests.length, 636);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

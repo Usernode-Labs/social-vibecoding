@@ -3656,6 +3656,12 @@
       "expectText": "Staging demo app — letter tile"
     },
     {
+      "name": "The all-apps directory is one pane: the search head over the list body, with the rows inside it (#1919)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
+      "expectText": "Sort"
+    },
+    {
       "name": "Shared report link serves the report document without a session",
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
@@ -3774,6 +3780,16 @@
       "name": "The coding run is a card and its facts are chips",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
+    },
+    {
+      "name": "#1944: an open coding-run card keeps its chevron in the head row",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-head > .dc-cc-attached-chevron"
+    },
+    {
+      "name": "#1944: an open coding-run card shows its log panel",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > pre.dc-cc-attached-log"
     },
     {
       "name": "Capture routes past the first sit behind a disclosure",
