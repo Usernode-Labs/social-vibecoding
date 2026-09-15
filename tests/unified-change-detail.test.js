@@ -309,6 +309,15 @@ test('server-side change link producers use the same detail route', () => {
   }
 });
 
+test('declared Improve checks expect real session rows on the full change route', () => {
+  const manifest = JSON.parse(fs.readFileSync('dapp.json', 'utf8'));
+  const check = manifest.tests.find((item) =>
+    String(item.name || '').includes('Real sessions still render beside it'));
+  assert.ok(check, 'the mixed work-order/session fixture remains covered');
+  assert.match(check.expectSelector, /\/dev\/proposals\//);
+  assert.doesNotMatch(check.expectSelector, /\/dev\/sessions\//);
+});
+
 test('the same detail URL resolves native/imported underway work and changes lifecycle after promotion', () => {
   const av = context();
   av._mySessions = [{ ...failing }];

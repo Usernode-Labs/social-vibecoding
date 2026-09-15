@@ -3829,9 +3829,9 @@
       "expectSelector": "#improve-panel [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
-      "name": "Real sessions still render beside it, each on its own destination (#1417)",
+      "name": "Real sessions still render beside it on the full change destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+      "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
     },
     {
       "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
