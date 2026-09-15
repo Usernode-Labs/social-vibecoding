@@ -181,7 +181,7 @@ export function WaitingScreen() {
               href="#landing"
               className="flex h-12 w-full items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 px-5 text-[17px] font-semibold transition-colors text-white"
             >
-              Browse public apps while you wait
+              Use apps while you wait
             </a>
             <button
               id="waiting-logout"

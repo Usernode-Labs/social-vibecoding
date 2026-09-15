@@ -147,9 +147,9 @@ test('the asset backend runs the platform image and is not mistaken for an app',
   const container = deployment.spec.template.spec.containers[0];
   assert.equal(container.image, 'registry.example/social-vibecoding@sha256:abc',
     'the image comes from the running platform Deployment, so the assets track the platform');
-  // Dockerfile.kubernetes uses node:22-alpine with USER node. Kubernetes
-  // needs its numeric UID to enforce runAsNonRoot, and this platform image
-  // launches Node directly (it has no CNB launcher).
+  // Dockerfile.kubernetes uses node:22-alpine at UID 1000. Keep the pod
+  // identity explicit and aligned; this platform image launches Node directly
+  // (it has no CNB launcher).
   assert.deepEqual(deployment.spec.template.spec.securityContext, {
     runAsNonRoot: true,
     runAsUser: 1000,
