@@ -160,10 +160,43 @@ async function migrate(config) {
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
+  await backfillProposalIssuerAssignments(pool);
   await migrateWaitlistCountryCodes(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// Proposal authorship predates proposal-level assignee votes, so existing
+// open work may have an owner but no assignment. Seed only genuinely missing
+// proposal fields: any explicit proposal-level vote wins, even when it names
+// somebody other than the issuer. Headless work is sponsored rather than
+// issued by its user_id, and maintenance proposals belong to the platform,
+// so neither is assigned by this human-work backfill.
+async function backfillProposalIssuerAssignments(pool) {
+  const result = await pool.query(
+    `INSERT INTO topic_attribute_votes
+       (app_id, target_type, target_ref, field, value, user_id)
+     SELECT cs.app_id, 'proposal', cs.id, 'assignee', BTRIM(u.username), cs.user_id
+       FROM chat_sessions cs
+       JOIN users u ON u.id = cs.user_id
+      WHERE cs.status IN ('active', 'paused', 'promoted', 'merging')
+        AND cs.is_headless = FALSE
+        AND cs.source IS DISTINCT FROM 'maintenance'
+        AND NULLIF(BTRIM(u.username), '') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM topic_attribute_votes tav
+           WHERE tav.app_id = cs.app_id
+             AND tav.target_type = 'proposal'
+             AND tav.target_ref = cs.id
+             AND tav.field = 'assignee'
+        )
+     ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`
+  );
+  if (result.rowCount) {
+    log.info('db', 'Backfilled proposal issuer assignments', { count: result.rowCount });
+  }
+  return result.rowCount || 0;
 }
 
 // The schema apply is dozens of `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` /
@@ -12516,6 +12549,7 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
 };

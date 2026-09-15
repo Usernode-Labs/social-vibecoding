@@ -38,23 +38,6 @@ function importGithubClient() {
   return usesMockGithubForImports() ? githubMock : github;
 }
 
-// #1647: importing a pull request is an explicit "I'm taking this" action,
-// just like starting native proposal work. Record that ownership through the
-// same vote service as the assignee picker so proposal cards, filters and the
-// PM view all observe one source of truth. This deliberately writes against
-// the proposal id (not a linked issue): an imported PR belongs to its
-// importer even when its origin issue was previously assigned to somebody
-// else.
-async function selfAssignImportedProposal(pool, appId, sessionId, user) {
-  const username = typeof user?.username === 'string' ? user.username.trim() : '';
-  if (!user?.id || !username) {
-    throw new Error('Importing user has no assignable identity');
-  }
-  await topicAttrs.castVote(
-    pool, appId, 'proposal', sessionId, 'assignee', username, user.id
-  );
-}
-
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
 // page URL by _demoQS in app-view.js). Sibling of stagingMockIssues in
@@ -2604,7 +2587,7 @@ function voteRoutes(config) {
             importSummary,
           ]
         ));
-        await selfAssignImportedProposal(
+        await topicAttrs.selfAssignProposal(
           importClient, app.id, inserted[0].id, req.user
         );
         await importClient.query('COMMIT');
@@ -6003,6 +5986,9 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ]
   );
   const revertSessionId = revertRows[0].id;
+  await topicAttrs.selfAssignProposal(
+    pool, session.app_id, revertSessionId, decider
+  );
 
   // Patch the original's revert_of_session_id pointer to actually
   // point at the revert session (was set to its own id as a claim
@@ -6132,7 +6118,6 @@ module.exports = {
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,
-  selfAssignImportedProposal,
   recordVote,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has

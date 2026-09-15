@@ -30,6 +30,7 @@ const log = require('./logger');
 const github = require('./github');
 const appManifest = require('./app-manifest');
 const events = require('./events');
+const topicAttrs = require('./topic-attributes');
 
 function renamePrTitle(newName) {
   return `Rename to "${newName}"`;
@@ -113,6 +114,12 @@ async function createManifestPR(config, pool, app, actor, opts) {
     [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
   );
   const sessionId = sessRows[0].id;
+  // Legacy rename-issue migration can only attribute very old rows to the
+  // fallback label "Homeroom" (no user id). Interactive proposal issuers have
+  // a real identity and receive the normal proposal-level assignment.
+  if (actor.id) {
+    await topicAttrs.selfAssignProposal(pool, app.id, sessionId, actor);
+  }
 
   // #788: stamp the explicit-approval flag directly. We KNOW what this
   // PR mutates (opts.explicitApproval is set by the caller that built

@@ -13,6 +13,7 @@ const proposalUpdate = require('../services/proposal-update');
 const prImportSync = require('../services/pr-import-sync');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
+const topicAttrs = require('../services/topic-attributes');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -949,6 +950,7 @@ function proposalHandoffRoutes(config) {
         ]
       );
       const sessionId = created[0].id;
+      await topicAttrs.selfAssignProposal(pool, app.id, sessionId, req.user);
 
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
@@ -1202,6 +1204,7 @@ function proposalHandoffRoutes(config) {
               replacementSession ? replacementSession.id : null, input.externalAgent]
           );
           created = rows[0];
+          await topicAttrs.selfAssignProposal(client, app.id, created.id, req.user);
           await snapshotSpec(client, created.id, input.spec);
           await insertHistoryRows(client, created.id, input.history);
           await client.query('COMMIT');

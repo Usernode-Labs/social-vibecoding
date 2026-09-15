@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { selfAssignImportedProposal } = require('../src/routes/votes');
+const { selfAssignProposal } = require('../src/services/topic-attributes');
 
 function recordingPool() {
   const calls = [];
@@ -24,7 +24,7 @@ function recordingPool() {
 test('an imported proposal stores the importer as its assignee', async () => {
   const pool = recordingPool();
 
-  await selfAssignImportedProposal(
+  await selfAssignProposal(
     pool, 41, 3778, { id: 73, username: '  Bruno  ' }
   );
 
@@ -41,7 +41,7 @@ test('an imported proposal cannot succeed without an assignable identity', async
   const pool = recordingPool();
 
   await assert.rejects(
-    () => selfAssignImportedProposal(pool, 41, 3778, { id: 73, username: '   ' }),
+    () => selfAssignProposal(pool, 41, 3778, { id: 73, username: '   ' }),
     /no assignable identity/
   );
   assert.equal(pool.calls.length, 0, 'no partial assignee write is attempted');
@@ -55,7 +55,7 @@ test('the import handler assigns before it reports or broadcasts success', () =>
   const end = source.indexOf("router.post('/api/apps/:slug/pr-import/_mock/advance'");
   const handler = source.slice(start, end);
 
-  const assignment = handler.indexOf('await selfAssignImportedProposal(');
+  const assignment = handler.indexOf('await topicAttrs.selfAssignProposal(');
   const commit = handler.indexOf("await importClient.query('COMMIT')");
   const response = handler.indexOf('res.json({ ok: true, sessionId');
   const broadcast = handler.indexOf('pushSessionUpdate({ action: promote');

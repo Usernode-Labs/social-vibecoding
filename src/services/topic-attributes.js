@@ -470,6 +470,36 @@ async function castVote(pool, appId, targetType, ref, field, value, userId, link
   return listOptions(pool, appId, targetType, ref, field, userId, linkedIssues);
 }
 
+// A person who starts proposal-shaped work owns it by default. Authorship
+// lives on chat_sessions.user_id, while the cards and PM filters read this
+// table, so session creation must bridge the two records explicitly.
+//
+// This is deliberately INSERT-ONLY across the whole proposal field, rather
+// than castVote's per-user upsert. Creation retries and repair/backfill passes
+// must never reintroduce the issuer after somebody has made an explicit
+// proposal-level assignment (including assigning the work to somebody else).
+// Callers use the same transaction as their session INSERT where they already
+// have one, and otherwise await this before broadcasting or returning success.
+async function selfAssignProposal(pool, appId, sessionId, user) {
+  const username = typeof user?.username === 'string' ? user.username.trim() : '';
+  if (!user?.id || !username) {
+    throw new Error('Proposal issuer has no assignable identity');
+  }
+  const result = await pool.query(
+    `INSERT INTO topic_attribute_votes
+       (app_id, target_type, target_ref, field, value, user_id)
+     SELECT $1, $2, $3, $4, $5, $6
+      WHERE NOT EXISTS (
+        SELECT 1 FROM topic_attribute_votes
+         WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
+           AND field = $4
+      )
+     ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+    [appId, 'proposal', sessionId, 'assignee', username, user.id]
+  );
+  return result.rowCount > 0;
+}
+
 // Withdraw the caller's own vote for a (target, field), then return the
 // refreshed option list (same shape as castVote/listOptions) so the FE can
 // repaint chip + card in one round-trip. Only removes THIS user's row — the
@@ -512,5 +542,6 @@ module.exports = {
   summarizeForProposals,
   listOptions,
   castVote,
+  selfAssignProposal,
   clearVote,
 };

@@ -2372,6 +2372,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [app.id, req.user.id, issueNumber,
          pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
+      await topicAttrs.selfAssignProposal(pool, app.id, rows[0].id, req.user);
 
       log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
       events.record(pool, {
@@ -2715,6 +2716,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
       const session = rows[0];
+      await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
 
       // Copy the conversation so the Mayor (and the new owner) see the full
       // auto-session context. Costs are zeroed — the cloner didn't pay for
@@ -4060,6 +4062,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, forkTitle]
       );
       const session = rows[0];
+      await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
 
       // Copy the conversation THROUGH THE SANITISER — the fork must never
       // carry content the forker wasn't allowed to read. Done row-by-row in
