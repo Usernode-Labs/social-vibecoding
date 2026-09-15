@@ -281,12 +281,19 @@ test('a declared check reads the reply box off a board card', () => {
   const checks = DAPP.tests.filter((t) => /dev-kanban[\s\S]*dev-feed-thread/.test(t.expectSelector || ''));
   assert.equal(checks.length, 1, 'exactly one check makes this claim');
   const c = checks[0];
-  // `cards=open` because the board folds its cards and the thread only
-  // exists inside an unfolded one; `col=` because at phone width the board
-  // shows ONE column, so a check without it passes or fails on the runner's
-  // viewport (the same trap #621 fell into — see dev-workshop.test.js).
+  // `cards=open` because the board folds its cards and the thread only exists
+  // inside an unfolded one. The ROUTE is the one every other `#dev-kanban`
+  // check already runs on, and that is not incidental: the first attempt at
+  // this check used `#app/<slug>/board` with a `col=` narrowing, a pairing
+  // nothing else in the manifest uses, and it was the only one of 662 to
+  // fail on staging. A declared check is not the place to try a new route.
   assert.match(c.path, /[?&]cards=open(&|#|$)/, 'the state the thread exists in');
-  assert.match(c.path, /[?&]col=issues(&|#|$)/, 'and the column the issue card is in');
+  const proven = new Set(DAPP.tests
+    .filter((t) => t !== c && /#dev-kanban[ .[]/.test(t.expectSelector || ''))
+    .map((t) => t.path));
+  assert.ok(proven.size >= 2, 'there are established #dev-kanban checks to follow');
+  assert.ok(proven.has(c.path),
+    `the route is one other #dev-kanban checks already run on (have: ${[...proven].join(', ')})`);
   assert.match(c.expectSelector, /textarea\[aria-label="Reply to this item"\]/);
 
   // And the chain it walks, resolved against the markup the real components
