@@ -243,7 +243,14 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // EVERY row this query returns and asserts the delivery count matches
   // default_enabled, so the two new kinds gain real coverage from the same
   // assertion the existing nineteen have.
-  assert.equal(policy.length, 22, 'the seed carries the reviewed closed set');
+  // 22 → 27 with #1374's five (proposal_vote, pr_merged, vote_digest,
+  // issue_opened, app_health). Two of that five are only PART of the delta:
+  // the same change restored connector_submitted and agent_awaiting_input,
+  // which the seed INSERTed and the DELETE reaper below it then removed on
+  // every boot, so they were push-disabled in the database while the service
+  // policy said otherwise. This count running against a real server is what
+  // proves they survive now.
+  assert.equal(policy.length, 27, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

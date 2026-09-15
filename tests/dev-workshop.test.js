@@ -3435,6 +3435,71 @@ test('the since-list controls have a declared check on Current status, through a
   assert.equal(check.expectText, 'Show older');
 });
 
+test('Clear is live once the walk has crossed the line, and folds what it revealed (#2240)', () => {
+  // The state the request is about, and it is the one `Show older` invites
+  // most often: a reader with NOTHING new. #2183 kept that button live on a
+  // quiet day on purpose — "a control that is sometimes there is one nobody
+  // learns to reach for" — so the first press has no new row to spend and
+  // falls straight through to the seen side. What came out was a wall of
+  // rows the reader had already read and no way back up: Clear folds the
+  // walk, and Clear was disabled, because new rows were the only thing it
+  // gated on. Nothing about the press needed changing — only when it is
+  // offered.
+  const AppView = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now()) } });
+  seed(AppView);
+  const v = AppView._workshopView();
+  assert.ok(v.since, 'the line exists, so the strip is drawn');
+  assert.equal(v.since.rows.length, 0, 'and nothing is above it');
+  assert.ok(v.since.seen.rows.length > 0, 'while the whole list is below it, to walk into');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-since-none=""/, 'the strip opens on "nothing has changed"');
+  assert.match(html, /data-ws-since-more=""(?! disabled)/, 'with the walk live');
+  assert.match(html, /data-ws-since-clear="" disabled=""/,
+    'and Clear still disabled BEFORE the walk — there is nothing on screen to fold yet');
+
+  // The walk is state, which renderToStaticMarkup cannot press, so the
+  // predicate is pinned in the source the way the rest of the walk is.
+  assert.match(WORKSHOP, /disabled=\{!v\.since\.rows\.length && !seenShown\}/,
+    'live while there are new rows to dismiss OR a walk below the line to fold');
+  // ONE handler, unchanged: it does not branch on which of the two made it
+  // live, and folding the seen side is already what it did.
+  assert.match(WORKSHOP, /const clearSince = \(\) => \{[\s\S]*?setSinceShown\(SINCE_FIRST\);\s*setSeenShown\(0\);/);
+
+  // With nothing new the baseline move is inert rather than special-cased:
+  // the line is already past every row, so `Clear` on a quiet day changes
+  // what is drawn and nothing else.
+  AppView._workshopClearSince('demo-app', v.since.through);
+  const after = AppView._workshopView();
+  assert.equal(after.since.rows.length, 0, 'still nothing new');
+  assert.equal(after.since.seen.total, v.since.seen.total, 'and not one row moved sides');
+});
+
+test('?shot=since-seen is the URL that reaches the walked state, for the check and the capture', () => {
+  // A declared check loads a URL and asserts a selector — it cannot press a
+  // button — and the before/after screenshots the voters see are shot the
+  // same way. So the deep link has to land IN the walked state, which is
+  // `?shot=board-unfold`'s problem and takes its shape: drive the real
+  // control on an interval, stop on the mark it produces, and stand aside
+  // the moment a human touches the page.
+  assert.match(APP_VIEW_SRC, /if \(shot === 'since-seen'\) \{\s*AppView\._workshopSince\[slug\] = Date\.now\(\);/,
+    'the line is seeded at NOW, so every row is on the seen side');
+  const block = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("if (shot === 'since-seen') {"));
+  const body = block.slice(0, block.indexOf('\n      }\n') + 1);
+  assert.match(body, /document\.querySelector\('\[data-ws-since-seen\]'\)/,
+    'it stops on the "Seen before" mark, not after a fixed number of presses');
+  assert.match(body, /button\[data-ws-since-more\]:not\(\[disabled\]\)/, 'and presses the real control');
+  assert.match(body, /e\.isTrusted/, 'and lets go on the first real gesture');
+  assert.ok(!/localStorage/.test(body), 'nothing is written to storage — a human is not told they were here');
+
+  const check = dapp.tests.find((t) => /data-ws-since-clear\]:not\(\[disabled\]\)/.test(t.expectSelector || ''));
+  assert.ok(check, 'declared');
+  assert.match(check.path, /^\/\?demo=1&shot=since-seen#app\/usernode-2d5619\/workshop$/,
+    'the Current status tab, which is where the strip lives');
+  assert.match(check.expectSelector, /\[data-ws-since\]:has\(> \[data-ws-since-seen\]\) > \.dev-ws-since-head > button\[data-ws-since-clear\]:not\(\[disabled\]\)/,
+    'the seen mark AND a live Clear — either alone would pass on the old behaviour');
+  assert.equal(check.expectText, 'Clear');
+});
+
 test('the composer shows its model picker and send circle at every width', () => {
   // It used to open expanded above the breakpoint and stay one line on a
   // phone until the field was tapped. The tap was the problem: a picker

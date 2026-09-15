@@ -23,6 +23,8 @@ export interface FeedThreadMessage {
   userId?: number | null;
   content: string;
   createdAt: string;
+  /** #2236: 'agent' when the connector posted it on the author's behalf. */
+  postedVia?: 'agent' | null;
 }
 
 export interface FeedThreadState {
