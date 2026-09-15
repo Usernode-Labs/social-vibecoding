@@ -506,7 +506,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // link's own field on the more-to-do screen — one that its value is the
   // marketing URL and carries no hash route, one that the copy affordance
   // is still beside it.
-  assert.equal(DAPP.tests.length, 629);
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  assert.equal(DAPP.tests.length, 631);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
