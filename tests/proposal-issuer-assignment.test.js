@@ -51,6 +51,8 @@ test('self-assignment stores the trimmed issuer on the proposal target', async (
   ]);
   assert.match(pool.calls[0].sql, /WHERE NOT EXISTS/);
   assert.match(pool.calls[0].sql, /field = \$4/);
+  assert.match(pool.calls[0].sql, /\$2::varchar\(16\)/,
+    'shared placeholders carry explicit PostgreSQL types');
   assert.match(pool.calls[0].sql, /ON CONFLICT .* DO NOTHING/s);
 });
 

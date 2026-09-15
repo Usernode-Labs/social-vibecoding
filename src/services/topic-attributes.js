@@ -488,7 +488,8 @@ async function selfAssignProposal(pool, appId, sessionId, user) {
   const result = await pool.query(
     `INSERT INTO topic_attribute_votes
        (app_id, target_type, target_ref, field, value, user_id)
-     SELECT $1, $2, $3, $4, $5, $6
+     SELECT $1::integer, $2::varchar(16), $3::integer,
+            $4::varchar(16), $5::text, $6::integer
       WHERE NOT EXISTS (
         SELECT 1 FROM topic_attribute_votes
          WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
