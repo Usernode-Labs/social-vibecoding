@@ -3644,6 +3644,12 @@
       "expectText": "Staging demo app — letter tile"
     },
     {
+      "name": "The all-apps directory is one pane: the search head over the list body, with the rows inside it (#1919)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
+      "expectText": "Sort"
+    },
+    {
       "name": "Shared report link serves the report document without a session",
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
