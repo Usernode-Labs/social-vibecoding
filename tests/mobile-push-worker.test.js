@@ -120,6 +120,23 @@ test('eligible delivery sends one contextual bound message and marks it sent', a
   });
 });
 
+test('new per-app notification kinds keep their context through provider handoff (#2273)', async () => {
+  const { worker, calls } = harness({
+    row: delivery({
+      kind: 'proposal_vote',
+      push_category: 'proposal_alerts',
+      source_username: 'alice',
+      detail: 'no',
+    }),
+  });
+  await worker.processDelivery(JOB);
+  assert.deepEqual(calls.sent[0].notification, {
+    title: '@alice voted no on "Fix login redirect loop" · MyPage',
+    body: 'Open the proposal to review their vote',
+  });
+  assert.equal(calls.finished[0].status, 'sent');
+});
+
 test('the recipient unread total rides on the message as the icon badge', async () => {
   // #1445: countUnread runs per send, for the notification's recipient,
   // and lands as aps.badge (iOS) + notificationCount (Android launchers).
