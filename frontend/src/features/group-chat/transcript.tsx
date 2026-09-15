@@ -524,6 +524,9 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
+          {msg.agent ? (
+            <span className="gc-msg-agent" title={`Posted by an agent on ${msg.username}'s behalf`}>via agent</span>
+          ) : null}
           {msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}

@@ -6551,6 +6551,22 @@ span.gc-vote-btn-icon { cursor: default; }
 /* "edited" marker shown next to a message's timestamp once it has been
    edited. Muted like the time; the full edit timestamp is in its title
    tooltip (revealed on hover/tap). */
+/* #2236: "via agent" beside the author of a comment an agent posted on their
+   behalf (connector / CLI). An outlined pill rather than the italic "edited"
+   note: it answers who wrote it, which should be seen, not discovered. */
+.gc-msg-agent,
+.dev-feed-msg-agent {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+}
+
 .gc-msg-edited {
   font-size: 11px;
   color: var(--text-muted);

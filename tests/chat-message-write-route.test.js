@@ -363,3 +363,36 @@ test('POST maps canonical race-time access and thread failures safely', async ()
     server.close();
   }
 });
+
+
+// ─── #2236: who wrote it ──────────────────────────────────────────────
+
+test('a browser (cookie) post is not marked as an agent\u2019s, and the body cannot claim it', async () => {
+  reset();
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { req.user = { id: 5, username: 'alice' }; next(); });
+  app.use(chatRoutes({}));
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'typed by me', via: 'agent', metadata: { via: 'agent' } }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(handleCalls[0][1].via, null, 'cookie auth: no agent stamp, whatever the body says');
+    assert.deepEqual(Object.keys(handleCalls[0][2]).sort(), ['content', 'type'],
+      'the body never forwards a via or metadata of its own');
+  } finally {
+    server.close();
+  }
+});
+
+test('the canonical handler stamps via only from the server-side client (#2236)', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'ws.js'), 'utf8');
+  const chat = src.slice(src.indexOf("case 'chat': {"), src.indexOf('const insertSql', src.indexOf("case 'chat': {")));
+  assert.match(chat, /const byAgent = client\.via === 'agent';/);
+  assert.match(chat, /if \(byAgent\) metadata\.via = 'agent';/);
+  assert.doesNotMatch(chat, /msg\.via/, 'nothing the socket sends can set it');
+});

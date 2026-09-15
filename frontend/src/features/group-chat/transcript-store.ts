@@ -137,6 +137,8 @@ export interface TranscriptMessage {
   mine: boolean;
   /** Full timestamp for the "edited" marker's tooltip, or null if never edited. */
   editedTitle: string | null;
+  /** #2236: an agent wrote this on the author's behalf (connector / CLI). */
+  agent?: boolean;
   unread: boolean;
   bookmarked: boolean;
   /**
