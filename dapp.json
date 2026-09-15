@@ -4242,6 +4242,12 @@
       "name": "#2241: the unsent change has a live composer, and no controls for a session that does not exist",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
       "expectSelector": "#dc-session-header:not(:has(#dc-venue-select)):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
+    },
+    {
+      "name": "Waitlist connect callback shows a status page, not the home page, and says when a link has expired",
+      "path": "/waitlist/connect/github/callback?state=staging-check-unknown&code=staging-check",
+      "expectSelector": "#waitlist-connect-status[data-state=\"expired\"]",
+      "expectText": "This link has expired"
     }
   ],
   "governance": {

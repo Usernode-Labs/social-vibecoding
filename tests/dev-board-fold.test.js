@@ -665,7 +665,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with #2266's check above; main independently took the SAME 663 to 665
   // with the #1508 and #2253 checks above. One +1 and one +2 against a
   // shared 663 is 666.
-  assert.equal(DAPP.tests.length, 666);
+  //
+  // 666 → 667: the waitlist connect callback's status page, loaded with a
+  // state no server has minted, so it renders the "link has expired"
+  // outcome without needing provider credentials on the preview.
+  assert.equal(DAPP.tests.length, 667);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
