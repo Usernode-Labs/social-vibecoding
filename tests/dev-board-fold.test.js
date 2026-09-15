@@ -645,7 +645,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // #2260 adds one deterministic check for the verified-account replacement
   // confirmation state in Connectors. That makes the reviewed total 663.
-  assert.equal(DAPP.tests.length, 663);
+  //
+  // #2266 adds one deterministic check for the password-reset completion
+  // state on the login screen. That makes the reviewed total 664.
+  assert.equal(DAPP.tests.length, 664);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

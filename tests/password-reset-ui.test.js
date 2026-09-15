@@ -102,6 +102,57 @@ test('the reset view posts token + new password to the confirm endpoint', () => 
   assert.match(tsx, /reset-confirm-password/, 'confirm input exists');
 });
 
+test('the reset view is a form, so Enter and its submit button take the same path', () => {
+  const tsx = read(LOGIN_TSX);
+  const start = tsx.indexOf('<form\n              id="reset-password-view"');
+  const form = tsx.slice(start, tsx.indexOf('</form>', start));
+  assert.ok(start > 0, 'the reset view is a form');
+  assert.match(form, /onSubmit=\{\(e\) => \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?void onResetConfirm\(\)/);
+  assert.match(form, /id="btn-reset-confirm"[\s\S]{0,120}?type="submit"/);
+  assert.doesNotMatch(form, /onClick=\{onResetConfirm\}/,
+    'one submit seam prevents button and Enter behavior from drifting');
+});
+
+test('a successful reset clears secrets, replaces history and opens login without auto-login', () => {
+  const tsx = read(LOGIN_TSX);
+  const start = tsx.indexOf('const onResetConfirm =');
+  const handler = tsx.slice(start, tsx.indexOf('// ── The invite link', start));
+  for (const field of ['resetNewPassword', 'resetConfirmPassword', 'password']) {
+    assert.match(handler, new RegExp(`${field}\\.current\\.value = ''`), `${field} is cleared`);
+  }
+  assert.match(handler, /st\.resetToken = null/);
+  assert.match(handler, /history\.replaceState\(null, '', screens\?\.deepLinkUrl\?\.\('#login'\) \|\| '\/#login'\)/,
+    'the spent token is replaced, not left behind a pushed login entry');
+  assert.match(handler, /screens\.show\('login'\)/,
+    'the legacy router state and React sub-view move together');
+  assert.match(handler, /setPasswordResetComplete\(true\)/);
+  assert.match(handler, /requestAnimationFrame\(\(\) => username\.current\?\.focus\(\)\)/);
+  assert.doesNotMatch(handler, /finishLogin\(/,
+    'resetting still requires a fresh login, matching the server contract');
+});
+
+test('the login destination carries a durable accessible success notice', () => {
+  const tsx = read(LOGIN_TSX);
+  assert.match(tsx, /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
+  assert.match(tsx, /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
+    'success uses the established green auth treatment, not the error red');
+  assert.match(tsx, /Password changed/);
+  assert.match(tsx, /signed out everywhere/);
+  assert.match(tsx, /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
+    'an ordinary later visit does not retain the one-time result');
+});
+
+test('the completed state is directly checkable without consuming a reset token', () => {
+  const manifest = JSON.parse(read('dapp.json'));
+  const check = manifest.tests.find((item) => String(item.name || '').includes('completed password reset'));
+  assert.ok(check, 'the final success state has a declared browser check');
+  assert.equal(check.path, '/?shot=password-reset-complete#login');
+  assert.match(check.expectSelector, /#reset-password-view\.hidden/);
+  assert.match(check.expectSelector, /#login-reset-success/);
+  assert.match(read('public/js/app.js'), /shot !== 'password-reset-complete'/,
+    'the signed-in capture user is held on the anonymous auth screen');
+});
+
 test('a refused token gets the generic expired-link message with a way back', () => {
   const tsx = read(LOGIN_TSX);
   assert.match(tsx, /invalid or has expired/i);

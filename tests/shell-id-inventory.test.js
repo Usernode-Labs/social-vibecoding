@@ -274,6 +274,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2266: password-reset completion ─────────────────────────────
+  'login-reset-success': '#2266: the durable success notice shown on the login form after a completed email password reset. The reset form is terminal now, so its old inline status has no successful state to render.',
   // ── #1911: the create-app dialog is three steps ───────────────────
   'create-step-indicator': 'The "Step N of 3" line under the create dialog\'s title. The dialog used to show every choice on one page; it is a start step (from scratch or from a repo), a details step and an access step now, unfolding in the same card, and this names how far it has unfolded.',
   'create-next': 'The create dialog\'s Next pill, which unfolds the access step under the details. It runs the guards the old single page ran at submit, one step earlier. Hidden once the last step is showing (app.css keys it off #create-card[data-step]), when Create takes its place.',

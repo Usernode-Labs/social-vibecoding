@@ -3539,6 +3539,12 @@
       "expectText": "a reset link is on its way"
     },
     {
+      "name": "A completed password reset returns to login with a durable success notice (#2266)",
+      "path": "/?shot=password-reset-complete#login",
+      "expectSelector": "#auth-login-screen:not(.hidden):has(#reset-password-view.hidden) #login-form:not(.hidden) #login-reset-success.bg-green-100:not(.hidden)",
+      "expectText": "Password changed"
+    },
+    {
       "name": "Email-code sign-in routes a password account to the password form (#1586)",
       "path": "/?shot=email-code-password-account#login",
       "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-error:not(.hidden)",
