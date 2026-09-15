@@ -258,9 +258,13 @@ function chatRoutes(config) {
       }
 
       const { handleMessage } = require('../services/ws');
+      // #2236: a comment posted through a connector or CLI token was written
+      // by an agent on the user's behalf. Set HERE, from how the request
+      // authenticated, never from the body — a browser cannot claim it and
+      // an agent cannot shed it.
       const result = await handleMessage(
         pool,
-        { user: req.user, appId: app.id, appSlug: app.slug },
+        { user: req.user, appId: app.id, appSlug: app.slug, via: req.cliAuthenticated ? 'agent' : null },
         { type: 'chat', content: body.content, ...(thread ? { thread } : {}) }
       );
       if (!result?.ok) {

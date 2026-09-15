@@ -23,6 +23,8 @@ export interface FeedThreadMessage {
   userId?: number | null;
   content: string;
   createdAt: string;
+  /** #2236: an agent wrote this on the author's behalf (connector / CLI). */
+  agent?: boolean;
 }
 
 export interface FeedThreadState {

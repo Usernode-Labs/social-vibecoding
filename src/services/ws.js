@@ -533,8 +533,12 @@ async function handleMessage(pool, client, msg) {
         attRows = attIds.map((id) => found.find((r) => r.id === id));
       }
 
-      const metadata = (quote || attRows.length) ? {} : null;
+      const byAgent = client.via === 'agent';
+      const metadata = (quote || attRows.length || byAgent) ? {} : null;
       if (quote) metadata.quote = quote;
+      // #2236: stamped from the server-side client (routes/chat.js sets it
+      // for connector and CLI callers); nothing a socket sends reaches it.
+      if (byAgent) metadata.via = 'agent';
       if (attRows.length) {
         // Render-time summary rides in the message row's metadata so
         // history loads and broadcasts need no join; the bytea rows are

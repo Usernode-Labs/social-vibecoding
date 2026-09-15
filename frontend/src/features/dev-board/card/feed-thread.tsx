@@ -82,6 +82,8 @@ export function feedThreadPreview(rows: any[]): {
       userId: r.user_id != null ? Number(r.user_id) : null,
       content: String(r.content || ''),
       createdAt: r.created_at,
+      // Only when it applies, so a typed reply's shape is what it always was.
+      ...(r.metadata && r.metadata.via === 'agent' ? { agent: true } : {}),
     })),
     total: human.length,
   };
@@ -113,6 +115,11 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
       <div className="dev-feed-msg-bubble">
         <div className="dev-feed-msg-head">
           <span className="dev-feed-msg-author">{m.author}</span>
+          {/* #2236: said beside the name, because the name alone reads as the
+              person typing it. */}
+          {m.agent ? (
+            <span className="dev-feed-msg-agent" title={`Posted by an agent on ${m.author}'s behalf`}>via agent</span>
+          ) : null}
           <time className="dev-feed-msg-time" dateTime={m.createdAt} title={when.title}>{when.text}</time>
         </div>
         {/* Plain text, never markdown and never innerHTML. This is the one

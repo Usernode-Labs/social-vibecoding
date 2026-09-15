@@ -621,6 +621,8 @@ const GroupChat = {
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
+      // #2236: posted by an agent on the author's behalf (connector / CLI).
+      agent: kind === 'message' && meta.via === 'agent',
       unread: !!msg.has_unread_notification,
       bookmarked: !!(msg.saved || msg.bookmarked),
       canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
