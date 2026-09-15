@@ -501,7 +501,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // is 626.
   // 626 → 627: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
-  assert.equal(DAPP.tests.length, 627);
+  // 627 → 629: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  assert.equal(DAPP.tests.length, 629);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
