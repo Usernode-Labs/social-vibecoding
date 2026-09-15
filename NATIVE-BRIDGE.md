@@ -255,6 +255,27 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Native history gestures (additive; `setBackNavigationEnabled`)
+
+`setBackNavigationEnabled({ enabled: boolean })` enables WebKit's native
+back/forward navigation gestures. Only WebKit clients implementing this method
+advertise the capability; callers must feature-detect it. This is a privileged
+top-frame call, so embedded apps cannot enable the shell's gesture.
+
+The platform header publishes `true` only for a visible Back arrow with a
+destination, outside embedded App-tab content. Workshop and other Dev screens
+remain eligible. Home icons and hidden headers publish `false`. WebKit still
+requires an existing history entry: a cold deep link with no previous page
+keeps its clickable header destination but cannot swipe back through history.
+The native flag also allows WebKit's standard forward gesture where forward
+history exists. Android's existing system-back handling is unchanged.
+
+The Flutter companion defaults the flag to disabled, revalidates the document
+before applying each request, serializes changes, and resets it on document
+load and disposal. The header republishes on `pageshow`, including restoration
+from the back/forward cache. Both the platform update and a native release
+containing this capability are required; older clients keep their behavior.
+
 ### Appearance (additive; `setAppearance`)
 
 #### `setAppearance({ scheme, background })` → resolves when stored

@@ -3226,8 +3226,10 @@ const Home = {
     }
     // The server computes this from the shared contributor definition and
     // rechecks it on DELETE. Keep the full-admin fallback for older payloads
-    // already in memory while a deployment rolls over.
-    if (user.canAdminWrite || app.can_delete) {
+    // already in memory while a deployment rolls over. #2161: the creator of
+    // a shared app (delete_block 'shared' is only ever handed to them) keeps
+    // the entry, because the dialog is where the refusal is explained.
+    if (user.canAdminWrite || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     return items;

@@ -506,6 +506,51 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 // drawer's pinned Invites section (driven by listPendingInvites below,
 // the authoritative "still actionable" source) — this row is the badge
 // bump + the history entry that remains after the invite resolves.
+// #2161: someone with the standing to delete a shared app tried to, and the
+// route refused the plain delete (the creator of a shared app, or a full
+// admin who has not yet acknowledged the other contributors). The other
+// contributors are told so the intent is not a surprise later. Unread-dedup
+// per (recipient, app): a retried click while the first row is unread does
+// not add a second one. `source_user_id` is the person who tried.
+async function createAppDeleteAttemptNotifications(pool, { appId, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!appId || !ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     SELECT r.user_id, $1, $2, 'app_delete_attempted'
+       FROM unnest($3::int[]) AS r(user_id)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = r.user_id AND n.app_id = $1
+           AND n.kind = 'app_delete_attempted' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, created_at`,
+    [appId, actorId ?? null, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
+// #2161: a full admin deleted a shared app over the other contributors'
+// heads. By the time this runs the app row is gone, and notifications.app_id
+// cascades with it, so the row carries NO app reference: the name rides in
+// `detail` (widened to 255 for this, schema.sql) and the slug is only logged.
+// `source_user_id` is the admin who deleted it.
+async function createAppDeletedNotifications(pool, { appName, appSlug, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!ids.length) return [];
+  const name = String(appName || appSlug || 'an app').slice(0, 255);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT r.user_id, NULL, $1, 'app_deleted', $2
+       FROM unnest($3::int[]) AS r(user_id)
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [actorId ?? null, name, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
 async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
   if (!recipientId || !appId) return [];
   const { rows } = await pool.query(
@@ -980,6 +1025,8 @@ module.exports = {
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
   createPrProposedNotifications,
+  createAppDeleteAttemptNotifications,
+  createAppDeletedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
   createApproverInviteNotification,

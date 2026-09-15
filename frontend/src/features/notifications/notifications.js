@@ -628,6 +628,14 @@ const Notifications = {
       App.showCreateModal();
       return;
     }
+    // #2161: the app this row is about no longer exists, so there is nothing
+    // to open. Home is the one screen that is still true.
+    if (item.kind === 'app_deleted') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+      else window.location.hash = '#home';
+      return;
+    }
     if (item.kind === 'app_quota_requested') {
       Notifications._dismissSheetForNav();
       App.navigateToAdminConsole('users');
@@ -1606,6 +1614,29 @@ function rowView(n) {
       // a rendering fault rather than as attribution.
       appLine: 'Messages',
       ...copy,
+    };
+  }
+
+  // #2161: the two deletion rows. An attempt still has its app (the meta
+  // line names it, the click opens it); a completed deletion has no app row
+  // left, so the name rides in `detail` and the meta line says Account.
+  if (n.kind === 'app_delete_attempted') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Tried to delete this shared app', null),
+    };
+  }
+  if (n.kind === 'app_deleted') {
+    return {
+      ...base,
+      appLine: 'Account',
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Deleted a shared app you contributed to', n.detail || 'an app'),
     };
   }
 

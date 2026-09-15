@@ -32,12 +32,13 @@
  * existing node's style; it never re-creates it.
  */
 
-import { memo, useRef, type ReactNode } from 'react';
+import { memo, useEffect, useRef, type ReactNode } from 'react';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
+import { publishAppTone } from './app-tone.js';
 
 /**
  * The permission-policy contract stays here; the sandbox policy is shared with
@@ -164,6 +165,18 @@ export function AppFrameHost(): ReactNode {
   // #app-view's own `hidden` is toggled by app.js's visibility seam and the same
   // discipline applies all the way down this subtree.
   useHiddenClass(hostRef, !state.active);
+
+  // #1945: the bar above the frame takes the app's tone. The page colour the
+  // app's bridge reports (`background`) is turned into `data-app-tone` on
+  // <html> — a node React does not own, written from an effect the same way
+  // the head's theme module writes `.dark` there — and cleared the moment the
+  // frame is parked or dropped. `useEffect`, not a layout effect: the tone is
+  // a repaint of the strip, never something a first paint has to wait for,
+  // and it must not run in the prerender pass at all (the shipped document
+  // carries no tone, exactly like the empty store).
+  useEffect(() => {
+    publishAppTone(document, state, window);
+  }, [state.slug, state.active, state.background]);
 
   return (
     <div

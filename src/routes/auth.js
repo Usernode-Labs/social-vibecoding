@@ -218,15 +218,41 @@ function authRoutes(config) {
         );
         for (const row of rows) candidates.push({ row, matchedBy: 'email' });
       }
+      let usernameMatched = false;
       {
         const { rows } = await pool.query(
           'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE username = $1',
           [identifier]
         );
         for (const row of rows) {
+          usernameMatched = true;
           if (!candidates.some((c) => c.row.id === row.id)) {
             candidates.push({ row, matchedBy: 'username' });
           }
+        }
+      }
+      // #1861: a rename must not lock anyone out. POST /api/me/username
+      // retires the old handle into `username_history` (services/usernames.js)
+      // instead of releasing it, and every handle resolver reads through that
+      // ledger, but sign-in did not: the name a person had signed in with for
+      // months answered "Invalid credentials" the moment they changed it. So
+      // when no live account wears the handle, a RETIRED one signs its owner
+      // in. Retired handles are globally unique and never re-issued, so this
+      // is at most one extra candidate (the compare budget above holds) and
+      // the password still decides. Exact match, like the live lookup:
+      // usernames stay case-sensitive at sign-in.
+      if (!usernameMatched) {
+        const { rows: retired } = await pool.query(
+          `SELECT u.id, u.username, u.password, u.is_admin, u.admin_readonly
+             FROM username_history h
+             JOIN users u ON u.id = h.user_id
+            WHERE h.username = $1
+            LIMIT 1`,
+          [identifier]
+        );
+        const row = retired[0];
+        if (row && !candidates.some((c) => c.row.id === row.id)) {
+          candidates.push({ row, matchedBy: 'retired_username' });
         }
       }
 

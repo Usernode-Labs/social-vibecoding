@@ -487,6 +487,13 @@
       "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
     },
     {
+      "key": "MARKETING_BASE_URL",
+      "group": "Waitlist",
+      "required": false,
+      "default": "https://onhomeroom.com",
+      "description": "Origin of the public marketing site that owns the /waitlist page a shared invite link lands on. A referral link is built as <this>/waitlist?ref=<code>, so the code still comes back to the join endpoint as invite_code. Not the app's own origin: invites are opened by people who have never seen the product. Point it at your own site when self-hosting."
+    },
+    {
       "key": "WAITLIST_FOLLOW_X_URL",
       "group": "Waitlist",
       "required": false,
@@ -683,6 +690,11 @@
       "path": "/?demo=1",
       "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer > .home-panel-expand[aria-expanded=\"false\"]",
       "expectText": "See all 7 challenges"
+    },
+    {
+      "name": "Challenges: a Home card with an illustration draws its artwork (Iteration 03)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-challenges-section .home-challenge-card img[src^=\"/illustrations/challenges/\"]"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
@@ -989,6 +1001,16 @@
       "expectSelector": "#app-iframe[sandbox=\"\"]:not([src])"
     },
     {
+      "name": "Inside a dark app the bar takes the app's tone: night ground under the light shell (#1945)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",
@@ -1143,6 +1165,18 @@
       "path": "/?shot=create-quota#create",
       "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"available\"]",
       "expectText": "1 of 2 app slots used"
+    },
+    {
+      "name": "Create-app dialog wears the pane styling: a rounded white name card and a pill rail whose segments are full-width (#1910)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
+      "expectText": "Who can build it"
+    },
+    {
+      "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
+      "path": "/?shot=create-import#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"import\"][data-import-state=\"idle\"] #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectText": "GitHub repo URL"
     },
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
@@ -1667,6 +1701,19 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The shared invite link lands on the marketing waitlist page, not the in-app route",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist?ref=\"]:not([value*=\"#waitlist\"])",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The invite link keeps its copy affordance beside it",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist\"] ~ #more-invite-copy",
+      "expectText": "Bring someone you",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
       "path": "/#leaderboard/users",
       "expectText": "Top users"
@@ -1751,6 +1798,12 @@
       "name": "The Dev tab lands on the Workshop, which leads with its number tiles",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"shipped\"] ~ [data-ws-dash-cell=\"unclaimed\"] > b"
+    },
+    {
+      "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182)",
+      "path": "/?demo=1&shot=mine-empty#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectText": "You have no work going on."
     },
     {
       "name": "Proposal view shows the How-voting-works help button",
@@ -2029,6 +2082,12 @@
       "expectText": "Ask"
     },
     {
+      "name": "#2172: one card past the last Needs-you item is a summary that says that's it, with the way back",
+      "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-cta",
+      "expectText": "See what changed this week"
+    },
+    {
       "name": "The view strip marks Workshop as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
@@ -2052,6 +2111,12 @@
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
+    },
+    {
+      "name": "Since your last visit carries a Clear on its heading and a Show older that is drawn even when nothing is new (#2183)",
+      "path": "/?demo=1&shot=since-visit#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since] > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
+      "expectText": "Show older"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2144,6 +2209,16 @@
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
+    },
+    {
+      "name": "Sending a saved draft leaves the composer empty (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form #dc-input[data-shot-sent=\"1\"]:placeholder-shown"
+    },
+    {
+      "name": "…on the same screen where the drafts list is actually painted (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send"
     },
     {
       "name": "Saved-drafts header says the list follows you across devices (#940)",
@@ -2836,6 +2911,12 @@
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
+      "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
+      "path": "/?shot=app-settings#app/usernode-2d5619",
+      "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked",
+      "expectText": "core platform app"
+    },
+    {
       "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
@@ -3456,6 +3537,12 @@
       "expectText": "Homeroom · Claude"
     },
     {
+      "name": "The session descriptor is one compact row: py-1, wrapping only below sm, the venue still beside the name (#1941)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-view > #dc-session-header.py-1.flex-wrap.sm\\:flex-nowrap:not(.py-2) > .dc-session-title ~ button#dc-venue-select[data-venue-change]",
+      "expectText": "Homeroom · Claude"
+    },
+    {
       "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
       "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
@@ -3598,6 +3685,12 @@
       "expectText": "Staging demo app — letter tile"
     },
     {
+      "name": "The all-apps directory is one pane: the search head over the list body, with the rows inside it (#1919)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
+      "expectText": "Sort"
+    },
+    {
       "name": "Shared report link serves the report document without a session",
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
@@ -3716,6 +3809,16 @@
       "name": "The coding run is a card and its facts are chips",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
+    },
+    {
+      "name": "#1944: an open coding-run card keeps its chevron in the head row",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-head > .dc-cc-attached-chevron"
+    },
+    {
+      "name": "#1944: an open coding-run card shows its log panel",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > pre.dc-cc-attached-log"
     },
     {
       "name": "Capture routes past the first sit behind a disclosure",

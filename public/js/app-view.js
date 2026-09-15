@@ -434,7 +434,7 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false },
   // Which app's filters `_kanbanFilters` currently holds. The persisted set
   // is per slug, so this is what tells a repaint whether it is looking at a
   // stale app's narrowing (restore) or at the viewer's own unsaved edit
@@ -444,7 +444,9 @@ const AppView = {
   // Workshop's: "Open on Board" from a theme narrows the board to that
   // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
+    // #1935: `assignedToMe` / `createdByMe` are the strip's two quick
+    // toggles — one tap, no dialog — for the viewer's own board.
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
   },
   // `?q=<text>` — a deep link to a surface already narrowed to a search, the
   // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
@@ -727,6 +729,7 @@ const AppView = {
       // lands, the caches still hold the PREVIOUS app's cards, and painting
       // those under this app's name is worse than painting placeholders.
       AppView._devDataReady = false;
+      AppView._resetMergedPagination();
     }
     AppView.appData = appData;
 
@@ -822,6 +825,16 @@ const AppView = {
           // onto whatever screen the user actually landed on.
           if (window.Secrets && AppView.appData?.slug === slug) {
             Secrets.open(slug, { declare: shot === 'secrets-new' });
+          }
+        }, 300);
+      }
+      // #2161: `?shot=app-settings` opens the App settings dialog (the
+      // danger zone) on this app, so the declared check can photograph the
+      // blocked state on the platform's own app. Same guard as above.
+      if (shot === 'app-settings') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appSettings?.open({ slug });
           }
         }, 300);
       }
@@ -1036,6 +1049,23 @@ const AppView = {
       if (shot === 'mine-session') {
         AppView._workshopShot = 'mine-session';
       }
+      // `?shot=since-visit` gives the page a last visit to be since (#2183).
+      // The since-list is drawn only for a RETURNING reader — a first visit
+      // has no baseline and gets the dashboard alone — so a fresh browser,
+      // which is what the checks and the captures are, never sees its
+      // controls. This seeds the in-memory baseline a month back, before
+      // the Workshop's first paint reads it; nothing is written to storage,
+      // so a human who opens the link is not told they were here.
+      if (shot === 'since-visit') {
+        AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
+      }
+      // `?shot=mine-empty` draws "What you are working on" with nothing in
+      // it — the state #2182 keeps on screen — whatever sessions the viewer
+      // has. The demo seeds one busy session of the viewer's, so without
+      // this no URL could reach the empty strip.
+      if (shot === 'mine-empty') {
+        AppView._workshopShot = 'mine-empty';
+      }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
       // own handler, with the delegated open handler above standing aside.
@@ -1155,6 +1185,7 @@ const AppView = {
     // concerned: the next open re-loads, and until it does the caches on this
     // object are stale by definition.
     AppView._devDataReady = false;
+    AppView._resetMergedPagination();
     if (window.DevConsole) {
       DevConsole.hide();
       DevConsole.setCurrentApp(null);
@@ -2089,6 +2120,37 @@ const AppView = {
     AppView._teardownLaunch();
     AppView._issueStateSource = null;
     AppView._appFrame().mount({ slug, faded: false });
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+  },
+
+  // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light`. A running app whose
+  // page is that tone, so the header strip above it can be captured taking
+  // the tone rather than the shell's theme. Synthesised the same way as
+  // showSettledLaunchShot: a fully restricted pending frame with no document
+  // behind it, so no same-origin document ever enters #app-iframe. The page
+  // colour is what the app's bridge would have reported for a document of
+  // that tone — the platform's own two grounds — set through the same
+  // `setBackground` the bridge message handler uses, so everything from the
+  // store onward is the production path (features/app-frame/app-tone.js).
+  showAppToneShot(tone) {
+    const dark = tone === 'dark';
+    const slug = dark ? 'staging-demo-dark-app' : 'staging-demo-light-app';
+    AppView.appData = {
+      slug,
+      name: dark ? 'Staging demo dark app' : 'Staging demo light app',
+      icon_emoji: dark ? '🌙' : '☀️',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    const frame = AppView._appFrame();
+    frame.mount({ slug, faded: false });
+    frame.setBackground?.(dark ? '#0b0d1b' : '#f4f2e4');
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
@@ -3465,7 +3527,7 @@ const AppView = {
       rows.splice(reviewIndex < 0 ? rows.length : reviewIndex, 0, main);
     }
     if (mine && !AppView.readOnly && open && AppView._headHome(item) === 'app_repo' && item.source !== 'imported') {
-      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main'] } }];
+      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
     } else if (AppView._headHome(item) === 'user_fork') {
       main.foot = [...(main.foot || []), ['The author must update this branch in their fork, then push the changes.']];
     }
@@ -3491,17 +3553,22 @@ const AppView = {
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
         title: submission.reason, disabled: !ready || !!busy,
-        act: { fn: 'runChangeAction', args: [item.id, 'promote'] } });
+        act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
   },
 
-  async runChangeAction(id, action) {
+  async runChangeAction(id, action, item) {
     if (!['sync-main', 'promote'].includes(action) || AppView._changeActions.has(Number(id))) return;
-    const session = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
-      ? DevChat.currentSession : AppView._changeItems.get(Number(id));
-    if (action === 'promote' && (!session || AppView.changeSubmissionState(session).kind !== 'ready')) return;
+    const workspace = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+      ? DevChat.currentSession : null;
+    // The detail polls independently of the workspace. Use the snapshot
+    // that rendered this action, including its readiness, so an older copy
+    // cannot silently veto an enabled button (or enable a blocked one).
+    const session = item || workspace || AppView._changeItems.get(Number(id));
+    if (!session || Number(session.id) !== Number(id)) return;
+    if (action === 'promote' && AppView.changeSubmissionState(session).kind !== 'ready') return;
     const slug = AppView.appData?.slug;
-    const fromWorkspace = typeof DevChat !== 'undefined' && DevChat.currentSession === session;
+    const fromWorkspace = !!workspace;
     const stillVisible = () => !fromWorkspace || Number(DevChat.currentSession?.id) === Number(id);
     AppView._changeActions.set(Number(id), action);
     const repaint = () => {
@@ -3518,12 +3585,18 @@ const AppView = {
         : data.message || data.error || 'The action could not be completed.');
       if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
       if (action === 'promote') {
-        session.status = 'promoted';
-        if (data.prNumber) session.pr_number = data.prNumber;
-        if (data.prUrl) session.pr_url = data.prUrl;
-        if (data.prTitle) session.pr_title = session.session_title = data.prTitle;
+        const promoted = { status: 'promoted' };
+        if (data.prNumber) promoted.pr_number = data.prNumber;
+        if (data.prUrl) promoted.pr_url = data.prUrl;
+        if (data.prTitle) promoted.pr_title = promoted.session_title = data.prTitle;
         const listed = typeof DevChat !== 'undefined' && DevChat.sessions?.find((s) => Number(s.id) === Number(id));
-        if (listed) Object.assign(listed, { status: session.status, pr_number: session.pr_number, pr_url: session.pr_url, pr_title: session.pr_title, session_title: session.session_title });
+        const focused = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+          ? DevChat.currentSession : null;
+        // Reconcile only the matching session's public lifecycle fields.
+        // Keep workspace-only data and a newly focused session untouched.
+        for (const target of [session, AppView._changeItems.get(Number(id)), focused, listed]) {
+          if (target) Object.assign(target, promoted);
+        }
       }
       if (typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)) {
         DevChat.renderChatView();
@@ -4566,8 +4639,19 @@ const AppView = {
             // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
             const titleEl = node.querySelector('[data-plus-title]')
               || node.querySelector('span');
+            // #1930: the row's own glyph too, so the sheet is the desktop
+            // menu's list rather than a column of bare words. A CLONE — the
+            // kit adopts `iconEl` into the sheet, and the original belongs to
+            // the hidden desktop menu, which must keep its icon for the next
+            // open on either idiom. Its Tailwind classes go with the copy:
+            // `w-5 h-5 mt-0.5` would outrank the kit's `.un-item-icon` size
+            // (tailwind.css loads last) and drop the glyph off the label's
+            // centre line, and the kit inks and sizes its own row icons.
+            const glyph = node.querySelector('svg')?.cloneNode(true);
+            if (glyph) glyph.removeAttribute('class');
             return {
               label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              iconEl: glyph || undefined,
               handler: () => node.click(),
             };
           }),
@@ -5035,7 +5119,7 @@ const AppView = {
   // Refreshed with the full dev load AND by the 15s busy-indicator poll;
   // returns true when anything changed (JSON signature) so the poll can
   // skip repainting on idle ticks.
-  async _refreshSessionCaches(slug) {
+  async _refreshSessionCaches(slug, pager) {
     const actTs = (s) => {
       const t = Date.parse(s.last_activity_at || s.created_at || '');
       return Number.isFinite(t) ? t : 0;
@@ -5074,6 +5158,7 @@ const AppView = {
           .sort((a, b) => actTs(b) - actTs(a));
       }
     } catch { /* keep whatever loaded */ }
+    if (pager && !AppView._mergedPagerActive(pager)) return false;
     // Fold both payloads' busy flags into the live store; a pushed event
     // newer than `issuedAt` still wins, so a slow response can't resurrect
     // a finished turn's spinner.
@@ -5108,6 +5193,92 @@ const AppView = {
   // freshness — the answer is the same answer.
   _devDataInflight: null,
   _devDataInflightFor: null,
+
+  // One queue per app visit. A refresh must see the boundary established by
+  // an earlier Load more, and a queued Load more must use the refreshed cursor.
+  // Retiring the object also invalidates an old response after A → B → A.
+  _mergedPager: null,
+  _resetMergedPagination() {
+    AppView._mergedPager = null;
+    AppView._devDataInflight = null;
+    AppView._devDataInflightFor = null;
+    AppView._merged = [];
+    AppView._mergedCursor = null;
+    AppView._mergedHasMore = false;
+    AppView._mergedLoadingMore = false;
+    AppView._mergedTotal = 0;
+    AppView._doneShowAll = false;
+  },
+  _mergedPagerFor(slug) {
+    if (AppView._mergedPager && AppView._mergedPager.slug !== slug) {
+      AppView._resetMergedPagination();
+    }
+    if (!AppView._mergedPager) AppView._mergedPager = { slug, pending: null, expanded: false };
+    return AppView._mergedPager;
+  },
+  _mergedPagerActive(pager) {
+    return AppView._mergedPager === pager && AppView.appData?.slug === pager.slug;
+  },
+  _queueMergedOperation(pager, task) {
+    const start = () => AppView._mergedPagerActive(pager) ? task() : null;
+    const run = pager.pending ? pager.pending.then(start) : Promise.resolve(start());
+    const clear = () => { if (pager.pending === tail) pager.pending = null; };
+    const tail = run.then(clear, clear);
+    pager.pending = tail;
+    return run;
+  },
+  _mergedRowKey(row) { return `${row.row_type || 'pr'}:${row.id}`; },
+  _mergedRowCursor(row) {
+    return row ? { created_at: row.created_at, id: row.id, row_type: row.row_type || 'pr' } : null;
+  },
+  // Match /merged's keyset order, including independent PR / close-issue ids.
+  _compareMergedRows(a, b) {
+    return Date.parse(b.created_at) - Date.parse(a.created_at)
+      || Number(b.row_type !== 'close_issue') - Number(a.row_type !== 'close_issue')
+      || Number(b.id) - Number(a.id);
+  },
+  async _fetchMergedPage(slug, cursor = null, limit = null) {
+    const qs = AppView._demoQS();
+    const params = [];
+    if (cursor) params.push(`before=${encodeURIComponent(cursor.created_at)}`,
+      `before_id=${encodeURIComponent(cursor.id)}`, `before_type=${encodeURIComponent(cursor.row_type || 'pr')}`);
+    if (limit) params.push(`limit=${limit}`);
+    const after = params.length ? (qs ? '&' : '?') + params.join('&') : '';
+    const res = await fetch(`/api/apps/${slug}/merged${qs}${after}`);
+    // An HTTP failure is not an empty successful page or the end of history.
+    if (!res.ok) throw new Error('Could not load completed history');
+    const data = await res.json();
+    return { ...data, merged: data.merged || [] };
+  },
+  async _fetchMergedRange(pager) {
+    const boundary = (pager.expanded || AppView._doneShowAll) ? AppView._mergedCursor : null;
+    // Larger existing API pages bound the cost of refreshing expanded history;
+    // the visible range is still clipped to the viewer's previous boundary.
+    let page = await AppView._fetchMergedPage(pager.slug, null, boundary ? 50 : null);
+    const first = page;
+    const rows = [];
+    const seen = new Set();
+    let cursor = null;
+    while (AppView._mergedPagerActive(pager)) {
+      for (const row of page.merged) {
+        const key = AppView._mergedRowKey(row);
+        if (!seen.has(key)) { seen.add(key); rows.push(row); }
+      }
+      const last = page.merged[page.merged.length - 1];
+      // Refresh only through the old boundary, even if that exact row was
+      // removed. Anything past it remains available to the next Load more.
+      if (!boundary || !page.hasMore || (last && AppView._compareMergedRows(last, boundary) >= 0)) {
+        const merged = boundary ? rows.filter((row) => AppView._compareMergedRows(row, boundary) <= 0) : rows;
+        return { ...first, merged, boundary, hasMore: !!page.hasMore || merged.length < rows.length };
+      }
+      if (!last || (cursor && AppView._compareMergedRows(last, cursor) <= 0)) {
+        throw new Error('Completed history cursor did not advance');
+      }
+      cursor = AppView._mergedRowCursor(last);
+      page = await AppView._fetchMergedPage(pager.slug, cursor, 50);
+    }
+    return null;
+  },
 
   /**
    * Start (or join) a dev-data load for `slug` without rendering anything.
@@ -5148,12 +5319,13 @@ const AppView = {
   _loadDevData() {
     if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
+    const pager = AppView._mergedPagerFor(slug);
     // Join the run already going for this app rather than opening a second
     // set of the same six requests beside it.
     if (AppView._devDataInflight && AppView._devDataInflightFor === slug) {
       return AppView._devDataInflight;
     }
-    const run = AppView._fetchDevData(slug).then(
+    const run = AppView._queueMergedOperation(pager, () => AppView._fetchDevData(slug)).then(
       (ok) => {
         if (AppView._devDataInflight === run) {
           AppView._devDataInflight = null;
@@ -5174,13 +5346,13 @@ const AppView = {
     return run;
   },
 
-  // The body of the load, unshared. Everything above is the de-duplication;
-  // this is verbatim what `_loadDevData` was, with the slug passed in rather
-  // than re-read — the caller resolved it once and a shared run has to answer
-  // for the app it was started for.
+  // Publish one refreshed snapshot for the visit that requested it. Keep the
+  // queue occupied until every request settles, including a failed refresh's
+  // session/category requests, so they cannot overtake a later retry.
   async _fetchDevData(slug) {
+    const pager = AppView._mergedPagerFor(slug);
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
+      const results = await Promise.allSettled([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -5192,7 +5364,7 @@ const AppView = {
         // the list's Completed block) populate in a staging ?demo=1 preview.
         // Server-side the demo append is gated on IS_STAGING, so this is a
         // no-op in production. votes.js stagingMockMerged() supplies the rows.
-        fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
+        AppView._fetchMergedRange(pager),
         // #613: the manual drag-and-drop order overlay for the Issues + In
         // review columns. Forward ?demo=1 so a staging preview seeds a
         // visibly non-default order; a no-op in production. `.catch` keeps a
@@ -5202,22 +5374,28 @@ const AppView = {
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
-        AppView._refreshSessionCaches(slug),
+        AppView._refreshSessionCaches(slug, pager),
         // #780: the app's category vocabulary (built-ins + custom), needed
         // before the first paint so custom chips get their label/colour and
         // the filter bar offers them. Stores onto AppView directly and
         // swallows failures, so no destructured slot and no board-load risk.
-        AppView._loadAppCategories(),
+        AppView._loadAppCategories(pager),
       ]);
+      if (!AppView._mergedPagerActive(pager)) return null;
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = results.map((result) => result.value);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const mergedData = mergedRes.ok ? await mergedRes.json() : { merged: [], hasMore: false };
+      const mergedData = mergedRes;
+      if (!mergedData || !AppView._mergedPagerActive(pager)) return null;
       const merged = mergedData.merged || [];
       // #613: manual card-order overlay per column. Shape { issues:[{type,ref}],
       // review:[{type,ref}] }. Tolerates a missing/failed fetch (older server
       // or transient error) by keeping the previous cache / defaulting empty.
       const orderData = (orderRes && orderRes.ok) ? await orderRes.json().catch(() => null) : null;
+      if (!AppView._mergedPagerActive(pager)) return null;
       AppView._boardOrder = {
         issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
         review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
@@ -5287,9 +5465,8 @@ const AppView = {
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
-      // #429: reset the pager state on a fresh load. _mergedHasMore drives
-      // the "Load more" footer; the cursor is the (created_at, id) of the
-      // last loaded row, used by loadMoreMerged() for keyset paging.
+      // Refreshes retain the expanded range; the next page continues after
+      // its last surviving row, not after the first page of the refresh.
       AppView._mergedHasMore = !!mergedData.hasMore;
       AppView._mergedCursor = merged.length
         ? {
@@ -5299,7 +5476,9 @@ const AppView = {
           // sequences, so the cursor carries the last row's type too.
           row_type: merged[merged.length - 1].row_type || 'pr',
         }
-        : null;
+        // Keyset cursors need not name an existing row. If every row in the
+        // loaded range disappeared, older history must remain reachable.
+        : (mergedData.hasMore ? mergedData.boundary : null);
       // #433: the true count of merged tasks for this app, used by the
       // Kanban "Done" column header (which renders only the first page of
       // cards and would otherwise show the loaded count, ~20). Falls back to
@@ -5327,7 +5506,7 @@ const AppView = {
       AppView._devDataReady = true;
       return true;
     } catch {
-      return false;
+      return AppView._mergedPagerActive(pager) ? false : null;
     }
   },
 
@@ -5340,22 +5519,49 @@ const AppView = {
     // is how the board came to show an error message during a slow open.
     if (ok === null) return;
     if (!ok) {
+      if (AppView._devDataReady) return;
       body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
-    AppView._repaintDevBody();
+    AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
     // and regroups when they land.
     AppView._loadWorkshopThemes(App.currentApp);
   },
 
-  // Paint #dev-body for the current view mode from cached data only (no
-  // refetch). Mode-aware so every caller — the initial load, WS-driven
-  // refreshes, the toggle, and optimistic card-action repaints — routes
-  // through one place. No-ops when #dev-body isn't mounted (topic / chat
-  // / settings sub-views), matching the old _rerenderFeed guard.
+  // Preserve the visible Done card across asynchronous data publications.
+  _repaintDevBodyKeepingPosition() {
+    const feed = document.getElementById('dev-forum-scroll');
+    const scroll = window.PlatformUI?.scrollElement?.(feed) || feed;
+    const done = document.getElementById('dev-kanban-col-done');
+    let anchor = null;
+    let top = 0;
+    if (scroll?.scrollTop > 0 && done) {
+      const viewport = scroll === document.scrollingElement
+        ? { top: 0, bottom: window.innerHeight } : scroll.getBoundingClientRect();
+      for (const card of done.querySelectorAll('[data-proposal-row], [data-gov-row]')) {
+        const rect = card.getBoundingClientRect();
+        if (rect.width && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+          anchor = card;
+          top = rect.top;
+          break;
+        }
+      }
+    }
+    AppView._repaintDevBody();
+    // React's keyed card is still here after a live insertion. Anchor AFTER
+    // the requests finish so scrolling while they were in flight is respected.
+    // At the top, allow new cards to appear normally. A removed anchor falls
+    // back to the browser's ordinary scroll behavior.
+    if (anchor?.isConnected && scroll.isConnected) {
+      const delta = anchor.getBoundingClientRect().top - top;
+      if (delta) scroll.scrollTo({ top: scroll.scrollTop + delta, behavior: 'instant' });
+    }
+  },
+
+  // Paint from cached data, for either layout; no-op off the board.
   _repaintDevBody() {
     const body = document.getElementById('dev-body');
     if (!body) return;
@@ -5889,6 +6095,11 @@ const AppView = {
   WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
+  // Rows of the SAME list from before the baseline — what the reader has
+  // already seen — that `Show older` can walk down into (#2183). The board
+  // holds every card, so this is a cap, not a window; the count of the
+  // whole rest is published beside it.
+  WORKSHOP_SEEN_MAX: 30,
   // One calendar week, in ms. The digest's windows are Monday-anchored in
   // UTC — see services/workshop-themes.js `weekStart`, which this file's
   // `_weekStart` mirrors. The two MUST agree: the server decides which
@@ -5933,6 +6144,28 @@ const AppView = {
       window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`, String(Date.now()));
     } catch { /* private mode — the strip just never appears */ }
     return prev;
+  },
+
+  // "Clear" on the since-list (#2183). Moves the baseline up to now — the
+  // in-memory copy, so this page session compares against the new point,
+  // AND the stored stamp, so a reload does not bring the list back — and
+  // repaints. Nothing is thrown away: what was new is "seen before" now, a
+  // `Show older` press away, the way a read notification is still in the
+  // inbox. `through` is the newest activity stamp among the rows being
+  // cleared, so a row a server clock put a moment in the future is cleared
+  // with the rest rather than surviving the press.
+  _workshopClearSince(slug, through) {
+    const s = slug || (typeof App !== 'undefined' && App.currentApp) || '';
+    if (!s) return;
+    const stamp = Math.max(Date.now(), Number(through) || 0);
+    AppView._workshopSince[s] = stamp;
+    try {
+      window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${s}`, String(stamp));
+    } catch { /* private mode — cleared for this page session only */ }
+    const react = AppView._reactDevBoard();
+    if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
+      react.publishWorkshop(AppView._workshopView());
+    }
   },
 
   // The key a card has in the themes' `items` lists. Mirrors the server's
@@ -6438,10 +6671,16 @@ const AppView = {
         && String(x.item.user_id) === String(meId))
         .map((x) => ({ kind: 'proposal', item: x.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    // #2182: the strip stays on screen when there is nothing in it, so the
+    // pane's shape does not change with the viewer's workload. `viewer` is
+    // what the empty strip is drawn on: a guest has no work to have none of.
+    // `?shot=mine-empty` empties it on purpose, for the declared check.
+    const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
     const mine = {
-      count: mineItems.length,
+      viewer: meId != null,
+      count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
-      rows: mineItems.map(({ kind, item }) => {
+      rows: mineList.map(({ kind, item }) => {
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : AppView._proposalCardModel(item);
@@ -6604,12 +6843,26 @@ const AppView = {
     let since = null;
     if (baseline) {
       const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
+      // The rest of the same list, newest first: what moved BEFORE the
+      // baseline, which the reader has already seen. `Show older` walks
+      // down into it once the new rows are exhausted, and `Clear` moves the
+      // new rows here (#2183) — the notifications sheet's read/unread split,
+      // on one list. Keyed `seen:` so a row cannot be drawn twice under the
+      // same key on the day the baseline moves between two publishes.
+      const seen = entries.filter((e) => !(e.t > baseline)).sort((a, b) => b.t - a.t);
       since = {
         baseline,
+        // The newest stamp among the new rows, for `Clear` (see
+        // _workshopClearSince). Zero when nothing is new.
+        through: moved.length ? moved[0].t : 0,
         shipped: entries.filter((e) => e.kind === 'merged' && e.created > baseline).length,
         opened: entries.filter((e) => e.kind === 'issue' && e.created > baseline).length,
         proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
+        seen: {
+          total: seen.length,
+          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({ ...e.row, key: `seen:${e.row.key}` })),
+        },
       };
     }
 
@@ -6627,6 +6880,11 @@ const AppView = {
     // and these numbers are the answer anyway.
     const nowMs = Date.now();
     const WEEK = 7 * 86400000;
+    // #2176: the calendar week, Monday 00:00 UTC — the same Monday the
+    // digest weeks below (_weekStart) and the server's counts (#1922,
+    // weekStartUtc) use — rather than a trailing seven days, which moved
+    // every day and matched no week anybody talks about.
+    const weekStartMs = AppView._weekStart(nowMs);
     const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
     const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
     const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
@@ -6651,14 +6909,14 @@ const AppView = {
       votesWaiting: buckets.inReview.length,
       shippedWeek: serverShipped
         ? serverShipped.week
-        : allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+        : allMerged.filter((m) => mergedAtOf(m) >= weekStartMs).length,
       // The week before, for a rate rather than a count. Same source as the
       // week above so the two are comparable.
       shippedPrevWeek: serverShipped
         ? serverShipped.prevWeek
         : allMerged.filter((m) => {
           const t = mergedAtOf(m);
-          return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+          return t < weekStartMs && t >= weekStartMs - WEEK;
         }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
@@ -7458,6 +7716,10 @@ const AppView = {
       // session is not an assignable board item.
       if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
         && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
+      // #1935: a session is nobody's to assign, so it is "yours" on both
+      // quick toggles exactly when you started it — the same reading the
+      // named-person filter above gives it.
+      if ((f.assignedToMe || f.createdByMe) && !AppView._devCardIsMine(kind, it)) return false;
       return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
@@ -7479,6 +7741,22 @@ const AppView = {
       const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
       if (!assignedToUser && !authoredByUser) return false;
     }
+    // #1935: the strip's quick toggles. "Created by you" is authorship on
+    // every kind. "Assigned to you" is the community-voted assignee on the
+    // kinds that carry one (issues); a proposal or merged change carries no
+    // assignee — whoever opened it is the one doing it — so there it reads
+    // as authorship too. Governance rows are never assigned, so they drop
+    // out of "Assigned to you" rather than all matching it.
+    if (f.createdByMe && !AppView._devCardIsMine(kind, it)) return false;
+    if (f.assignedToMe) {
+      const me = AppView._viewerUsername();
+      if (!me || kind === 'gov') return false;
+      if (kind === 'issue') {
+        if (!(it.assignee && it.assignee.top === me)) return false;
+      } else if (!AppView._devCardIsMine(kind, it)) {
+        return false;
+      }
+    }
     if (f.needsVote) {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted).
@@ -7494,7 +7772,27 @@ const AppView = {
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
+      || f.assignedToMe || f.createdByMe);
+  },
+
+  // #1935: the signed-in viewer's handle, as the board's person fields spell
+  // it (assignee.top, created_by_username, username). Null when signed out —
+  // the quick toggles do not render then, and a stale persisted one matches
+  // nothing rather than everything.
+  _viewerUsername() {
+    return (typeof App !== 'undefined' && App.user && App.user.username) || null;
+  },
+  _devCardIsMine(kind, item) {
+    const me = AppView._viewerUsername();
+    return !!me && AppView._devCardAuthor(kind, item) === me;
+  },
+  // A quick toggle's tap: flip it and repaint. Persistence rides the repaint,
+  // as it does for every other filter change.
+  _toggleKanbanQuickFilter(key) {
+    if (key !== 'assignedToMe' && key !== 'createdByMe') return;
+    AppView._kanbanFilters[key] = !AppView._kanbanFilters[key];
+    AppView._repaintBoardSurface();
   },
 
   // Person dropdown options: the union of top-voted assignees and authors
@@ -7605,6 +7903,10 @@ const AppView = {
       seq: AppView._kanbanFilterSeq,
       count: AppView._kanbanFilterCount(),
       chips: AppView._kanbanActiveChips(),
+      // #1935: the two quick toggles, only for someone who has a "you".
+      quick: AppView._viewerUsername()
+        ? { assignedToMe: !!f.assignedToMe, createdByMe: !!f.createdByMe }
+        : null,
     };
   },
 
@@ -12093,13 +12395,14 @@ const AppView = {
 
   // #780: load the app's category vocabulary. Called on Dev-tab mount;
   // failures are swallowed (the UI falls back to built-ins only).
-  async _loadAppCategories() {
+  async _loadAppCategories(pager) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topic-categories`);
       if (!res.ok) return;
       const data = await res.json();
+      if (pager && !AppView._mergedPagerActive(pager)) return;
       AppView._setAppCategories(data && data.categories);
     } catch { /* built-ins only */ }
   },
@@ -13389,15 +13692,12 @@ const AppView = {
   // that block used to own is the feed footer's `loadMerged` and the Done
   // column's, both built in _workshopView / _kanbanView.
 
-  // #429: fetch the next keyset page of merged PRs and append it in place.
-  // Uses the (created_at, id) cursor of the last loaded row so paging is
-  // stable even as new PRs merge at the top. Re-renders #gc-merged and
-  // re-wires kudos / Ask-AI on the freshly painted cards, mirroring the
-  // mount in loadVotePanel.
+  // Append the next keyset page, coordinated with background refreshes.
   async loadMoreMerged() {
     if (AppView._mergedLoadingMore || !AppView._mergedHasMore) return;
     if (!AppView.appData || !AppView._mergedCursor) return;
     const slug = AppView.appData.slug;
+    const pager = AppView._mergedPagerFor(slug);
     AppView._mergedLoadingMore = true;
     // Reflect the disabled/"Loading…" state immediately. Both modes repaint
     // the whole body now: the kanban Done-column footer lives in #dev-kanban,
@@ -13405,47 +13705,47 @@ const AppView = {
     // #gc-merged section this used to patch in place is gone.
     AppView._repaintDevBody();
     try {
-      const cur = AppView._mergedCursor;
-      const qs = AppView._demoQS();
-      const sep = qs ? '&' : '?';
-      const url = `/api/apps/${slug}/merged${qs}${sep}before=${encodeURIComponent(cur.created_at)}&before_id=${encodeURIComponent(cur.id)}&before_type=${encodeURIComponent(cur.row_type || 'pr')}`;
-      const res = await fetch(url);
-      const data = res.ok ? await res.json() : { merged: [], hasMore: false };
-      const more = data.merged || [];
-      // De-dup defensively in case the cursor straddled equal timestamps.
-      // Keyed by (type, id): PR and close-issue rows draw ids from
-      // independent sequences, so a bare id isn't unique in the stream.
-      const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
-      const have = new Set((AppView._merged || []).map(rowKey));
-      const fresh = more.filter((r) => !have.has(rowKey(r)));
-      AppView._merged = (AppView._merged || []).concat(fresh);
-      AppView._mergedHasMore = !!data.hasMore;
-      if (AppView._merged.length) {
-        const last = AppView._merged[AppView._merged.length - 1];
-        AppView._mergedCursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
-      }
-      // Keep inline vote/kudos state in sync so the newly loaded merged
-      // rows get their group-chat activity controls too. Close-issue rows
-      // stay out (voteState is PR-keyed — see _loadDevData).
-      if (AppView.voteState && AppView.voteState.bySession) {
-        for (const pr of fresh) {
-          if ((pr.row_type || 'pr') === 'close_issue') continue;
-          AppView.voteState.bySession[String(pr.id)] = pr;
-          if (pr.pr_number != null) AppView.voteState.byPrNumber[String(pr.pr_number)] = pr;
+      await AppView._queueMergedOperation(pager, async () => {
+        if (!AppView._mergedHasMore || !AppView._mergedCursor) return;
+        const cur = AppView._mergedCursor;
+        const data = await AppView._fetchMergedPage(slug, cur);
+        if (!AppView._mergedPagerActive(pager)) return;
+        const have = new Set((AppView._merged || []).map(AppView._mergedRowKey));
+        const fresh = data.merged.filter((row) => {
+          const key = AppView._mergedRowKey(row);
+          if (have.has(key)) return false;
+          have.add(key);
+          return true;
+        });
+        const merged = (AppView._merged || []).concat(fresh);
+        const cursor = AppView._mergedRowCursor(merged[merged.length - 1]);
+        if (data.hasMore && (!cursor || AppView._compareMergedRows(cursor, cur) <= 0)) {
+          throw new Error('Completed history cursor did not advance');
         }
-        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
-          GroupChat.refreshVoteControls();
+        AppView._merged = merged;
+        AppView._mergedHasMore = !!data.hasMore;
+        AppView._mergedCursor = cursor;
+        if (typeof data.total === 'number') AppView._mergedTotal = data.total;
+        pager.expanded = true;
+        // Close-issue rows never enter the PR-keyed vote maps.
+        if (AppView.voteState && AppView.voteState.bySession) {
+          for (const pr of fresh) {
+            if ((pr.row_type || 'pr') === 'close_issue') continue;
+            AppView.voteState.bySession[String(pr.id)] = pr;
+            if (pr.pr_number != null) AppView.voteState.byPrNumber[String(pr.pr_number)] = pr;
+          }
+          if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+            GroupChat.refreshVoteControls();
+          }
         }
-      }
+      });
     } catch {
       // Leave the existing rows in place; surface nothing destructive.
     } finally {
-      AppView._mergedLoadingMore = false;
-      // Paint the freshly loaded cards into whichever view is active.
-      // _repaintDevBody re-renders #dev-kanban and re-attaches Kudos /
-      // Ask-AI for the kanban Done column, and re-renders #dev-feed with the
-      // completed rows inline for the Feed.
-      AppView._repaintDevBody();
+      if (AppView._mergedPagerActive(pager)) {
+        AppView._mergedLoadingMore = false;
+        AppView._repaintDevBodyKeepingPosition();
+      }
     }
   },
 

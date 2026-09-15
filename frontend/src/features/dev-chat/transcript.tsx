@@ -18,9 +18,10 @@
  * stop. Those are onClick now, holding the closure instead of a global name.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode, type SyntheticEvent } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
 import {
   nowStore,
   streamStore,
@@ -259,13 +260,53 @@ function ProgressNote(
   );
 }
 
+/**
+ * The log panel follows the run (#1944) — see ./log-follow.ts for the rule.
+ *
+ * The follower lives in a ref because the toggle is the reader's, not
+ * React's: the browser flips `open` and fires `toggle`, and no render
+ * happens between the two. So an open is handled in the toggle handler (the
+ * panel has just been laid out and can be scrolled), while the effect below
+ * covers the two cases a render does see — a persisted-open card mounting,
+ * and the log text growing under an open card.
+ */
+function useLogFollow(text: string | null, open: boolean) {
+  const pre = useRef<HTMLPreElement | null>(null);
+  const follower = useRef<LogFollower | null>(null);
+  if (!follower.current) follower.current = createLogFollower();
+  const onScroll = useCallback(() => {
+    if (pre.current) follower.current!.noteScroll(pre.current);
+  }, []);
+  const onOpened = useCallback(() => {
+    if (pre.current) follower.current!.noteOpened(pre.current);
+  }, []);
+  useEffect(() => {
+    if (open && text != null && pre.current) follower.current!.noteGrowth(pre.current);
+  }, [text, open]);
+  return { pre, onScroll, onOpened };
+}
+
 function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): ReactNode {
   const { open, onToggle } = useDetails(r.details);
+  const log = useLogFollow(r.body.kind === 'log' ? r.body.text : null, open);
+  // The reader's toggle, on top of the persistence write: an OPEN shows the
+  // latest line and brings the card into view. The transcript's own
+  // follow-to-bottom stays out of it (`initScrollTracking` ignores the `open`
+  // flip), because a card opened at the bottom of a phone-height pane used
+  // to be scrolled straight past — the head, with the toggle on it, off the
+  // top of the pane and the panel's stale first lines in view.
+  const onToggleAttached = useCallback((ev: SyntheticEvent<HTMLDetailsElement>) => {
+    onToggle(ev);
+    if (ev.currentTarget.open) {
+      log.onOpened();
+      revealDisclosure(ev.currentTarget);
+    }
+  }, [onToggle, log.onOpened]);
   return (
     <details
       className="dc-cc-attached" data-persist-id={r.details.persistId}
       data-default-open={r.details.defaultOpen ? '1' : '0'}
-      open={open} onToggle={onToggle}
+      open={open} onToggle={onToggleAttached}
     >
       {/* TWO ROWS INSIDE THE SUMMARY, not one line. Everything a collapsed
           card shows has to live in the <summary> — a <details> hides every
@@ -288,7 +329,14 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
         {r.progress ? <ProgressNote p={r.progress} /> : null}
       </summary>
       {r.body.kind === 'log'
-        ? <pre className="dc-cc-attached-log" data-persist-id={r.body.persistId}>{r.body.text}</pre>
+        ? (
+          <pre
+            className="dc-cc-attached-log" data-persist-id={r.body.persistId}
+            ref={log.pre} onScroll={log.onScroll}
+          >
+            {r.body.text}
+          </pre>
+        )
         : <div className="dc-cc-attached-md" dangerouslySetInnerHTML={{ __html: r.body.html }} />}
     </details>
   );
@@ -702,6 +750,18 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
     && s.rows.some((r, i) => i > latestAt && r.t === 'msg' && r.who === 'user');
   return (
     <>
+      {/* #1942: what a new session is for, where the conversation will be.
+          Centered in the pane, the way a new chat opens in Claude or
+          ChatGPT, and gone the moment the first message arrives. */}
+      {s.empty ? (
+        <div id="dc-empty-state" className="dc-empty-state">
+          <div className="dc-empty-title">What should this session change?</div>
+          <p className="dc-empty-text">
+            Describe it in the box below. The agent works it out with you, builds it, and
+            gives you a preview to try before anything goes to a vote.
+          </p>
+        </div>
+      ) : null}
       {s.rows.map((r, i) => {
         if (r.t !== 'changes') return <Row key={r.key} r={r} embedded={embedded} />;
         if (i !== latestAt) return <Row key={r.key} r={r} embedded={embedded} historical />;

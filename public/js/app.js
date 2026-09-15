@@ -1310,6 +1310,17 @@ const App = {
       shot = params.get('shot');
       settled = params.get('settle') === '1';
     } catch (err) { /* ignore */ }
+    // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
+    // whose page is that tone, so the bar above it can be seen taking it.
+    // Same synthetic frame as the settled launch below (no document loads),
+    // with the page colour the app's bridge would have reported set by hand.
+    if (shot === 'app-tone-dark' || shot === 'app-tone-light') {
+      const tone = shot === 'app-tone-dark' ? 'dark' : 'light';
+      setTimeout(() => {
+        try { AppView.showAppToneShot(tone); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
     if (shot !== 'app-launching') return;
     // #2154: the paired settled state deliberately uses the SAME route as
     // the old loading fixture. On the base commit `settle=1` is ignored and

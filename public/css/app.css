@@ -1994,7 +1994,16 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
-.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+/* THE WALLPAPER FOLLOWS THE APP'S TONE AS WELL AS THE SHELL'S (#1945). The
+   dark rule below fires for the dark shell, as it always did, AND for a
+   dark app under the light shell; the light base above it holds for the
+   light shell and for a light app under the dark shell. `data-app-tone` is
+   what features/app-frame/app-tone.js writes on <html> from the page colour
+   the framed app's bridge reports, and it exists only while that app is on
+   screen — so on every other route these selectors are exactly the two they
+   were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
+   along with the ground. */
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -2044,7 +2053,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
-  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -2072,6 +2081,53 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    identical on both sides of the transition and only the page moves. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
+}
+/* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
+   used to sit beneath a cream strip, and a light app under the dark shell
+   beneath a night one: the bar has no surface inside an app, so the
+   shell's wallpaper ran up behind its controls whatever colour the page
+   under them was. The framed app's bridge already tells the shell its
+   opaque page colour (`__usernode_background`, #1581);
+   features/app-frame/app-tone.js reads it as a tone and writes
+   `data-app-tone` on <html> while the frame is on screen. The wallpaper
+   rules above key off it, and these carry the tokens that have to move
+   with the ground: the bar's periwinkle controls (--brand-*: the chip, the
+   bell, the back disc, which "lift off cream and off dark alike" only with
+   the value for the ground they are on) and the sheet edge (--app-sheet-*:
+   a black hairline is invisible on a night ground, a white one on cream).
+
+   SCOPED TO THE BAR AND THE SHEET, deliberately, rather than to <html>.
+   The theme is still the shell's: `.dark` on <html> is the theme module's
+   alone, every `dark:` utility keeps reading it, and a sheet or dialog
+   opened from the bar over a dark app is still drawn in the viewer's own
+   mode — the tone is the STRIP's, not the page's. Custom properties
+   inherit, so setting them on the two elements reaches every control and
+   edge inside them and nothing outside. The chip's subtitle is the one
+   control drawn with a `dark:` utility rather than a brand token, so it is
+   re-inked here by hand. */
+[data-app-tone="dark"]:not(.dark) #platform-header,
+[data-app-tone="dark"]:not(.dark) #app-frame-host {
+  --brand-ink: #c7d0f5;
+  --brand-tint: #262b45;
+  --brand-line: #3a4270;
+  --app-sheet-line: rgba(255, 255, 255, 0.12);
+  --app-sheet-shadow-near: rgba(0, 0, 0, 0.55);
+  --app-sheet-shadow-far: rgba(0, 0, 0, 0.4);
+}
+.dark[data-app-tone="light"] #platform-header,
+.dark[data-app-tone="light"] #app-frame-host {
+  --brand-ink: #37477b;
+  --brand-tint: #e4e9f7;
+  --brand-line: #c9d2f2;
+  --app-sheet-line: rgba(0, 0, 0, 0.1);
+  --app-sheet-shadow-near: rgba(24, 39, 75, 0.12);
+  --app-sheet-shadow-far: rgba(24, 39, 75, 0.08);
+}
+[data-app-tone="dark"]:not(.dark) #platform-header #app-switcher-subtitle {
+  color: #8e8e93; /* zinc-400 */
+}
+.dark[data-app-tone="light"] #platform-header #app-switcher-subtitle {
+  color: #68686c; /* zinc-500 */
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
    set inline in the head (frontend/src/head.html) so the first paint is
@@ -3288,6 +3344,88 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row + .browse-row:hover { border-color: var(--accent-light); }
 }
 
+/* ── The phone directory as ONE PANE (#1919) ────────────────────────────
+   Below md the search bar, the Sort control and the list they narrow wear
+   the Workshop's working pane (`.dev-ws-pane`, further down): one frosted
+   sheet (`--dc-sheet-fill` over `--dc-frost`), a 22px radius and a hairline
+   ring, with the head pinned at the top and the rows sliding under its
+   frost. Before this the bar was a wallpaper-coloured strip and the list a
+   plain white rounded-2xl card below it, which is the pre-pane shape every
+   other recent screen has moved off.
+
+   PAGE-SCOPED CLASSES, deliberately not the Workshop's own. The two panes
+   are the same treatment today and should be allowed to move separately;
+   sharing `.dev-ws-pane-*` would also drag the Workshop's sticky offset and
+   its stage-board width rules onto a screen that has neither.
+
+   NO WRAPPER, so no single element to ring. The head (#browse-search-bar)
+   and the body (#browse-list) are siblings under #browse-screen — the head
+   sticks against the SCREEN's scroller, and wrapping both in a pane would
+   put a new ancestor between the head and the thing it sticks in. So the
+   ring is a `border` split across the two parts (the head keeps no bottom
+   edge, the body no top edge) rather than the Workshop's inset box-shadow,
+   which cannot leave one side out. Same margins on both parts is what makes
+   the two half-rings meet as one.
+
+   The parts paint the SAME fill over the SAME backdrop, for the reason the
+   Workshop's note gives: a fill on a wrapper plus a fill on the sticky head
+   stacks 50% on 50% and draws a lighter band across the controls.
+
+   THE NOTE IS THE BODY WHEN THE LIST IS EMPTY. A search that matches nothing
+   leaves #browse-list with no children and #browse-empty with the sentence;
+   the empty list collapses (`:empty`) and the note takes the body's bottom
+   half of the ring instead, so the pane still closes. And while neither is
+   drawn — the directory is still loading, or the load failed and the error
+   card is the body's only child — the head closes itself (`:has`, the same
+   way the shell's body rules already read screen state).
+
+   Written as one max-width query matching the md breakpoint's lower edge
+   (767px), the mirror of the min-width query above — keep the two in step
+   if the container's breakpoint ever moves. */
+@media (max-width: 767px) {
+  #browse-screen .browse-pane-head,
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note {
+    background-color: var(--dc-sheet-fill);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+    border: 1px solid var(--app-sheet-line);
+  }
+  #browse-screen .browse-pane-head {
+    margin: 12px 12px 0;
+    padding: 8px 10px;
+    border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+  }
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note {
+    margin: 0 12px 12px;
+    border-top: 0;
+    border-radius: 0 0 22px 22px;
+    /* The rows' hover fill and the hairlines would otherwise poke out of
+       the bottom corners. Nothing in the body positions itself outside it
+       (the "+" menu the Workshop pane keeps `overflow: visible` for has no
+       counterpart here). */
+    overflow: hidden;
+  }
+  #browse-screen .browse-pane-body:empty { display: none; }
+  #browse-screen .browse-pane-note { padding: 12px 14px 16px; }
+  /* Nothing below the head to close the pane: round it off on its own. */
+  #browse-screen .browse-pane-head:has(+ #browse-list-level > .browse-pane-body:empty + .browse-pane-note.hidden) {
+    border-bottom: 1px solid var(--app-sheet-line);
+    border-radius: 22px;
+  }
+}
+/* Where there is no backdrop-filter the fill is all there is, and 50% white
+   with rows sliding crisply under the pinned head is the rendering fault the
+   frost prevents. All three parts go opaque together, because they must stay
+   the same colour as each other above all. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #browse-screen .browse-pane-head,
+  #browse-screen .browse-pane-body,
+  #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
+}
+
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
    positioned against the trigger rect). Plain CSS rather than
@@ -3587,6 +3725,40 @@ body:has(#platform-header.hidden) #app-frame-host {
 /* ── Dev chat messages ─────────────────────────────────── */
 
 .dc-messages-container { scroll-behavior: smooth; }
+
+/* #1942: a new session's empty state, centred in the message pane. */
+.dc-empty-state {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 24px;
+  text-align: center;
+}
+.dc-empty-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+.dc-empty-text { margin: 0; max-width: 26rem; font-size: 14px; line-height: 1.5; color: var(--text-muted); }
+
+/* #1905: on a brand-new session the composer comes up to meet the empty
+   state, the way a new conversation opens in Claude or ChatGPT: title,
+   line and input box as one group in the middle of the pane. Keyed on the
+   empty state being in the pane, so the first message sends the box back
+   to the bottom with no state of its own to clear. Tablet width and up
+   only: on a phone the box stays at the bottom, where the keyboard opens and the
+   thumb already is, and a mid-screen field would jump as the keyboard
+   pushes it. Its own breakpoint, deliberately not the Workshop's 700px:
+   tests/dev-workshop.test.js reads that block as the only one of its kind. */
+@media (min-width: 768px) {
+  .dc-chat-pane:has(#dc-empty-state) { justify-content: center; }
+  .dc-chat-pane:has(#dc-empty-state) > #dc-messages { flex: 0 0 auto; overflow: visible; }
+  .dc-chat-pane:has(#dc-empty-state) #dc-empty-state { min-height: 0; padding-bottom: 16px; }
+  .dc-chat-pane:has(#dc-empty-state) > #dc-composer-bar {
+    width: 100%;
+    max-width: 44rem;
+    align-self: center;
+  }
+}
 
 .dc-msg { padding: 8px 12px; max-width: 92%; }
 
@@ -5307,7 +5479,12 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   text-align: center;
 }
 .dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
-.dc-cc-attached[open] > .dc-cc-attached-summary > .dc-cc-attached-chevron::before {
+/* #1944: a descendant, not a child. The dev chat's card puts the chevron
+   inside its head row (`.dc-cc-head`, since the chips), while the shared
+   transcript page still draws it as the summary's own child. The
+   direct-child form matched only the second, so the dev chat's glyph sat
+   on ▸ whether the card was open or closed and the toggle looked dead. */
+.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-attached-chevron::before {
   content: '\25BE'; /* ▾ */
 }
 .dc-cc-attached-summary:hover .dc-cc-attached-chevron {
@@ -9565,48 +9742,84 @@ a.drawer-ver--fork:hover {
   }
 }
 
+/* ── The create-app dialog on the PANE GROUND (#1910) ──────────────────
+   The dialog is drawn in the widget language the shell's panes wear (see
+   the recipe in frontend/src/features/dialogs/create-app.tsx): white cards
+   floating on a grey ground. Presented, the card rides inside the kit's
+   modal shell, which neutralises the card's own chrome (`.un-modal
+   .platform-modal-card` above) and paints the surface itself from
+   `--un-sheet-bg` — so the ground has to come from the SHELL, and the
+   sanctioned way to restyle the kit is its variables, never its rules.
+   `:has()` scopes the override to the one shell that holds this card;
+   the other dialogs keep the kit's white. The token is `--dc-strip`, the
+   ground every `.dc-lift` sheet and the settings screen sit on. */
+.un-modal:has(> #create-card) {
+  --un-sheet-bg: var(--dc-strip);
+}
+
 /* Create-app modal: segmented "Create new | Import existing" toggle.
    The active state is keyed off the parent #create-card[data-mode="..."]
    attribute so app.js only has to flip a single attribute to change modes
    (no per-button class juggling, no race with the form-reset path).
    It must be the CARD, not #create-modal: the native-kit modal adoption
    (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
-   while presented, so selectors rooted at the modal stop matching. */
+   while presented, so selectors rooted at the modal stop matching.
+
+   THE LOOK IS THE LANGUAGE'S SELECTION IDIOM (#1910): the selected segment
+   is the solid inversion — near-black fill, page-coloured ink — the same
+   treatment @/components/ui/chip.tsx and the Leaderboard's section strip
+   state. The raised-face-on-a-recessed-track look these pills used to
+   share with the drawer's theme selector lives on in `.members-vis-pill`
+   and `.theme-seg` above; this dialog left it. */
 #create-card .create-mode-pill {
   color: var(--text-muted);
   cursor: pointer;
 }
 #create-card .create-mode-pill:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  background: var(--text-primary);
+  color: var(--bg-primary);
   cursor: default;
 }
 
-/* Visibility segmented pills (create modal + members modal). Active
-   state is a JS-toggled .active class — unlike the mode pills there are
-   two independent controls per surface, so an attribute on the modal
-   root doesn't fit. Same visual language as .create-mode-pill. */
-.create-vis-pill,
+/* Visibility segmented pills (create modal). Active state is a
+   JS-toggled .active class — unlike the mode pills there are two
+   independent controls per surface, so an attribute on the modal root
+   doesn't fit. Same inversion as .create-mode-pill. */
+.create-vis-pill {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.create-vis-pill:hover {
+  color: var(--text-primary);
+}
+.create-vis-pill.active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+.create-vis-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The Members modal's visibility pills keep the recessed-track look they
+   shared with the create dialog before #1910 restyled it; that dialog is
+   not in the pane language yet. */
 .members-vis-pill {
   color: var(--text-muted);
   cursor: pointer;
 }
-.create-vis-pill:hover,
 .members-vis-pill:hover {
   color: var(--text-secondary);
 }
-.create-vis-pill.active,
 .members-vis-pill.active {
   background: var(--bg-primary);
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-.create-vis-pill:disabled,
 .members-vis-pill:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -10513,10 +10726,20 @@ body.is-offline [data-offline-disabled] {
    10.5rem is not an aesthetic round number: it is the narrowest width at
    which the two "Your computer · …" venues are still told apart — below it
    both ellipsize to the same string, and the control stops answering the
-   question it exists to answer. */
+   question it exists to answer.
+
+   #1941: the second term is the strip's SECOND LINE. Below `sm` the strip
+   wraps, and this control shares its line with the mode switch (7.5rem
+   with its label) and the ⋯ (1.75rem), plus the two gaps between them
+   (1rem): 10.25rem. A flex line is composed from hypothetical sizes, so a
+   control that would only fit by shrinking does not shrink, it wraps — and
+   the ⋯ would start a THIRD line. At 375px `100% - 10.5rem` is 11.4rem and
+   the first term wins; the cap only bites below about 350px, where it
+   trades a little of the venue's name for keeping the strip at two lines
+   on the narrowest phones. */
 @media (max-width: 30rem) {
   .dc-venue-select {
-    max-width: 10.5rem;
+    max-width: min(10.5rem, calc(100% - 10.5rem));
   }
 }
 
@@ -10541,7 +10764,20 @@ body.is-offline [data-offline-disabled] {
 /* Below Tailwind's sm the session name may take two lines, so a long name
    has room beside the provider and the PR link without a very long title
    consuming the chat. (#1940 put those controls back inline at every width;
-   the full branch name stays on the title's tooltip.) */
+   the full branch name stays on the title's tooltip.)
+
+   #1941: THE STRIP IS TWO LINES ON A PHONE, and this basis is what breaks
+   it. The strip wraps below `sm` (view.tsx). The title's hypothetical size
+   is `100% - 4rem` — the strip's width less room for the PR number beside
+   it — so the name and the PR number fill the first line and the first
+   control that does not fit, the venue, starts the second. With `flex-1`'s
+   zero basis every child fit on one line and the title took the leftovers,
+   which at 375px were none: the venue (10.5rem), the mode switch and the ⋯
+   are wider than the strip between them.
+
+   The second line's own cap is on `.dc-venue-select` below (the 30rem
+   rule): wrapping is decided on hypothetical sizes, so a control that
+   would only fit by shrinking does not shrink — it wraps. */
 @media (max-width: 639px) {
   #dc-session-header > .dc-session-title {
     white-space: normal;
@@ -10549,6 +10785,7 @@ body.is-offline [data-offline-disabled] {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+    flex-basis: calc(100% - 4rem);
   }
 }
 
@@ -11986,6 +12223,44 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
    the air between it and the last row. */
 .dev-ws-since-more { margin-top: 2px; }
+/* #2183: the control is always drawn and DISABLED when the walk is over,
+   rather than leaving — so it reads as spent, not pressable. */
+.dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
+.dev-ws-reveal:disabled:hover { color: var(--text-muted); }
+/* `Clear` rides the far end of the heading row (#2183) — the notifications
+   sheet's "Mark all read", drawn the same size as the heading's own type
+   and in its muted ink, the accent on hover. Pushed right by its own
+   margin so the label and the count keep the gap they had. Disabled when
+   there is nothing to clear rather than absent, so the row does not reflow
+   between a quiet visit and a busy one. */
+.dev-ws-since-clear {
+  flex: none; margin-left: auto; padding: 2px 6px;
+  border: 0; border-radius: 6px; background: transparent;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-since-clear:hover { color: var(--accent); }
+.dev-ws-since-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-since-clear:disabled { opacity: .45; cursor: default; }
+.dev-ws-since-clear:disabled:hover { color: var(--text-muted); }
+/* The line across the list (#2183): where `Show older` crosses from what is
+   new into what the reader has already seen. The heading's own shape, one
+   size down, with the count of the whole rest riding it in plain ink rather
+   than the brand tint — these rows are not news. */
+.dev-ws-since-seen {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; margin-top: 6px; padding: 2px 2px 0;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+}
+.dev-ws-since-seen-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-seen-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--bg-secondary); color: var(--text-muted);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
 
 /* ── Where the summary came from ─────────────────────────────
    Two clauses of the category footnote, moved onto the tab that holds the
@@ -12731,8 +13006,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-ask-send-icon { width: 17px; height: 17px; }
 .dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 
-/* ── The end of the feed ──────────────────────────────────────────── */
+/* ── The end of the feed ──────────────────────────────────────────────
+   One card past the last item, always (#2172): the same snap slot as an
+   item, in a tint of its own so the swipe that lands here reads as arriving
+   somewhere rather than as one more decision. */
 .dev-ws-needs-done { align-items: center; justify-content: center; text-align: center; padding: 24px 28px; gap: 10px; }
+.dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .12), rgba(255, 255, 255, 0) 55%, rgba(139, 92, 246, .08)); }
+.dark .dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .16), rgba(0, 0, 0, 0) 55%, rgba(139, 92, 246, .10)); }
 .dev-ws-done-ring { width: 112px; height: 112px; margin-bottom: 8px; }
 .dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
 .dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-muted); }
@@ -12741,6 +13021,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;
 }
+/* The way back to what was passed over: a quiet second action under the
+   primary one, drawn only when there is something above to go back to. */
+.dev-ws-done-back {
+  height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 600;
+  background: transparent; color: var(--accent);
+}
+.dev-ws-done-back:hover { background: var(--accent-wash); }
 
 /* ── The tab pill steps aside for a sheet ─────────────────────────── */
 @media (max-width: 699.98px) {
