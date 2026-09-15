@@ -482,9 +482,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
   // Codex CLI block's config.toml entry and one for the generic MCP-client
   // walkthrough.
-  // 621 → 622: #2182 adds the check that the viewer's strip stays on screen
-  // when it is empty, reached through `?shot=mine-empty`.
-  assert.equal(DAPP.tests.length, 622);
+  // 621 → 622: #2183 adds one check on the since-list's Clear and its
+  // always-drawn Show older, reached through `?shot=since-visit`.
+  // 621 → 622: #2182 independently adds the check that the viewer's strip
+  // stays on screen when it is empty, reached through `?shot=mine-empty`.
+  // Two branches each took 621 to 622 on their own, so together they land
+  // on 623.
+  assert.equal(DAPP.tests.length, 623);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

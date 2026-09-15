@@ -86,9 +86,20 @@ type TabKey = 'status' | 'needs' | 'all';
  * Three, because that is what fits above the fold beside the panes around it
  * and because a returning member's question is "did anything happen", which
  * three rows answer. The step is the same number so each press pays the same
- * scroll, and the button leaves when the list is exhausted — there is no
- * "show fewer", for the reason the week walk gives: this is one pane with a
- * way to ask for more, not a thing being opened and shut.
+ * scroll. There is no "show fewer", for the reason the week walk gives: this
+ * is one pane with a way to ask for more, not a thing being opened and shut.
+ *
+ * #2183: the button no longer leaves when the new rows run out. The list it
+ * walks is the WHOLE activity list, newest first, and the baseline is only a
+ * line across it: above the line is what moved since the reader was last
+ * here, below it is what they have already seen. `Show older` reveals three
+ * more of the new rows while there are any, then crosses the line under a
+ * "Seen before" mark and keeps going — so a quiet visit, or a visit just
+ * after Clear, still has somewhere to look. It disables, rather than leaves,
+ * when the rows it can draw are exhausted: a control that is sometimes there
+ * is a control nobody learns to reach for. That is the notifications
+ * sheet's split between Unread and the archive that holds what was read,
+ * on one list instead of two tabs.
  */
 const SINCE_FIRST = 3;
 const SINCE_STEP = 3;
@@ -1975,6 +1986,9 @@ export function DevWorkshop(): ReactNode {
   // had to open; the first three are simply on screen now and the rest are a
   // press away, which is the WeekWalk's bargain one pane down.
   const [sinceShown, setSinceShown] = useState(SINCE_FIRST);
+  // #2183: how many of the rows the reader has ALREADY seen are drawn under
+  // the new ones. Zero until `Show older` has no new row left to reveal.
+  const [seenShown, setSeenShown] = useState(0);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -2059,6 +2073,26 @@ export function DevWorkshop(): ReactNode {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
   };
 
+  // The since-list's two controls (#2183). `Show older` walks down the list:
+  // the rest of the new rows first, three a press, then the rows from before
+  // the baseline. `Clear` moves the baseline to now — AppView owns the stamp
+  // and its storage, and republishes — and folds the walk back to its start,
+  // so what the reader dismissed is under `Show older` rather than gone.
+  const sinceMore = !!v.since
+    && (v.since.rows.length > sinceShown || v.since.seen.rows.length > seenShown);
+  const showOlder = () => {
+    if (!v.since) return;
+    if (v.since.rows.length > sinceShown) setSinceShown(sinceShown + SINCE_STEP);
+    else setSeenShown(seenShown + SINCE_STEP);
+  };
+  const clearSince = () => {
+    if (!v.since) return;
+    setSinceShown(SINCE_FIRST);
+    setSeenShown(0);
+    setOpenRows((cur) => ({ ...cur, since: '' }));
+    callAppView('_workshopClearSince', slug, v.since.through);
+  };
+
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
   const autoKey = v.autoExpand ? `${v.autoExpand.theme}:${v.autoExpand.key}` : null;
@@ -2077,7 +2111,7 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}`;
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}|seen:${seenShown}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -2325,17 +2359,33 @@ export function DevWorkshop(): ReactNode {
           So the pane is open and the LENGTH is what is bargained instead,
           the way the week walk one pane up bargains its history: the newest
           three on screen, the rest under a button that reveals three more
-          each press and leaves when there are none. Same control, same
-          chevron, pointing down at what it is about to show. */}
+          each press. Same control, same chevron, pointing down at what it
+          is about to show. Since #2183 the button stays once the new rows
+          are out and goes on down into what the reader has already seen,
+          and a Clear on the heading moves the line between the two up to
+          now — see the note on SINCE_FIRST. */}
       {v.since ? (
         <section className="dev-ws-strip" data-ws-since="">
           {/* NOT A BUTTON ANY MORE. It opens nothing, so it must not look
               like it does — a row that reads as tappable and is not is worse
               than a plain heading. The label and the count keep their
-              classes; the caret went with the press. */}
+              classes; the caret went with the press. Clear rides the far
+              end of the same row, as "Mark all read" rides the notifications
+              sheet's title row: an action on the list, drawn small, and
+              disabled rather than absent when there is nothing to clear so
+              the row does not reflow. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
             <span className="dev-ws-since-label">Since your last visit</span>
             <span className="dev-ws-since-n">{v.since.rows.length}</span>
+            <button
+              type="button"
+              className="dev-ws-since-clear"
+              data-ws-since-clear=""
+              disabled={!v.since.rows.length}
+              onClick={clearSince}
+            >
+              Clear
+            </button>
           </div>
           {v.since.rows.slice(0, sinceShown).map((row) => (row.t === 'card' ? (
             <CardRowView
@@ -2355,19 +2405,45 @@ export function DevWorkshop(): ReactNode {
               Nothing has changed since you were last here.
             </p>
           )}
-          {v.since.rows.length > sinceShown ? (
-            <button
-              type="button"
-              className="dev-ws-reveal dev-ws-since-more"
-              data-ws-since-more=""
-              onClick={() => setSinceShown(sinceShown + SINCE_STEP)}
-            >
-              {/* Pointing DOWN, at where the rows it reveals appear — the
-                  week walk's own reading of the same control. */}
-              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-              Show older
-            </button>
+          {/* Below the line: rows from before the baseline, drawn only once
+              `Show older` has walked past the new ones, under a mark that
+              says which side of the line they are on. Same rows, same fold,
+              same one-open-at-a-time scope as the rows above. */}
+          {seenShown > 0 && v.since.seen.rows.length ? (
+            <>
+              <div className="dev-ws-since-seen" data-ws-since-seen="">
+                <span className="dev-ws-since-seen-label">Seen before</span>
+                <span className="dev-ws-since-seen-n">{v.since.seen.total}</span>
+              </div>
+              {v.since.seen.rows.slice(0, seenShown).map((row) => (row.t === 'card' ? (
+                <CardRowView
+                  key={row.key}
+                  row={row}
+                  slug={slug}
+                  canPost={canPost}
+                  open={openRows.since === row.key}
+                  onToggle={() => toggleRow('since', row.key)}
+                />
+              ) : null))}
+            </>
           ) : null}
+          {/* ALWAYS DRAWN. Disabled, not absent, once there is nothing left
+              to draw: the reader who cleared the list or arrived on a quiet
+              day is exactly the one who wants a way back into what they
+              already saw, and a control that is sometimes there is one
+              nobody learns to reach for. */}
+          <button
+            type="button"
+            className="dev-ws-reveal dev-ws-since-more"
+            data-ws-since-more=""
+            disabled={!sinceMore}
+            onClick={showOlder}
+          >
+            {/* Pointing DOWN, at where the rows it reveals appear — the
+                week walk's own reading of the same control. */}
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+            Show older
+          </button>
         </section>
       ) : null}
 
