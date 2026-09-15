@@ -87,20 +87,23 @@ type Mode = 'new' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 type Vis = 'public' | 'private';
 /**
- * #1911: the dialog is three steps rather than one page of every choice.
+ * #1911: the dialog is three steps that UNFOLD in one card, rather than
+ * one page of every choice.
  *
  *   start    how to begin: from scratch, or from a GitHub repo. The two
  *            choices ARE the old mode pills (same `create-mode-pill` class,
  *            same `data-mode-pill`, same #create-card[data-mode] styling),
- *            drawn as two rows; picking one advances.
+ *            drawn as two rows. Picking one collapses this step to the
+ *            chosen row (with a "Change" affordance) and unfolds the next.
  *   details  the name — and, for an import, the repo URL and its access
  *            check first (the name card reveals on a passed check, as
- *            before).
+ *            before). Stays on screen, editable, once the last step opens.
  *   access   who can build it and who can see it, then Create / Import.
  *
+ * `step` is the FURTHEST step reached; everything up to it is showing.
  * Every section stays in the document on every step (the declared checks
- * and public/js select on the same ids as before); app.css shows the
- * current step off `#create-card[data-step]`, the same attribute-driven
+ * and public/js select on the same ids as before); app.css folds and
+ * unfolds them off `#create-card[data-step]`, the same attribute-driven
  * mechanism `data-mode` and `data-import-state` already use.
  */
 type Step = 'start' | 'details' | 'access';
@@ -213,7 +216,12 @@ const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semib
  */
 const CHOICE = 'create-mode-pill w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
 const CHOICE_TITLE = 'block text-[15px] font-semibold';
-const CHOICE_CAPTION = 'block text-xs mt-0.5';
+const CHOICE_CAPTION = 'create-choice-caption block text-xs mt-0.5';
+// Shown in place of the chevron once the step has collapsed to the chosen
+// row: pressing the row then reopens the choice.
+const CHOICE_CHANGE = 'create-choice-change text-xs font-medium shrink-0';
+/* The small numbered heading each unfolded step opens with. */
+const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300 mb-2';
 
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -225,6 +233,7 @@ export function CreateAppDialog() {
   const collabPrivateRef = useRef<HTMLButtonElement>(null);
   const viewPublicRef = useRef<HTMLButtonElement>(null);
   const viewPrivateRef = useRef<HTMLButtonElement>(null);
+  const accessRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<Mode>('new');
   const [step, setStep] = useState<Step>('start');
@@ -322,8 +331,18 @@ export function CreateAppDialog() {
     (forMode === 'import' ? urlRef.current : nameRef.current)?.focus();
   }
 
-  /** #1911: the start step's choice — set the mode and move on. */
+  /**
+   * #1911: the start step's choice — set the mode and unfold the details.
+   * Once the step has collapsed to the chosen row, pressing that row folds
+   * the later steps back up so the choice can be changed; what was typed
+   * below stays in the document for when they unfold again.
+   */
   function choose(next: Mode) {
+    if (step !== 'start') {
+      setError('');
+      setStep('start');
+      return;
+    }
     applyMode(next);
     setStep('details');
     setTimeout(() => focusDetails(next), 0);
@@ -347,12 +366,9 @@ export function CreateAppDialog() {
     }
     setError('');
     setStep('access');
-  }
-
-  function back() {
-    setError('');
-    setStep(step === 'access' ? 'details' : 'start');
-    if (step === 'access') setTimeout(() => focusDetails(mode), 0);
+    // The card can be taller than a phone's dialog: bring the step that
+    // just unfolded into view, and its footer with it.
+    setTimeout(() => accessRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
   }
 
   /** Verbatim from App.setCreateMode: one entry point keeps every mirror in sync. */
@@ -566,14 +582,10 @@ export function CreateAppDialog() {
         ) : (
         <>
         <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-          {step === 'start'
-            ? 'Create a new app'
-            : step === 'details'
-              ? (mode === 'import' ? 'Import existing app' : 'Name your app')
-              : 'Who can use it'}
+          {mode === 'import' && step !== 'start' ? 'Import existing app' : 'Create a new app'}
         </h2>
         {/*
-            #1911: where the reader is in the flow. Text, not dots, because
+            #1911: how far the flow has unfolded. Text, not dots, because
             the dialog is narrow and three words say it; the index is also
             on the attribute for the declared checks.
         */}
@@ -594,6 +606,7 @@ export function CreateAppDialog() {
               A choice advances; there is no Next here.
           */}
           <div data-create-step="start" className="space-y-2">
+            <p className={STEP_HEADING}>1. How do you want to start?</p>
             <button
               type="button"
               data-mode-pill="new"
@@ -604,7 +617,8 @@ export function CreateAppDialog() {
                 <span className={CHOICE_TITLE}>Start from scratch</span>
                 <span className={CHOICE_CAPTION}>Name it, then describe what you want and build it with the group.</span>
               </span>
-              <ChevronRightIcon className="w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+              <ChevronRightIcon className="create-choice-chevron w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+              <span className={CHOICE_CHANGE}>Change</span>
             </button>
             <button
               type="button"
@@ -616,7 +630,8 @@ export function CreateAppDialog() {
                 <span className={CHOICE_TITLE}>Import a GitHub repo</span>
                 <span className={CHOICE_CAPTION}>Bring an app that already exists. You will invite the bot to it first.</span>
               </span>
-              <ChevronRightIcon className="w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+              <ChevronRightIcon className="create-choice-chevron w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+              <span className={CHOICE_CHANGE}>Change</span>
             </button>
           </div>
           {/*
@@ -626,6 +641,7 @@ export function CreateAppDialog() {
               the repo name. CSS hides the URL block in "new" mode.
           */}
           <div data-create-step="details" className="space-y-4">
+          <p className={STEP_HEADING}>{mode === 'import' ? '2. Which repo, and what to call it' : '2. What to call it'}</p>
           <div id="create-import-block" className="create-import-block">
             <div className={CARD}>
               <div className={ROW}>
@@ -729,7 +745,8 @@ export function CreateAppDialog() {
               Collab=Everyone forces View=Everyone (a publicly-buildable app
               can't be privately viewed) — applyVisibility enforces it.
           */}
-          <div data-create-step="access">
+          <div data-create-step="access" ref={accessRef}>
+          <p className={STEP_HEADING}>3. Who can use it</p>
           <div id="create-visibility-block" className="space-y-3">
             <div>
               <p className={LABEL + ' mb-1.5'}>
@@ -794,10 +811,13 @@ export function CreateAppDialog() {
             {error}
           </div>
           {/*
-              #1911: the footer changes with the step, through CSS on
-              #create-card[data-step] rather than by mounting and unmounting
-              (every id ships on every step). Start: Cancel alone. Details:
-              Back and Next. Access: Back and Create / Import.
+              #1911: the footer follows how far the card has unfolded,
+              through CSS on #create-card[data-step] rather than by
+              mounting and unmounting (every id ships on every step).
+              Cancel is always there; Next until the last step has
+              unfolded, then Create / Import. No Back: the earlier steps
+              are still on screen and editable, and the start row's
+              "Change" reopens the first choice.
           */}
           <div className="flex gap-2 pt-1">
             <button
@@ -807,14 +827,6 @@ export function CreateAppDialog() {
               onClick={() => dialog.close()}
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              id="create-back"
-              className={PILL_SECONDARY}
-              onClick={back}
-            >
-              Back
             </button>
             <Button
               type="button"
