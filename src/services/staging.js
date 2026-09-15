@@ -1069,13 +1069,38 @@ async function rebuildProductionInner(config, app) {
       // (the old container keeps serving) — see app-deploy-status.js for
       // why rebuild progress never touches apps.status. Best-effort.
       const deployFailure = require('./deploy-failure');
+      let failureRecord = null;
       try {
+        failureRecord = deployFailure.record(err, { sha: mainSha || null });
         await getPool(config).query(
           'UPDATE apps SET last_failure = $1 WHERE id = $2',
-          [JSON.stringify(deployFailure.record(err, { sha: mainSha || null })), app.id]
+          [JSON.stringify(failureRecord), app.id]
         );
       } catch (e) {
         log.warn('staging', 'Failed to persist last_failure', { app: app.slug, err: e.message });
+      }
+
+      // #1374: tell the people who can fix it. Before this the failure was
+      // recorded on the app row and surfaced only to whoever happened to
+      // look, so a production rebuild could stay broken until somebody
+      // noticed. Addressed to the creator and the app's admins, gated on
+      // the adminOnly `app_health` category.
+      //
+      // Best-effort, and deliberately after the row is persisted: the
+      // failure record is the durable part and must not depend on this.
+      try {
+        const notifications = require('./notifications');
+        const pool = getPool(config);
+        const created = await notifications.createAppHealthNotification(pool, {
+          appId: app.id,
+          // A short token, not the reason: notifications.detail is
+          // VARCHAR(32) and the full reason is on apps.last_failure, which
+          // the UPDATE above just wrote.
+          detail: 'deploy_failed',
+        });
+        await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)));
+      } catch (e) {
+        log.warn('staging', 'App-health notification failed', { app: app.slug, err: e.message });
       }
     }
     throw err;

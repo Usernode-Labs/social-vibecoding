@@ -3137,6 +3137,23 @@ const Home = {
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
+    // #1374: per-app notification settings, UNGATED on purpose and placed
+    // right after the "Your apps" entry.
+    //
+    // Not in App settings below, which is where a per-app dialog would
+    // normally go: that entry is offered only to an admin, the creator, or
+    // somebody whose app has other contributors. Who hears about an app is
+    // every user's business, and most users are none of those things — so
+    // putting it there would have hidden the switches from nearly everyone
+    // who wants them. "Add to Your apps" above is the closest thing the
+    // platform already had to a per-app subscription, which is why this sits
+    // beside it.
+    items.push({
+      key: 'notifications',
+      label: 'Notifications',
+      title: 'Choose what this app can notify you about, here and on your phone.',
+      run: () => window.UsernodeReact?.dialogs?.appNotifications?.open({ slug: app.slug }),
+    });
     // Native homescreen shortcut — only when the page runs inside a
     // Homeroom app build whose bridge reports the feature (see
     // _probeShortcutSupport; Home._shortcutSupport stays null in plain

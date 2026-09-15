@@ -764,7 +764,15 @@ const Notifications = {
       // and the topic view opens full-screen. Without an id there is no
       // proposal to open and it falls back to the board, which is where the
       // card is.
-      const proposalKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
+      // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
+      // voted on it, and the daily digest of what is waiting on you. The
+      // digest carries no sessionId, so it lands on the board — which is
+      // right, since its subject is "these several proposals" rather than
+      // one of them.
+      const proposalKinds = new Set([
+        'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
+        'pr_merged', 'proposal_vote', 'vote_digest',
+      ]);
       const toProposals = proposalKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
@@ -1725,6 +1733,88 @@ function rowView(n) {
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
       ...headline('New proposal', prLabel || 'a PR'),
+    };
+  }
+
+  // ── #1374's five ────────────────────────────────────────────────────
+  //
+  // Each of these was a silence before that change: nothing told you your
+  // proposal had merged, that somebody had voted on it, or that an issue had
+  // been filed on an app you look after.
+
+  // The good-news row. `detail === 'forced'` is an admin override rather than
+  // a vote that carried, and the label says which: to the person who wrote
+  // the change those are the same event with very different meanings.
+  if (n.kind === 'pr_merged') {
+    return {
+      ...base,
+      icon: '\u{1F389}',
+      ...headline(
+        n.detail === 'forced' ? 'Merged by an admin' : 'Merged',
+        prLabel || n.sessionTitle || 'your proposal',
+      ),
+    };
+  }
+
+  // Somebody voted. The DIRECTION is in the label rather than the subject,
+  // because it is the part you want at a glance and the proposal title is
+  // usually long enough to push it off the row.
+  if (n.kind === 'proposal_vote') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: n.detail === 'no' ? '\u{1F44E}' : '\u{1F44D}',
+      ...headline(
+        n.detail === 'no' ? 'Voted no' : 'Voted yes',
+        prLabel || n.sessionTitle || 'your proposal',
+      ),
+    };
+  }
+
+  // A new issue on an app you have a stake in. `detail` is the issue number
+  // (notifications has no issue column; see the producer), so the subject is
+  // the number rather than the title — the title is one tap away and a
+  // truncated one here would be worse than a precise reference.
+  if (n.kind === 'issue_opened') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: '\u{1F4DD}',
+      ...headline('New issue', n.detail ? `#${n.detail}` : 'filed'),
+    };
+  }
+
+  // The app is unwell, and this row goes only to people who can fix it.
+  //
+  // `detail` is a short TOKEN, never a reason line: notifications.detail is
+  // VARCHAR(32), so a build failure's own message would arrive as a
+  // meaningless fragment. The copy is rendered from the token here, and the
+  // full reason is on the app (apps.last_failure) where the row leads.
+  // Rendering `detail` directly would also put an internal identifier on
+  // screen, which is the thing tests/settings-mobile-push.test.js bars
+  // elsewhere for good reason.
+  if (n.kind === 'app_health') {
+    const APP_HEALTH_COPY = { deploy_failed: 'a deploy failed' };
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F6A8}',
+      ...headline('App problem', APP_HEALTH_COPY[n.detail] || 'something needs looking at'),
+    };
+  }
+
+  // The daily digest, and the counterweight to `new_proposals` defaulting
+  // off. `detail` is the COUNT, so the subject is a plural-aware phrase
+  // rather than a bare number nobody can parse without the label.
+  if (n.kind === 'vote_digest') {
+    const count = Number(n.detail) || 0;
+    return {
+      ...base,
+      icon: '\u{1F5F3}\uFE0F',
+      ...headline(
+        'Waiting on your vote',
+        count === 1 ? '1 proposal' : `${count} proposals`,
+      ),
     };
   }
 

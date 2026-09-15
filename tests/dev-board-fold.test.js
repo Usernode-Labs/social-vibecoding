@@ -563,6 +563,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // it was dead in — a reader with nothing new who walked `Show older` down
   // past the baseline — reached through `?shot=since-seen`, which seeds the
   // line at now and then presses the walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
   // 649 → 651: on yet another side of this merge, #2201 also gives the
   // check-my-status address step an answer for a mistyped address, and
   // declares the two things that state must show at
@@ -572,12 +576,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  // 650 → 652, 651 → 652: the tallies above were computed on either side of
-  // this merge and cannot be read as one sequence. This branch took
-  // 649 → 650 alone, with the #2240 check above; main independently took
-  // the SAME 649 → 651 with the #2201 pair above. One +1 and one +2 against
-  // a shared 649 is 652.
-  assert.equal(DAPP.tests.length, 652);
+  // 650 → 655, 652 → 655, 651 → 655: the tallies above were computed on
+  // three different sides of this merge and cannot be read as one sequence.
+  // This branch took 649 → 650 alone, with the #2240 check above; main
+  // independently took the SAME 649 to both 652 (the #1374 checks above) and
+  // 651 (the #2201 not-found pair above). #2240 (+1), #1374 (+3) and the
+  // #2201 pair (+2) are three independent additions against the shared 649,
+  // which is 649 + 1 + 3 + 2 = 655.
+  assert.equal(DAPP.tests.length, 655);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

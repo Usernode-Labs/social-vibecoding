@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
+const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -20,6 +21,29 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
 // strictly a no-op outside staging. Mark-read calls on these ids match
 // no DB row and no-op harmlessly.
+// #1374: fabricated per-app EXCEPTIONS for the Settings roll-up. The
+// notification_preferences table is staging:private and therefore always
+// empty in a clone, so the roll-up's whole point — "here is every app you
+// have set differently" — would photograph as an empty state. Behind
+// ?demo=1 + staging only, exactly like the mock feed below.
+function demoNotificationOverrides() {
+  return [
+    {
+      appId: -921, appSlug: 'staging-demo-app-a', appName: 'Staging demo app A',
+      categories: [
+        { key: 'new_proposals', label: 'New proposals to vote on', enabled: true },
+        { key: 'new_issues', label: 'New issues', enabled: true },
+      ],
+    },
+    {
+      appId: -922, appSlug: 'staging-demo-app-b', appName: 'Staging demo app B',
+      categories: [
+        { key: 'proposal_status', label: 'Your proposals', enabled: false },
+      ],
+    },
+  ];
+}
+
 function stagingMockNotifications() {
   const now = Date.now();
   const base = {
@@ -283,6 +307,179 @@ function notificationsRoutes(config) {
       return res.json({ preferences });
     } catch (err) {
       log.error('mobile-push-preferences', 'update failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Per-app notification preferences (#1374) ────────────────────────
+  //
+  // The sibling of the two routes above, and a different question: those
+  // decide whether a notification that EXISTS may reach a phone, these
+  // decide whether it is created at all for a given app. See
+  // services/notification-preferences.js for why that distinction is what
+  // keeps the phone push and the on-platform row in sync.
+
+  // Resolve a slug to an app id and say whether this user administers it.
+  // `adminOnly` categories are hidden from everyone else, because the
+  // notifications behind them are only ever addressed to admins and the
+  // creator in the first place.
+  async function resolveApp(slug, userId) {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.slug, a.name, a.created_by,
+              EXISTS (SELECT 1 FROM app_admins ad
+                       WHERE ad.app_id = a.id AND ad.user_id = $2) AS is_admin
+         FROM apps a WHERE a.slug = $1`,
+      [slug, userId]
+    );
+    const app = rows[0];
+    if (!app) return null;
+    return { ...app, isAdmin: !!app.is_admin || app.created_by === userId };
+  }
+
+  router.get('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const overrides = await notificationPreferences.readOverrides(pool, req.user.id, app.id);
+      return res.json({
+        app: { id: app.id, slug: app.slug, name: app.name },
+        categories: notificationPreferences.serializeAppCategories({
+          ...overrides,
+          isAdmin: app.isAdmin,
+        }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'app read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // The allowed set is computed from THIS user's admin status, so a
+      // non-admin posting `app_health` is refused rather than quietly
+      // storing a preference for something they will never be sent.
+      const allowedKeys = notificationPreferences.APP_CATEGORY_DEFINITIONS
+        .filter((category) => !category.adminOnly || app.isAdmin)
+        .map((category) => category.key);
+      const { details, values } = notificationPreferences.validatePreferencePatch(
+        req.body, { allowedKeys }
+      );
+      if (Object.keys(details).length) {
+        return res.status(422).json({ error: 'The given data was invalid.', details });
+      }
+
+      const overrides = await notificationPreferences.writeOverrides(
+        pool, req.user.id, app.id, values
+      );
+      return res.json({
+        app: { id: app.id, slug: app.slug, name: app.name },
+        categories: notificationPreferences.serializeAppCategories({
+          ...overrides,
+          isAdmin: app.isAdmin,
+        }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'app write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The account-wide layer plus every per-app exception, for the Settings
+  // roll-up. The exceptions are what make the roll-up worth having: without
+  // them there is no way to find an app you muted months ago short of
+  // opening its tile menu and looking.
+  router.get('/api/me/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+    if (req.query.demo === '1' && IS_STAGING) {
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({}),
+        apps: demoNotificationOverrides(),
+        demo: true,
+      });
+    }
+
+    try {
+      const { accountOverrides } = await notificationPreferences.readOverrides(
+        pool, req.user.id, null
+      );
+      const { rows } = await pool.query(
+        `SELECT p.app_id, p.category, p.enabled, a.slug, a.name
+           FROM notification_preferences p
+           JOIN apps a ON a.id = p.app_id
+          WHERE p.user_id = $1 AND p.app_id IS NOT NULL
+          ORDER BY a.name ASC, p.category ASC`,
+        [req.user.id]
+      );
+      const byApp = new Map();
+      for (const row of rows) {
+        const definition = notificationPreferences.definitionFor(row.category);
+        if (!definition) continue;
+        if (!byApp.has(row.app_id)) {
+          byApp.set(row.app_id, {
+            appId: row.app_id, appSlug: row.slug, appName: row.name, categories: [],
+          });
+        }
+        byApp.get(row.app_id).categories.push({
+          key: row.category, label: definition.label, enabled: row.enabled,
+        });
+      }
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({ accountOverrides }),
+        apps: [...byApp.values()],
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'account read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/me/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const { details, values } = notificationPreferences.validatePreferencePatch(req.body);
+    if (Object.keys(details).length) {
+      return res.status(422).json({ error: 'The given data was invalid.', details });
+    }
+    try {
+      const { accountOverrides } = await notificationPreferences.writeOverrides(
+        pool, req.user.id, null, values
+      );
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({ accountOverrides }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'account write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Clear every per-app exception for one app: the roll-up's "follow my
+  // defaults again" button. A DELETE of the overrides rather than writing
+  // them all to the default value, so the app goes back to INHERITING and
+  // keeps doing so if a default ever changes.
+  router.delete('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      await pool.query(
+        'DELETE FROM notification_preferences WHERE user_id = $1 AND app_id = $2',
+        [req.user.id, app.id]
+      );
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('notification-preferences', 'app reset failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
