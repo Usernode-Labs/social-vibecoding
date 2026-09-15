@@ -368,6 +368,28 @@ html.un-kb .platform-kb-column {
   transition: none;
 }
 
+/* …and the scroller inside it must NOT reserve it a second time.
+
+   `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever scroller
+   `attachScreenFx` hands it — the general chat's `#gc-messages`, the topic
+   thread's `#gc-thread-scroll`, the dev chat's `#dc-messages` — so on those
+   screens the class is there at runtime whether or not any source file writes
+   it. With the column reserving as well, the inset is counted twice, and the
+   second one is the damaging one: a scroll container cannot shrink below its
+   own padding, so `#gc-messages` bottomed out at 368px (its `py-2` 8px plus a
+   360px keyboard inset) and floored the whole column. Measured on a Pixel
+   emulator against the live general chat: the composer rose 163px of the 360
+   it needed and stayed behind the keys. The topic thread escaped only because
+   its column had enough slack to absorb the floor.
+
+   Suppressing it here restores the single reservation: general chat's composer
+   moved from 647 to 450 — exactly the keyboard line — while the topic thread
+   stayed at 450, unchanged. Specificity (0,3,1) beats the kit's (0,2,1) and
+   app.css loads after native.css, so no !important is needed. */
+html.un-kb .platform-kb-column .un-kb-avoid {
+  padding-bottom: 0;
+}
+
 /* ── Platform Messages screen ─────────────────────────────
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.

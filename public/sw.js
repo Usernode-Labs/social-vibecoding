@@ -197,7 +197,21 @@
 // proposal also takes v24 from v23. These two are independent changes that
 // both need a cache retirement, so the loser of the race is a real conflict
 // and wants v25 — not a silent pick of one side.
-const SW_VERSION = 'v24';
+
+// v25: and the OTHER half of the same work — the composer column was
+// reserving the inset twice. v23 shipped `.platform-kb-column`, but
+// `attachKeyboardAvoidance` ADDS `un-kb-avoid` to the scroller it is given,
+// so the general chat, the topic thread and the dev chat reserved the
+// keyboard height on the column AND again inside the scroller. A scroll
+// container cannot shrink below its own padding, so #gc-messages floored at
+// 368px and held the composer 197px behind the keys; only the topic thread
+// had enough slack to absorb it, which is why v23 looked verified.
+// app.css again, so the bump belongs here per v10 — and per v15, an
+// installed client that took v23 or v24 would otherwise keep the half-fix.
+//
+// This is the conflict the v24 entry predicted, resolved the way it asked:
+// both notes kept, the version advanced rather than one side silently won.
+const SW_VERSION = 'v25';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
