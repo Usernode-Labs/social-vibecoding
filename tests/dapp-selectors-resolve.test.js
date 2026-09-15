@@ -231,8 +231,12 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // SPA route. /api/public/ is the anonymous JSON tier (routes/public-api.js):
   // a GET there answers with its own payload and never reaches index.html, so
   // a declared check on one reads the API rather than photographing a screen.
+  // /waitlist/connect/ is the social-connect round trip
+  // (routes/waitlist-connect.js): its callback answers with its own
+  // standalone status page, never index.html.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
-    '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/'];
+    '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/',
+    '/waitlist/connect/'];
 
   const unroutable = [];
   for (const t of declared) {

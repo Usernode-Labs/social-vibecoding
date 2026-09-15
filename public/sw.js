@@ -560,6 +560,12 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // Waitlist social connect (routes/waitlist-connect.js): the start route
+  // redirects to the provider and the callback is a standalone status page.
+  // As ordinary navigations both fell into the 200ms shell race, so a
+  // returning visitor saw the cached SPA home page in place of the provider
+  // redirect, and again in place of the status page on the way back.
+  if (p.startsWith('/waitlist/connect/')) return 'bypass';
   // The OpenRouter catalog is private, key-filtered, and has its own short
   // server cache plus an explicit refresh control. Replaying the PWA's much
   // longer offline copy can hide newly released models and account-policy

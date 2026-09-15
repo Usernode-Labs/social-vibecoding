@@ -23,6 +23,7 @@ as shipped.
   - [POST /api/public/waitlist/more/:token](#post-apipublicwaitlistmoretoken)
   - [GET /waitlist/connect/:provider](#get-waitlistconnectprovider)
   - [GET /waitlist/connect/:provider/callback](#get-waitlistconnectprovidercallback)
+  - [POST /waitlist/connect/:provider/complete](#post-waitlistconnectprovidercomplete)
 - [Rate limits](#rate-limits)
 - [Trusted integrator headers](#trusted-integrator-headers)
 - [Errors](#errors)
@@ -657,7 +658,7 @@ The save does not echo the merged answers. Re-read
 ### GET /waitlist/connect/:provider
 
 Start an OAuth round trip that proves the signup's owner controls a
-GitHub, X or LinkedIn account. Note the path: these two routes are **not**
+GitHub, X or LinkedIn account. Note the path: these three routes are **not**
 under `/api/public/`.
 
 This proves **account ownership and nothing more**. It does not and
@@ -703,36 +704,69 @@ The provider's redirect target. You do not call this; the provider does.
 It is documented because its outcomes land back on a URL your
 integration may need to read.
 
-It exchanges the authorization code, stores the resolved handle under
-`answers.verified.<provider>`, and redirects back to the stage-2 form.
+It answers **`200` with a standalone HTML status page** straight away
+("Connecting your GitHub account…") and does no other work: loading it
+consumes no state and exchanges no code, so a link scanner or prefetch
+cannot spend the round trip. The page's script finishes it by posting
+its own URL's `state` and `code` to
+[`POST …/complete`](#post-waitlistconnectprovidercomplete), then shows
+the outcome:
 
-**Response `302`**
+| Outcome | What the page does |
+|---|---|
+| `ok` | Shows "Verified as @handle", then replaces itself with `/#more/<token>?connect=ok` after about 1.5 seconds. |
+| `denied`, `failed`, `unavailable` | Explains what happened and offers a **Back to your form** link to `/#more/<token>?connect=<outcome>`. |
+| `expired` | Says the link has expired and to press Connect again from the form. No link: nothing identifies the signup. |
+
+The page is served with `Cache-Control: no-store`,
+`Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
+`Content-Security-Policy` that allows only its own nonce-tagged inline
+script and style and `connect-src 'self'`. It loads no other resource,
+so the code in its URL cannot leak to another origin.
+
+The `connect` value on the form URL rides in a query segment **inside**
+the fragment, after the `#`, so it never reaches any server log, the
+platform's or a proxy's.
+
+### POST /waitlist/connect/:provider/complete
+
+Called by the callback page. It exchanges the authorization code,
+stores the resolved handle under `answers.verified.<provider>`, and
+reports the outcome.
+
+**Request**
 
 ```http
-HTTP/1.1 302 Found
-Location: /#more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?connect=ok
+POST /waitlist/connect/github/complete HTTP/1.1
+Content-Type: application/json
+
+{ "state": "a5968df01edc4c8f05b1…", "code": "7214cc38dafa5bd93c27" }
 ```
 
-| `connect` value | Meaning |
-|---|---|
-| `ok` | The handle was verified and stored. |
-| `denied` | The person declined on the provider's page (no code came back). |
-| `unavailable` | The provider is not configured on this deployment. |
-| `failed` | The token exchange or profile read failed. |
+**Response `200`** (every outcome; none is an HTTP error)
 
-The status rides in a query segment **inside** the fragment, after the
-`#`, so it never reaches any server log, the platform's or a proxy's.
+```json
+{
+  "status": "ok",
+  "provider": "github",
+  "handle": "octocat",
+  "redirect": "/#more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?connect=ok"
+}
+```
 
-Two redirects carry no `connect` value and land on `/#landing` instead:
-an unknown or expired `state` (nothing identifies which signup to
-return to), and a successful exchange whose token no longer resolves to
-a signup.
+| `status` | Meaning | `redirect` |
+|---|---|---|
+| `ok` | The handle was verified and stored. `handle` is the GitHub login, X username or LinkedIn display name. | the form |
+| `denied` | The person declined on the provider's page (no code came back). | the form |
+| `unavailable` | The provider is not configured on this deployment. | the form |
+| `failed` | The token exchange or profile read failed. | the form |
+| `expired` | Unknown or expired `state` (it lives 10 minutes, in memory, so a server restart also expires it), or a successful exchange whose token no longer resolves to a signup. | `null` |
 
-Re-requesting a callback URL is safe. A finished round trip remembers
-where it landed for 10 minutes, so a reload, a back button or a link
-scanner replays the same redirect rather than falling through to the
-landing page. The replay is a redirect and nothing else; the
-authorization code is never re-exchanged and is never stored.
+Completing the same round trip again is safe. A finished round trip
+remembers its outcome for 10 minutes, so a reload of the page reports
+the same `status`, `handle` and `redirect` rather than `expired`. The
+replay reports and nothing else; the authorization code is never
+re-exchanged and is never stored.
 
 ## Rate limits
 
