@@ -3606,11 +3606,12 @@ body:has(#platform-header.hidden) #app-frame-host {
    state, the way a new conversation opens in Claude or ChatGPT: title,
    line and input box as one group in the middle of the pane. Keyed on the
    empty state being in the pane, so the first message sends the box back
-   to the bottom with no state of its own to clear. Wide viewports only: on
-   a phone the box stays at the bottom, where the keyboard opens and the
+   to the bottom with no state of its own to clear. Tablet width and up
+   only: on a phone the box stays at the bottom, where the keyboard opens and the
    thumb already is, and a mid-screen field would jump as the keyboard
-   pushes it. */
-@media (min-width: 700px) {
+   pushes it. Its own breakpoint, deliberately not the Workshop's 700px:
+   tests/dev-workshop.test.js reads that block as the only one of its kind. */
+@media (min-width: 768px) {
   .dc-chat-pane:has(#dc-empty-state) { justify-content: center; }
   .dc-chat-pane:has(#dc-empty-state) > #dc-messages { flex: 0 0 auto; overflow: visible; }
   .dc-chat-pane:has(#dc-empty-state) #dc-empty-state { min-height: 0; padding-bottom: 16px; }
