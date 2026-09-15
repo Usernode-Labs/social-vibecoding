@@ -559,7 +559,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  assert.equal(DAPP.tests.length, 649);
+  // 649 → 651: #2241's two checks on the unsent-change screen, which has a
+  // route of its own (/dev/sessions/new) and no session behind it — one on
+  // the empty state's sentence, one on the live composer beside a header
+  // that offers no venue dropdown and no ⋯ menu, because there is nothing
+  // yet for either to act on.
+  assert.equal(DAPP.tests.length, 651);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

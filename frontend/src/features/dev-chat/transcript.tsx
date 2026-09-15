@@ -760,6 +760,17 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
             Describe it in the box below. The agent works it out with you, builds it, and
             gives you a preview to try before anything goes to a vote.
           </p>
+          {/* #2241: on the unsent-change screen, the one fact the screen
+              cannot show by itself. Sending is what creates the change, so
+              opening this and walking away leaves nothing behind — which is
+              worth saying, because the old behaviour left a session in your
+              list every time. */}
+          {s.unsent ? (
+            <p id="dc-empty-unsent" className="dc-empty-text">
+              Nothing is created until you send: no change, no branch, nothing left
+              behind if you close this.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {s.rows.map((r, i) => {
