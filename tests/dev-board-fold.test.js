@@ -507,7 +507,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 628 → 630: #1962's two checks that sending a saved draft leaves the
   // composer empty, one on the send and one on the screen the drafts list
   // is actually painted on.
-  assert.equal(DAPP.tests.length, 630);
+  // 627 → 629: the invite link now points at the marketing site's /waitlist
+  // page instead of the in-app #waitlist route, so two checks read the
+  // link's own field on the more-to-do screen — one that its value is the
+  // marketing URL and carries no hash route, one that the copy affordance
+  // is still beside it.
+  // 629 → 631: this branch independently added #1944's two checks on the
+  // coding-run card opened through `?shot=cc-log-open` — the chevron still
+  // in the head row of an OPEN card (the flip rule has to reach it there),
+  // and the log panel under it.
+  // 630 → 634: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 628 → 630 with #1962's
+  // pair (the first entry above); main independently carried that same pair
+  // plus the waitlist-link pair and #1944's pair on top of the shared 628.
+  // One shared +2 counted once, plus main's two additional +2s, against a
+  // shared 628 is 634.
+  assert.equal(DAPP.tests.length, 634);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
