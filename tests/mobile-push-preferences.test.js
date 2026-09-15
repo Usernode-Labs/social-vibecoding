@@ -26,6 +26,12 @@ const CURRENT_KINDS = [
   // holding for an answer. Both are "a coding session did something while you
   // were away", so both join developer_sessions rather than adding a category.
   'connector_submitted', 'agent_awaiting_input', 'test_alert',
+  // #1374's five. Three are proposal lifecycle and join proposal_alerts; the
+  // two app ones get the new app_alerts category. Note that being
+  // push-eligible here is only the SECOND gate now —
+  // services/notification-preferences.js decides whether the notification is
+  // created at all, per user and per app, and two of these default off there.
+  'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {
@@ -49,6 +55,7 @@ test('category defaults match the product contract', () => {
       shared_work: true,
       developer_sessions: true,
       proposal_alerts: true,
+      app_alerts: true,
       lightweight_activity: false,
     }
   );
@@ -135,7 +142,9 @@ test('preferences are account-scoped and never mutate device registrations', asy
     'account updates do not delete, recreate, or update phone registrations');
 
   const defaults = serializePreferences();
-  assert.equal(defaults.length, 7);
+  // 7 → 8 with #1374's app_alerts. Every category must serialize, or one
+  // silently loses its Settings row while still gating pushes.
+  assert.equal(defaults.length, 8);
   assert.ok(defaults.every((row) => typeof row.enabled === 'boolean'));
 });
 

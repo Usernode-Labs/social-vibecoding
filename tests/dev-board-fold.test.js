@@ -559,6 +559,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
   // 649 → 651: on yet another side of this merge, #2201 also gives the
   // check-my-status address step an answer for a mistyped address, and
   // declares the two things that state must show at
@@ -568,7 +572,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  assert.equal(DAPP.tests.length, 651);
+  // 652 → 654, 651 → 654: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 649 → 652
+  // alone, with the #1374 checks above; main independently took the SAME
+  // 649 → 651 with the #2201 not-found checks above. One +3 and one +2 against
+  // a shared 649 is 654.
+  assert.equal(DAPP.tests.length, 654);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

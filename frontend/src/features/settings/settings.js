@@ -729,6 +729,7 @@
       this._refreshOpenRouter();
       this._renderLlmGrants();
       this._renderAppPermissions();
+      this._renderNotificationPrefs();
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
@@ -3951,6 +3952,88 @@
       if (!el) return;
       paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── What apps tell you about (#1374) ─────────────────────────────
+    //
+    // Two layers, one fetch: the account-wide defaults and every per-app
+    // exception. GET /api/me/notification-preferences returns both, because
+    // an exception is meaningless without the default it departs from.
+    //
+    // Like the AI grants above, the table is staging:private and therefore
+    // always empty in a clone, so ?demo=1 is passed through for the preview.
+
+    async _renderNotificationPrefs() {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsNotificationPrefs : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', categories: [], apps: [] });
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      try {
+        const r = await fetch('/api/me/notification-preferences' + (demo ? '?demo=1' : ''),
+          { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        publish({
+          phase: 'ready',
+          categories: j.categories || [],
+          apps: j.apps || [],
+        });
+      } catch {
+        publish({ phase: 'error', categories: [], apps: [] });
+      }
+    },
+
+    _setNotificationPrefsStatus(text, kind) {
+      const el = document.getElementById('notification-prefs-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // Change the account-wide default for one category. Every app that has
+    // no exception of its own follows this immediately; the ones that do
+    // keep theirs, which is the whole point of the two layers.
+    async _onNotificationDefaultChange(category, enabled) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      try {
+        const r = await fetch('/api/me/notification-preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ preferences: { [category]: enabled } }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to save.', 'error'); return; }
+        status('Saved.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // Drop one app's exceptions so it follows the defaults again.
+    //
+    // A DELETE rather than writing each category to the default's current
+    // value: the app goes back to INHERITING, so it keeps following if a
+    // default changes later. Writing the values would freeze them.
+    async _onNotificationAppReset(appId, appSlug) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      try {
+        const r = await fetch(
+          `/api/apps/${encodeURIComponent(appSlug)}/notification-preferences`,
+          { method: 'DELETE', credentials: 'same-origin' }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to reset.', 'error'); return; }
+        status('Following your defaults again.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     // Revoke one capability from one app.

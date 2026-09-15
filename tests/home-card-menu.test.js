@@ -417,7 +417,7 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
     'nothing admin-gated leaks');
   assert.equal(items[2].label, 'Add to Your apps');
 });
@@ -579,7 +579,7 @@ test('menu: full admin on a running repo app gets check-updates, lock and safe a
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'app-settings']);
+    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
@@ -631,7 +631,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
     'no retry/check/lock/delete');
 });
 
@@ -639,7 +639,7 @@ test('menu: errored app adds Retry + View build log for the creator (#416)', () 
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'retry', 'build-log']);
+    ['app-details', 'github', 'favorite', 'notifications', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -706,7 +706,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'add-to-homescreen']);
+    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
