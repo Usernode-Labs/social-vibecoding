@@ -63,6 +63,7 @@ const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
+const { appInstallRoutes } = require('./src/routes/app-install');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -676,6 +677,13 @@ app.use(galleryRoutes(config));
 // AFTER authMiddleware — req.user is already resolved by the time this
 // router's own adminMiddleware runs, exactly like src/routes/admin.js.
 app.use(topochainAdminRoutes(config));
+// Per-app "Add to Home Screen" (#1508): `/app/<slug>/install` and the
+// app's own manifest beside it. AFTER authMiddleware because both need
+// req.user (the page renders a sign-in variant without one, the manifest
+// 404s), and BEFORE the `app.get('*')` SPA catch-all, which would otherwise
+// serve index.html for these clean app paths. The shell's own manifest
+// link and public/manifest.webmanifest are untouched — see the route.
+app.use(appInstallRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //
