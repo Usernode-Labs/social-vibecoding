@@ -4002,3 +4002,100 @@ test('#2182: a guest has no strip to keep', () => {
   assert.equal(v.mine.viewer, false);
   assert.ok(!workshopHtml(AppView).includes('data-ws-mine='), 'no empty strip for a reader with no work to have');
 });
+
+// ── #1933: the category chip on the Board's cards ───────────────────────
+//
+// The themes are the Workshop's grouping, and until now they were visible
+// ONLY as that pane's headings: the Board's columns and the stage pane sort
+// by state, and a card there said nothing about where the model had placed
+// it. The chip is the theme's name on the card's meta line, looked up by the
+// same key the server placed the card under.
+
+test('#1933: a card names the auto-drafted category it was placed in, once the themes have arrived', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._sharedSessions = [
+    { id: 56, session_title: 'Shared thing', status: 'active', shared_at: at(1), linked_issues: [], created_at: at(1), last_activity_at: at(0) },
+  ];
+  const chipOf = (card) => (card.badges || []).find((b) => b && b.key === 'theme') || null;
+
+  // No themes yet: nothing is drawn, so a slow fetch never paints a wrong name.
+  AppView._workshopThemes = null;
+  assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[0])), null);
+
+  AppView._workshopThemes = themes([
+    { id: 'theming', name: 'Theming', items: ['issue:12', 'session:34', 'session:56', 'session:78'] },
+  ]);
+  const issue = chipOf(AppView._issueCardModel(AppView._ghIssues[0]));
+  assert.ok(issue, 'the issue the theme names carries the chip');
+  assert.equal(issue.t, 'chip');
+  assert.equal(issue.meta, true, 'it rides the meta line beside the priority / assignee / category tags');
+  assert.equal(issue.label, 'Theming');
+  assert.deepEqual(plain(issue.data), { 'data-theme-chip': 'theming' });
+  assert.match(issue.cls, /^dev-badge /);
+  assert.equal(issue.cls, `dev-badge ${AppView._categoryTint('theming').cls}`,
+    'one category is one colour on every card, through the same hash the custom category chips use');
+  assert.match(issue.title, /Category: Theming/);
+  assert.doesNotMatch(issue.title, /—/, 'platform copy carries no em dashes');
+
+  // Not named by any theme: no chip. A card the placer declined is simply
+  // absent from every list, so it reads the same way.
+  assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[1])), null);
+
+  // Every card kind the server keys: a proposal and a merge by their
+  // chat_sessions row, a shared session likewise.
+  assert.equal(chipOf(AppView._proposalCardModel(AppView._proposals[0])).label, 'Theming');
+  assert.equal(chipOf(AppView._sharedSessionCardModel(AppView._sharedSessions[0])).label, 'Theming');
+  assert.equal(chipOf(AppView._mergedRowModel(AppView._merged[0])).label, 'Theming');
+
+  // And it reaches the Board's markup, on the card the columns draw.
+  const html = kanbanHtml(AppView);
+  assert.ok(html.includes('data-theme-chip="theming"'), 'the chip is in the kanban markup');
+  assert.ok(/data-theme-chip="theming"[^>]*>Theming</.test(html), 'with the category\'s name as its text');
+});
+
+test('#1933: under the "By category" pane the chip is dropped, because the heading already says it', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 'theming', name: 'Theming', items: ['issue:12', 'session:34'] }]);
+  const chipOf = (row) => (row.card.badges || []).find((b) => b && b.key === 'theme') || null;
+  const lane = (t, k) => t.lanes.find((l) => l.key === k);
+
+  AppView._getWorkshopGroup = () => 'category';
+  const grouped = AppView._workshopView();
+  assert.equal(chipOf(lane(grouped.themes[0], 'open').rows[0]), null, 'no chip under its own heading');
+  assert.equal(chipOf(lane(grouped.themes[0], 'review').rows[0]), null);
+  // The vote strip is not grouped by category, so its card keeps the name.
+  assert.equal(grouped.votes.rows.length, 1);
+  assert.equal(chipOf(grouped.votes.rows[0]).label, 'Theming');
+
+  AppView._getWorkshopGroup = () => 'stage';
+  const staged = AppView._workshopView();
+  assert.equal(chipOf(lane(staged.themes[0], 'open').rows[0]).label, 'Theming', 'the stage pane sorts by state, so the chip stays');
+});
+
+test('#1933: the themes landing repaints whichever surface is up, not only the Workshop pane', async () => {
+  const AppView = makeAppView({
+    fetch: async () => ({ ok: true, json: async () => ({ themes: [{ id: 't', name: 'T', items: ['issue:12'] }], source: 'ai' }) }),
+  });
+  seed(AppView);
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(AppView._workshopThemes.themes.length, 1);
+  assert.equal(repaints, 1, 'the board repaints so its cards can pick up their chips');
+});
+
+test('#1933: the declared check reads the chip off a demo issue card on the board', () => {
+  const check = dapp.tests.find((t) => /#1933/.test(t.name || ''));
+  assert.ok(check, 'declared');
+  assert.match(check.path, /demo=1.*#app\/usernode-2d5619\/board$/);
+  assert.match(check.expectSelector, /#dev-kanban \[data-ref-issue="900001"\] \[data-theme-chip="demo-appearance"\]/);
+  assert.equal(check.expectText, '[Mock] Appearance & theming');
+  // The name and the placement it asserts are the staging demo theme's.
+  const route = read('src/routes/workshop-themes.js');
+  assert.ok(route.includes("id: 'demo-appearance'"));
+  assert.ok(route.includes("name: '[Mock] Appearance & theming'"));
+  assert.ok(/items: \['issue:900001'/.test(route));
+});

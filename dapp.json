@@ -1156,6 +1156,12 @@
       "expectSelector": "[data-issue-chip]"
     },
     {
+      "name": "Board cards name the auto-drafted category they were placed in (#1933)",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-ref-issue=\"900001\"] [data-theme-chip=\"demo-appearance\"]",
+      "expectText": "[Mock] Appearance & theming"
+    },
+    {
       "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
       "expectSelector": "[data-plus=\"import-pr\"]"
