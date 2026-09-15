@@ -87,7 +87,22 @@ function menuHarness(touch) {
       node.textContent = text(body);
       node.hasAttribute = (attr) => attr === 'data-plus' && node.isAction;
       const title = body.match(/<span data-plus-title="[^"]*"[^>]*>([\s\S]*?)<\/span>/);
+      // #1930: the touch sheet also borrows the row's glyph. A stand-in svg
+      // that records what the sheet did to its copy — the clone must come
+      // away without the Tailwind sizing classes.
+      const hasGlyph = /<svg[\s>]/.test(body);
       node.querySelector = (selector) => {
+        if (selector === 'svg') {
+          if (!hasGlyph) return null;
+          return {
+            cloneNode: (deep) => {
+              assert.equal(deep, true, 'the glyph is cloned deep, paths and all');
+              const clone = { glyphOf: key, classRemoved: false };
+              clone.removeAttribute = (name) => { if (name === 'class') clone.classRemoved = true; };
+              return clone;
+            },
+          };
+        }
         assert.equal(selector, '[data-plus-title]');
         assert.ok(title, `action ${key} has a marked title`);
         return { textContent: text(title[1]) };
@@ -164,6 +179,11 @@ for (const touch of [false, true]) {
           'Add to the board', 'File an issue', 'Import Feature from a PR', 'Settings & rules',
           'Members & visibility', 'App display name', 'App secrets', 'Fork this app',
         ]);
+        // #1930: every action row carries its own glyph, class-stripped.
+        for (const item of sheet.actions.filter((a) => !a.heading)) {
+          assert.ok(item.iconEl, `${item.label} carries its row's icon`);
+          assert.equal(item.iconEl.classRemoved, true, `${item.label}'s icon drops its Tailwind classes`);
+        }
         assert.ok(h.classes.has('hidden'), 'touch never opens the desktop dropdown');
         sheet.actions.filter((item) => !item.heading)[index].handler();
       } else {
