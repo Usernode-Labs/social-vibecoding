@@ -3541,7 +3541,7 @@
     {
       "name": "A completed password reset returns to login with a durable success notice (#2266)",
       "path": "/?shot=password-reset-complete#login",
-      "expectSelector": "#auth-login-screen:not(.hidden):has(#reset-password-view.hidden) #login-form:not(.hidden) #login-reset-success.bg-green-100:not(.hidden)",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-reset-success.bg-green-100:not(.hidden)",
       "expectText": "Password changed"
     },
     {

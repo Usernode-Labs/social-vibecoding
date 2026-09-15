@@ -147,7 +147,8 @@ test('the completed state is directly checkable without consuming a reset token'
   const check = manifest.tests.find((item) => String(item.name || '').includes('completed password reset'));
   assert.ok(check, 'the final success state has a declared browser check');
   assert.equal(check.path, '/?shot=password-reset-complete#login');
-  assert.match(check.expectSelector, /#reset-password-view\.hidden/);
+  assert.match(check.expectSelector, /#login-form:not\(\.hidden\)/,
+    'the capture asserts the visible destination; the lazy reset form need not mount for a display-only shot');
   assert.match(check.expectSelector, /#login-reset-success/);
   assert.match(read('public/js/app.js'), /shot !== 'password-reset-complete'/,
     'the signed-in capture user is held on the anonymous auth screen');
