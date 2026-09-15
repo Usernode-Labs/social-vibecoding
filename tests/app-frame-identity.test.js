@@ -644,6 +644,9 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   assert.equal(bridge.frame(), null, 'the creating placeholder has no frame');
   assert.equal(h.surface(), 'platform', 'and keeps the platform clearance');
   assert.match(h.status().message, /spinning up/, 'the placeholder is published');
+  assert.notEqual(AppView._statusPollTimer, null,
+    'and one HTTP recovery is armed in case the terminal WebSocket event was missed');
+  AppView._stopStatusPolling();
 });
 
 test('#2154: a running event that beats the first detail response clears the spinner', async () => {

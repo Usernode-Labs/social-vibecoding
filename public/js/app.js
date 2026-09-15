@@ -1909,6 +1909,18 @@ const App = {
         return !!el && !el.classList.contains('hidden');
       };
 
+      // The app record itself is in the service worker's zero-deadline boot
+      // lane. If its cached `creating` snapshot is corrected after first
+      // paint, revalidate the open App tab just as the branches below refresh
+      // the Dev board and Home. WebSocket remains the fast path; this closes
+      // the missed-event hole that otherwise leaves the placeholder forever.
+      if (App.currentApp && App.currentTab === 'app'
+          && window.AppView && AppView.appData?.status === 'creating'
+          && AppView._watchCreatingStatus) {
+        AppView._watchCreatingStatus(AppView.appData, { immediate: true });
+        return;
+      }
+
       if (App.currentApp && App.currentTab === 'dev'
           && window.AppView && AppView.refreshDevData) {
         AppView.refreshDevData('api-update');
@@ -5289,6 +5301,7 @@ const App = {
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
+    if (tab !== 'app') AppView._stopStatusPolling?.();
     // The `.app-mode-seg` repaint that used to sit here went with the switch
     // itself. There IS a control reflecting the active tab again — the
     // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the

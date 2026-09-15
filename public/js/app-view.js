@@ -1222,6 +1222,7 @@ const AppView = {
     if (AppView._staging().isOpen()) AppView.closeStagingOverlay();
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
+    AppView._stopStatusPolling();
     AppView._issueStateSource = null;
     // #931: retire any in-flight eager launch (generation bump + timers), so
     // a frame we're about to unmount can't reveal itself over the next screen.
@@ -2414,6 +2415,16 @@ const AppView = {
     AppView._teardownDevRoots();
 
     if (!appData || appData.status !== 'running' || !appData.url) {
+      if (appData?.status === 'creating') {
+        // WebSocket delivery is the fast path, but it is not a durability
+        // boundary: a sleeping tab, reconnect, or a cached first-paint app
+        // record can miss the one terminal event. Keep one HTTP recheck armed
+        // while this exact placeholder is visible so `creating` cannot become
+        // a permanent client-side state.
+        AppView._watchCreatingStatus(appData);
+      } else {
+        AppView._stopStatusPolling();
+      }
       // #931: this branch replaces #app-content, so any launch surface under
       // it is gone — retire the generation so its pending callbacks and the
       // adoption offer can't outlive the frame they belong to.
@@ -2434,6 +2445,11 @@ const AppView = {
       // Status updates pushed via WebSocket — no polling needed
       return;
     }
+
+    // A terminal record reached the ordinary render path (via WebSocket,
+    // service-worker correction, or the recovery poll below). No scheduled
+    // recheck may survive it.
+    AppView._stopStatusPolling();
 
     // Offline mode (#487): the running app lives on its own subdomain — a
     // different origin the platform's service worker can't cache — so
@@ -16941,22 +16957,105 @@ const AppView = {
     }
   },
 
-  async pollStatus() {
-    if (!AppView.appData || App.currentTab !== 'app') return;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}`);
-      if (!res.ok) return;
-      const { app: updated } = await res.json();
-      AppView.appData = updated;
-      if (updated.status === 'running') {
-        await AppView.refreshToken(AppView.appData.slug);
-        AppView.renderAppTab();
-      } else if (updated.status === 'creating') {
-        setTimeout(() => AppView.pollStatus(), 3000);
-      } else {
-        AppView.renderAppTab();
+  // WebSocket app_status is deliberately still the fast path. This is the
+  // recovery path for a terminal event the page never received — especially
+  // when the service worker's zero-deadline app-detail lane supplied an older
+  // `creating` record for first paint. The old pollStatus method had existed
+  // since the first extraction of this code, but nothing called it, and each
+  // invocation could start an independent timer or overwrite a later app.
+  STATUS_POLL_MS: 3000,
+  _statusPollTimer: null,
+  _statusPollInflight: null,
+  _statusPollRecord: null,
+
+  _stopStatusPolling() {
+    if (AppView._statusPollTimer) clearTimeout(AppView._statusPollTimer);
+    AppView._statusPollTimer = null;
+    AppView._statusPollRecord = null;
+  },
+
+  _watchCreatingStatus(appData, { immediate = false } = {}) {
+    if (!appData || appData.status !== 'creating' || !appData.slug
+        || App.currentApp !== appData.slug || App.currentTab !== 'app') {
+      return null;
+    }
+
+    // Object identity distinguishes a later visit to the same slug from the
+    // snapshot whose request may still be in flight. A late answer from the
+    // first visit must not overwrite the second one.
+    if (AppView._statusPollRecord !== appData) {
+      AppView._stopStatusPolling();
+      AppView._statusPollRecord = appData;
+    }
+
+    if (AppView._statusPollInflight) return AppView._statusPollInflight;
+    if (AppView._statusPollTimer) {
+      if (!immediate) return null;
+      clearTimeout(AppView._statusPollTimer);
+      AppView._statusPollTimer = null;
+    }
+
+    if (immediate) return AppView.pollStatus(appData);
+    AppView._statusPollTimer = setTimeout(() => {
+      AppView._statusPollTimer = null;
+      AppView.pollStatus(appData);
+    }, AppView.STATUS_POLL_MS);
+    return null;
+  },
+
+  async pollStatus(expected = AppView.appData) {
+    if (!expected || expected.status !== 'creating' || !expected.slug
+        || AppView.appData !== expected
+        || App.currentApp !== expected.slug || App.currentTab !== 'app') {
+      return;
+    }
+    if (AppView._statusPollInflight) return AppView._statusPollInflight;
+    if (AppView._statusPollTimer) {
+      clearTimeout(AppView._statusPollTimer);
+      AppView._statusPollTimer = null;
+    }
+    AppView._statusPollRecord = expected;
+
+    let run;
+    run = (async () => {
+      try {
+        const res = await fetch(`/api/apps/${expected.slug}`);
+        if (!res.ok) return;
+        const { app: updated } = await res.json();
+
+        // Re-check after both awaits. A terminal WebSocket event mutates the
+        // expected record in place; navigation replaces it. Either makes this
+        // older HTTP snapshot ineligible to write.
+        if (AppView.appData !== expected || expected.status !== 'creating'
+            || App.currentApp !== expected.slug || App.currentTab !== 'app') {
+          return;
+        }
+
+        AppView.appData = updated;
+        AppView._statusPollRecord = updated;
+        if (updated.status === 'running') {
+          await AppView.refreshToken(updated.slug);
+          // Token minting is another await across which the user can leave.
+          if (AppView.appData !== updated || App.currentApp !== updated.slug
+              || App.currentTab !== 'app') return;
+        }
+        if (updated.status !== 'creating') AppView.renderAppTab();
+      } catch {
+        // A transient read failure changes no visible state. The finally block
+        // re-arms the same single watcher while the placeholder still applies.
+      } finally {
+        if (AppView._statusPollInflight === run) AppView._statusPollInflight = null;
+        const current = AppView.appData;
+        if (current?.status === 'creating' && App.currentApp === current.slug
+            && App.currentTab === 'app') {
+          AppView._watchCreatingStatus(current);
+        } else {
+          AppView._stopStatusPolling();
+        }
       }
-    } catch {}
+    })();
+    AppView._statusPollInflight = run;
+    return run;
   },
 
   // Activity tracking: counts seconds while the user is on the App tab
