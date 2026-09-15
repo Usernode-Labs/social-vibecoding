@@ -459,14 +459,15 @@ app.use(appLlmProxyRoutes(config));
 // callers are app containers, not browser sessions.
 app.use(appStorageRoutes(config));
 
-// App-facing read-only platform API (#744). App containers call
-// /api/app-platform/governance/feed with the same per-app token
+// Versioned app-facing read-only platform API (#744, #1908). App containers
+// call /api/app-platform/v1/* with the same per-app token
 // (USERNODE_LLM_PROXY_TOKEN) to read their OWN proposal/vote/merge
-// feed for in-app "what's changing" strips. App-token-only (no user
-// token or grant — the feed holds nothing an app viewer can't already
-// see in the vote panel), same private-IP gate; mounted before
-// authMiddleware because callers are app containers, not browser
-// sessions.
+// feed or the public app directory. The legacy unversioned paths remain
+// aliases. App-token-only endpoints need no user token or grant because
+// they expose only public or already-viewable data. User-directory calls
+// additionally verify the forwarded user token. Same private-IP gate;
+// mounted before authMiddleware because callers are app containers, not
+// browser sessions.
 app.use(appPlatformApiRoutes(config));
 
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo

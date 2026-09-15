@@ -19,11 +19,10 @@
 // ALREADY ON AN APP. Nothing an app iframe can reach may expose that, so
 // the bridge gets a surface with no membership parameter at all.
 //
-// This is what makes handle lookup work in STAGING: staging containers
-// are injected with neither USERNODE_PLATFORM_API_URL nor an app token,
-// so their server-side code cannot reach /api/app-platform/* — but the
-// shell relay accepts #staging-iframe, so bridge-based lookups keep
-// working in PR previews.
+// Staging containers receive the app-platform base URLs but deliberately no
+// app token. Server-side user lookup can use the caller's forwarded iframe
+// token; this shell relay remains the token-free frontend path and accepts
+// #staging-iframe, so bridge-based lookups work in PR previews too.
 //
 // Mounted AFTER authMiddleware in server.js: req.user is guaranteed.
 
