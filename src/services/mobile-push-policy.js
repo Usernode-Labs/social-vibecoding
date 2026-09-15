@@ -207,6 +207,44 @@ function buildCopy(kind, context, now) {
         title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
         body: `@${actor} would love your eyes on this`,
       };
+    // #2273: these four kinds arrived with the per-app notification controls,
+    // after the contextual push registry was written. They were push-eligible
+    // but had no visible copy here, so every delivery collapsed to the generic
+    // "You have new activity" fallback even though the worker had already
+    // loaded the actor, app, proposal and detail needed to identify it.
+    case 'proposal_vote': {
+      if (!actor) return null;
+      const direction = detail === 'no' ? 'no' : 'yes';
+      return {
+        title: withApp(quotedTitle
+          ? `@${actor} voted ${direction} on ${quotedTitle}`
+          : `@${actor} voted ${direction} on your proposal`),
+        body: 'Open the proposal to review their vote',
+      };
+    }
+    case 'pr_merged':
+      return {
+        title: withApp(quotedTitle ? `${quotedTitle} merged` : 'Your proposal merged'),
+        body: detail === 'forced'
+          ? 'An admin merged it. Your change is live'
+          : 'The vote carried. Your change is live',
+      };
+    case 'issue_opened': {
+      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      return {
+        title: withApp(actor ? `@${actor} filed issue${issue}` : `New issue${issue}`),
+        body: 'Open the issue to see what needs attention',
+      };
+    }
+    case 'vote_digest': {
+      const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
+      return {
+        title: count
+          ? `${count} ${count === 1 ? 'proposal is' : 'proposals are'} waiting for your vote`
+          : 'Proposals are waiting for your vote',
+        body: 'Open Dev to review them',
+      };
+    }
     case 'check_failed':
       return {
         title: withApp(quotedTitle ? `Checks failed on ${quotedTitle}` : 'Proposal checks failed'),
@@ -251,9 +289,9 @@ function buildCopy(kind, context, now) {
       };
     }
     // #2253: the app storage cap speaks through app_health, and its two
-    // tokens say what happened and what to do. Every other app_health
-    // detail keeps the generic copy it has always had: a deploy failure's
-    // reason is on the app row, not in the push.
+    // tokens say what happened and what to do. #2273 gives the existing
+    // deploy-failure token its own copy too. The full failure reason stays on
+    // the app row; the push identifies the event and points to that detail.
     case 'app_health':
       if (detail === 'storage_warn') {
         return {
@@ -267,7 +305,16 @@ function buildCopy(kind, context, now) {
           body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
         };
       }
-      return null;
+      if (detail === 'deploy_failed') {
+        return {
+          title: withApp('Deploy failed'),
+          body: 'The latest change did not go live. Open the app to see what failed',
+        };
+      }
+      return {
+        title: withApp('App needs attention'),
+        body: 'Open the app to see what needs attention',
+      };
     default:
       return null;
   }

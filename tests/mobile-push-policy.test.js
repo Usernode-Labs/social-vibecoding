@@ -164,6 +164,18 @@ test('each kind renders its own title and body from send-time context', () => {
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
       '@alice would love your eyes on this'],
+    ['proposal_vote', CONTEXT,
+      '@alice voted yes on "Fix login redirect loop" · MyPage',
+      'Open the proposal to review their vote'],
+    ['pr_merged', CONTEXT,
+      '"Fix login redirect loop" merged · MyPage',
+      'The vote carried. Your change is live'],
+    ['issue_opened', { ...CONTEXT, detail: '2273' },
+      '@alice filed issue #2273 · MyPage',
+      'Open the issue to see what needs attention'],
+    ['vote_digest', { ...CONTEXT, detail: '3' },
+      '3 proposals are waiting for your vote',
+      'Open Dev to review them'],
     ['check_failed', CONTEXT,
       'Checks failed on "Fix login redirect loop" · MyPage',
       'Needs a fix before it can merge'],
@@ -292,6 +304,16 @@ test('missing context degrades to the generic notification, never a throw', () =
     buildMessage({ ...INPUT, kind: 'session_done', context: {} }).notification,
     { title: 'Your build is ready' }
   );
+  // The new system-owned kinds can still identify the event without an
+  // actor, app or proposal label, so they never regress to generic activity.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'pr_merged', context: {} }).notification,
+    { title: 'Your proposal merged', body: 'The vote carried. Your change is live' }
+  );
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'vote_digest', context: {} }).notification,
+    { title: 'Proposals are waiting for your vote', body: 'Open Dev to review them' }
+  );
 });
 
 test('context never leaks into the data payload', () => {
@@ -343,10 +365,10 @@ test('test alert uses explicit copy with the normal opaque push envelope', () =>
   assert.equal(message.android.notification.channelId, 'social_activity');
 });
 
-test('app storage alerts say what happened and what to do (#2253)', () => {
-  // The storage cap speaks through app_health, which had no copy of its
-  // own before; its two tokens get some, and every other detail keeps the
-  // generic fallback it always had.
+test('app health alerts say what happened and what to do (#2253, #2273)', () => {
+  // The storage cap and deploy-failure tokens all produce contextual copy.
+  // Unknown future tokens still identify the app and direct the recipient to
+  // the durable detail instead of degrading to generic activity.
   const warn = buildMessage({
     ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_warn' },
   });
@@ -361,8 +383,18 @@ test('app storage alerts say what happened and what to do (#2253)', () => {
     title: 'Out of storage · MyPage',
     body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
   });
-  const other = buildMessage({
+  const deploy = buildMessage({
     ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'deploy_failed' },
   });
-  assert.deepEqual(other.notification, { title: 'Homeroom', body: 'You have new activity' });
+  assert.deepEqual(deploy.notification, {
+    title: 'Deploy failed · MyPage',
+    body: 'The latest change did not go live. Open the app to see what failed',
+  });
+  const other = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'future_token' },
+  });
+  assert.deepEqual(other.notification, {
+    title: 'App needs attention · MyPage',
+    body: 'Open the app to see what needs attention',
+  });
 });
