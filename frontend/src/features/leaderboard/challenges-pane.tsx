@@ -61,7 +61,6 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
-    _toStandings(): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
@@ -256,15 +255,6 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           </div>
         </Fragment>
       ))}
-      <div className="mt-4 text-center">
-        <button
-          id="tc-se-to-standings"
-          className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
-          onClick={() => controller()?._toStandings()}
-        >
-          See where the season stands →
-        </button>
-      </div>
     </>
   );
 }
