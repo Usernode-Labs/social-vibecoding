@@ -173,7 +173,10 @@ test('every hard blocking state is a red tag, in severity order', () => {
   const AppView = makeAppView();
   const cases = [
     [{ merge_conflict_state: 'failed' }, 'Needs manual resolution'],
-    [{ merge_conflict_state: 'conflict' }, 'GitHub refused the merge'],
+    // #2221: the label names the next action now. The TONE is what this
+    // test is about and it is unchanged — a refused merge is still red,
+    // because a person really does have to act on it.
+    [{ merge_conflict_state: 'conflict' }, 'Needs author to sync with main'],
     [{ check_state: 'error' }, 'Preview won’t boot'],
     [{ check_state: 'failing', test_results: [] }, 'Checks failing'],
   ];
@@ -637,7 +640,7 @@ test('the declared checks match what the real staging fixtures render', () => {
   const refused = row(9000083);
   assert.equal(AppView.statusTagSpecs(refused, {}).map((t) => t.data['data-status-tag']).join(),
     'merge_conflict');
-  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'GitHub refused the merge');
+  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'Needs author to sync with main');
 
   // 9000003 — automatic resolution in flight. Toned `running`, because
   // nobody has to act; the wording says so rather than reporting our state.
