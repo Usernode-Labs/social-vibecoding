@@ -1645,6 +1645,13 @@ ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_ref INTEGER;
 -- 'edit' handler, src/services/ws.js).
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
+-- #2236: how a message reached the thread. NULL = a person typing in the
+-- browser (every pre-existing row; no backfill). 'agent' = posted on the
+-- author's behalf by a coding agent through the Homeroom MCP connector, so
+-- the thread can say so beside the name. Derived server-side from the
+-- request's connector credential (routes/chat.js), never from the body.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS posted_via VARCHAR(16);
+
 CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
   ON chat_messages (app_id, thread_type, thread_ref, id)
   WHERE thread_type IS NOT NULL;

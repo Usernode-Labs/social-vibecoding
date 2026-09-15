@@ -545,12 +545,18 @@ async function handleMessage(pool, client, msg) {
         }));
       }
 
-      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6)
+      // #2236: `client.postedVia` is 'agent' when the JSON write route was
+      // reached with a Homeroom MCP connector credential (routes/chat.js
+      // derives it from the request, never from the body). A browser
+      // socket has no such field, so its rows stay NULL — a person typing.
+      const postedVia = client.postedVia === 'agent' ? 'agent' : null;
+
+      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6, $7)
          RETURNING id, created_at`;
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
-        thread ? thread.type : null, thread ? thread.ref : null];
+        thread ? thread.type : null, thread ? thread.ref : null, postedVia];
       let rows;
       if (attRows.length) {
         // Insert + link atomically — a half-linked send would render
@@ -584,6 +590,9 @@ async function handleMessage(pool, client, msg) {
         ...(metadata ? { metadata } : {}),
         ...(thread ? { thread } : {}),
         createdAt: rows[0].created_at,
+        // Always present on a human row, so a live row and a loaded one
+        // carry the same fact (`posted_via` on the REST payload).
+        postedVia,
       };
 
       broadcast(client.appId, outMsg);

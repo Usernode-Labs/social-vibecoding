@@ -3719,7 +3719,8 @@ const App = {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
-            ref = parseInt(parts[4]) || null;
+            // #2241: `new` is the unsent change (see _normalizeTab).
+            ref = parts[4] === 'new' ? 'new' : (parseInt(parts[4]) || null);
           } else if (sec === 'chat') {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
@@ -4640,7 +4641,11 @@ const App = {
       if (App.currentTab === 'dev') {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          ref = DevChat.currentSession.id;
+          // #2241: an unsent change has no id, and `null` here would
+          // normalize the whole route back to the board — so it serializes
+          // as the word the router reserves for it.
+          ref = DevChat.currentSession.id
+            || (DevChat.currentSession.pending ? DevChat.NEW_SESSION_REF : null);
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
@@ -5211,6 +5216,14 @@ const App = {
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
 
     if (subTab === 'sessions') {
+      // #2241: `new` is the one session ref that is a WORD rather than an
+      // id — /app/<slug>/dev/sessions/new is the change you have not sent
+      // yet, which has no row and therefore no id to be addressed by. It
+      // needs a route of its own precisely because of the line below: a
+      // session sub-tab with no ref normalizes to the card list, so a
+      // screen with nothing to name could not be navigated to at all.
+      // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
+      if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
       // No session id → the card list (there is no session-list screen).
       return Number.isInteger(id) && id > 0
