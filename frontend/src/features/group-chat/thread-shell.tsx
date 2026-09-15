@@ -100,7 +100,11 @@ export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   if (fill) {
     return (
-      <div className="dev-thread flex flex-col h-full min-h-0 dc-lift dc-lift-session">
+      // `dev-thread-fill` is what app.css hangs the keyboard reservation on
+      // (#1937). It has to be the COLUMN, not the composer: the composer is a
+      // `shrink-0` sibling below the scroller, so the kit's `.un-kb-avoid`
+      // padding — which lands inside the scroller — can never lift it.
+      <div className="dev-thread dev-thread-fill flex flex-col h-full min-h-0 dc-lift dc-lift-session">
         <div
           id="gc-thread-scroll"
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3"

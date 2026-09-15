@@ -131,6 +131,33 @@ test('keyboard-up suppresses the inset on both utilities', () => {
     'the bar keeps its base gap with the keyboard up, just not the inset');
 });
 
+test('the fill-mode topic thread reserves the keyboard inset on its COLUMN', () => {
+  // #1937. The fill thread pins its typing slot and composer as shrink-0
+  // siblings OUTSIDE #gc-thread-scroll, so `.un-kb-avoid` — which pads the
+  // inside of a scroller — cannot lift them. Left alone the bar sits behind
+  // the keyboard, iOS pans the document to reveal the focused composer, and
+  // the kit's settled pin resets that pan on every viewport settle: once per
+  // keypress, since QuickType resizes the visual viewport as you type.
+  // Reserving the inset on the column shrinks the scroller instead, so the
+  // discussion stays visible and nothing has to pan.
+  const col = /html\.un-kb \.dev-thread-fill\s*\{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(col, 'html.un-kb .dev-thread-fill rule is missing');
+  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
+    'the column must reserve the kit-published keyboard inset');
+  assert.match(col[1], /transition:\s*none/,
+    'no transition while the keyboard is up — the bar tracks it exactly');
+
+  const shell = read('frontend/src/features/group-chat/thread-shell.tsx');
+  const fillRoot = /className="dev-thread dev-thread-fill[^"]*"/.exec(shell);
+  assert.ok(fillRoot, 'the fill-mode root must carry dev-thread-fill');
+  // The boxed layout is not screen-bottom-anchored, so reserving the inset
+  // there would be dead space in the middle of a page.
+  const boxedRoot = /className="dev-thread border[^"]*"/.exec(shell);
+  assert.ok(boxedRoot, 'the boxed root should still be plain dev-thread');
+  assert.ok(!boxedRoot[0].includes('dev-thread-fill'),
+    'only the fill variant reserves the keyboard inset');
+});
+
 // ── 3. Every screen scroller opts in ─────────────────────────────────
 
 // The top-level screens and the fixed auth overlays. A new screen that

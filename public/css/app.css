@@ -326,6 +326,32 @@ html.un-kb .platform-safe-sheet {
   padding-bottom: 1.25rem !important;
 }
 
+/* Keyboard up, fill-mode topic thread (#1937). The thread pins its typing
+   slot and composer as `shrink-0` siblings OUTSIDE `#gc-thread-scroll`
+   (thread-shell.tsx says so in its header), so the kit's `.un-kb-avoid`
+   padding — which lands inside the scroller — cannot lift them. The bar
+   therefore sat behind the keyboard; iOS Safari panned the document to
+   reveal the focused composer; and `attachKeyboardAvoidance`'s settled pin,
+   which runs on EVERY settled viewport event rather than only on focus,
+   reset that pan with `window.scrollTo(0, 0)`. Each keystroke resizes the
+   visual viewport (QuickType), so the page snapped back once per keypress
+   and the discussion above it jumped to the top.
+
+   Reserving the inset on the COLUMN is the fix: the scroller shrinks by the
+   keyboard's height instead of being covered by it, so past comments stay
+   visible, the composer sits above the keys, and nothing needs to pan.
+   Transition shape copied from the kit's own `.un-kb-avoid`: none while the
+   keyboard is up so the bar tracks it exactly, eased on the way out so the
+   browser's scrollTop clamp rides the ease instead of snapping. */
+.dev-thread-fill {
+  transition: padding-bottom 150ms ease-out;
+}
+
+html.un-kb .dev-thread-fill {
+  padding-bottom: var(--un-kb-inset, 0px);
+  transition: none;
+}
+
 /* ── Platform Messages screen ─────────────────────────────
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.
