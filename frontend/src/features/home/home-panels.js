@@ -838,8 +838,8 @@ const HomePanels = {
 
   // `_wire(section)` lived here: eight `querySelectorAll` sweeps re-run after
   // every paint, because the paint had just destroyed the nodes they were on.
-  // Every one of them is a prop in ./panels/ now — the challenge rows and the
-  // footer's Open button (Challenges), the heading's leaderboard link, the
+  // Every one of them is a prop in ./panels/ now — the challenge rows, the
+  // heading's leaderboard link, the
   // expand toggle, the ⋮, Discover's browse control, and the create tile's two
   // branches.
   //

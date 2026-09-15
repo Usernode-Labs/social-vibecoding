@@ -676,7 +676,7 @@
     {
       "name": "Challenges: a block showing every challenge there is draws no \"see all\" (#1824)",
       "path": "/?demo=1&challenges=few",
-      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer:not(:has(.home-panel-expand)) .home-panel-open"
+      "expectSelector": "#home-challenges-section article.home-panel:not(:has(.home-panel-expand)) > .home-panel-body .home-challenge-card"
     },
     {
       "name": "Challenges: a truncated list still draws the toggle that opens the rest (#1824)",

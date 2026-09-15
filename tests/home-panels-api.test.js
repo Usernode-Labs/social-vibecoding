@@ -988,12 +988,15 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
     'the existing challenges-widget check still runs');
 
   // #1824, both directions. The `few` route shows every challenge it has, so
-  // its footer must carry the way out and NO expand toggle; the default route
-  // is truncated, so it must still carry one. A check on only the first would
-  // pass just as well if the toggle were deleted outright.
+  // its block must draw its cards and NO expand toggle; the default route is
+  // truncated, so it must still carry one. A check on only the first would
+  // pass just as well if the toggle were deleted outright. (The all-shown
+  // check used to select the footer's "Open challenges" door; that copy is
+  // gone, and so is the footer when the toggle is.)
   const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
-  assert.match(allShown.expectSelector, /home-panel-footer/);
+  assert.match(allShown.expectSelector, /home-challenge-card/);
+  assert.doesNotMatch(allShown.expectSelector, /home-panel-open/);
   assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
     'it asserts the ABSENCE of the toggle, which is the whole fix');
   assert.ok(kept.some((t) => t.path === '/?demo=1'

@@ -621,7 +621,7 @@ test('cards from one group draw no header, and keep their deadlines', () => {
     'with no header to own it, each card keeps its clock');
 
   const { html } = renderWith(data());
-  const list = html.slice(html.indexOf('home-panel-rows'), html.indexOf('home-panel-footer'));
+  const list = html.slice(html.indexOf('home-panel-rows'), html.indexOf('</article>'));
   assert.doesNotMatch(list, />This week</, 'no header over a single group');
   assert.match(list, />3d left</);
   assert.match(list, />23h left</);
@@ -688,7 +688,7 @@ test('render: the group headers sit inside the rows list, before their cards, wi
     })],
   });
   assert.match(html, /data-rows="3"/, 'data-rows still counts cards, not headers');
-  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('home-panel-footer'));
+  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('</article>'));
   const rows = body.slice(body.indexOf('home-panel-rows'));
   const at = (frag) => {
     const i = rows.indexOf(frag);
@@ -882,7 +882,7 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
   assert.match(html, /aria-label="[^"]*&quot;out&quot;[^"]*"/, 'the rail label is escaped');
 });
 
-test('render: the footer carries the expand toggle and the way out', () => {
+test('render: the footer carries the expand toggle, and the heading the way out', () => {
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
@@ -900,11 +900,12 @@ test('render: the footer carries the expand toggle and the way out', () => {
   assert.equal((html.match(/home-challenge-card/g) || []).length, 4);
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
   assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
-  // And the separate way out, bottom right. It NAMES its destination — the
-  // Challenges TAB, which is not where the title bar's leaderboard link goes
-  // (#980), so neither label may say only "leaderboard" or only "open".
-  assert.match(html, /home-panel-open[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/);
+  // The footer's second way out is GONE: it read "Open challenges" and landed
+  // on the same tab as the heading's link one card above it. The heading's
+  // `home-panel-lb-browse` is the area's one door.
+  assert.doesNotMatch(html, /home-panel-open/, 'no second door in the footer');
+  assert.equal((html.match(/aria-label="Open challenges"/g) || []).length, 1,
+    'one "Open challenges" on the block, the heading\'s');
   assert.doesNotMatch(html, />Open<\/span>/, 'the bare "Open" label is gone');
   assert.match(html, /aria-expanded="false"/);
 });
@@ -927,12 +928,12 @@ test('#1824: a block already showing every challenge draws no expand toggle', ()
   assert.equal((html.match(/data-challenge-id/g) || []).length, 3);
   assert.doesNotMatch(html, /home-panel-expand/, 'no toggle');
   assert.doesNotMatch(html, /See all 3 challenges/, 'and no false label');
-  // The footer itself stays — it still carries the way out to the Challenges
-  // tab — and with only that child it seats it right rather than letting it
-  // drift to the left edge where the toggle used to be.
-  assert.match(html, /home-panel-footer[^"]*justify-end/);
-  assert.doesNotMatch(html, /home-panel-footer[^"]*justify-between/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/);
+  // …and no footer at all. It used to stay for its "Open challenges" door;
+  // that door is the heading's alone now, so an empty footer would be a
+  // 26px gap under the cards.
+  assert.doesNotMatch(html, /home-panel-footer/, 'no footer with nothing in it');
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/,
+    'the way out is still one tap away, in the heading');
   // The view says so in one field, so a renderer cannot re-derive it wrong.
   const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
   assert.equal(view.expandable, false);
@@ -948,7 +949,6 @@ test('#1824: the toggle stays when the list is truncated, or has finished rows b
   }, AT_DESKTOP);
   assert.match(cut.html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(cut.html, /See all 8 challenges/);
-  assert.match(cut.html, /home-panel-footer[^"]*justify-between/);
 
   // Not truncated, but the season has finished challenges an expansion
   // reveals — `total` alone would have hidden the toggle and taken the only
@@ -1082,7 +1082,10 @@ test('locked setup: one dashed placeholder after the cards, and no second unlock
   assert.equal(HP.challengesView(locked).lockedCount, 6);
 
   const { html } = renderWith({ registry: [], hidden: [], panels: [locked] });
-  const rows = html.slice(html.indexOf('home-panel-rows'), html.indexOf('home-panel-footer'));
+  // Two setup cards and nothing behind them: no footer, so the rows list runs
+  // to the end of the block.
+  assert.doesNotMatch(html, /home-panel-footer/);
+  const rows = html.slice(html.indexOf('home-panel-rows'), html.indexOf('</article>'));
   assert.equal((html.match(/home-challenge-locked/g) || []).length, 1, 'one placeholder');
   assert.ok(rows.indexOf('home-challenge-locked') > rows.lastIndexOf('home-challenge-card'),
     'the placeholder follows the last card, inside the rows list');
@@ -1103,7 +1106,8 @@ test('locked setup: one dashed placeholder after the cards, and no second unlock
   assert.match(one, />1 challenge locked</);
 
   // Locked, but a payload with no count (an older server) or a zero count:
-  // no placeholder, and the note sits under the challenges, before the footer.
+  // no placeholder, and the note sits under the challenges, last in the block
+  // (before the footer when the block draws one; a short list draws none).
   for (const hidden of [undefined, 0, 'wat']) {
     const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
     assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
@@ -1111,7 +1115,9 @@ test('locked setup: one dashed placeholder after the cards, and no second unlock
     assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
     const note = out.indexOf('Finish these to unlock persistent and weekly challenges.');
     assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
-    assert.ok(note < out.indexOf('home-panel-footer'), `hidden_count ${hidden}: and precedes the footer`);
+    const footer = out.indexOf('home-panel-footer');
+    assert.ok(note < (footer > -1 ? footer : out.indexOf('</article>', note)),
+      `hidden_count ${hidden}: and closes the block, before any footer`);
     assert.match(out, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Finish these/);
   }
 
@@ -1329,15 +1335,13 @@ test('the title bar and the footer controls are single-line too', () => {
   // shorten to "Leaderboard" in the one-cell phone shape, and a section's bar
   // fits the full one at every width, so _leaderboardLink takes no flag.
   assert.match(html, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
-  // #1916: the heading link reads "Open challenges" now, like the footer's.
+  // #1916: the heading link reads "Open challenges".
   assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>/);
-  // Both footer labels — the expand toggle and the "Open challenges" button.
-  // Neither may wrap: the footer is a fixed-height flex row, so a wrap would
-  // be clipped exactly like a wrapped row.
+  // The footer's label, the expand toggle's. It may not wrap: the footer is a
+  // fixed-height flex row, so a wrap would be clipped exactly like a wrapped
+  // row.
   assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
-  assert.match(html, /<span class="whitespace-nowrap">Open challenges<\/span>/);
   assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
-  assert.match(html, /home-panel-open[^>]*whitespace-nowrap/);
 });
 
 test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
@@ -2162,11 +2166,20 @@ test('the Create block lays out as a row at every width', () => {
   assert.match(btn, /\bflex-row\b/, 'icon beside label');
   assert.doesNotMatch(btn, /\bsm:flex-col\b/, 'and never stacked again at 640px');
   assert.match(btn, /\bitems-center\b/);
-  assert.match(btn, /\bjustify-center\b/);
-  // The label keeps the wide row's size at every width now, rather than
-  // stepping down for the cell.
-  assert.match(html, /home-create-label[^"]*\btext-sm\b/);
+  // Left-aligned now, as the dashed locked-challenges placeholder it mirrors:
+  // tile at the card's inset, title and quota line beside it.
+  assert.doesNotMatch(btn, /\bjustify-center\b/);
+  assert.match(btn, /\brounded-3xl\b/);
+  assert.match(btn, /\bborder-dashed\b/);
+  assert.match(btn, /\bborder-violet-500\/50\b/, 'the blue accent stroke while creation is open');
+  // The label keeps one size at every width, the placeholder title's.
+  assert.match(html, /home-create-label[^"]*\btext-base\b/);
+  assert.match(html, /home-create-label[^"]*\btext-violet-700\b/, 'and the accent title');
   assert.doesNotMatch(html, /home-create-label[^"]*sm:text-xs/);
+  // At the limit it steps down to the placeholder's neutrals.
+  const off = renderBlock('create', { home: { canCreate: () => false } }).html;
+  assert.match(off.match(/class="home-create-btn[^"]*"/)[0], /\bborder-zinc-300\b/);
+  assert.doesNotMatch(off, /home-create-label[^"]*text-violet/);
   // `h-full` went with the rectangle: there is nothing to fill, so the block
   // is as tall as its own padding.
   assert.doesNotMatch(btn, /\bh-full\b/);
@@ -2358,21 +2371,21 @@ test('the block draws all four rows, its footer and its toggle — at any width'
   assert.match(html, /home-panel-footer/);
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
-    'the footer keeps the Challenges-tab door');
+  assert.doesNotMatch(html, /home-panel-open/,
+    'the footer holds the toggle only; the heading holds the door');
   // The leaderboard link (#980) with the LONG label — the compact
   // "Leaderboard" existed only for the one-cell bar. It is in the SECTION
   // HEADING now, which is where every block's chrome went when the title
   // left the card (the ⋮ that once followed it is gone).
   assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?<\/h2>/,
     'inside the heading');
-  // #1916: "Open challenges" with a trailing chevron, landing on the
+  // #1916: "Open challenges", landing on the
   // Leaderboard screen's Challenges tab — the area's name, not a different
   // thing's.
   assert.match(html, /home-panel-lb-browse[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
   assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/);
-  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>\s*<svg/,
-    'the label is followed by the chevron');
+  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>\s*<\/button>/,
+    'no chevron after the label, as Browse all apps has none');
   assert.doesNotMatch(html, /Open leaderboard/, 'the old label is gone');
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
   assert.match(ui, /home-panel-lb-browse[\s\S]{0,700}?goToChallenges\?\.\(\)/,

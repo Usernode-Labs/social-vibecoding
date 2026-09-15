@@ -636,7 +636,7 @@ test('the create widget renders in both states and keeps quota details reachable
   sandbox.Home.canCreate = () => true;
   const on = createHtml();
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /home-create-btn/, 'the class app.css styles the tile through');
+  assert.match(on, /home-create-btn/, 'the hook the dapp.json create checks select on');
   assert.match(on, /Create app/);
   assert.doesNotMatch(on, /aria-disabled/);
 

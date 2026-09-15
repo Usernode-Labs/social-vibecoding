@@ -2153,8 +2153,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
-   home cards, the widget strip, the landing (unauthed) grid, and
-   the "Your app here" placeholder. A plain white face (an elevated
+   home cards, the widget strip and the landing (unauthed) grid. A plain
+   white face (an elevated
    zinc surface in dark mode) with a faint hairline tracing whatever
    rounded shape the call site picks (rounded-xl on the 56px tiles,
    rounded-lg on the 40px widget tiles) — the border is drawn by this
@@ -2208,38 +2208,6 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      the faint-hairline intent needs --border here. */
   border-color: var(--border);
 }
-/* The create-tile placeholder: same face, dashed ring + muted glyph so
-   it still reads "empty slot" within the same visual family. */
-.app-icon-tile--empty {
-  border-style: dashed;
-  color: var(--text-faint);
-}
-
-/* "Your app here" placeholder tile. Native `border-style: dashed`
-   has no way to set dash length — at 1px border-width browsers
-   draw very short dashes that read like a row of dots. We paint
-   the outline as an SVG background-image instead, so we can pick
-   `stroke-dasharray` directly. `stroke-width=2` is doubled because
-   the rect sits flush with the SVG edges and half the stroke is
-   clipped off-screen, leaving a visible ~1px line that matches
-   the regular tile's `border` width. rx=12 = Tailwind rounded-xl.
-   Four bg-image rules cover light/dark + hover; data-URL SVGs
-   don't inherit `currentColor` so we can't collapse to a single
-   variable-driven version cleanly. */
-.home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-}
-.home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-.dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-.dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-
 /* Drag-reorderable starred cards (issue #191): a long-press must
    pick the card up, not select its title text or pop the mobile
    copy/look-up callout. Static rather than toggled at drag start
@@ -2524,9 +2492,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    hook the declared checks select on, and needs no rule: the block is one flat
    column now and the progress is just its first band. */
 
-/* The footer bar: the expand/collapse toggle and the way out to the
-   Challenges screen. It carries no rule and no inset (see ui.tsx's
-   PanelFooter); the height keeps the two controls on one steady line. */
+/* The footer bar: the expand/collapse toggle, drawn only when it has rows to
+   reveal (the way out is the section heading's link alone). It carries no
+   rule and no inset (see ui.tsx's PanelFooter); the height keeps the toggle
+   on one steady line. */
 .home-panel-footer {
   min-height: 1.625rem; /* 26px */
 }
@@ -3001,53 +2970,22 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    design they drew. */
 
 /* ── Create-app widget ──────────────────────────────────────
-   A 1x1 tile: the whole thing is the button, since a single cell has no
-   room for chrome around one.
-
-   Two states, and the DISABLED one is the majority rendering — most accounts
-   carry no app quota — so it has to read as "locked", not "broken". Enabled
-   keeps the violet dashed outline the old create tile had; disabled steps
-   both the outline and the glyph down to the neutral hairline/faint tokens
-   and drops the hover lift. Nothing about it is inert, though: it still
-   drags, still hides, and still explains itself on tap (a `disabled`
-   attribute would have swallowed the pointer events all three need). */
+   The whole block is one button, drawn entirely in utilities in
+   frontend/src/features/home/panels/create.tsx: the dashed placeholder card
+   the Challenges area's locked slot uses, in the blue accent while creation is
+   available and in that card's neutrals at the limit. The SVG dashed outlines
+   that lived here (a data-URL rect per colour, per hover, per theme) and the
+   two-line clamp on the label are retired with the tile they drew.
+   `.home-create-tile`, `.home-create-label` and `.home-create-widget--disabled`
+   stay in the markup as hooks the declared checks and tests select on. */
 .home-create-widget {
   min-width: 0;
 }
-/* "Create app" wraps to two lines rather than truncating. It is a backstop
-   now rather than the layout: the block is a full-width section at every
-   width and the label sits BESIDE the icon with room to spare. The clamp
-   earned its keep when the widget could be ONE ~150px grid cell, where a
-   truncated "Create …" read as a rendering bug the way an app tile's
-   truncated name reads as a long name. */
-.home-create-label {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.home-create-widget .home-create-tile {
-  background-color: rgba(31, 134, 255, 0.02);
-}
-.dark .home-create-widget .home-create-tile {
-  background-color: rgba(31, 134, 255, 0.04);
-}
-.home-create-widget--disabled .home-create-tile {
-  background-color: transparent;
-  /* Same SVG-outline trick as .home-create-tile above (a data-URL SVG can't
-     inherit currentColor, so each colour is its own image) — stepped to the
-     neutral hairline so the slot reads as present-but-locked. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-.home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-.dark .home-create-widget--disabled .home-create-tile,
-.dark .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
-}
-.home-create-widget--disabled .app-icon-tile--empty {
-  color: var(--text-faint);
+/* Keyboard focus draws the ring the challenge cards above it draw
+   (`.home-challenge-card[role="button"]:focus-visible`). */
+.home-create-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Phone density ──────────────────────────────────────────

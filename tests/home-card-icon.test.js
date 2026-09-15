@@ -151,7 +151,6 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp()),
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
-    createPanelHtml(Home),
     widgetTileHtml(Home, { id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
@@ -163,8 +162,12 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /bg-violet/, 'no violet tile background');
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
-  // The create-tile placeholder keeps its "empty slot" variant.
-  assert.match(createPanelHtml(Home), /app-icon-tile app-icon-tile--empty/);
+  // The Create block is NOT an app tile any more: it is the dashed placeholder
+  // card the locked challenges slot draws, so its plus sits in that card's
+  // hatched tile rather than in the shared app-icon face.
+  const create = createPanelHtml(Home);
+  assert.doesNotMatch(create, /app-icon-tile/);
+  assert.match(create, /class="home-create-glyph[^"]*rounded-\[0\.6875rem\]/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with

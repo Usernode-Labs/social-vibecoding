@@ -18,10 +18,7 @@
 
 import type { ReactNode } from 'react';
 
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-} from '@/components/ui/icons';
+import { ChevronDownIcon } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
 
@@ -305,8 +302,12 @@ export function PanelShell({
  * It reads "Open challenges" and lands on the Challenges tab of the
  * Leaderboard screen (#1916): the area is called Challenges, so a link out of
  * it that named a different thing read as a way somewhere else. It is still
- * the home screen's door to that screen — the standings are one tab over —
- * and the trailing chevron marks it as navigation rather than an action.
+ * the home screen's door to that screen — the standings are one tab over.
+ *
+ * NO CHEVRON, as `BrowseLink` has none: the two links sit at the right end of
+ * two section headings on one screen, and a glyph behind only one of them
+ * pushed its label out of line with the other's. And it is the area's ONLY
+ * way out: the footer's second "Open challenges" is gone (see `PanelFooter`).
  */
 export function LeaderboardLink() {
   return (
@@ -321,82 +322,56 @@ export function LeaderboardLink() {
       }}
     >
       <span className="whitespace-nowrap">Open challenges</span>
-      <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
 }
 
 /**
- * The Challenges footer: the expand/collapse toggle on the left, the way out
- * to the Challenges tab on the right.
+ * The Challenges footer: the expand/collapse toggle, and nothing else.
  *
- * That right-hand control says "Open challenges" and lands on
- * `#leaderboard/challenges` — the same label and the same destination as the
- * heading's link since #1916, so the two never disagree about where they go
- * (#980 was two controls one card apart reading alike but opening different
- * tabs). The footer copy is the one under the rows, for a reader who has just
- * scrolled past them.
+ * It used to carry a second control at its right end, "Open challenges",
+ * landing on the same `#leaderboard/challenges` as the heading's link. Two
+ * doors to one tab, one card apart, read as two destinations, so the footer's
+ * went and the heading's `LeaderboardLink` is the area's one way out.
  *
- * THE TOGGLE IS CONDITIONAL (#1824). It used to render whenever the block had
- * any rows, so a season with three challenges drew "See all 3 challenges"
- * under all three of them — a control whose label was false and whose click
- * refetched the same list. `expandable` is the view's answer to "would
- * expanding show a row that is not already on screen?", and when it is no,
- * the footer is just the way out. The count in the label is `total` for the
- * same reason it always was: the toggle only appears when there is more than
- * is drawn, so the number is never the number already on screen.
+ * THE FOOTER IS CONDITIONAL (#1824). The toggle used to render whenever the
+ * block had any rows, so a season with three challenges drew "See all 3
+ * challenges" under all three of them — a control whose label was false and
+ * whose click refetched the same list. `expandable` is the view's answer to
+ * "would expanding show a row that is not already on screen?", and when it is
+ * no, ChallengesPanel draws no footer at all: with the door gone, the toggle
+ * is all a footer would hold. The count in the label is `total` for the same
+ * reason it always was: the toggle only appears when there is more than is
+ * drawn, so the number is never the number already on screen.
  */
 export function PanelFooter({
-  panelKey, total, expanded, expandable = true,
-}: { panelKey: string; total: number; expanded: boolean; expandable?: boolean }) {
+  panelKey, total, expanded,
+}: { panelKey: string; total: number; expanded: boolean }) {
   const label = expanded
     ? 'Show less'
     : (total ? `See all ${total} challenges` : 'See all challenges');
-  // One justify utility, never two: `justify-between` seats the toggle left
-  // and the door right, and with no toggle a lone flex child would drift to
-  // the left edge instead of staying under the rows it belongs to.
-  //
   // No side inset and no rule above: the block sits on the page ground, so
   // the toggle starts at the heading's left edge like the cards above it, and
   // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
   return (
-    <div
-      className={expandable
-        ? 'home-panel-footer flex-none flex items-center justify-between gap-2 pt-2'
-        : 'home-panel-footer flex-none flex items-center justify-end gap-2 pt-2'}
-    >
-      {expandable ? (
-        <button
-          type="button"
-          className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
-          data-panel-key={panelKey}
-          aria-expanded={expanded}
-          title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
-          onClick={(e) => {
-            e.stopPropagation();
-            panels()?.toggleExpanded?.(panelKey);
-          }}
-        >
-          <ChevronDownIcon
-            className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-            strokeWidth="2.5"
-            aria-hidden="true"
-          />
-          <span className="whitespace-nowrap">{label}</span>
-        </button>
-      ) : null}
+    <div className="home-panel-footer flex-none flex items-center gap-2 pt-2">
       <button
         type="button"
-        className="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
-        title="Go to the Challenges tab on the Leaderboard screen"
-        aria-label="Open challenges"
+        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+        data-panel-key={panelKey}
+        aria-expanded={expanded}
+        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
         onClick={(e) => {
           e.stopPropagation();
-          panels()?.goToChallenges?.();
+          panels()?.toggleExpanded?.(panelKey);
         }}
       >
-        <span className="whitespace-nowrap">Open challenges</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <ChevronDownIcon
+          className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
+          strokeWidth="2.5"
+          aria-hidden="true"
+        />
+        <span className="whitespace-nowrap">{label}</span>
       </button>
     </div>
   );

@@ -48,24 +48,58 @@ function win(): any {
   return typeof window !== 'undefined' ? (window as any) : {};
 }
 
+// ── The placeholder card's shape ──────────────────────────────────────
+//
+// The block is drawn the way the Challenges area's locked placeholder is
+// (features/leaderboard/locked-challenges-card.tsx): a 24px dashed card with a
+// 12px inset, an 80px hatched tile holding one glyph at a concentric 11px, and
+// a title over a quieter second line. Two dashed empty slots on one screen say
+// one thing, "something goes here", so they share one geometry. What differs
+// is the glyph and the ink: a plus where that card has a lock, and while
+// creation is available the stroke, the faint fill, the hatch and the title
+// all take the blue accent (`violet-*` IS the blue, see tailwind.config.js).
+// At the limit it steps down to the placeholder's own neutrals, which is what
+// "present but locked" already looks like one section up.
+//
+// Tailwind's native `border-dashed`, not the SVG outline app.css used to paint
+// this tile with: the placeholder is native dashed, and two dash rhythms one
+// section apart would be the difference a reader spots first. The classes are
+// complete literals, because Tailwind's extractor is a regex over source text.
+const BTN = 'home-create-btn home-create-tile flex w-full min-h-[6.5rem] flex-row items-center gap-3 '
+  + 'rounded-3xl border border-dashed p-3 text-left transition-colors';
+const BTN_ON = 'border-violet-500/50 bg-violet-500/[0.04] hover:border-violet-500/80 hover:bg-violet-500/[0.08] '
+  + 'dark:border-violet-400/40 dark:bg-violet-400/[0.06] dark:hover:border-violet-400/70 dark:hover:bg-violet-400/[0.1]';
+const BTN_OFF = 'border-zinc-300 bg-white/40 dark:border-zinc-700 dark:bg-white/[0.03]';
+const TILE = 'home-create-glyph flex h-20 w-20 shrink-0 items-center justify-center rounded-[0.6875rem]';
+const TILE_ON = 'text-violet-600 dark:text-violet-400 '
+  + 'bg-[repeating-linear-gradient(135deg,rgb(31_134_255/0.1)_0_6px,rgb(31_134_255/0.04)_6px_12px)] '
+  + 'dark:bg-[repeating-linear-gradient(135deg,rgb(90_169_255/0.14)_0_6px,rgb(90_169_255/0.05)_6px_12px)]';
+const TILE_OFF = 'text-zinc-500 dark:text-zinc-400 '
+  + 'bg-[repeating-linear-gradient(135deg,rgb(24_24_27/0.05)_0_6px,rgb(24_24_27/0.02)_6px_12px)] '
+  + 'dark:bg-[repeating-linear-gradient(135deg,rgb(255_255_255/0.07)_0_6px,rgb(255_255_255/0.03)_6px_12px)]';
+const TITLE_ON = 'home-create-label truncate text-base font-medium leading-6 text-violet-700 dark:text-violet-400';
+const TITLE_OFF = 'home-create-label truncate text-base font-medium leading-6 text-zinc-600 dark:text-zinc-300';
+const HINT = 'truncate text-[0.8125rem] leading-5 text-zinc-500 dark:text-zinc-400';
+
 export function CreatePanel({ view }: { view: CreateView }) {
   const { quota } = useAppAllowance();
-  const label = view.canCreate ? 'Create a new app' : `View app quota. ${view.hint}`;
+  const on = view.canCreate;
+  const label = on ? 'Create a new app' : `View app quota. ${view.hint}`;
   return (
-    // ONE SHAPE. It used to be two: the widget's grid footprint was 4x1 below
-    // 640px and 1x1 at and above it, so the content flipped on the same `sm:`
-    // breakpoint the grid did. THE UI OVERHAUL made this a full-width section
-    // at every width, so the row shape is the only one left; the stacked
-    // variant existed for a 150px cell that is gone, and `h-full` went with it
-    // — there is no rectangle to fill, so the block is as tall as its padding.
+    // ONE SHAPE, a row at every width: the widget's grid footprint was once
+    // 4x1 below 640px and 1x1 at and above it, and the stacked variant existed
+    // for a 150px cell that is gone. The block is as tall as the placeholder
+    // card it mirrors.
     <div
-      className={`home-create-widget ${view.canCreate ? '' : 'home-create-widget--disabled'}`}
+      // `pt-2` on the heading's `pb-1.5` is the 14px step the Challenges cards
+      // sit under their heading at.
+      className={on ? 'home-create-widget pt-2' : 'home-create-widget home-create-widget--disabled pt-2'}
       data-panel={view.key}
-      data-create-enabled={String(view.canCreate)}
+      data-create-enabled={String(on)}
     >
       <button
         type="button"
-        className="home-create-btn home-create-tile w-full rounded-xl p-4 flex flex-row items-center justify-center text-center gap-3 transition-colors"
+        className={`${BTN} ${on ? BTN_ON : BTN_OFF}`}
         title={label}
         aria-label={label}
         onClick={(e) => {
@@ -77,21 +111,12 @@ export function CreatePanel({ view }: { view: CreateView }) {
           win().App?.showCreateModal?.();
         }}
       >
-        <span
-          className="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
-          aria-hidden="true"
-        >
-          <PlusWideIcon className="w-6 h-6" strokeWidth="2.5" />
+        <span className={`${TILE} ${on ? TILE_ON : TILE_OFF}`} aria-hidden="true">
+          <PlusWideIcon className="h-[1.625rem] w-[1.625rem]" strokeWidth="2" />
         </span>
-        <span
-          className={`home-create-label text-sm leading-tight max-w-full ${
-            view.canCreate
-              ? 'text-violet-700 dark:text-violet-400'
-              : 'text-zinc-500 dark:text-zinc-500'
-          }`}
-        >
-          Create app
-          {quota ? <span className="block mt-1 text-xs text-zinc-500 dark:text-zinc-400">{quotaHeadline(quota)}</span> : null}
+        <span className="flex min-w-0 flex-col">
+          <span className={on ? TITLE_ON : TITLE_OFF}>Create app</span>
+          {quota ? <span className={HINT}>{quotaHeadline(quota)}</span> : null}
         </span>
       </button>
     </div>

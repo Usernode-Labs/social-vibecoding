@@ -37,8 +37,12 @@ test('the onboarding status line has top padding as well as bottom', () => {
 
 test('the onboarding status line follows the challenges, not the season progress', () => {
   const note = SRC.search(NOTE);
-  const season = SRC.indexOf('home-panel-season');
-  const body = SRC.indexOf('className="home-panel-body');
+  // The JSX's own class, not the header comment's mention of it: `hasNote`
+  // reads `view.onboardingNote` above the markup.
+  const season = SRC.indexOf('home-panel-season pt-2');
+  // The body's class is one of two complete literals (it closes on `pb-1.5`
+  // only when a band follows it), so find its first spelling.
+  const body = SRC.search(/['"]home-panel-body /);
   const locked = SRC.indexOf('<LockedChallengesCard');
   assert.ok(season > 0 && body > season, 'the season progress leads the body');
   assert.ok(locked > body, 'the locked placeholder is inside the body');
@@ -48,5 +52,6 @@ test('the onboarding status line follows the challenges, not the season progress
 });
 
 test('the note is not drawn beside the placeholder that already says it', () => {
-  assert.match(SRC, /\{view\.onboardingNote && !\(lockedCount > 0\) \? \(/);
+  assert.match(SRC, /const hasNote = !!view\.onboardingNote && !\(lockedCount > 0\);/);
+  assert.match(SRC, /\{hasNote \? \(/);
 });

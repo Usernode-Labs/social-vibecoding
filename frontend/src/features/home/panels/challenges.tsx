@@ -72,6 +72,10 @@
  * tap from here — "Open challenges" (#1916), in this section's own heading,
  * which renders in every branch including the between-seasons one and lands
  * on the screen's Challenges tab, one tab from the standings.
+ *
+ * It is the ONLY one. The footer used to repeat "Open challenges" at its right
+ * end, one card below the heading's; that copy is gone, so the footer draws
+ * only when its "See all N challenges" toggle has something to reveal.
  */
 
 import { Fragment } from 'react';
@@ -107,6 +111,8 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
   const groups: ChallengeGroupView[] = view.groups
     ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
   const lockedCount = view.lockedCount ?? 0;
+  const hasFooter = view.expandable !== false;
+  const hasNote = !!view.onboardingNote && !(lockedCount > 0);
 
   return (
     <PanelShell
@@ -114,17 +120,16 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       expanded={view.expanded}
       plate="none"
       stamps={{ rows: view.rows.length }}
-      footer={(
-        <PanelFooter
-          panelKey={view.key}
-          total={view.total}
-          expanded={view.expanded}
-          expandable={view.expandable !== false}
-        />
-      )}
+      footer={hasFooter ? (
+        <PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />
+      ) : null}
     >
       {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
-      <div className="home-panel-body pt-2 pb-1.5">
+      {/* The body closes on `pb-1.5` only when a band follows it (the footer or
+          the note), as the first half of their 14px step. A block that ends at
+          its last card ends there, on the section's own bottom padding, as
+          Discover does. */}
+      <div className={hasFooter || hasNote ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
         <div className="home-panel-rows flex flex-col gap-2.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
@@ -147,7 +152,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
           of its own against a hairline that is gone. It follows the cards,
           and the placeholder's own second line stands in for it. */}
-      {view.onboardingNote && !(lockedCount > 0) ? (
+      {hasNote ? (
         <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}
         </p>
