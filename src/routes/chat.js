@@ -18,6 +18,22 @@ const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// #2236: how a message reached the thread, as the row will carry it.
+//
+// 'agent' means a coding agent posted it on the signed-in person's behalf
+// through the Homeroom MCP connector: that path authenticates with a
+// connector bearer (routes/cli-auth.js connectorApiBearerChain), which is
+// the one place `req.connectorClientId` is ever set. The marker is derived
+// from that credential and from nothing the client sends — a body field
+// could be forged in either direction, and the whole point of the chip is
+// that a reader can trust it. A plain CLI access token (`req.cliAuthenticated`
+// without a connector client) is a person driving a tool by hand, and a
+// browser session is a person typing; both stay NULL, as does every row
+// written before the column existed.
+function postedViaFor(req) {
+  return req && req.connectorClientId ? 'agent' : null;
+}
+
 // Content-Disposition's legacy filename parameter is a header, so it may
 // contain ASCII only (macOS screenshot names carry a narrow no-break space
 // before AM/PM). The shared helper keeps a readable ASCII fallback and
@@ -54,7 +70,7 @@ function stagingMockGroupChat(appId, thread) {
     thread_ref: thread ? thread.ref : null,
     created_at: createdAt || iso(now - minutesBack * 60 * 1000),
     edited_at: null, reactions: [], bookmarked: false,
-    has_unread_notification: false, app_id: appId,
+    has_unread_notification: false, app_id: appId, posted_via: null,
   });
   return [
     row(0, 0, 'staging-demo-user',
@@ -72,6 +88,17 @@ function stagingMockGroupChat(appId, thread) {
         '[Mock] PR #9000001 is now synced with main and conflict-free. It needs 1/2 yes votes needed to merge.'),
       user_id: null, msg_type: 'conflict',
     })),
+    // #2236: a note a coding agent posted through the connector on the
+    // demo user's behalf. The newest human row, so the Activity feed's
+    // two-line preview shows it as well as the topic's Discussion sheet.
+    // Obviously fake (a username no real account can hold, in the mock
+    // stream only) and never persisted; the declared check for the chip
+    // reads it on the demo issue's discussion.
+    {
+      ...row(7, 2, 'staging-demo-agent',
+        '[Mock] Posted by a coding agent on the demo user\'s behalf: I have reproduced the report and am drafting a fix.'),
+      posted_via: 'agent',
+    },
   ];
 }
 
@@ -153,7 +180,7 @@ function chatRoutes(config) {
 
       const query = `
         SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
-               m.thread_type, m.thread_ref, m.created_at, m.edited_at
+               m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via
         FROM chat_messages m
         LEFT JOIN users u ON m.user_id = u.id
         WHERE m.app_id = $1 AND ${threadClause}${beforeClause}
@@ -264,7 +291,10 @@ function chatRoutes(config) {
       // an agent cannot shed it.
       const result = await handleMessage(
         pool,
-        { user: req.user, appId: app.id, appSlug: app.slug, via: req.cliAuthenticated ? 'agent' : null },
+        // `postedVia` rides on the CLIENT, beside the identity it qualifies,
+        // rather than in the message: it describes who is holding the pen,
+        // and the body is the one thing a caller gets to write.
+        { user: req.user, appId: app.id, appSlug: app.slug, postedVia: postedViaFor(req) },
         { type: 'chat', content: body.content, ...(thread ? { thread } : {}) }
       );
       if (!result?.ok) {
@@ -297,6 +327,7 @@ function chatRoutes(config) {
           created_at: message.createdAt,
           edited_at: null,
           reactions: [],
+          posted_via: message.postedVia || null,
         },
       });
     } catch (err) {
@@ -589,4 +620,4 @@ function chatRoutes(config) {
   return router;
 }
 
-module.exports = { chatRoutes };
+module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat };

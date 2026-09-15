@@ -844,6 +844,20 @@ const AppView = {
           }
         }, 300);
       }
+      // #1374: `?shot=app-notifications` opens the per-app Notifications
+      // dialog. It is otherwise two taps inside a tile menu, which neither
+      // the capture pipeline nor a dapp.json check can reach — the same
+      // reason the secrets and app-settings links above exist. Reads the
+      // viewer's own preferences and writes nothing until a switch is
+      // touched, so it is safe on any environment. Same slug guard: a fast
+      // navigate-away must not pop a dialog onto another screen.
+      if (shot === 'app-notifications') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appNotifications?.open({ slug });
+          }
+        }, 300);
+      }
       // #816: the preview loader is the screen this change is about, and it
       // only exists mid-click on a Preview button — no URL reaches it, so
       // the before/after captures would show the dev board instead. These
@@ -1064,6 +1078,42 @@ const AppView = {
       // so a human who opens the link is not told they were here.
       if (shot === 'since-visit') {
         AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
+      }
+      // `?shot=since-seen` lands on the state #2240 is about, which is the
+      // OTHER end of the same walk: a reader with nothing new who pressed
+      // `Show older` anyway — which the strip invites, because that button is
+      // drawn and live on a quiet day by design. One press crosses the
+      // baseline, a wall of already-seen rows comes out, and `Clear`, the
+      // control that folds them again, is what has to be live there.
+      // The baseline is seeded to NOW rather than a month back, so every row
+      // is on the seen side and the strip opens on its "nothing has changed"
+      // note; then `Show older` is pressed — through its own handler, as
+      // `?shot=board-unfold` presses a row — until the "Seen before" mark is
+      // on screen. It stops on the mark rather than after a fixed number of
+      // presses, because how many the first one spends depends on the rows.
+      // Nothing is written to storage, so a human who opens the link is not
+      // told they were here.
+      if (shot === 'since-seen') {
+        AppView._workshopSince[slug] = Date.now();
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        // A human who opens this link must not have the list walked out from
+        // under them after their first real gesture. Same guard as
+        // `?shot=board-unfold` and `?shot=feed-comments` below, the other two
+        // deep links that drive a control rather than seeding state.
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          if (document.querySelector('[data-ws-since-seen]')) { done(); return; }
+          const more = document.querySelector('button[data-ws-since-more]:not([disabled])');
+          if (more) more.click();
+        }, 300);
       }
       // `?shot=mine-empty` draws "What you are working on" with nothing in
       // it — the state #2182 keeps on screen — whatever sessions the viewer
@@ -5513,7 +5563,7 @@ const AppView = {
       AppView._proposals = promoted;
       AppView._govProposals = (issuesData.issues || [])
         .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-          || i.kind === 'maintenance_campaign');
+          || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
       AppView._proposalsCtx = {
         majority,
         activeUsers,
@@ -10793,10 +10843,33 @@ const AppView = {
       failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
       conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
     };
-    // A predicted conflict's plain text is the note's sentence: it is the
-    // lane's answer, and there is no older sentence worth keeping over it.
+    // WHO RESOLVES IT DECIDES HOW THE TAG LOOKS, and it is decided right
+    // here (#2221/#2222). The tag used to carry a fixed string and the
+    // blocking (red) tone whatever the lane had already worked out, so
+    // "Conflicts with main · 7 files" read as an emergency on a proposal
+    // the platform was about to sync by itself. `Behind main · N` has
+    // been `soft` for exactly this reason for as long as it has existed —
+    // worth knowing, does not stop it landing — and a conflict the lane
+    // owns is the same kind of fact.
+    //
+    // Returned from HERE rather than computed again at the tag, because
+    // the branches above are the whole decision and a second copy of them
+    // is a second copy to drift. Three tones, matching statusTagSpecs:
+    //   running   the lane is working on it now — grey, spins
+    //   soft      the lane will, or will once the vote passes — amber
+    //   blocking  a person has to act — red
+    const authorActs = pr.source !== 'imported'
+      ? (mode === 'failed' || mode === 'conflict' || served.includes('unresolvable'))
+      : (home !== 'app_repo' || mode === 'failed');
+    const laneWorking = pr.source !== 'imported' && served.includes('integrating');
+    const tone = authorActs ? 'blocking' : (laneWorking ? 'running' : 'soft');
     return {
       parts,
+      tone,
+      // The short form the tag wears. Null leaves the caller's own label
+      // alone, which is what an auto-resolving conflict wants: the file
+      // count is the useful part and nobody needs to do anything about it.
+      label: authorActs ? 'Needs author to sync with main' : null,
       text: pr.source !== 'imported' && nativeDetail[mode]
         ? nativeDetail[mode]
         : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
@@ -11742,6 +11815,7 @@ const AppView = {
     if (kind === 'secret_change') return 'Applying env-var change…';
     if (kind === 'rename') return 'Renaming app…';
     if (kind === 'maintenance_campaign') return 'Starting campaign…';
+    if (kind === 'featured_illustration') return 'Updating illustration…';
     return 'Applying…';
   },
 
@@ -12061,8 +12135,11 @@ const AppView = {
 
     // Admin merge, View campaign and Withdraw are the demoted three.
     const isCampaign = issue.kind === 'maintenance_campaign';
+    // #2086: a featured-illustration proposal force-applies like the rest.
+    const isIllustration = issue.kind === 'featured_illustration';
     const menu = [];
-    if (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign) && App.user?.canAdminWrite) {
+    if (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign || isIllustration)
+        && App.user?.canAdminWrite) {
       menu.push({
         label: 'Admin merge',
         icon: 'merge',
@@ -12120,9 +12197,31 @@ const AppView = {
       actions,
       actionPreview: null,
       rail: { menuKey: AppView._registerCardMenu(`gov:${issue.id}`, menu), chevron: !noNav },
-      extra: [],
+      // #2086: an illustration card shows what is proposed beside what the
+      // app wears now; the other kinds say it all in their title.
+      extra: isIllustration ? [AppView._illustrationExtraSpec(issue)] : [],
       dense: !noNav,
       uncapped: noNav,
+    };
+  },
+
+  // The preview block of a featured-illustration card (#2086): the record
+  // proposed and the record current when it was proposed, each an image URL
+  // plus the card colour it wears, or null for "no illustration". Rendered
+  // by dev-card.tsx's ExtraRow as two thumbnails with captions, never as a
+  // link: the URL is API-supplied and only ever an <img> source.
+  _illustrationExtraSpec(issue) {
+    const p = (issue && issue.payload) || {};
+    const pick = (rec) => (rec && rec.url
+      ? { url: String(rec.url), darkUrl: rec.darkUrl ? String(rec.darkUrl) : null,
+        tint: rec.tint != null ? rec.tint : null }
+      : null);
+    return {
+      t: 'illustration',
+      key: 'illustration',
+      proposed: pick(p.proposed),
+      current: pick(p.current),
+      remove: !!p.remove || !p.proposed,
     };
   },
 
@@ -13250,18 +13349,23 @@ const AppView = {
     const gov = (AppView._govProposals || []).find((g) => g.id === issueId);
     const isCloseIssue = gov?.kind === 'close_issue';
     const isCampaign = gov?.kind === 'maintenance_campaign';
+    const isIllustration = gov?.kind === 'featured_illustration';
     const targetN = gov?.payload?.issueNumber;
     const ok = await ConfirmModal.show({
       title: isCloseIssue
         ? `Close issue ${targetN ? `#${targetN} ` : ''}now?`
         : isCampaign
           ? 'Start this maintenance campaign now?'
-          : 'Apply this env-var change now?',
+          : isIllustration
+            ? 'Apply this illustration change now?'
+            : 'Apply this env-var change now?',
       message: (isCloseIssue
         ? 'This bypasses the active-user vote majority and closes the issue right now, here and on GitHub.\n\n'
         : isCampaign
           ? 'This bypasses the platform vote and starts the campaign right now: an AI will open one maintenance PR per app across the fleet.\n\n'
-          : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
+          : isIllustration
+            ? 'This bypasses the active-user vote majority and changes the featured illustration on Discover right now.\n\n'
+            : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
         + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
       confirmLabel: isCloseIssue ? 'Close now' : isCampaign ? 'Start now' : 'Apply now',
       cancelLabel: 'Cancel',
@@ -14732,15 +14836,24 @@ const AppView = {
         detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
+      const r = AppView._conflictRemedy(p, 'conflict');
       out.push({
         key: 'merge_conflict',
         // Written in exactly ONE place: the merge-time 405 in routes/votes.js.
         // So it does not mean "this conflicts with main" — mergeability_conflict
         // is that, and says so. It means the proposal passed every gate, the
-        // platform called pulls.merge, and GitHub refused. The old label read
-        // as a duplicate of the prediction below it.
-        label: 'GitHub refused the merge',
-        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${AppView._conflictRemedy(p, 'conflict').text}`,
+        // platform called pulls.merge, and GitHub refused.
+        //
+        // #2221: "GitHub refused the merge" reported OUR history at the
+        // reader. It named the actor they cannot do anything about and left
+        // out the one they can — which is the same complaint 'conflict_failed'
+        // above already answered by becoming "Needs manual resolution". The
+        // label now comes from the remedy, so it names the next action when
+        // there is one and keeps the plain statement when the lane has it.
+        label: r.label || 'GitHub refused the merge',
+        soft: r.tone === 'soft',
+        running: r.tone === 'running',
+        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${r.text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -14756,13 +14869,22 @@ const AppView = {
       const n = fresh.files.length;
       const shown = fresh.files.slice(0, 6);
       const more = n > shown.length ? ` and ${n - shown.length} more` : '';
-      const remedy = AppView._conflictRemedy(p, 'predicted').text;
+      const predicted = AppView._conflictRemedy(p, 'predicted');
+      const remedy = predicted.text;
       out.push({
         key: 'mergeability_conflict',
+        // #2222: amber, not red, while the lane owns it. The count stays —
+        // it is the useful half — but a conflict the platform is going to
+        // resolve is not the reader's problem, and red said it was. Only a
+        // head the lane has declined (fork_head / unresolvable) or a failed
+        // resolution reads as blocking, and that one says whose move it is.
+        soft: predicted.tone === 'soft',
+        running: predicted.tone === 'running',
         // The unit is part of the count. "Conflicts with main · 10" sat on
         // the same card as "Behind main · 118" in the same grammar, one
         // counting FILES and the other COMMITS, and read as 10 commits.
-        label: n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main',
+        label: predicted.label
+          || (n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main'),
         detail: n
           ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
           : `This proposal no longer merges into main on its own. ${remedy}`,
@@ -16352,11 +16474,15 @@ const AppView = {
       // four per-kind result objects this row produced (all share the
       // { applied, superseded, awaitingAdmin, error, … } shape).
       const outcome = data?.issueClosed || data?.secretChanged
-        || data?.renamed || data?.campaignStarted || null;
+        || data?.renamed || data?.campaignStarted || data?.illustrationChanged || null;
       finish();
       if (outcome && outcome.applied) {
         if (kind === 'close_issue') {
           PlatformUI.toast(`Issue #${outcome.issueNumber || targetN || '?'} closed by group vote.`);
+        } else if (kind === 'featured_illustration') {
+          PlatformUI.toast(outcome.illustration
+            ? 'Featured illustration changed by group vote.'
+            : 'Featured illustration removed by group vote.');
         }
       } else if (outcome && outcome.superseded) {
         // Not an error: the guard found the target already closed and

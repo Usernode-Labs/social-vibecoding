@@ -58,6 +58,7 @@ import { Avatar, ReactionPill } from '@/components/ui/feed';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { PostedViaChip } from './posted-via-chip';
 import { transcriptStore, type Attachment, type Quote, type TranscriptMessage } from './transcript-store';
 
 function controller(): any {
@@ -505,6 +506,9 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
+      // #2236: only when set, so an ordinary row's attribute set is exactly
+      // what it was.
+      {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
@@ -514,6 +518,7 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label="Unread mention" /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
+          <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
       )}
       timestamp={(

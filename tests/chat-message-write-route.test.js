@@ -144,8 +144,9 @@ test('POST issue reply is collab-gated and delegates to the canonical chat handl
       user: { id: 5, username: 'alice' },
       appId: 7,
       appSlug: 'demo',
-      // #2236: an automated caller's post is stamped as the agent's.
-      via: 'agent',
+      // #2236: a plain bearer/browser caller is a person; only a connector
+      // credential marks the row (tests/agent-posted-via.test.js).
+      postedVia: null,
     });
     assert.deepEqual(handleCalls[0][2], {
       type: 'chat',
@@ -165,6 +166,7 @@ test('POST issue reply is collab-gated and delegates to the canonical chat handl
         created_at: '2026-08-04T10:00:00.000Z',
         edited_at: null,
         reactions: [],
+        posted_via: null,
       },
     });
   } finally {

@@ -93,8 +93,9 @@ function platformStagingEnv(app, config = null) {
     ...appIdentityEnv(app, config),
     PORT: '3000',
     USERNODE_ENV: 'staging',
-    // #1213: the app-facing platform API's base URL — the URL ONLY, never
-    // a token. A preview's server can reach the user-directory endpoints
+    // #1213/#1908: both the stable v1 and legacy app-facing platform API
+    // base URLs — URLs ONLY, never a token. A preview's server can reach
+    // the user-directory endpoints
     // with just the caller's forwarded iframe token (the middleware's
     // allowUserTokenOnly path); everything token-gated (governance feed,
     // LLM proxy, storage) stays production-only because the credential
@@ -102,6 +103,7 @@ function platformStagingEnv(app, config = null) {
     // fingerprint below, so pre-existing previews are swept as stale and
     // rebuilt with it — no FINGERPRINT_VERSION bump needed.
     USERNODE_PLATFORM_API_URL: platformApiBaseUrl(),
+    USERNODE_PLATFORM_API_V1_URL: `${platformApiBaseUrl()}/v1`,
   };
   for (const key of INHERITED_KEYS) {
     if (process.env[key]) env[key] = process.env[key];

@@ -125,6 +125,8 @@ test('a successfully posted reply survives the inline-thread reload', () => {
         userId: null,
         content: 'Existing reply',
         createdAt: '2026-09-04T10:00:00Z',
+        // #2236: a person typing; only a connector-posted row says 'agent'.
+        postedVia: null,
       },
       {
         id: 42,
@@ -132,6 +134,7 @@ test('a successfully posted reply survives the inline-thread reload', () => {
         userId: null,
         content: 'Newly posted reply',
         createdAt: '2026-09-04T11:00:00Z',
+        postedVia: null,
       },
     ],
     total: 2,

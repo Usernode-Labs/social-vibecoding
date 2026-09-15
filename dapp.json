@@ -1599,6 +1599,20 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist status check says so when the address is not on the list (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-note:not(.hidden)",
+      "expectText": "find that address on the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist not-found offers to join with that address instead (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-join-instead:not(.hidden)",
+      "expectText": "Join the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Waitlist withholds the stage-2 offer until the email is confirmed",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-more-offer.hidden",
@@ -1874,6 +1888,18 @@
       "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
+      "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "[data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "expectText": "Proposed"
+    },
+    {
+      "name": "An illustration proposal's discussion page carries the same preview (#2086)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100008",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectText": "Change the featured illustration"
+    },
+    {
       "name": "An applied close proposal opens its discussion, not the board (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
       "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
@@ -2135,6 +2161,12 @@
       "path": "/?demo=1&shot=since-visit#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-since] > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
       "expectText": "Show older"
+    },
+    {
+      "name": "Since your last visit: Clear goes live once Show older has walked below the line, so the seen rows can be folded again (#2240)",
+      "path": "/?demo=1&shot=since-seen#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
+      "expectText": "Clear"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -3075,7 +3107,7 @@
       "expectText": "automatic, after 1"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal says so in a red tag, and still shows its vote",
+      "name": "Freshness (#1442): a conflicting proposal says so in a tag, and still shows its vote",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": "#gc-thread-head [data-status-tag=\"mergeability_conflict\"]",
       "expectText": "Conflicts with main"
@@ -4072,10 +4104,10 @@
       "expectText": "Bringing up to date"
     },
     {
-      "name": "#2038: a refused merge is named for what it was, not as a conflict",
+      "name": "#2221: a refused merge names the next action, not the actor who refused",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"merge_conflict\"]",
-      "expectText": "GitHub refused the merge"
+      "expectText": "Needs author to sync with main"
     },
     {
       "name": "#2038: automatic conflict resolution says nobody has to act",
@@ -4123,6 +4155,30 @@
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
       "expectText": "the next time it opens"
+    },
+    {
+      "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-messages .gc-msg[data-posted-via=\"agent\"][data-username=\"staging-demo-agent\"] .gc-posted-via",
+      "expectText": "via agent"
+    },
+    {
+      "name": "#1374: per-app notification settings are reachable and name both places they apply",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "the bell here and a notification on your phone"
+    },
+    {
+      "name": "#1374: muting is described honestly as stopping the notification, not the thing",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "still appear on this app's board"
+    },
+    {
+      "name": "#1374: Settings rolls up your notification defaults and the apps set differently",
+      "path": "/?demo=1#settings/alerts",
+      "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #settings-notification-prefs #notification-prefs-list",
+      "expectText": "Apps set differently"
     }
   ],
   "governance": {

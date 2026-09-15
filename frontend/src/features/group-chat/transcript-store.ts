@@ -142,6 +142,13 @@ export interface TranscriptMessage {
   unread: boolean;
   bookmarked: boolean;
   /**
+   * #2236: 'agent' when a coding agent posted the message on the author's
+   * behalf through the connector; the row wears the "via agent" chip. The
+   * module reads it off either spelling of the row (`posted_via` loaded,
+   * `postedVia` live) and never off anything the composer sent.
+   */
+  postedVia?: 'agent' | null;
+  /**
    * The 1.5s highlight a jump-to-original lands on. On the MODEL because the
    * row is React's: `_handleQuotedClick` used to `classList.add` it, which the
    * next repaint would have swept away mid-animation.
