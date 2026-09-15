@@ -2004,6 +2004,12 @@ const AppView = {
     const coverId = 'app-viewer-cover';
     document.getElementById(coverId)?.remove();
     iframe.style.opacity = '0';
+    // #1909: this is the one point where an app's document starts loading in
+    // the landing viewer, so it is where the shell records WHICH app that
+    // frame is showing. The bridge relays need it because `AppView.appData`
+    // belongs to the App tab and is null on this screen — see
+    // `appSlugForFrame`, which is what reads this back.
+    AppView._viewerApp = { frame: iframe, slug: (record && record.slug) || '' };
     // insertAdjacentHTML, not innerHTML: the frame is a long-lived element
     // in the document — replacing the host's children would destroy it.
     host.insertAdjacentHTML('beforeend', AppView._launchCoverHtml(record, { id: coverId }));
@@ -17444,6 +17450,55 @@ const AppView = {
   // Every frame this shell owns and forwards insets to.
   SAFE_AREA_FRAME_IDS: ['app-iframe', 'app-viewer-frame', 'staging-iframe'],
 
+  // ── Which owned frame is asking, and for which app (#1909) ──────────
+  //
+  // A bridge relay has to answer both before it can act, and the AI-consent
+  // family used to answer the first with a two-entry allow-list of its own —
+  // which silently dropped every request from the THIRD frame in the list
+  // above, the landing viewer. A waiting-room session browses the landing
+  // directory with a real session cookie, so an app it opens there can be
+  // granted AI access like any other; its `requestLlmAccess()` simply never
+  // reached the shell, and the bridge rejected it 15 seconds later as "no
+  // platform shell". Reading the one list means a frame cannot be forgotten
+  // again. Deliberately not applied to the storage / directory / locale
+  // relays in the same pass: each is its own decision about what an
+  // anonymous visitor's app may reach, and #1909 is about this one.
+
+  /** Which frame this shell owns posted `source`, or null for anything else. */
+  ownedFrameFor(source) {
+    if (typeof document === 'undefined' || !source) return null;
+    return AppView.SAFE_AREA_FRAME_IDS.find((id) => {
+      const frame = document.getElementById(id);
+      return frame && source === frame.contentWindow;
+    }) || null;
+  },
+
+  /**
+   * The app the landing viewer is showing, recorded by `mountViewerCover`.
+   *
+   * Keyed to the frame ELEMENT rather than cleared on close, because the
+   * landing teardown REPLACES that element (#1028): a record whose frame is
+   * no longer the one in the document belongs to an app that has already
+   * been closed, which is the same answer "cleared" would give.
+   */
+  _viewerApp: null,
+
+  /**
+   * The slug of the app running in `frameId`, or null when the shell cannot
+   * name it. `AppView.appData` is the App tab's record — it covers
+   * #app-iframe and the staging preview opened from that app's Dev screen,
+   * and is null on the landing screen, which has its own record above.
+   */
+  appSlugForFrame(frameId) {
+    if (frameId === 'app-viewer-frame') {
+      const rec = AppView._viewerApp;
+      const frame = document.getElementById(frameId);
+      if (!rec || !frame || rec.frame !== frame) return null;
+      return rec.slug || null;
+    }
+    return (AppView.appData && AppView.appData.slug) || null;
+  },
+
   // Last value posted per frame id, so an unchanged recompute posts
   // nothing (a rotation is one message per frame, not a stream).
   _safeAreaSent: {},
@@ -17575,17 +17630,13 @@ const AppView = {
     const type = data.__usernode_llm;
     if (type !== 'request-access' && type !== 'get-access' && type !== 'get-usage') return;
 
-    // Only the app iframes this shell owns may ask. The staging
-    // preview iframe is accepted too so AI-consent flows are
-    // exercisable in PR previews (the staging proxy path itself is
-    // disabled server-side — staging containers hold no proxy token).
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-    const slug = AppView.appData?.slug;
-    if (!slug) return;
+    // Only the app frames this shell owns may ask — all three of them
+    // (`ownedFrameFor`). The staging preview is in that list so AI-consent
+    // flows are exercisable in PR previews (the staging proxy path itself
+    // is disabled server-side — staging containers hold no proxy token),
+    // and the landing viewer is in it because an app runs there too (#1909).
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!frameId) return;
 
     const reply = (value, error) => {
       try {
@@ -17596,16 +17647,31 @@ const AppView = {
       } catch {}
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
-    // the user may take minutes on the dialog below.
+    // the user may take minutes on the dialog below. Before anything that
+    // can decline to answer, too: the shell has RECOGNISED this request, so
+    // every path from here owes the app a reply rather than the silence that
+    // leaves it waiting out the bridge's 15s "there is no shell" timeout.
     try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+
+    const slug = AppView.appSlugForFrame(frameId);
+    if (!slug) {
+      reply(null, 'This app could not be identified. Reopen it and try again.');
+      return;
+    }
 
     let info;
     try {
       const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      // The bootstrap is session-authenticated, and the landing viewer is the
+      // one owned frame a SIGNED-OUT visitor can reach. Say so, rather than
+      // reporting the sign-in wall as a failure the user can do nothing about.
+      if (r.status === 401) throw new Error('signed-out');
       if (!r.ok) throw new Error(`status ${r.status}`);
       info = await r.json();
     } catch (err) {
-      reply(null, 'Failed to load AI permission state.');
+      reply(null, err && err.message === 'signed-out'
+        ? 'Sign in to Homeroom to give an app access to AI.'
+        : 'Failed to load AI permission state.');
       return;
     }
 
