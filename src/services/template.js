@@ -365,13 +365,16 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY . .
-# After COPY . . so the compiled stylesheet is not overwritten by the
+COPY --chown=1000:1000 . .
+# After the source copy so the compiled stylesheet is not overwritten by the
 # source tree (which deliberately does not contain one).
-COPY --from=css /build/public/tailwind.css ./public/tailwind.css
+COPY --chown=1000:1000 --from=css /build/public/tailwind.css ./public/tailwind.css
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \\
   CMD wget -qO- http://localhost:3000/health || exit 1
+# Kubernetes enforces runAsNonRoot without supplying a UID. Keep this numeric:
+# unlike a symbolic USER, it lets the kubelet verify the image before startup.
+USER 1000:1000
 CMD ["node", "server.js"]
 `,
     },

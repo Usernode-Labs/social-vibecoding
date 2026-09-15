@@ -17,6 +17,12 @@ const PART_OF = 'social-vibecoding';
 // slice of a ~25s preview turnaround.
 const BUILD_POLL_MS = 1000;
 const ROLLOUT_POLL_MS = 1000;
+const TERMINAL_CONTAINER_WAITING_REASONS = new Set([
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'InvalidImageName',
+  'ErrImageNeverPull',
+]);
 
 // The app container's health probes. The startup probe decides how soon a
 // booted container is seen (its period is the latency, its threshold the
@@ -790,12 +796,17 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
     appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   try {
-    await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
+    await waitForDeployment(namespace, name, {
+      generation: deployed?.metadata?.generation,
+      terminalPodFilter: { imageRef, environmentChecksum: envChecksum(env), container: 'app' },
+    });
   } catch (err) {
     const diagnostics = await collectPodDiagnostics(core, { namespace, runtimeName: name, imageRef,
       environmentChecksum: envChecksum(env) });
     err.healthcheckFailed = true;
-    err.containerLogs = boundedText([err.rolloutDetails, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    err.containerLogs = boundedText([
+      err.rolloutDetails, diagnostics.details, diagnostics.logs, err.terminalPodDetails,
+    ].filter(Boolean).join('\n'));
     err.containerStatus = 'not_ready';
     err.infrastructure = diagnostics.infrastructure || /exceeded quota/i.test(err.rolloutDetails || '');
     err.message = boundedText(err.message);
@@ -817,9 +828,29 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
 }
 
-async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, generation = 0 } = {}) {
+function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {
+  const details = [];
+  for (const pod of pods || []) {
+    if (pod.metadata?.deletionTimestamp) continue;
+    if (imageRef && !pod.spec?.containers?.some(item => item.name === container && item.image === imageRef)) continue;
+    if (environmentChecksum
+        && pod.metadata?.annotations?.['social.usernode.io/env-checksum'] !== environmentChecksum) continue;
+    const statuses = [...(pod.status?.initContainerStatuses || []), ...(pod.status?.containerStatuses || [])];
+    for (const status of statuses) {
+      if (container && status.name !== container) continue;
+      const waiting = status.state?.waiting;
+      if (!TERMINAL_CONTAINER_WAITING_REASONS.has(waiting?.reason)) continue;
+      details.push(`${status.name}: ${[waiting.reason, waiting.message].filter(Boolean).join(': ')}`);
+    }
+  }
+  return details;
+}
+
+async function waitForDeployment(namespace, name, {
+  timeoutMs = 5 * 60 * 1000, generation = 0, terminalPodFilter = null,
+} = {}) {
   const deadline = Date.now() + timeoutMs;
-  const { apps } = getClients();
+  const { apps, core } = getClients();
   let rolloutDetails = '';
   while (Date.now() < deadline) {
     const deployment = await apps.readNamespacedDeployment({ name, namespace });
@@ -833,6 +864,27 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
         && status.updatedReplicas === desired && status.replicas === desired
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
+    // A Pod rejected before its process starts will never become healthy, so
+    // waiting the whole rollout budget only turns a precise configuration
+    // error into a five-minute "spinning up" delay. This read is best-effort:
+    // transient API errors keep the ordinary rollout waiter in control.
+    if (terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
+      try {
+        const pods = await core.listNamespacedPod({ namespace,
+          labelSelector: `social.usernode.io/runtime-name=${name}` });
+        const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
+        if (terminal.length) {
+          const detail = terminal.join('\n');
+          const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
+          err.rolloutDetails = rolloutDetails;
+          err.terminalPodDetails = boundedText(detail, 4096);
+          err.terminalPodFailure = true;
+          throw err;
+        }
+      } catch (err) {
+        if (err.terminalPodFailure) throw err;
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
   }
   const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
@@ -1983,6 +2035,7 @@ module.exports = {
   _attachLineObserverForTest: attachLineObserver,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
+  _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
