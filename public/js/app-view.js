@@ -10724,10 +10724,33 @@ const AppView = {
       failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
       conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
     };
-    // A predicted conflict's plain text is the note's sentence: it is the
-    // lane's answer, and there is no older sentence worth keeping over it.
+    // WHO RESOLVES IT DECIDES HOW THE TAG LOOKS, and it is decided right
+    // here (#2221/#2222). The tag used to carry a fixed string and the
+    // blocking (red) tone whatever the lane had already worked out, so
+    // "Conflicts with main · 7 files" read as an emergency on a proposal
+    // the platform was about to sync by itself. `Behind main · N` has
+    // been `soft` for exactly this reason for as long as it has existed —
+    // worth knowing, does not stop it landing — and a conflict the lane
+    // owns is the same kind of fact.
+    //
+    // Returned from HERE rather than computed again at the tag, because
+    // the branches above are the whole decision and a second copy of them
+    // is a second copy to drift. Three tones, matching statusTagSpecs:
+    //   running   the lane is working on it now — grey, spins
+    //   soft      the lane will, or will once the vote passes — amber
+    //   blocking  a person has to act — red
+    const authorActs = pr.source !== 'imported'
+      ? (mode === 'failed' || mode === 'conflict' || served.includes('unresolvable'))
+      : (home !== 'app_repo' || mode === 'failed');
+    const laneWorking = pr.source !== 'imported' && served.includes('integrating');
+    const tone = authorActs ? 'blocking' : (laneWorking ? 'running' : 'soft');
     return {
       parts,
+      tone,
+      // The short form the tag wears. Null leaves the caller's own label
+      // alone, which is what an auto-resolving conflict wants: the file
+      // count is the useful part and nobody needs to do anything about it.
+      label: authorActs ? 'Needs author to sync with main' : null,
       text: pr.source !== 'imported' && nativeDetail[mode]
         ? nativeDetail[mode]
         : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
@@ -14663,15 +14686,24 @@ const AppView = {
         detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
+      const r = AppView._conflictRemedy(p, 'conflict');
       out.push({
         key: 'merge_conflict',
         // Written in exactly ONE place: the merge-time 405 in routes/votes.js.
         // So it does not mean "this conflicts with main" — mergeability_conflict
         // is that, and says so. It means the proposal passed every gate, the
-        // platform called pulls.merge, and GitHub refused. The old label read
-        // as a duplicate of the prediction below it.
-        label: 'GitHub refused the merge',
-        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${AppView._conflictRemedy(p, 'conflict').text}`,
+        // platform called pulls.merge, and GitHub refused.
+        //
+        // #2221: "GitHub refused the merge" reported OUR history at the
+        // reader. It named the actor they cannot do anything about and left
+        // out the one they can — which is the same complaint 'conflict_failed'
+        // above already answered by becoming "Needs manual resolution". The
+        // label now comes from the remedy, so it names the next action when
+        // there is one and keeps the plain statement when the lane has it.
+        label: r.label || 'GitHub refused the merge',
+        soft: r.tone === 'soft',
+        running: r.tone === 'running',
+        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${r.text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -14687,13 +14719,22 @@ const AppView = {
       const n = fresh.files.length;
       const shown = fresh.files.slice(0, 6);
       const more = n > shown.length ? ` and ${n - shown.length} more` : '';
-      const remedy = AppView._conflictRemedy(p, 'predicted').text;
+      const predicted = AppView._conflictRemedy(p, 'predicted');
+      const remedy = predicted.text;
       out.push({
         key: 'mergeability_conflict',
+        // #2222: amber, not red, while the lane owns it. The count stays —
+        // it is the useful half — but a conflict the platform is going to
+        // resolve is not the reader's problem, and red said it was. Only a
+        // head the lane has declined (fork_head / unresolvable) or a failed
+        // resolution reads as blocking, and that one says whose move it is.
+        soft: predicted.tone === 'soft',
+        running: predicted.tone === 'running',
         // The unit is part of the count. "Conflicts with main · 10" sat on
         // the same card as "Behind main · 118" in the same grammar, one
         // counting FILES and the other COMMITS, and read as 10 commits.
-        label: n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main',
+        label: predicted.label
+          || (n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main'),
         detail: n
           ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
           : `This proposal no longer merges into main on its own. ${remedy}`,
