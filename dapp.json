@@ -2151,6 +2151,12 @@
       "expectText": "Show older"
     },
     {
+      "name": "Since your last visit: Clear goes live once Show older has walked below the line, so the seen rows can be folded again (#2240)",
+      "path": "/?demo=1&shot=since-seen#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
+      "expectText": "Clear"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": ".attr-avatar"
