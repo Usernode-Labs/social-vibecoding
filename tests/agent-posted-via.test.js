@@ -18,7 +18,11 @@
 //     bubble render the chip, with `data-posted-via` on the row, only when
 //     the row says 'agent';
 //   * the staging mock stream (`?demo=1`) carries one agent row, which is
-//     what the two declared checks read.
+//     what the declared check reads on the demo issue's discussion. (The
+//     Activity feed has no check of its own: the feed-comments capture
+//     unfolds a row whose thread, on a production-cloned staging database,
+//     already has a genuine transcript, and the mock only stands in for an
+//     empty one. Its chip is pinned by the render test below instead.)
 //
 // Run with: node --test tests/agent-posted-via.test.js
 
@@ -322,13 +326,11 @@ test('the Activity feed bubble wears the same chip, from the REST spelling', () 
   assert.ok(!/data-posted-via|gc-posted-via/.test(person));
 });
 
-test('two declared checks read the mock agent row, and the manifest count says so', () => {
+test('one declared check reads the mock agent row on the demo issue\u2019s discussion', () => {
   const dapp = JSON.parse(read('dapp.json'));
   const checks = dapp.tests.filter((t) => /#2236/.test(t.name));
-  assert.equal(checks.length, 2);
+  assert.equal(checks.length, 1);
   assert.match(checks[0].path, /^\/\?demo=1#app\/usernode-2d5619\/dev\/issues\/\d+$/);
   assert.match(checks[0].expectSelector, /#gc-thread-messages \.gc-msg\[data-posted-via="agent"\]\[data-username="staging-demo-agent"\] \.gc-posted-via/);
-  assert.match(checks[1].path, /demo=1.*#app\/usernode-2d5619\/workshop$/);
-  assert.match(checks[1].expectSelector, /\.dev-feed-msg\[data-posted-via="agent"\] \.gc-posted-via/);
-  for (const c of checks) assert.equal(c.expectText, 'via agent');
+  assert.equal(checks[0].expectText, 'via agent');
 });

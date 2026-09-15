@@ -559,11 +559,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  // 649 → 651: #2236 adds two checks for the "via agent" chip a note wears
+  // 649 → 650: #2236 adds one check for the "via agent" chip a note wears
   // when a coding agent posted it through the connector on the author's
-  // behalf, one on the demo issue's discussion and one on the Activity
-  // feed's reply preview. Both read the mock agent row the staging chat
-  // endpoint returns under `?demo=1`, so they run against an empty database.
+  // behalf, on the demo issue's discussion. It reads the mock agent row the
+  // staging chat endpoint returns under `?demo=1` for a thread with no real
+  // messages. A second check on the Activity feed's reply preview was
+  // declared and withdrawn: the feed-comments shot unfolds the first issue
+  // row with GitHub comments, and on a production-cloned staging database
+  // that thread already has a genuine transcript, which always wins over the
+  // mock. The feed bubble's chip is pinned by tests/agent-posted-via.test.js.
   // 649 → 651: on yet another side of this merge, #2201 also gives the
   // check-my-status address step an answer for a mistyped address, and
   // declares the two things that state must show at
@@ -573,12 +577,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  // 651 → 653: the tallies above were computed on either side of this merge
-  // and cannot be read as one sequence. This branch took 649 → 651 alone,
-  // with the #2236 "via agent" checks above; main independently took the
-  // SAME 649 to 651 with the #2201 waitlist-not-found checks above. One +2
-  // and one +2 against a shared 649 is 653.
-  assert.equal(DAPP.tests.length, 653);
+  // 650 → 652: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 649 → 650 alone,
+  // with the one #2236 "via agent" check above; main independently took the
+  // SAME 649 to 651 with the #2201 waitlist-not-found checks above. One +1
+  // and one +2 against a shared 649 is 652.
+  assert.equal(DAPP.tests.length, 652);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

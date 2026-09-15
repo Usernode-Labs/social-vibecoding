@@ -4143,12 +4143,6 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#gc-thread-messages .gc-msg[data-posted-via=\"agent\"][data-username=\"staging-demo-agent\"] .gc-posted-via",
       "expectText": "via agent"
-    },
-    {
-      "name": "#2236: the Activity feed's reply preview marks the same agent-posted note",
-      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-feed-thread .dev-feed-msg[data-posted-via=\"agent\"] .gc-posted-via",
-      "expectText": "via agent"
     }
   ],
   "governance": {
