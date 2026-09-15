@@ -572,7 +572,7 @@
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
       "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",
-      "expectText": "Manage social accounts"
+      "expectText": "Connect or change social accounts"
     },
     {
       "name": "Edit profile is a scrolling card of inset-grouped rows (#1285)",
@@ -964,6 +964,12 @@
       "path": "/?demo=identity-x-misconfigured#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #x-link-diagnostics #x-link-check",
       "expectText": "connection attempt didn't complete"
+    },
+    {
+      "name": "A verified social replacement waits for explicit confirmation (#2260)",
+      "path": "/?demo=identity-replacement#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-replacement-confirmation #github-replacement-visible",
+      "expectText": "Nothing changes until you confirm"
     },
     {
       "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",

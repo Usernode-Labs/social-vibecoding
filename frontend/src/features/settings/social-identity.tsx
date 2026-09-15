@@ -29,6 +29,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { socialIdentityStore } from './social-identity-store.js';
 import { openNativeSocialConnect, watchSocialConnectReturn } from './native-social-connect.js';
@@ -44,6 +47,9 @@ type DiagnosticsView = {
   provider: string;
 };
 
+type OAuthIntent = 'connect' | 'refresh' | 'replace';
+type OAuthActionView = { label: string; href: string | null; intent: OAuthIntent };
+
 type ProviderRowView = {
   provider: 'github' | 'x';
   name: string;
@@ -54,7 +60,16 @@ type ProviderRowView = {
   linkedAt: string | null;
   noToken: string | null;
   /** `href: null` is the ?demo= variant — a disabled button, not a link. */
-  connect: { label: string; href: string | null } | null;
+  connect: OAuthActionView | null;
+  refresh: OAuthActionView | null;
+  replace: OAuthActionView | null;
+  visibility: { checked: boolean; disabled: boolean } | null;
+  pendingReplacement: {
+    currentHandle: string;
+    replacementHandle: string;
+    expiresAt: string | null;
+    disabled: boolean;
+  } | null;
   unlink: { disabled: boolean } | null;
   strandedNote: string | null;
   diagnostics: DiagnosticsView | null;
@@ -69,6 +84,15 @@ type SocialIdentityState = {
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Settings : null) || null;
+}
+
+async function refreshIdentitySurfaces() {
+  const settings = controller();
+  if (settings?._refreshSocialIdentitySurfaces) {
+    await settings._refreshSocialIdentitySurfaces();
+    return;
+  }
+  await settings?._loadGithubLink?.();
 }
 
 const TIER_TONE = {
@@ -89,7 +113,10 @@ const TIER_TONE = {
  * One constant instead, and this file is on
  * tests/shell-primitive-adoption.test.js's allow-list for exactly that reason.
  */
-const CONNECT_SURFACE = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
+const CONNECT_SURFACE =
+  'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white inline-flex min-h-[36px] items-center justify-center';
+const SECONDARY_ACTION_SURFACE =
+  'rounded-md bg-zinc-200 dark:bg-zinc-700 px-2 py-1 text-xs font-medium text-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors inline-flex min-h-[36px] items-center justify-center';
 
 const STATE_TONE = {
   amber: 'text-amber-800 dark:text-amber-400',
@@ -256,14 +283,160 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
   );
 }
 
+async function errorMessage(response: Response, fallback: string) {
+  try {
+    const body = await response.json();
+    return typeof body?.message === 'string' ? body.message : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function ProviderRow({ row }: { row: ProviderRowView }) {
   const opening = useRef(false);
-  const [launchStatus, setLaunchStatus] = useState('');
-  const [launchFailed, setLaunchFailed] = useState(false);
+  const [actionStatus, setActionStatus] = useState('');
+  const [actionFailed, setActionFailed] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [publicVisible, setPublicVisible] = useState(row.visibility?.checked ?? false);
+  const [replacementVisible, setReplacementVisible] = useState(row.visibility?.checked ?? true);
+
+  useEffect(() => {
+    setPublicVisible(row.visibility?.checked ?? false);
+  }, [row.visibility?.checked]);
+  useEffect(() => {
+    setReplacementVisible(row.visibility?.checked ?? true);
+  }, [row.pendingReplacement?.replacementHandle, row.visibility?.checked]);
+
+  const launch = async (
+    e: React.MouseEvent<HTMLAnchorElement>, action: OAuthActionView
+  ) => {
+    const bridge = (window as any).usernode;
+    if (!bridge?.isNative) return;
+    e.preventDefault();
+    if (opening.current) return;
+    opening.current = true;
+    setActionFailed(false);
+    setActionStatus('Opening your browser…');
+    try {
+      await openNativeSocialConnect({
+        bridge,
+        provider: row.provider,
+        intent: action.intent,
+        accountId: (window as any).App?.user?.id,
+        origin: window.location.origin,
+      });
+      setActionStatus(
+        `Finish ${action.intent === 'connect' ? 'connecting' : 'verification'} in your browser, `
+        + 'then return to the app. Sign in with the same Homeroom account if asked.'
+      );
+    } catch (err) {
+      setActionFailed(true);
+      setActionStatus((err as Error).message);
+    } finally {
+      opening.current = false;
+    }
+  };
+
+  const oauthAction = (action: OAuthActionView | null, primary = false) => {
+    if (!action) return null;
+    const classes = primary
+      ? `${CONNECT_SURFACE} hover:bg-violet-500 transition-colors`
+      : SECONDARY_ACTION_SURFACE;
+    return action.href ? (
+      <a href={action.href} className={classes} onClick={(e) => { void launch(e, action); }}>
+        {action.label}
+      </a>
+    ) : (
+      <button type="button" disabled className={`${classes} opacity-50`}>
+        {action.label}
+      </button>
+    );
+  };
+
+  const changeVisibility = async (next: boolean) => {
+    const previous = publicVisible;
+    setPublicVisible(next);
+    setBusy('visibility');
+    setActionFailed(false);
+    setActionStatus('Saving profile visibility…');
+    try {
+      const response = await fetch(
+        `/api/me/social-identities/${encodeURIComponent(row.provider)}/visibility`,
+        {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ publicVisible: next }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await errorMessage(response, 'Could not change profile visibility.'));
+      }
+      await refreshIdentitySurfaces();
+      setActionStatus(next ? 'Shown on your public profile.' : 'Hidden from your public profile.');
+    } catch (err) {
+      setPublicVisible(previous);
+      setActionFailed(true);
+      setActionStatus((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const confirmReplacement = async () => {
+    setBusy('replace');
+    setActionFailed(false);
+    setActionStatus('Replacing account…');
+    try {
+      const response = await fetch(
+        `/api/me/social-identities/${encodeURIComponent(row.provider)}/replacement`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ publicVisible: replacementVisible }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await errorMessage(response, 'Could not replace this account.'));
+      }
+      await refreshIdentitySurfaces();
+      setActionStatus(`${row.name} account replaced.`);
+    } catch (err) {
+      setActionFailed(true);
+      setActionStatus((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const cancelReplacement = async () => {
+    setBusy('cancel');
+    setActionFailed(false);
+    try {
+      const response = await fetch(
+        `/api/me/social-identities/${encodeURIComponent(row.provider)}/replacement`,
+        { method: 'DELETE', credentials: 'same-origin', cache: 'no-store' }
+      );
+      if (!response.ok) {
+        throw new Error(await errorMessage(response, 'Could not cancel this replacement.'));
+      }
+      await refreshIdentitySurfaces();
+      setActionStatus(`No changes made. @${row.pendingReplacement?.currentHandle} is still connected.`);
+    } catch (err) {
+      setActionFailed(true);
+      setActionStatus((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 sm:flex-1">
           <div className="flex items-center gap-2 min-w-0">
             <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
               {row.heading}
@@ -289,44 +462,22 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               {row.noToken}
             </div>
           ) : null}
-        </div>
-        <div className="shrink-0 flex flex-wrap justify-end gap-2">
-          {row.connect ? (
-            row.connect.href ? (
-              <a href={row.connect.href} className={`${CONNECT_SURFACE} hover:bg-violet-500 transition-colors`}
-                onClick={async (e) => {
-                  const bridge = (window as any).usernode;
-                  if (!bridge?.isNative) return;
-                  e.preventDefault();
-                  if (opening.current) return;
-                  opening.current = true;
-                  setLaunchFailed(false);
-                  setLaunchStatus('Opening your browser…');
-                  try {
-                    await openNativeSocialConnect({
-                      bridge, provider: row.provider,
-                      accountId: (window as any).App?.user?.id,
-                      origin: window.location.origin,
-                    });
-                    setLaunchStatus('Finish connecting in your browser, then return to the app. Sign in with the same Homeroom account if asked.');
-                  } catch (err) {
-                    setLaunchFailed(true);
-                    setLaunchStatus((err as Error).message);
-                  } finally {
-                    opening.current = false;
-                  }
-                }}
-              >
-                {row.connect.label}
-              </a>
-            ) : (
-              // The ?demo= variant: the flow would leave the fixture, so the
-              // control is present and inert rather than absent.
-              <button type="button" disabled className={`${CONNECT_SURFACE} opacity-50`}>
-                {row.connect.label}
-              </button>
-            )
+          {row.visibility ? (
+            <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
+              <Switch
+                id={`${row.provider}-profile-visible`}
+                checked={publicVisible}
+                disabled={row.visibility.disabled || busy === 'visibility'}
+                onChange={(e) => { void changeVisibility(e.currentTarget.checked); }}
+              />
+              Show on public profile
+            </label>
           ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2 sm:max-w-[17rem] sm:shrink-0 sm:justify-end">
+          {oauthAction(row.connect, true)}
+          {oauthAction(row.refresh)}
+          {oauthAction(row.replace, true)}
           {row.unlink ? (
             <button
               type="button"
@@ -342,9 +493,73 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
           ) : null}
         </div>
       </div>
-      {launchStatus ? (
-        <p role="status" className={`text-xs mt-2 ${launchFailed ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
-          {launchStatus}
+
+      {row.pendingReplacement ? (
+        <section
+          id={`${row.provider}-replacement-confirmation`}
+          aria-label={`Confirm ${row.name} account replacement`}
+          className="mt-3 rounded-lg border border-violet-300 dark:border-violet-800 bg-white dark:bg-zinc-900 p-3"
+        >
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            Replace {row.name} account?
+          </div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            The new account is verified. Nothing changes until you confirm.
+          </p>
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+            <div className="rounded-md border border-zinc-300 dark:border-zinc-700 px-2.5 py-2 min-w-0">
+              <div className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Current</div>
+              <div className="text-sm font-medium truncate">@{row.pendingReplacement.currentHandle}</div>
+            </div>
+            <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">→</span>
+            <div className="rounded-md border border-violet-400 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 px-2.5 py-2 min-w-0">
+              <div className="text-[0.65rem] uppercase tracking-wide text-violet-700 dark:text-violet-300">Verified replacement</div>
+              <div className="text-sm font-medium truncate">@{row.pendingReplacement.replacementHandle}</div>
+            </div>
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
+            <Switch
+              id={`${row.provider}-replacement-visible`}
+              checked={replacementVisible}
+              disabled={row.pendingReplacement.disabled || !!busy}
+              onChange={(e) => setReplacementVisible(e.currentTarget.checked)}
+            />
+            Show the replacement on my public profile
+          </label>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            Cancelling keeps @{row.pendingReplacement.currentHandle} connected with its current visibility.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button
+              type="button"
+              disabled={row.pendingReplacement.disabled || !!busy}
+              variant="neutral"
+              size="xsText"
+              ink="neutral"
+              disabledStyle="dim"
+              className="min-h-[36px]"
+              onClick={() => { void cancelReplacement(); }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={row.pendingReplacement.disabled || !!busy}
+              variant="pill"
+              size="xsText"
+              disabledStyle="dim"
+              className="min-h-[36px]"
+              onClick={() => { void confirmReplacement(); }}
+            >
+              {busy === 'replace' ? 'Replacing…' : 'Replace account'}
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {actionStatus ? (
+        <p role="status" className={`text-xs mt-2 ${actionFailed ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+          {actionStatus}
         </p>
       ) : null}
       <AuditNote provider={row.provider} />
@@ -385,7 +600,7 @@ export function SocialIdentity() {
       win: window, doc: document,
       refresh: () => {
         if (document.querySelector('#settings-screen:not(.hidden)')) {
-          return controller()?._loadGithubLink?.();
+          return refreshIdentitySurfaces();
         }
       },
     });

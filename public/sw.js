@@ -169,7 +169,13 @@
 // the meter that draws them is the shell bundle's, and the installed one
 // skips OpenRouter sessions entirely: without the bump the new responses
 // reach a reader that never asks for them.
-const SW_VERSION = 'v21';
+//
+// v22: verified social accounts gain Change account, Refresh handle, pending
+// replacement confirmation, and profile-visibility controls (#2260). The
+// previous cached bundle has only Disconnect once an account is linked and
+// still contains the retired free-text profile inputs, so this is also the
+// remote repair for the silent stale-client failure reported after #1939.
+const SW_VERSION = 'v22';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

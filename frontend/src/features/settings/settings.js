@@ -2013,7 +2013,7 @@
         const demo = new URLSearchParams(window.location.search).get('demo');
         if (demo === '1' || demo === 'identity-connected'
             || demo === 'identity-unverified' || demo === 'identity-legacy'
-            || demo === 'identity-x-misconfigured') {
+            || demo === 'identity-x-misconfigured' || demo === 'identity-replacement') {
           return `?demo=${encodeURIComponent(demo)}`;
         }
       } catch { /* ordinary production read */ }
@@ -2055,6 +2055,18 @@
         });
         section.classList.remove('hidden');
       }
+    },
+
+    // Keep the connector panel and every profile surface on the same
+    // post-mutation truth. The panel reads the provider-neutral status route;
+    // the profile editor reads App.user.links, which comes from /api/auth/me.
+    async _refreshSocialIdentitySurfaces() {
+      await Promise.all([
+        this._loadGithubLink(),
+        (typeof window !== 'undefined' && window.Profile?._refreshUser)
+          ? window.Profile._refreshUser()
+          : Promise.resolve(),
+      ]);
     },
 
     _publishSocialIdentity(next) {
@@ -2126,10 +2138,13 @@
       };
     },
 
-    // One provider row. Five mutually-exclusive states, and the two actions:
-    // a Connect anchor (or its inert ?demo= twin) and Disconnect.
+    // One provider row. Connection, provider verification, public visibility,
+    // replacement confirmation and destructive disconnect stay separate.
     _socialIdentityRowView(provider, link, entitlement, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
+      const actionHref = (intent) => demo
+        ? null
+        : `/api/me/social-identities/${provider}/connect?intent=${intent}`;
       let state;
       if (link.reconnectRequired) {
         state = {
@@ -2187,7 +2202,25 @@
             label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
             // A demo fixture gets the control inert rather than absent: the
             // real flow would navigate straight out of the fixture.
-            href: demo ? null : `/api/me/social-identities/${provider}/connect`,
+            href: actionHref('connect'),
+            intent: 'connect',
+          }
+          : null,
+        refresh: link.linked && !link.reconnectRequired && link.available !== false
+          ? { label: 'Refresh handle', href: actionHref('refresh'), intent: 'refresh' }
+          : null,
+        replace: link.linked && !link.reconnectRequired && link.available !== false
+          ? { label: 'Change account', href: actionHref('replace'), intent: 'replace' }
+          : null,
+        visibility: link.linked && !link.reconnectRequired
+          ? { checked: link.publicVisible !== false, disabled: !!demo }
+          : null,
+        pendingReplacement: link.pendingReplacement && link.handle
+          ? {
+            currentHandle: link.handle,
+            replacementHandle: link.pendingReplacement.handle,
+            expiresAt: link.pendingReplacement.expiresAt,
+            disabled: !!demo,
           }
           : null,
         unlink: link.linked ? { disabled: !!demo } : null,
@@ -2252,7 +2285,11 @@
       const name = provider === 'x' ? 'X' : 'GitHub';
       const messages = {
         linked: `${name} connected.`,
-        conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
+        refreshed: `${name} handle refreshed.`,
+        confirm: `Another ${name} account was verified. Review the replacement below before anything changes.`,
+        in_use: `That ${name} account is already linked to another Homeroom account. Your current connection is unchanged.`,
+        different_account: `That is a different ${name} account. Use Change account instead; your current connection is unchanged.`,
+        conflict: `That ${name} account could not be used. Your current connection is unchanged.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
         account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
@@ -2260,13 +2297,21 @@
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
       status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
-      status.classList.add(...(result === 'linked'
+      status.classList.add(...(['linked', 'refreshed', 'confirm'].includes(result)
         ? ['text-emerald-700', 'dark:text-emerald-400']
         : ['text-red-700', 'dark:text-red-400']));
     },
 
     async _unlinkGithub(button, provider = 'github') {
       const status = document.getElementById('github-link-status');
+      const name = provider === 'x' ? 'X' : 'GitHub';
+      const confirmed = await PlatformUI.confirm({
+        title: `Disconnect ${name}?`,
+        message: `This removes ${name} from your public profile and may change your daily credit eligibility.`,
+        confirmLabel: 'Disconnect',
+        danger: true,
+      });
+      if (!confirmed) return;
       if (button) button.disabled = true;
       try {
         const response = await fetch(`/api/me/social-identities/${encodeURIComponent(provider)}`, {
@@ -2274,8 +2319,8 @@
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error(`Could not disconnect ${provider === 'x' ? 'X' : 'GitHub'}.`);
-        await this._loadGithubLink();
+        if (!response.ok) throw new Error(`Could not disconnect ${name}.`);
+        await this._refreshSocialIdentitySurfaces();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {

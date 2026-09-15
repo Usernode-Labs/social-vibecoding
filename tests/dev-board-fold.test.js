@@ -642,7 +642,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // landing on a manifest one entry larger than either side's own arithmetic
   // predicts. The literal is the ground truth here, not the arithmetic:
   // 662.
-  assert.equal(DAPP.tests.length, 662);
+  //
+  // #2260 adds one deterministic check for the verified-account replacement
+  // confirmation state in Connectors. That makes the reviewed total 663.
+  assert.equal(DAPP.tests.length, 663);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

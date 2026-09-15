@@ -216,6 +216,7 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],
   social_identity_oauth_states: ['state_hash', 'pkce_verifier'],
+  social_identity_pending_replacements: ['provider_subject', 'handle'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),
   // so it is a plaintext bearer credential even though the rest of the row

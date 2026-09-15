@@ -437,11 +437,18 @@ function redirectOrReject(req, res, next) {
   // The native app opens OAuth in the system browser, whose cookie jar may
   // be empty. Only these two account-pinned document navigations may resume
   // after login; ordinary unauthenticated API requests still receive 401.
+  const socialIntent = typeof req.query?.intent === 'string'
+    && /^(connect|refresh|replace)$/.test(req.query.intent)
+    ? req.query.intent
+    : null;
   if (req.method === 'GET'
       && /^\/api\/me\/social-identities\/(github|x)\/connect$/.test(req.path)
       && typeof req.query?.account === 'string'
-      && /^[1-9][0-9]*$/.test(req.query.account)) {
-    const target = `${req.path}?account=${req.query.account}`;
+      && /^[1-9][0-9]*$/.test(req.query.account)
+      && (req.query.intent === undefined || socialIntent)) {
+    const params = new URLSearchParams({ account: req.query.account });
+    if (socialIntent) params.set('intent', socialIntent);
+    const target = `${req.path}?${params.toString()}`;
     res.setHeader('Cache-Control', 'no-store');
     return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
   }
