@@ -233,12 +233,12 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   // concurrent creates of the same issue must not double-notify.
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
-     SELECT u, $2, $3, 'issue_opened', $4
+     SELECT u, $2, $3, 'issue_opened', $4::text
        FROM UNNEST($1::int[]) AS u
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.app_id = $2
-          AND n.kind = 'issue_opened' AND n.detail = $4
+          AND n.kind = 'issue_opened' AND n.detail = $4::text
       )
      RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
     [[...recipientIds], appId, authorId || null, String(issueNumber)]
@@ -307,6 +307,12 @@ async function createProposalVoteNotification(pool, { userId, appId, sessionId, 
 // De-duplicated on UNREAD rather than ever: a failure that is still unread
 // should not stack, but once you have seen and cleared one, the NEXT failure
 // is news again. Same rule check_failed uses.
+//
+// `detail` is a SHORT TOKEN, not a reason line: notifications.detail is
+// VARCHAR(32), and 32 characters of a build failure ("Command failed: npm
+// run build:sh") is a fragment rather than information. The drawer renders
+// the copy from the token, and the full reason is on apps.last_failure,
+// where an operator is going anyway.
 async function createAppHealthNotification(pool, { appId, detail }) {
   if (!appId) return [];
   const { rows: recipientRows } = await pool.query(
@@ -335,7 +341,9 @@ async function createAppHealthNotification(pool, { appId, detail }) {
           AND n.kind = 'app_health' AND n.read_at IS NULL
       )
      RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
-    [allowed, appId, (detail || '').slice(0, 200) || null]
+    // VARCHAR(32). See the note above the function: this is a short token,
+    // not a reason line.
+    [allowed, appId, (detail || '').slice(0, 32) || null]
   );
   return rows;
 }

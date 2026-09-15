@@ -1785,14 +1785,21 @@ function rowView(n) {
   }
 
   // The app is unwell, and this row goes only to people who can fix it.
-  // `detail` is the failure's own reason line, which is the one thing that
-  // says whether this needs them now or is a known flake.
+  //
+  // `detail` is a short TOKEN, never a reason line: notifications.detail is
+  // VARCHAR(32), so a build failure's own message would arrive as a
+  // meaningless fragment. The copy is rendered from the token here, and the
+  // full reason is on the app (apps.last_failure) where the row leads.
+  // Rendering `detail` directly would also put an internal identifier on
+  // screen, which is the thing tests/settings-mobile-push.test.js bars
+  // elsewhere for good reason.
   if (n.kind === 'app_health') {
+    const APP_HEALTH_COPY = { deploy_failed: 'a deploy failed' };
     return {
       ...base,
       wrap: true,
       icon: '\u{1F6A8}',
-      ...headline('App problem', n.detail || 'a deploy failed'),
+      ...headline('App problem', APP_HEALTH_COPY[n.detail] || 'something needs looking at'),
     };
   }
 

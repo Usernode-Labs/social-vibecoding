@@ -1093,7 +1093,10 @@ async function rebuildProductionInner(config, app) {
         const pool = getPool(config);
         const created = await notifications.createAppHealthNotification(pool, {
           appId: app.id,
-          detail: (failureRecord && failureRecord.reason) || 'The production deploy failed.',
+          // A short token, not the reason: notifications.detail is
+          // VARCHAR(32) and the full reason is on apps.last_failure, which
+          // the UPDATE above just wrote.
+          detail: 'deploy_failed',
         });
         await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)));
       } catch (e) {
