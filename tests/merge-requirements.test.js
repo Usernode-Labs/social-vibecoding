@@ -362,6 +362,95 @@ test('the provisional list names main health only when the serializer has the ap
   assert.equal(never.find((g) => g.key === 'main_healthy').state, 'done', 'never watched is not red');
 });
 
+// The serializer's block, as routes/votes.js spreads it onto a row: the pause
+// is its own fact, a red names its test, and a first red says it is being
+// re-run (services/main-watch.js describe()).
+const PAUSED = {
+  app_main_check_state: 'failing', app_main_check_sha: 'f'.repeat(40), app_main_check_resumed_sha: null,
+  app_main_check_paused: true, app_main_check_confirming: false,
+  app_main_check_failing_test: 'shared-sessions returns linked_issues per row',
+};
+const unitSuite = require('../src/services/unit-suite');
+const SUITE_PASS = [{ index: unitSuite.UNIT_CHECK_INDEX, name: unitSuite.UNIT_CHECK_NAME, path: unitSuite.UNIT_CHECK_PATH, status: 'pass' }];
+
+test('the main-health step names the test, and says when the red is provisional', () => {
+  const blocked = requirements.mainStep({ ...PAUSED, integration_behind_by: 2 });
+  assert.equal(blocked.state, 'blocked');
+  assert.equal(blocked.detail.paused, true);
+  assert.equal(blocked.detail.confirming, false);
+  assert.match(blocked.detail.note, /^main's unit suite is failing since fffffff \(shared-sessions returns linked_issues per row\); merges are paused/);
+
+  const confirming = requirements.mainStep({ ...PAUSED, app_main_check_state: 'confirming', app_main_check_confirming: true, integration_behind_by: 2 });
+  assert.equal(confirming.state, 'blocked', 'a provisional pause is still a pause');
+  assert.equal(confirming.detail.confirming, true);
+  assert.match(confirming.detail.note, /failed once since fffffff \(shared-sessions returns linked_issues per row\) and is being re-run to confirm; merges are paused/);
+
+  // The flag, not the state, is the pause: a red the admin resumed, or that a
+  // green verdict cleared, is done. An 'error' with the flag still up is not.
+  assert.equal(requirements.mainStep({ ...PAUSED, app_main_check_paused: false }).state, 'done');
+  assert.match(requirements.mainStep({ ...PAUSED, app_main_check_paused: false }).detail.note, /an admin resumed merges/);
+  assert.equal(requirements.mainStep({ ...PAUSED, app_main_check_state: 'error' }).state, 'blocked',
+    'a run that could not happen did not lift the pause it found');
+});
+
+test('level with main, clean, and its own suite green: the step is done, with the pass-through named', () => {
+  const row = {
+    ...PAUSED, check_state: 'passing', integration_behind_by: 0, integration_merges_clean: true,
+    test_results: SUITE_PASS, checks_commit_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40),
+  };
+  assert.equal(requirements.levelAndGreen(row), true);
+  const step = requirements.mainStep(row);
+  assert.equal(step.state, 'done');
+  assert.equal(step.detail.passThrough, 'level_and_green');
+  assert.match(step.detail.note, /this head is level with main and its own checks passed on this exact tree, so it merges and re-tests main/);
+  // The same rule as the gate: all three, and a suite of its own.
+  assert.equal(requirements.levelAndGreen({ ...row, integration_behind_by: 1 }), false, 'behind');
+  assert.equal(requirements.levelAndGreen({ ...row, integration_merges_clean: false }), false, 'conflict');
+  assert.equal(requirements.levelAndGreen({ ...row, check_state: 'pending' }), false, 'checks not finished');
+  assert.equal(requirements.levelAndGreen({ ...row, test_results: [{ status: 'pass' }] }), false, 'green, but not the suite');
+  assert.equal(requirements.levelAndGreen({ ...row, test_results: JSON.stringify(SUITE_PASS) }), true, 'the column may arrive as text');
+  // A verdict about an older commit is not one about this head.
+  assert.equal(requirements.levelAndGreen({ ...row, checks_commit_sha: 'b'.repeat(40) }), false);
+  // And it is what the provisional list says too.
+  const prov = requirements.provisional({ ...row, votes_required: 1, yes_count: 1 });
+  assert.equal(prov.find((g) => g.key === 'main_healthy').detail.passThrough, 'level_and_green');
+  assert.equal(requirements.summarize(prov, {}).detail, 'merging shortly');
+});
+
+test('a pause that began after the record was written replaces its main-health step', () => {
+  // The record: a run that reached github with main green.
+  const t = requirements.trace();
+  t.pass('approvals').pass('integration').pass('checks').pass('main_healthy', { state: 'passing' }).stop('github', 'active');
+  const record = t.toRecord();
+  const base = { merge_requirements: record, merge_requirements_at: new Date().toISOString(), integration_behind_by: 3 };
+
+  // Not paused: the record stands, as written.
+  const stands = requirements.readRequirements({ ...base, ...PAUSED, app_main_check_paused: false });
+  assert.equal(stands.evaluated, true);
+  assert.equal(stands.gates.find((g) => g.key === 'main_healthy').state, 'done');
+
+  // Paused since: the live step replaces the record's. This is the board that
+  // read "Passed, merging shortly" all afternoon.
+  const paused = requirements.readRequirements({ ...base, ...PAUSED });
+  assert.equal(paused.evaluated, true, 'the rest of the record is still the record');
+  const main = paused.gates.find((g) => g.key === 'main_healthy');
+  assert.equal(main.state, 'blocked');
+  assert.equal(main.detail.paused, true);
+  assert.match(main.detail.note, /shared-sessions returns linked_issues per row/);
+  assert.equal(requirements.summarize(paused.gates, { isAdmin: true }).headline, 'Waiting on you');
+
+  // A row the serializer did not join the app columns onto is left alone.
+  const bare = requirements.readRequirements(base);
+  assert.equal(bare.gates.find((g) => g.key === 'main_healthy').state, 'done');
+
+  // And a level-and-green head under a pause reads as done, with the reason.
+  const through = requirements.readRequirements({
+    ...base, ...PAUSED, integration_behind_by: 0, integration_merges_clean: true, check_state: 'passing',
+    test_results: SUITE_PASS,
+  });
+  assert.equal(through.gates.find((g) => g.key === 'main_healthy').detail.passThrough, 'level_and_green');
+});
+
 // ── The promise: the description matches the gate that decided ──────────
 
 function stub(id, exports) {

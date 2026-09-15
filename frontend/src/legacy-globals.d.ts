@@ -176,6 +176,12 @@ declare global {
     /** public/js/app-view.js — the app screen. The dialogs read its appData. */
     AppView?: {
       appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
+      /**
+       * POST /api/apps/:slug/main-check/resume — the admin's "I know, let
+       * them through" while main's unit suite is red. One implementation,
+       * called by the per-card ledger's button and the board banner alike.
+       */
+      resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
       [key: string]: unknown;
     };
     /** features/home/home.js — refreshed after app creation. */
