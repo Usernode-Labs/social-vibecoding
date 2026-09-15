@@ -68,6 +68,24 @@
     return i;
   }
 
+  // The app's main-health step off the row's requirements ledger
+  // (services/merge-requirements.js mainStep): non-null only while the
+  // app's merges are paused by a red main. App state riding on every row,
+  // so a card that passed its vote and its checks can say WHY it is not
+  // merging instead of promising "shortly" — which is what the row read for
+  // an afternoon while main was paused (#2247's neighbour).
+  function mainPauseOf(p) {
+    var mr = (p && p.mergeRequirements && typeof p.mergeRequirements === 'object') ? p.mergeRequirements : null;
+    var gates = mr && Array.isArray(mr.gates) ? mr.gates : [];
+    for (var i = 0; i < gates.length; i++) {
+      var g = gates[i];
+      if (!g || g.key !== 'main_healthy') continue;
+      if (g.state === 'blocked' && g.detail && g.detail.paused) return g.detail;
+      return null;
+    }
+    return null;
+  }
+
   // "measured 30 seconds ago" — the honest half of a cached number. A card
   // that states a figure without its age is making a claim about the present
   // that it cannot support, which is what every "the UI is out of sync"
@@ -340,6 +358,18 @@
       return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
         votes: votes,
         title: 'App is locked, so it also needs at least one admin yes before it merges.',
+      });
+    }
+    // 8b — passed the vote, checks green, and the APP's merges are paused by
+    // a red main (services/main-watch.js). Nothing about this proposal is
+    // wrong, and "merging shortly" would be a promise nobody is keeping: the
+    // row says so, and the tooltip names the test and the way out.
+    var mainPause = mainPauseOf(p);
+    if (status === 'promoted' && reached && check === 'passing' && mainPause) {
+      return descriptor('main_paused', 'Passed, merges paused', 'amber', false, {
+        votes: votes,
+        title: 'Votes passed and checks are green, but ' + (mainPause.note || 'main\u2019s unit suite is failing and merges for this app are paused')
+          + '. Nothing about this proposal is wrong; it merges once main is green again or an admin resumes merges.',
       });
     }
     // 9 — passed the vote, checks green, not behind: eligible and queued to

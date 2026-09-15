@@ -3496,6 +3496,12 @@ function voteRoutes(config) {
             app_main_check_state: mainCheck.state,
             app_main_check_sha: mainCheck.sha,
             app_main_check_resumed_sha: mainCheck.resumedSha,
+            // The pause is its own fact (main_check_paused_sha), and a red
+            // names its test; the ledger says both rather than re-deriving.
+            app_main_check_paused: mainCheck.paused,
+            app_main_check_paused_sha: mainCheck.pausedSha,
+            app_main_check_confirming: mainCheck.confirming,
+            app_main_check_failing_test: mainCheck.failingTest,
           });
         }
       }
@@ -5152,44 +5158,82 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Main-health gate (services/main-watch.js). Every merge lands a tree
     // nobody ran the checks against as a whole, so the repo's unit suite
     // runs once more on each merge commit, and a red result pauses the
-    // app's merges — all of them, this proposal included, whatever its own
-    // checks said — until a fix lands or an admin resumes them. This is
-    // the app's state rather than the proposal's, which is why it is the
-    // last thing asked before GitHub: nothing about the proposal changes
-    // it, and nothing the author does clears it.
-    const mainHealth = await require('../services/main-watch').mergePause(pool, session.app_id);
+    // app's merges — whatever this proposal's own checks said — until a
+    // fix lands or an admin resumes them. This is the app's state rather
+    // than the proposal's, which is why it is the last thing asked before
+    // GitHub: nothing about the proposal changes it, and nothing the author
+    // does clears it.
+    //
+    // With one exception, and it is what the pause is FOR. The pause holds
+    // back merges whose tree nobody has tested — a head checked against an
+    // older main lands a tree the red could be hiding in. A head that is
+    // level with main, merges clean, and whose own checks (the same unit
+    // suite) passed on this exact tree lands exactly the tree that was
+    // tested: it is not hiding anything, it is the fix candidate, and its
+    // own post-merge run re-tests main. It goes.
+    const mainWatch = require('../services/main-watch');
+    const mainHealth = await mainWatch.mergePause(pool, session.app_id);
     if (mainHealth.paused) {
-      const since = mainHealth.sha ? String(mainHealth.sha).slice(0, 7) : 'the last merge';
+      // The red commit the pause is ABOUT — not the one a newer merge may be
+      // re-testing right now, which is what main_check_sha says meanwhile.
+      const redSha = mainHealth.pausedSha || mainHealth.sha;
+      const since = redSha ? String(redSha).slice(0, 7) : 'the last merge';
+      const culprit = mainHealth.failingTest ? ` (${mainHealth.failingTest})` : '';
+      const what = mainHealth.confirming
+        ? `main's unit suite failed once since ${since}${culprit} and is being re-run to confirm`
+        : `main's unit suite is failing since ${since}${culprit}`;
+      const levelAndGreen = measured.behindBy === 0 && measured.mergesClean === true
+        && checkState === 'passing' && require('../services/unit-suite').passedIn(checkRows[0]?.test_results);
+      if (!levelAndGreen) {
+        dstep({
+          phase: 'gate:main_healthy', level: 'warn',
+          message: `Merge blocked: ${what}; merges for this app are paused.`,
+          detail: {
+            sha: mainHealth.sha, at: mainHealth.at, confirming: mainHealth.confirming,
+            failingTest: mainHealth.failingTest,
+            behindBy: measured.behindBy, mergesClean: measured.mergesClean, checkState,
+          },
+        });
+        gateTrace.stop('main_healthy', 'blocked', {
+          sha: mainHealth.sha,
+          paused: true,
+          confirming: mainHealth.confirming,
+          note: `${what}; merges are paused until a fix lands or an admin resumes them`,
+        });
+        gateSave();
+        dend('blocked', 'Blocked: main is red, merges paused.');
+        return {
+          merged: false, yesCount, needed: required, blockReason: 'main_failing',
+          mainCheck: mainHealth,
+        };
+      }
       dstep({
-        phase: 'gate:main_healthy', level: 'warn',
-        message: `Merge blocked: main's unit suite is failing (since ${since}); merges for this app are paused.`,
-        detail: { sha: mainHealth.sha, at: mainHealth.at },
+        phase: 'gate:main_healthy',
+        message: `Main's unit suite is red (since ${since}), but this head is level with main and its own checks passed on this exact tree; merging it re-tests main.`,
+        detail: { sha: mainHealth.sha, confirming: mainHealth.confirming, passThrough: 'level_and_green' },
       });
-      gateTrace.stop('main_healthy', 'blocked', {
+      gateTrace.pass('main_healthy', {
+        state: mainHealth.state,
         sha: mainHealth.sha,
-        note: `main's unit suite is failing since ${since}; merges are paused until a fix lands or an admin resumes them`,
+        passThrough: 'level_and_green',
+        note: `${what}; this head is level with main and its own checks passed on this exact tree, so it merges and re-tests main`,
       });
-      gateSave();
-      dend('blocked', 'Blocked: main is red, merges paused.');
-      return {
-        merged: false, yesCount, needed: required, blockReason: 'main_failing',
-        mainCheck: mainHealth,
-      };
+    } else {
+      dstep({
+        phase: 'gate:main_healthy',
+        message: mainHealth.state
+          ? `Main's unit suite: ${mainHealth.state}${(mainHealth.state === 'failing' || mainHealth.state === 'confirming') ? ' (an admin resumed merges)' : ''}.`
+          : 'Main has not been watched yet for this app.',
+        detail: { state: mainHealth.state, sha: mainHealth.sha },
+      });
+      gateTrace.pass('main_healthy', {
+        state: mainHealth.state,
+        note: mainHealth.state === 'passing' ? 'main is green'
+          : (mainHealth.state === 'failing' || mainHealth.state === 'confirming') ? 'main is red, but an admin resumed merges'
+            : mainHealth.state === 'running' ? 'main is being checked after the last merge'
+              : 'no verdict about main yet',
+      });
     }
-    dstep({
-      phase: 'gate:main_healthy',
-      message: mainHealth.state
-        ? `Main's unit suite: ${mainHealth.state}${mainHealth.state === 'failing' ? ' (an admin resumed merges)' : ''}.`
-        : 'Main has not been watched yet for this app.',
-      detail: { state: mainHealth.state, sha: mainHealth.sha },
-    });
-    gateTrace.pass('main_healthy', {
-      state: mainHealth.state,
-      note: mainHealth.state === 'passing' ? 'main is green'
-        : mainHealth.state === 'failing' ? 'main is red, but an admin resumed merges'
-          : mainHealth.state === 'running' ? 'main is being checked after the last merge'
-            : 'no verdict about main yet',
-    });
   }
   // For admin force-merge we deliberately skip the behind_main pre-check
   // — GitHub will still reject the merge if there's a real conflict,

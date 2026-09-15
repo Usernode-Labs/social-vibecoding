@@ -67,8 +67,8 @@ function makePool() {
     users: initialUsers(),
     retired: initialRetired(),
     identities: [
-      { user_id: 1, provider: 'x', handle: 'verified_alice' },
-      { user_id: 2, provider: 'github', handle: 'verified-bob' },
+      { user_id: 1, provider: 'x', handle: 'verified_alice', public_visible: true },
+      { user_id: 2, provider: 'github', handle: 'verified-bob', public_visible: true },
     ],
     reports: [],
     calls: [],
@@ -93,7 +93,9 @@ function makePool() {
     if (/SELECT provider, handle/.test(s) && /FROM user_social_identities/.test(s)) {
       return {
         rows: state.identities
-          .filter((identity) => identity.user_id === params[0])
+          .filter((identity) => (
+            identity.user_id === params[0] && identity.public_visible !== false
+          ))
           .map(({ provider, handle }) => ({ provider, handle })),
       };
     }
@@ -350,6 +352,24 @@ test('disconnecting a provider proof removes its public link without unpublishin
   }
 });
 
+test('hiding a provider removes only that link while keeping verification and profile publication', async () => {
+  const pool = makePool();
+  const server = await start(pool);
+  try {
+    const github = pool.state.identities.find((identity) => (
+      identity.user_id === 2 && identity.provider === 'github'
+    ));
+    github.public_visible = false;
+
+    const hiddenLink = await request(server, '/api/public/profiles/bob');
+    assert.equal(hiddenLink.status, 200, 'the overall profile remains published');
+    assert.deepEqual(hiddenLink.body.profile.links, { github: null, x: null });
+    assert.ok(pool.state.identities.includes(github), 'the verified identity remains connected');
+  } finally {
+    await server.close();
+  }
+});
+
 test('reports are authenticated, generic, idempotent, and lock against moderation updates', async () => {
   const pool = makePool();
   const server = await start(pool);
@@ -490,7 +510,8 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(publicCard, /target="_blank"/);
   assert.match(publicCard, /rel="noopener noreferrer"/);
   assert.match(profileSheet, /#settings\/connectors/);
-  assert.match(profileSheet, /Only accounts connected through provider verification/);
+  assert.match(profileSheet, /Connect or change social accounts/);
+  assert.match(profileSheet, /Provider verification and public visibility are managed separately/);
   assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
   assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
   assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);

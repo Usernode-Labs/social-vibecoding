@@ -2018,24 +2018,94 @@ test('a demo Connect control is inert but present, and matches the live one', ()
     state: { tone: 'muted', text: 'Not connected.' },
     linkedAt: null,
     noToken: null,
-    connect: { label: 'Connect GitHub', href: '/api/me/social-identities/github/connect' },
+    connect: {
+      label: 'Connect GitHub',
+      href: '/api/me/social-identities/github/connect?intent=connect',
+      intent: 'connect',
+    },
+    refresh: null,
+    replace: null,
+    visibility: null,
+    pendingReplacement: null,
     unlink: null,
     strandedNote: null,
     diagnostics: null,
   };
   const live = socialHtml({ ...socialBase, providers: [row] });
-  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect"/,
+  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect\?intent=connect"/,
     'the real control is an ANCHOR — the OAuth flow is a top-level navigation');
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled
   // button — and it has to LOOK the same, which one shared constant is what
   // guarantees (see the file's header and the primitive allow-list entry).
   const demo = socialHtml({
     ...socialBase,
-    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null } }],
+    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null, intent: 'connect' } }],
   });
   assert.match(demo, /<button type="button" disabled/);
   const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
   assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+});
+
+test('a connected provider offers refresh, safe replacement, visibility and disconnect separately', () => {
+  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const row = view._socialIdentityRowView('github', {
+    available: true,
+    linked: true,
+    handle: 'octo-current',
+    linkedAt: '2026-09-15T10:00:00Z',
+    access: 'identity',
+    publicVisible: false,
+  }, { policy: 'tiered' }, false);
+
+  assert.deepEqual(row.refresh, {
+    label: 'Refresh handle',
+    href: '/api/me/social-identities/github/connect?intent=refresh',
+    intent: 'refresh',
+  });
+  assert.deepEqual(row.replace, {
+    label: 'Change account',
+    href: '/api/me/social-identities/github/connect?intent=replace',
+    intent: 'replace',
+  });
+  assert.deepEqual(row.visibility, { checked: false, disabled: false });
+  assert.deepEqual(row.unlink, { disabled: false });
+  assert.equal(row.connect, null);
+});
+
+test('a verified replacement is reviewable and cancellable before the active account changes', () => {
+  const html2 = socialHtml({
+    ...socialBase,
+    providers: [{
+      provider: 'github',
+      name: 'GitHub',
+      heading: 'GitHub · @octo-current',
+      badge: { text: 'Connected', tone: 'emerald' },
+      state: { tone: 'emerald', text: 'Ownership verified.' },
+      linkedAt: 'linked 15 Sep',
+      noToken: 'Homeroom holds no GitHub access token for your account.',
+      connect: null,
+      refresh: { label: 'Refresh handle', href: null, intent: 'refresh' },
+      replace: { label: 'Change account', href: null, intent: 'replace' },
+      visibility: { checked: true, disabled: true },
+      pendingReplacement: {
+        currentHandle: 'octo-current',
+        replacementHandle: 'octo-next',
+        expiresAt: '2026-09-15T10:10:00Z',
+        disabled: false,
+      },
+      unlink: { disabled: false },
+      strandedNote: null,
+      diagnostics: null,
+    }],
+  });
+
+  assert.match(html2, /id="github-replacement-confirmation"/);
+  assert.match(html2, /Nothing changes until you confirm/);
+  assert.match(html2, /Current[\s\S]*@octo-current/);
+  assert.match(html2, /Verified replacement[\s\S]*@octo-next/);
+  assert.match(html2, /Show the replacement on my public profile/);
+  assert.match(html2, />Cancel<\/button>/);
+  assert.match(html2, />Replace account<\/button>/);
 });
 
 test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
@@ -2063,6 +2133,10 @@ test('the reviewable claims travel with the row that makes them', () => {
       linkedAt: 'linked 1 Jan',
       noToken: 'Homeroom holds no GitHub access token for your account.',
       connect: null,
+      refresh: null,
+      replace: null,
+      visibility: { checked: true, disabled: false },
+      pendingReplacement: null,
       unlink: { disabled: false },
       strandedNote: 'Your last GitHub connection attempt didn’t complete.',
       diagnostics: null,

@@ -5830,9 +5830,12 @@ CREATE TABLE IF NOT EXISTS user_social_identities (
   handle              VARCHAR(64) NOT NULL,
   linked_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_verified_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  public_visible      BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE (user_id, provider),
   UNIQUE (provider, provider_subject)
 );
+ALTER TABLE user_social_identities
+  ADD COLUMN IF NOT EXISTS public_visible BOOLEAN NOT NULL DEFAULT TRUE;
 COMMENT ON TABLE user_social_identities IS 'staging:private';
 CREATE INDEX IF NOT EXISTS user_social_identities_user_idx
   ON user_social_identities (user_id);
@@ -5845,14 +5848,36 @@ CREATE TABLE IF NOT EXISTS social_identity_oauth_states (
   state_hash       CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
   user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider         VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  intent           VARCHAR(16) NOT NULL DEFAULT 'connect'
+                     CHECK (intent IN ('connect', 'refresh', 'replace')),
   pkce_verifier    VARCHAR(128) NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at       TIMESTAMPTZ NOT NULL,
   UNIQUE (user_id, provider)
 );
+ALTER TABLE social_identity_oauth_states
+  ADD COLUMN IF NOT EXISTS intent VARCHAR(16) NOT NULL DEFAULT 'connect'
+    CHECK (intent IN ('connect', 'refresh', 'replace'));
 COMMENT ON TABLE social_identity_oauth_states IS 'staging:private';
 CREATE INDEX IF NOT EXISTS social_identity_oauth_states_expiry_idx
   ON social_identity_oauth_states (expires_at);
+
+-- Provider-verified replacement awaiting the user's same-origin confirmation.
+-- The current identity remains authoritative until this short-lived row is
+-- consumed transactionally. As with the durable proof, it stores no token.
+CREATE TABLE IF NOT EXISTS social_identity_pending_replacements (
+  user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider            VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  provider_subject    VARCHAR(40) NOT NULL CHECK (provider_subject ~ '^[1-9][0-9]{0,39}$'),
+  handle              VARCHAR(64) NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at          TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (user_id, provider),
+  CHECK (expires_at > created_at)
+);
+COMMENT ON TABLE social_identity_pending_replacements IS 'staging:private';
+CREATE INDEX IF NOT EXISTS social_identity_pending_replacements_expiry_idx
+  ON social_identity_pending_replacements (expires_at);
 
 -- Which external coding agent produced a proposal, for the "built with
 -- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column
@@ -7660,23 +7685,51 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch IN
 -- nothing is rolled back, and the culprit is whatever landed since the
 -- last green.
 --
---   main_check_state        'running' | 'passing' | 'failing' | 'error' |
---                           'skipped'. NULL: never run. 'error' is a run
---                           that could not happen (no runner, no clone)
---                           and does not pause anything; 'skipped' is a
---                           repo with no runnable test script.
+--   main_check_state        'running' | 'confirming' | 'passing' |
+--                           'failing' | 'error' | 'skipped'. NULL: never
+--                           run. 'confirming' is a first red being re-run
+--                           once on the same commit before it counts —
+--                           flaky tests exist, and one paused the
+--                           platform's merges for an afternoon. 'error' is
+--                           a run that could not happen (no runner, no
+--                           clone) and says nothing about main; 'skipped'
+--                           is a repo with no runnable test script.
 --   main_check_sha          the merge commit the state describes.
 --   main_check_at           when that run finished (or started, while
---                           'running').
+--                           'running' / 'confirming').
 --   main_check_detail       the run's own account: failing tests, the
---                           TAP summary, the PR that landed it.
---   main_check_resumed_sha  an admin's "resume merges" for exactly this
---                           red sha. A later red is a new pause.
+--                           TAP summary, the PR that landed it; for a
+--                           confirmed red, the first run too; for a flake,
+--                           the failure that did not repeat.
+--   main_check_paused_sha   the red commit the app's merge pause is about;
+--                           NULL when merges are not paused. Set by a red
+--                           verdict (provisional or confirmed), cleared by
+--                           exactly two things: a green verdict, or an
+--                           admin's resume. An 'error' run in between
+--                           leaves it alone — a run that says nothing
+--                           about main cannot lift a pause. Before this
+--                           column the pause was DERIVED (state 'failing'
+--                           at a sha not yet resumed), so a merge whose
+--                           run merely could not happen silently lifted
+--                           it; the backfill below carries the derived
+--                           pauses over.
+--   main_check_resumed_sha  the sha an admin's "resume merges" was about,
+--                           so a red verdict still in flight for that same
+--                           sha cannot re-pause. A later red is a new pause.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_state VARCHAR(16);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR(40);
+-- Carry the derived pauses over. Idempotent: only rows that are red, not
+-- resumed for that red, and not yet carrying the pause column.
+UPDATE apps
+   SET main_check_paused_sha = main_check_sha
+ WHERE main_check_state = 'failing'
+   AND main_check_sha IS NOT NULL
+   AND main_check_paused_sha IS NULL
+   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha);
 
 -- #2253: a ceiling on each app's own Postgres database. Uploaded files have
 -- had a per-app cap since app-files.js; the database had none, and one app

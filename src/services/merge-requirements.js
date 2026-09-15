@@ -347,6 +347,93 @@ function summarize(list, viewer) {
   };
 }
 
+// Did this proposal's own checks run the repo's unit suite on its head, and
+// pass? Lazily through services/unit-suite so this module stays as light as
+// it is; a context without that collaborator answers "no", which only ever
+// withholds a pass-through, never grants one.
+function suitePassedIn(testResults) {
+  try {
+    return require('./unit-suite').passedIn(testResults);
+  } catch {
+    return false;
+  }
+}
+
+// Level with main, merges clean, and its own checks — the same unit suite
+// included — passed on this exact head: the tree its merge would land is
+// the tree that was tested, so a red main is not hiding anything in it.
+// Mirrors the main_healthy gate's pass-through in routes/votes.js off the
+// columns; the gate measures live, this reads what was last measured.
+function levelAndGreen(s) {
+  if (intOrNull(s.integration_behind_by) !== 0) return false;
+  if (s.integration_merges_clean == null || !s.integration_merges_clean) return false;
+  if (s.check_state !== 'passing') return false;
+  // A green verdict about an older commit is not one about this head.
+  const reviewed = reviewedHeadForSession(s);
+  if (reviewed && s.checks_commit_sha
+    && String(s.checks_commit_sha).toLowerCase() !== String(reviewed).toLowerCase()) return false;
+  return suitePassedIn(s.test_results);
+}
+
+/**
+ * The main-health step, read live off the app's columns the serializer
+ * joins on (app_main_check_*; routes/votes.js). App state, not proposal
+ * state — which is why readRequirements lets this answer replace a record's
+ * whenever main is paused: a pause that began after the record was written
+ * is still a pause on that proposal, and the record cannot know it.
+ *
+ * Paused says WHICH test, so the board can name the culprit instead of
+ * "main is red"; 'confirming' says the red is provisional and being re-run
+ * (services/main-watch.js). A level-and-green head is 'done' with the
+ * pass-through named, the same call the gate makes.
+ */
+function mainStep(session) {
+  const s = session || {};
+  const mainState = s.app_main_check_state || null;
+  const sameSha = (a, b) => !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+  // The pause is its own fact when the serializer says so; a caller from
+  // before that derives it the old way (red at a sha not yet resumed).
+  const red = mainState === 'failing' || mainState === 'confirming';
+  const paused = s.app_main_check_paused !== undefined
+    ? !!s.app_main_check_paused
+    : red && !sameSha(s.app_main_check_resumed_sha, s.app_main_check_sha);
+  const confirming = s.app_main_check_confirming !== undefined
+    ? !!s.app_main_check_confirming : mainState === 'confirming';
+  // "since <sha>" is the red commit the pause is ABOUT; while a newer merge
+  // is being re-tested, main_check_sha is that newer commit instead.
+  const redSha = s.app_main_check_paused_sha || s.app_main_check_sha;
+  const short = redSha ? String(redSha).slice(0, 7) : null;
+  const since = short ? ` since ${short}` : '';
+  const test = s.app_main_check_failing_test ? ` (${s.app_main_check_failing_test})` : '';
+  const base = { key: 'main_healthy', label: 'Main is healthy', actor: 'admin' };
+
+  if (paused) {
+    const what = confirming
+      ? `main's unit suite failed once${since}${test} and is being re-run to confirm`
+      : `main's unit suite is failing${since}${test}`;
+    if (levelAndGreen(s)) {
+      return {
+        ...base, state: 'done',
+        detail: {
+          passThrough: 'level_and_green',
+          note: `${what}; this head is level with main and its own checks passed on this exact tree, so it merges and re-tests main`,
+        },
+      };
+    }
+    return {
+      ...base, state: 'blocked',
+      detail: { paused: true, confirming, note: `${what}; merges are paused until a fix lands or an admin resumes them` },
+    };
+  }
+  return {
+    ...base,
+    state: mainState === 'running' ? 'active' : 'done',
+    detail: mainState === 'running' ? { note: 'checking the last merge' }
+      : red ? { note: 'main is red, but an admin resumed merges' }
+        : null,
+  };
+}
+
 /**
  * The list before the gate has ever run against this proposal.
  *
@@ -411,25 +498,7 @@ function provisional(session) {
   // The app's main, when the serializer has joined it on (app_main_check_*).
   // Absent, the step is absent too, like the lock and the platform
   // variables: an answer only the gate has is not guessed here.
-  if (s.app_main_check_state !== undefined) {
-    const mainState = s.app_main_check_state || null;
-    const resumed = mainState === 'failing' && s.app_main_check_resumed_sha
-      && s.app_main_check_sha
-      && String(s.app_main_check_resumed_sha).toLowerCase() === String(s.app_main_check_sha).toLowerCase();
-    const paused = mainState === 'failing' && !resumed;
-    const short = s.app_main_check_sha ? String(s.app_main_check_sha).slice(0, 7) : null;
-    out.push({
-      key: 'main_healthy',
-      label: 'Main is healthy',
-      actor: 'admin',
-      state: paused ? 'blocked' : (mainState === 'running' ? 'active' : 'done'),
-      detail: paused
-        ? { note: `main's unit suite is failing${short ? ` since ${short}` : ''}; merges are paused until a fix lands or an admin resumes them` }
-        : mainState === 'running' ? { note: 'checking the last merge' }
-          : resumed ? { note: 'main is red, but an admin resumed merges' }
-            : null,
-    });
-  }
+  if (s.app_main_check_state !== undefined) out.push(mainStep(s));
 
   // Left 'pending' unconditionally this would be the only never-done step in
   // a provisional list, so a proposal with every knowable requirement met
@@ -494,10 +563,24 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: describe(record),
+    gates: withLiveMainPause(describe(record), s),
     evaluated: true,
     provisional: false,
   };
+}
+
+// A record says what one checkAndMerge run did. The main-health step is the
+// app's state, not that run's: merges paused after the record was written
+// (or the last run never reached that gate and left it 'pending') are still
+// paused for this proposal, and a board that hid that behind a stale record
+// is how a red main went undiscovered for an afternoon. So while main IS
+// paused, the live step — blocked, or the level-and-green pass-through —
+// replaces the record's; the rest of the time the record stands.
+function withLiveMainPause(gates, s) {
+  if (s.app_main_check_state === undefined) return gates;
+  const live = mainStep(s);
+  if (!live.detail || (!live.detail.paused && !live.detail.passThrough)) return gates;
+  return gates.map((g) => (g.key === 'main_healthy' ? live : g));
 }
 
 /**
@@ -528,6 +611,8 @@ module.exports = {
   trace,
   describe,
   integrationStep,
+  mainStep,
+  levelAndGreen,
   provisional,
   summarize,
   readRequirements,

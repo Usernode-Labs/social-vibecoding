@@ -91,6 +91,7 @@ const DENIED_TABLES = new Set([
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
+  'social_identity_pending_replacements', // short-lived verified account replacements
   'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
 ]);
 

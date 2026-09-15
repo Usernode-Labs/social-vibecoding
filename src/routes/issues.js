@@ -1852,6 +1852,9 @@ function issueRoutes(config) {
         issues,
         truncatedList: !!result.truncatedList,
         ...(result.note ? { note: result.note } : {}),
+        // #2261: the list is the last one GitHub gave, not a fresh read —
+        // the board keeps what it has rather than repainting on it.
+        ...(result.stale ? { stale: true } : {}),
         ...(wantRefresh
           ? { refreshed: !!result.refreshed, refreshRetryMs: result.retryInMs || 0 }
           : {}),

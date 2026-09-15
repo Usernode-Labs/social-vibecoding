@@ -714,3 +714,279 @@ test('clipIssueComments on an empty/absent thread is a clean no-op', () => {
   assert.deepStrictEqual(github.clipIssueComments([]), { comments: [], truncated: false });
   assert.deepStrictEqual(github.clipIssueComments(undefined), { comments: [], truncated: false });
 });
+
+// ── #2261: a failed refetch never empties the list ──────────────────────
+// The Dev board's Issues column — and the issue cards in Underway — draw
+// from fetchPublicIssues through GET /github-issues. Only the rate-limited
+// exit used to fall back to the cached list: a timeout, a 5xx, an unflagged
+// 403 (a secondary rate limit) or a bad payload answered with an EMPTY
+// list, and invalidateIssuesCache (every platform merge) deleted the entry
+// outright — so one refused GitHub answer painted the board as "no open
+// issues" until GitHub came back. Now every failure serves the last list,
+// flagged `stale`, and the ordinary read path backs off before asking
+// GitHub again; a forced refresh never waits.
+
+// A GitHub answer with `status`, optional lowercase headers, no usable body.
+function refusingStub(status, headers = {}) {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (h) => (Object.hasOwn(headers, String(h).toLowerCase()) ? headers[String(h).toLowerCase()] : null) },
+      json: async () => ({ message: `status ${status}` }),
+    };
+  };
+  return calls;
+}
+
+function throwingStub(message) {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    throw new Error(message);
+  };
+  return calls;
+}
+
+// Pin Date.now so a test can walk past the cache TTL and the retry window
+// without waiting. Restored by the caller.
+function fakeClock() {
+  const real = Date.now;
+  let now = real();
+  Date.now = () => now;
+  return { tick: (ms) => { now += ms; }, restore: () => { Date.now = real; } };
+}
+
+const CACHE_TTL_MS = 5 * 60 * 1000;   // ISSUES_CACHE_TTL_MS
+const RETRY_AFTER_MS = 30 * 1000;     // ISSUES_RETRY_AFTER_MS
+
+test('#2261 a refetch GitHub refuses (5xx) serves the last list past its TTL, flagged stale', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('DegOwner', 'deg-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+
+    const calls = refusingStub(502);
+    const res = await github.fetchPublicIssues('DegOwner', 'deg-repo');
+    assert.strictEqual(calls.length, 1, 'the expired entry is refetched');
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'the last list, not an empty one');
+    assert.strictEqual(res.note, 'fetch failed');
+    assert.strictEqual(res.stale, true);
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 a refetch that throws (network error / timeout) serves the last list', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z'), fakeIssue(2, 'also open', '2026-06-08T00:00:00Z')]);
+    await github.fetchPublicIssues('ThrowOwner', 'throw-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+
+    const calls = throwingStub('This operation was aborted');
+    const res = await github.fetchPublicIssues('ThrowOwner', 'throw-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1, 2]);
+    assert.strictEqual(res.note, 'fetch failed');
+    assert.strictEqual(res.stale, true);
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 after a failure the ordinary read backs off; a forced refresh never waits', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('BackOwner', 'back-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+
+    const calls = refusingStub(500);
+    await github.fetchPublicIssues('BackOwner', 'back-repo');
+    assert.strictEqual(calls.length, 1);
+
+    // Within the window: the fallback again, and GitHub is left alone.
+    clock.tick(RETRY_AFTER_MS - 1);
+    const held = await github.fetchPublicIssues('BackOwner', 'back-repo');
+    assert.strictEqual(calls.length, 1, 'no refetch inside the retry window');
+    assert.deepStrictEqual(held.issues.map((i) => i.number), [1]);
+    assert.strictEqual(held.note, 'fetch failed');
+    assert.strictEqual(held.stale, true);
+
+    // The panel's manual refresh is a forced read: it tries regardless.
+    const forced = await github.refreshPublicIssues('BackOwner', 'back-repo');
+    assert.strictEqual(calls.length, 2, 'a forced refresh ignores the backoff');
+    assert.strictEqual(forced.refreshed, true);
+    assert.strictEqual(forced.stale, true, 'still refused, still the fallback');
+
+    // Past the window (re-stamped by the forced failure) the read tries again.
+    clock.tick(RETRY_AFTER_MS + 1);
+    await github.fetchPublicIssues('BackOwner', 'back-repo');
+    assert.strictEqual(calls.length, 3, 'refetched once the window passed');
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 an unflagged 403 (secondary rate limit) serves the last list and honours Retry-After', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('SecOwner', 'sec-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+
+    // GitHub's secondary limit: 403, budget NOT exhausted, Retry-After set.
+    const calls = refusingStub(403, { 'retry-after': '120', 'x-ratelimit-remaining': '4000' });
+    const res = await github.fetchPublicIssues('SecOwner', 'sec-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1]);
+    assert.strictEqual(res.note, 'fetch failed');
+    assert.strictEqual(res.stale, true);
+
+    clock.tick(119 * 1000);
+    await github.fetchPublicIssues('SecOwner', 'sec-repo');
+    assert.strictEqual(calls.length, 1, 'Retry-After is honoured past the default window');
+    clock.tick(2 * 1000);
+    await github.fetchPublicIssues('SecOwner', 'sec-repo');
+    assert.strictEqual(calls.length, 2, 'retried once Retry-After elapsed');
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 an exhausted primary budget backs off until the reset, capped at ten minutes', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+
+    const reset = Math.floor((Date.now() + 40 * 60 * 1000) / 1000); // 40 min away
+    const calls = refusingStub(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) });
+    const res = await github.fetchPublicIssues('ResetOwner', 'reset-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(res.note, 'rate limited');
+    assert.strictEqual(res.stale, true);
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1]);
+
+    clock.tick(9 * 60 * 1000 + 59 * 1000);
+    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
+    assert.strictEqual(calls.length, 1, 'held for the whole capped window');
+    clock.tick(2 * 1000);
+    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
+    assert.strictEqual(calls.length, 2, 'the cap, not the reset, decides when to try again');
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 a successful refetch after the outage replaces the list and clears the flag', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    stubFetch([fakeIssue(1, 'old', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('RecOwner', 'rec-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+    refusingStub(500);
+    const during = await github.fetchPublicIssues('RecOwner', 'rec-repo');
+    assert.strictEqual(during.stale, true);
+
+    clock.tick(RETRY_AFTER_MS + 1);
+    const calls = stubFetch([fakeIssue(2, 'new', '2026-06-10T00:00:00Z')]);
+    const after = await github.fetchPublicIssues('RecOwner', 'rec-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(after.issues.map((i) => i.number), [2]);
+    assert.strictEqual(after.note, undefined);
+    assert.strictEqual(after.stale, undefined);
+
+    // The fresh entry is a normal one again: fetch-free within its TTL.
+    const again = await github.fetchPublicIssues('RecOwner', 'rec-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(again.issues.map((i) => i.number), [2]);
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 invalidateIssuesCache expires the entry but keeps it as the fallback', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(1, 'first', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('InvOwner', 'inv-repo');
+    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
+
+    // Expired: the next read goes to GitHub right away and takes its answer.
+    const calls = stubFetch([fakeIssue(1, 'first', '2026-06-09T00:00:00Z'), fakeIssue(2, 'second', '2026-06-10T00:00:00Z')]);
+    const fresh = await github.fetchPublicIssues('InvOwner', 'inv-repo');
+    assert.strictEqual(calls.length, 1, 'an invalidated entry is refetched on the next read');
+    assert.deepStrictEqual(fresh.issues.map((i) => i.number), [1, 2]);
+
+    // Invalidated again — the way a platform merge does — and GitHub refuses:
+    // the list it was holding is what the board gets, not nothing.
+    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
+    const refused = refusingStub(503);
+    const held = await github.fetchPublicIssues('InvOwner', 'inv-repo');
+    assert.strictEqual(refused.length, 1);
+    assert.deepStrictEqual(held.issues.map((i) => i.number), [1, 2]);
+    assert.strictEqual(held.note, 'fetch failed');
+    assert.strictEqual(held.stale, true);
+
+    // An invalidation also drops the failure backoff: a merge must be
+    // reflected by the very next read, not after the window.
+    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
+    const retried = refusingStub(503);
+    await github.fetchPublicIssues('InvOwner', 'inv-repo');
+    assert.strictEqual(retried.length, 1, 'refetched straight after the invalidation');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 the fallback still hides issues the platform closed since the entry was taken', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(1, 'open', '2026-06-09T00:00:00Z'), fakeIssue(2, 'about to merge', '2026-06-10T00:00:00Z')]);
+    await github.fetchPublicIssues('ClOwner', 'cl-repo');
+    // The merge path: suppress the closed numbers, then invalidate.
+    github.noteIssuesClosed('ClOwner', 'cl-repo', [2]);
+    github.invalidateIssuesCache('ClOwner', 'cl-repo');
+
+    refusingStub(500);
+    const res = await github.fetchPublicIssues('ClOwner', 'cl-repo');
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'the closed issue stays hidden');
+    assert.strictEqual(res.stale, true);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('#2261 nothing cached: a failed fetch is an empty list with a note, never stale, and retried next read', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = refusingStub(500);
+    const first = await github.fetchPublicIssues('ColdOwner', 'cold-repo');
+    assert.deepStrictEqual(first.issues, []);
+    assert.strictEqual(first.note, 'fetch failed');
+    assert.strictEqual(first.stale, undefined, 'nothing to be stale relative to');
+    const second = await github.fetchPublicIssues('ColdOwner', 'cold-repo');
+    assert.strictEqual(calls.length, 2, 'with nothing to serve there is nothing to back off for');
+    assert.deepStrictEqual(second.issues, []);
+  } finally {
+    global.fetch = origFetch;
+  }
+});

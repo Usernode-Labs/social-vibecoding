@@ -590,67 +590,66 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  // 651 → 653: #2086 makes a featured-illustration change a governance
-  // proposal, and adds two checks on its card via the ?demo=1 mock row
-  // 9100008: the proposed-beside-current preview on the open board card,
-  // and the same preview on the proposal's own discussion page. (This
-  // branch took 649 → 651 alone; main independently took the same step
-  // with the #2201 pair above, so the merged manifest holds 653.)
-  // 650 → 655, 652 → 655, 651 → 655: on another side of this merge, the
-  // tallies above were computed on three different sides and cannot be read
-  // as one sequence either. Main took 649 → 650 alone, with the #2240 check
-  // above, and independently took the SAME 649 to both 652 (the #1374
-  // checks above) and 651 (the #2201 not-found pair above). #2240 (+1),
-  // #1374 (+3) and the #2201 pair (+2) are three independent additions
-  // against the shared 649, which is 649 + 1 + 3 + 2 = 655.
-  // 653 → 657, 655 → 657: this branch's #2086 pair and main's #2240/#1374
-  // trio share the #2201 pair in their common ancestry (this branch merged
-  // main's #2201 addition on the way to 651 before adding #2086; main's own
-  // 655 already counts that same #2201 pair once). The union does not add
-  // 653 + 655 against a doubled base: it is the shared 649, plus #2201 (+2,
-  // counted once), plus this branch's #2086 (+2), plus main's #2240 (+1) and
-  // #1374 (+3) — 649 + 2 + 2 + 1 + 3 = 657, which is what main's manifest
-  // held independently of this merge.
-  // 652 → 658, 657 → 658: the tallies above were computed on either side of
-  // THIS merge and cannot be read as one sequence. This branch's own total
-  // before this merge was 652 — the shared 651 (the #2201 pair, counted
-  // once) plus this branch's #2236 "via agent" check above; main's own total
-  // was 657 — the same shared 651 plus main's #2086, #2240 and #1374
-  // additions above. One +1 and one +6 against a shared 651 is 658, which is
-  // what the merged manifest holds.
-  // 652 → 659, 658 → 659: computed on either side of THIS merge and not
-  // one sequence either. This branch's own total before it was 652 — the
-  // shared 651 plus #1884's board check below; main's was 658. One +1 and
-  // one +7 against a shared 651 is 659.
+  // 650 → 655, 652 → 655, 651 → 655: the tallies above were computed on
+  // three different sides of this merge and cannot be read as one sequence.
+  // This branch took 649 → 650 alone, with the #2240 check above; main
+  // independently took the SAME 649 to both 652 (the #1374 checks above) and
+  // 651 (the #2201 not-found pair above). #2240 (+1), #1374 (+3) and the
+  // #2201 pair (+2) are three independent additions against the shared 649,
+  // which is 649 + 1 + 3 + 2 = 655.
+  // 655 → 657: #2241's two checks on the unsent-change screen, which has a
+  // route of its own (/dev/sessions/new) and no session behind it — one on
+  // the empty state's sentence, one on the live composer beside a header
+  // that offers no venue dropdown and no ⋯ menu, because there is nothing
+  // yet for either to act on. This one IS a plain sequence: the pair landed
+  // on a branch cut before #2240 / #1374 / #2201 and was merged after all
+  // three, so it adds to whatever the manifest holds, which is 655.
+  // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
+  // featured-illustration change a governance proposal and adds two checks
+  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // current preview on the open board card, and the same preview on the
+  // proposal's own discussion page — plus a second #2236 via-agent-chip
+  // check, on the topic's own discussion rather than the demo issue's, for
+  // a note a coding agent posted through the connector.
+  // 657 → 660, 658 → 660: this branch's #2241 pair and main's #2086/#2236
+  // trio are independent additions against the shared 655 — neither set
+  // overlaps the other — so the merged manifest holds every one of them:
+  // 655 + 2 (#2241) + 3 (#2086 pair + the second #2236 check) = 660.
+  // 660 → 661: the public waitlist CORS fix adds one check on
+  // GET /api/public/waitlist/options — the first declared check whose path is
+  // an API route rather than a screen. It is here because the fix's own
+  // endpoint (POST /api/public/waitlist/status) is registered for POST only,
+  // and a declared check can do nothing but navigate; its sibling GET on the
+  // same router, behind the same new CORS middleware, is what a navigation
+  // can actually prove is reachable anonymously. The preflight and response
+  // headers are pinned in tests/public-api-cors.test.js instead.
   //
   // #1884 gives the BOARD's unfolded card the sheet the Workshop's has had
   // — the issue's comment tail and the app's own reply box under it — and
-  // declares it on the surface that gained it. One slot, not two: the
-  // Workshop's own pair above already reads the same two regions, so a
-  // second copy of that claim would spend a slot to assert something
-  // already asserted. Room remains against MAX_DECLARED_TESTS (710).
+  // declares it on the surface that gained it, independently on main. One
+  // slot, not two: the Workshop's own pair above already reads the same two
+  // regions, so a second copy of that claim would spend a slot to assert
+  // something already asserted. Room remains against MAX_DECLARED_TESTS
+  // (710).
   //
-  // 659 → 661: on the other side of THIS merge, origin/main carried the
-  // shared 655 forward through two more additions this branch did not have:
-  // #2241's two checks on the unsent-change screen (/dev/sessions/new, no
-  // session behind it — one on the empty state's sentence, one on the live
-  // composer beside a header with no venue dropdown and no ⋯ menu, because
-  // there is nothing yet for either to act on), and a second #2236
-  // via-agent check, on the topic's own discussion rather than the demo
-  // issue's, for a note a coding agent posted through the connector. Read on
-  // their own those two additions are +3 against the shared 655 main
-  // reached above (658, then 660 once #2086 is folded back in) — which
-  // would put this merge at 662. The manifest this merge actually produced
-  // holds 661, one short, for the same reason the 610 → 609 entry above
-  // recorded its number rather than re-derived it: the two histories' path
-  // back to their shared base does not reconcile cleanly through this
-  // comment trail. The literal is the ground truth here, not the
-  // arithmetic.
-  // 661 → 662: #2253 adds one check on the admin console's App storage
+  // 661 → 662: the tallies above were computed on either side of THIS merge
+  // and, as with the 610 → 609 and 659 → 661 entries above, do not reconcile
+  // through the comment trail alone. This branch's own total before this
+  // merge was 661, counted directly above. Main independently carried the
+  // shared history through #1884's board-sheet check and the rest of the
+  // commits this merge brings in (verified social accounts on public
+  // profiles, #2250; the Home challenges regrouping, #2233; among others),
+  // landing on a manifest one entry larger than either side's own arithmetic
+  // predicts. The literal is the ground truth here, not the arithmetic:
+  // 662.
+  //
+  // #2260 adds one deterministic check for the verified-account replacement
+  // confirmation state in Connectors. That makes the reviewed total 663.
+  // 663 → 664: #2253 adds one check on the admin console's App storage
   // section, read through `?demo=1#admin/storage` so the preview shows the
   // fixed demo rows (one frozen, one nearly full) rather than a cloned apps
-  // table with no figures in it.
-  assert.equal(DAPP.tests.length, 662);
+  // table with no figures in it. Main took 661 → 663 independently.
+  assert.equal(DAPP.tests.length, 664);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

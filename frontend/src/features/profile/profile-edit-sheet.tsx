@@ -367,7 +367,7 @@ export function ProfileEditSheet({
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not connected</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
               )}
             </div>
             <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
@@ -382,7 +382,7 @@ export function ProfileEditSheet({
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not connected</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
               )}
             </div>
             <a
@@ -390,11 +390,11 @@ export function ProfileEditSheet({
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => Profile._dismissSheet()}
             >
-              Manage social accounts
+              Connect or change social accounts
             </a>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            Only accounts connected through provider verification can appear on your public profile.
+            Provider verification and public visibility are managed separately in Settings.
           </p>
         </section>
 
