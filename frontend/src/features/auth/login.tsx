@@ -128,6 +128,15 @@ const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 
 /**
+ * The terminal email-reset result. It lives on the login form, not beside the
+ * now-spent reset controls: success has moved the person to their next action.
+ * SENT_BOX is already the auth screen's durable positive-feedback treatment.
+ */
+const RESET_COMPLETE_TITLE = 'Password changed';
+const RESET_COMPLETE_MSG =
+  'For security, you’ve been signed out everywhere. Sign in with your new password.';
+
+/**
  * ── Arriving from a waitlist-release email (#1548) ─────────────────────
  *
  * The release mail links to `#signup/<url-encoded address>`, and the router
@@ -306,6 +315,7 @@ export function LoginScreen() {
   const [walletControls, setWalletControls] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [passwordResetComplete, setPasswordResetComplete] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
@@ -322,7 +332,6 @@ export function LoginScreen() {
   const [emailResetError, setEmailResetError] = useState<string | null>(null);
   const [emailResetStatus, setEmailResetStatus] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
-  const [resetStatus, setResetStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Non-render state, mirroring the legacy module's fields one for one.
@@ -365,6 +374,7 @@ export function LoginScreen() {
   // ── View switching (the router's per-route hooks) ─────────────────────
 
   const showLoginBaseView = useCallback(() => {
+    setPasswordResetComplete(false);
     setView('base');
   }, []);
 
@@ -409,7 +419,6 @@ export function LoginScreen() {
       ensureResetUi();
       st.resetToken = token || null;
       setResetError(null);
-      setResetStatus(null);
       if (resetNewPassword.current) resetNewPassword.current.value = '';
       if (resetConfirmPassword.current) resetConfirmPassword.current.value = '';
       setView('reset');
@@ -488,6 +497,12 @@ export function LoginScreen() {
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
       const shot = currentShot();
+      // The terminal state after the magic-link form succeeds. A real reset
+      // reaches this through onResetConfirm; the shot paints the same state
+      // without consuming a token, so proposal checks can see it.
+      if (!openSignup && shot === 'password-reset-complete') {
+        setPasswordResetComplete(true);
+      }
       if (!openSignup && (shot === 'password-recovery' || shot === 'password-recovery-sent')) {
         showRecovery();
         setRecoveryPath('email');
@@ -923,7 +938,6 @@ export function LoginScreen() {
 
   const onResetConfirm = useCallback(async () => {
     setResetError(null);
-    setResetStatus(null);
     if (blockedOffline(setResetError)) return;
     const value = resetNewPassword.current?.value || '';
     const confirm = resetConfirmPassword.current?.value || '';
@@ -947,15 +961,37 @@ export function LoginScreen() {
         setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
         return;
       }
-      // The reset revoked every session on purpose; signing in with the new
-      // password is the one remaining step.
-      setResetStatus('Your password has been reset. Head back to login and sign in with it.');
+      // The token is single-use and the reset revoked every session on
+      // purpose. Clear every remaining copy of the new password/token, scrub
+      // the spent capability from browser history, then use the existing
+      // same-screen router to put the next action in front of the user.
+      if (resetNewPassword.current) resetNewPassword.current.value = '';
+      if (resetConfirmPassword.current) resetConfirmPassword.current.value = '';
+      if (password.current) password.current.value = '';
+      st.resetToken = null;
+      setLoginError(null);
+
+      const screens = legacy().AuthScreens as undefined | {
+        deepLinkUrl?: (target: string) => string;
+        show?: (route: string) => void;
+      };
+      try {
+        history.replaceState(null, '', screens?.deepLinkUrl?.('#login') || '/#login');
+      } catch {
+        location.hash = '#login';
+      }
+      if (screens?.show) screens.show('login');
+      else showLoginBaseView();
+      // AuthScreens.show('login') clears any previous completion state as it
+      // resets the base view, so publish the new result after that call.
+      setPasswordResetComplete(true);
+      window.requestAnimationFrame(() => username.current?.focus());
     } catch {
       setResetError('Network error');
     } finally {
       setBusy(null);
     }
-  }, [st]);
+  }, [showLoginBaseView, st]);
 
   // ── The invite link's automatic send (#1548) ─────────────────────────
 
@@ -1134,6 +1170,16 @@ export function LoginScreen() {
               wallet)
           */}
           <form id="login-form" className={hiddenLast(!base, 'space-y-4')} onSubmit={onLoginSubmit}>
+            <div
+              id="login-reset-success"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className={hiddenLast(!passwordResetComplete, SENT_BOX)}
+            >
+              <strong className="block font-semibold">{RESET_COMPLETE_TITLE}</strong>
+              <span className="mt-1 block">{RESET_COMPLETE_MSG}</span>
+            </div>
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
               <label
@@ -1498,7 +1544,14 @@ export function LoginScreen() {
               inserted it.
           */}
           {resetUi ? (
-            <div id="reset-password-view" className={hiddenFirst(view !== 'reset', 'space-y-4')}>
+            <form
+              id="reset-password-view"
+              className={hiddenFirst(view !== 'reset', 'space-y-4')}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void onResetConfirm();
+              }}
+            >
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
                 <label className={LABEL} htmlFor="reset-new-password">New password</label>
@@ -1523,15 +1576,11 @@ export function LoginScreen() {
               <div id="reset-error" className={hiddenLast(!resetError, ERROR)}>
                 {resetError}
               </div>
-              <div id="reset-status" className={hiddenLast(!resetStatus, STATUS)}>
-                {resetStatus}
-              </div>
               <Button
                 id="btn-reset-confirm"
-                type="button"
+                type="submit"
                 {...SOLID}
                 disabled={busy === 'btn-reset-confirm'}
-                onClick={onResetConfirm}
               >
                 Set new password
               </Button>
@@ -1548,7 +1597,7 @@ export function LoginScreen() {
               >
                 Back to login
               </button>
-            </div>
+            </form>
           ) : null}
         </div>
       </div>

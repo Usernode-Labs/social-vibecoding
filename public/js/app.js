@@ -637,6 +637,9 @@ const App = {
     // anonymous boot so the capture session can't strip #login to the feed.
     // `password-recovery-sent` is the same view with the post-submit
     // confirmation painted (the green "link is on its way" success box).
+    // `password-reset-complete` is the terminal step after that link is
+    // redeemed: the reset form is gone and the login form carries the durable
+    // success notice. It sends nothing and consumes no token.
     // `email-code-password-account` (#1586) is the login screen carrying the
     // explanation an email code hands back when the account it matches can
     // only be signed in with its password. Same anonymous boot, same reason.
@@ -701,6 +704,7 @@ const App = {
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent' &&
+        shot !== 'password-reset-complete' &&
         shot !== 'email-code-password-account') {
       return false;
     }

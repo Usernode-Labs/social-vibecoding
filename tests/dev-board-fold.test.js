@@ -645,22 +645,27 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // #2260 adds one deterministic check for the verified-account replacement
   // confirmation state in Connectors. That makes the reviewed total 663.
-  // 663 → 664: #1508 (per-app Add to Home Screen) declares one check on the
-  // seeded app's install page (/app/staging-demo-admins/install), a server-
-  // rendered document with the app's own manifest, asserting its #app-install
-  // root renders for a signed-in viewer. Main took 661 → 663 independently.
   //
-  // 663 → 664: #2253 adds one check on the admin console's App storage
-  // section, read through `?demo=1#admin/storage` so the preview shows the
-  // fixed demo rows (one frozen, one nearly full) rather than a cloned apps
-  // table with no figures in it. Main took 661 → 663 independently.
+  // #2266 adds one deterministic check for the password-reset completion
+  // state on the login screen. That makes the reviewed total 664.
   //
-  // 664 → 665: the tallies above were computed on either side of this merge
-  // and cannot be read as one sequence, as with the other pairs above. This
-  // branch took 663 → 664 alone, with the #1508 install-page check above;
-  // main independently took the SAME 663 to 664 with the #2253 App storage
-  // check above. One +1 and one +1 against a shared 663 is 665.
-  assert.equal(DAPP.tests.length, 665);
+  // 663 → 664: independently on main, #1508 (per-app Add to Home Screen)
+  // declares one check on the seeded app's install page
+  // (/app/staging-demo-admins/install), a server-rendered document with the
+  // app's own manifest, asserting its #app-install root renders for a
+  // signed-in viewer.
+  //
+  // 663 → 664: also independently on main, #2253 adds one check on the admin
+  // console's App storage section, read through `?demo=1#admin/storage` so
+  // the preview shows the fixed demo rows (one frozen, one nearly full)
+  // rather than a cloned apps table with no figures in it.
+  //
+  // 664 → 666: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 663 → 664 alone,
+  // with #2266's check above; main independently took the SAME 663 to 665
+  // with the #1508 and #2253 checks above. One +1 and one +2 against a
+  // shared 663 is 666.
+  assert.equal(DAPP.tests.length, 666);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
