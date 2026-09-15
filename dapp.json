@@ -3063,7 +3063,7 @@
       "expectText": "automatic, after 1"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal says so in a red tag, and still shows its vote",
+      "name": "Freshness (#1442): a conflicting proposal says so in a tag, and still shows its vote",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": "#gc-thread-head [data-status-tag=\"mergeability_conflict\"]",
       "expectText": "Conflicts with main"
@@ -4055,10 +4055,10 @@
       "expectText": "Bringing up to date"
     },
     {
-      "name": "#2038: a refused merge is named for what it was, not as a conflict",
+      "name": "#2221: a refused merge names the next action, not the actor who refused",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"merge_conflict\"]",
-      "expectText": "GitHub refused the merge"
+      "expectText": "Needs author to sync with main"
     },
     {
       "name": "#2038: automatic conflict resolution says nobody has to act",
