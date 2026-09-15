@@ -1645,6 +1645,13 @@ ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_ref INTEGER;
 -- 'edit' handler, src/services/ws.js).
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
+-- #2236: how a message reached the thread. NULL = a person typing in the
+-- browser (every pre-existing row; no backfill). 'agent' = posted on the
+-- author's behalf by a coding agent through the Homeroom MCP connector, so
+-- the thread can say so beside the name. Derived server-side from the
+-- request's connector credential (routes/chat.js), never from the body.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS posted_via VARCHAR(16);
+
 CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
   ON chat_messages (app_id, thread_type, thread_ref, id)
   WHERE thread_type IS NOT NULL;
@@ -2632,6 +2639,27 @@ CREATE TABLE IF NOT EXISTS app_illustrations (
 ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_id VARCHAR(32) UNIQUE;
 ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_content_type TEXT;
 ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_data BYTEA;
+
+-- #2086: a featured-illustration change is a governance proposal now, not a
+-- direct write. The bytes a proposal carries wait here, keyed by the issue
+-- row that is the proposal, until the group votes it in (at which point the
+-- apply copies them into app_illustrations under the SAME ids, so the card's
+-- preview URL keeps resolving) or the proposal settles without applying. One
+-- open illustration proposal per app, enforced by the partial index below
+-- rather than by a read-then-insert the two saves in a race would both pass.
+CREATE TABLE IF NOT EXISTS app_illustration_proposals (
+  issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  id VARCHAR(32) UNIQUE,
+  content_type TEXT,
+  data BYTEA,
+  dark_id VARCHAR(32) UNIQUE,
+  dark_content_type TEXT,
+  dark_data BYTEA
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_open_featured_illustration
+  ON issues (app_id)
+  WHERE kind = 'featured_illustration' AND status = 'open';
 
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);

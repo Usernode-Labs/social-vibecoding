@@ -559,10 +559,20 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  // 649 → 650: #2240 adds one check on the since-list's Clear in the state
-  // it was dead in — a reader with nothing new who walked `Show older` down
-  // past the baseline — reached through `?shot=since-seen`, which seeds the
-  // line at now and then presses the walk across it.
+  // 649 → 650: #2236 adds one check for the "via agent" chip a note wears
+  // when a coding agent posted it through the connector on the author's
+  // behalf, on the demo issue's discussion. It reads the mock agent row the
+  // staging chat endpoint returns under `?demo=1` for a thread with no real
+  // messages. A second check on the Activity feed's reply preview was
+  // declared and withdrawn: the feed-comments shot unfolds the first issue
+  // row with GitHub comments, and on a production-cloned staging database
+  // that thread already has a genuine transcript, which always wins over the
+  // mock. The feed bubble's chip is pinned by tests/agent-posted-via.test.js.
+  // 649 → 650: independently on main, #2240 adds one check on the
+  // since-list's Clear in the state it was dead in — a reader with nothing
+  // new who walked `Show older` down past the baseline — reached through
+  // `?shot=since-seen`, which seeds the line at now and then presses the
+  // walk across it.
   // 649 → 652: #1374's three, counted directly off the merged manifest for
   // the same reason. Two photograph the per-app Notifications dialog through
   // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
@@ -590,7 +600,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // yet for either to act on. This one IS a plain sequence: the pair landed
   // on a branch cut before #2240 / #1374 / #2201 and was merged after all
   // three, so it adds to whatever the manifest holds, which is 655.
-  assert.equal(DAPP.tests.length, 657);
+  // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
+  // featured-illustration change a governance proposal and adds two checks
+  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // current preview on the open board card, and the same preview on the
+  // proposal's own discussion page — plus a second #2236 via-agent-chip
+  // check, on the topic's own discussion rather than the demo issue's, for
+  // a note a coding agent posted through the connector.
+  // 657 → 660, 658 → 660: this branch's #2241 pair and main's #2086/#2236
+  // trio are independent additions against the shared 655 — neither set
+  // overlaps the other — so the merged manifest holds every one of them:
+  // 655 + 2 (#2241) + 3 (#2086 pair + the second #2236 check) = 660.
+  assert.equal(DAPP.tests.length, 660);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

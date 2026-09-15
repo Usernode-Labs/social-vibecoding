@@ -623,6 +623,10 @@ const GroupChat = {
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
       unread: !!msg.has_unread_notification,
       bookmarked: !!(msg.saved || msg.bookmarked),
+      // #2236: 'agent' when the connector posted this on the author's behalf
+      // (`posted_via` on a loaded row, `postedVia` on a live broadcast);
+      // null for a person typing. Only the one value the server writes.
+      postedVia: (msg.postedVia || msg.posted_via) === 'agent' ? 'agent' : null,
       canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       // The three header controls, gated exactly as the string template gated
       // them: edit is your own message and not read-only (#621), react is not

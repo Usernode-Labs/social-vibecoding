@@ -1888,6 +1888,18 @@
       "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
+      "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "[data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "expectText": "Proposed"
+    },
+    {
+      "name": "An illustration proposal's discussion page carries the same preview (#2086)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100008",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectText": "Change the featured illustration"
+    },
+    {
       "name": "An applied close proposal opens its discussion, not the board (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
       "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
@@ -4143,6 +4155,12 @@
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
       "expectText": "the next time it opens"
+    },
+    {
+      "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-messages .gc-msg[data-posted-via=\"agent\"][data-username=\"staging-demo-agent\"] .gc-posted-via",
+      "expectText": "via agent"
     },
     {
       "name": "#1374: per-app notification settings are reachable and name both places they apply",
