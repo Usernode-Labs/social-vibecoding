@@ -6693,21 +6693,6 @@ const AppView = {
    * for a second host would give the page two nodes with one id and the
    * loader would fill whichever it found first.
    */
-  _workshopCardBody(key) {
-    const at = String(key || '').indexOf(':');
-    if (at < 0) return null;
-    const rawKind = key.slice(0, at);
-    const kind = ['my-session', 'shared-session'].includes(rawKind) ? 'session' : rawKind;
-    const rest = key.slice(at + 1);
-    const id = kind === 'issue' ? Number(rest) : Number(rest);
-    if (!Number.isFinite(id)) return null;
-    const item = AppView._findItem(kind, id);
-    if (!item) return null;
-    const built = AppView._topicViewFor(kind, item);
-    if (!built) return null;
-    return { ...built.body, comments: false };
-  },
-
   _issueUnclaimed(it) {
     const ip = it && it.in_progress;
     if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;

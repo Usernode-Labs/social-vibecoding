@@ -29,11 +29,12 @@
  * is the COLUMN's state — one per column, so a board with four open cards
  * is still four columns of rows — and it lives in the component, so the
  * WS-driven republishes that repaint the board leave it alone. The open card
- * is the card the column always drew, with the Workshop's "Open card" toggle
- * as the last pill of its action band (the facts-line seat moves the actions
- * up beside it, which a column cannot hold) and the item's own page one link
- * below. `?cards=open` draws every card unfolded: the board as it was, and
- * the state the declared checks that read a card's anatomy run in.
+ * is the card the column always drew, with the "Open card" pill as the last
+ * pill of its action band (the facts-line seat moves the actions up beside
+ * it, which a column cannot hold), leading to the item's own page — the
+ * same link with the same label the Workshop's card carries since #1884
+ * round two. `?cards=open` draws every card unfolded: the board as it was,
+ * and the state the declared checks that read a card's anatomy run in.
  */
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -150,12 +151,14 @@ function Column(
               onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
               // "Open card" rides in the action band here, not on the facts
               // line: a column is too narrow for the actions that seat moves
-              // up beside it (fold.tsx).
+              // up beside it (fold.tsx). Where it LEADS is no longer a
+              // per-surface choice — the item's own page, on both — so there
+              // is nothing left to pass for that.
               detail: 'actions',
-              // And it is a link to the item's page, not the sections in
-              // place: a column is the wrong width for a ledger and a
-              // transcript, and the page is one tap away from here.
-              expand: 'page',
+              // No "Open session ›" line under a board card: app.css has no
+              // rule for `.dev-ws-sheet-actions` inside `#dev-kanban`, and a
+              // column is not where somebody goes looking for their session.
+              sessionLink: false,
             }}
           />
         ))}

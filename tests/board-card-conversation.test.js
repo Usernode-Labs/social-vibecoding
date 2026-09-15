@@ -44,6 +44,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const KANBAN = read('frontend/src/features/dev-board/card/dev-kanban.tsx');
+const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CSS = read('public/css/app.css');
 const DAPP = JSON.parse(read('dapp.json'));
 
@@ -245,6 +246,35 @@ test('the comment and thread CSS is scoped to both card hosts, at the weight it 
   assert.deepEqual(
     CSS.split('\n').filter((l) => /^\s*#dev-workshop \.dev-feed-entry/.test(l)), [],
     'no sheet rule is left scoped to the Workshop alone');
+});
+
+test('the three controls #1884 names are the same three on every surface', () => {
+  // The request lists them: a Reply input, open on its own page, recent
+  // comments. Two were missing from the Board and are added by the rows
+  // above. The third was on both — but "Open card" LED somewhere different
+  // depending on the surface, which is the same complaint one control
+  // further down, so it is settled here too.
+  //
+  // What this pins is that none of the three is decided per-surface any
+  // more: one component, one set of props, and nothing in it branching on
+  // which screen drew the card.
+  assert.ok(!/OpenMode|expand[?:]|'inline'/.test(FOLD),
+    'no open mode: "Open card" is the item\u2019s page, whichever surface drew it');
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/);
+  // The reply box and the comment tail are the ROW's to carry, and both
+  // surfaces build rows through the one helper (asserted above).
+  assert.match(FOLD, /\{row\.commentsFor != null \? \(/);
+  assert.match(FOLD, /\{row\.thread && slug \? \(/);
+  // The one thing still keyed on the surface, and it is not one of the
+  // three: #1887's session line, which the Board has no rule to style.
+  const surfaceProps = FOLD.match(/^\s*sessionLink\??[:=]/gm) || [];
+  assert.ok(surfaceProps.length >= 2, 'sessionLink is declared and defaulted');
+  // And it is the only one: the open row takes the row, the slug, whether
+  // the viewer may post, where the pill sits, that line, and how to fold.
+  const sig = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'));
+  assert.match(sig.slice(0, sig.indexOf('): ReactNode {')),
+    /row, slug, canPost, detail: placement = 'actions', sessionLink = true, onFold,/,
+    'nothing else in the signature decides behaviour per surface');
 });
 
 test('a declared check reads the reply box off a board card', () => {
