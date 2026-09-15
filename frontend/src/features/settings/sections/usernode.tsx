@@ -207,12 +207,6 @@ function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
 function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
   return (
     <>
-      {s.nodeSleep ? (
-        <UnSection
-          title="Homeroom app: node"
-          description="The node pauses when the app has been inactive for a while and wakes on your next interaction."
-        ><UnSwitch toggle={s.nodeSleep} /></UnSection>
-      ) : null}
       <BlockProduction s={s} />
       {s.privacy ? (
         <UnSection
