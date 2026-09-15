@@ -38,6 +38,8 @@ const {
   waitlistCodeConfirmLimiter,
   waitlistResendLimiter,
   waitlistResendIpLimiter,
+  waitlistStatusLimiter,
+  waitlistStatusIpLimiter,
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
@@ -380,6 +382,69 @@ function publicApiRoutes(config) {
       log.error('public-api', 'waitlist resend failed', { message: err.message });
     }
     return res.json(RESEND_RESPONSE);
+  });
+
+  // POST /api/public/waitlist/status — where one address stands, by address.
+  //
+  // The read half of check-my-status, and the one route in this family that
+  // answers the membership question OUT LOUD: not on the list, on it and
+  // unconfirmed, or on it and confirmed. Everything else here refuses to,
+  // and the difference is deliberate rather than an oversight to tidy up.
+  //
+  // The decision it rests on is not this endpoint's. #2201 accepted
+  // membership + confirmed-state disclosure on the JOIN endpoint, with the
+  // silent alternative in front of the owner, because the silence was
+  // costing every returning person their way back in. This route discloses
+  // the same three cases for strictly less: it writes nothing, mails
+  // nothing, and mints nothing, where a join creates a row and sends a code.
+  // So it introduces no new disclosure class. If that decision is ever
+  // reversed and the join endpoint goes back to one frozen body, THIS route
+  // has to be revisited in the same motion — the two cannot fall out of step.
+  //
+  // What it never says, whatever the branch: more_token (the stage-2
+  // capability, first join only), invite_code, invited_by, answers, ip, the
+  // linked account, or an echo of the submitted address. Confirming an
+  // address still means holding the code that was mailed to it, so nothing
+  // here helps anyone claim a mailbox they do not have.
+  //
+  // Not mounted with waitlistIntegratorAuth, unlike the join route above. A
+  // key re-keys a WRITE budget for genuinely proxied signups; a read has no
+  // proxied end user to re-key for, and a key must not buy a bigger oracle
+  // budget. A key-bearing caller is simply an anonymous caller here: one
+  // behaviour, one bucket, no second response shape to keep in sync.
+  //
+  // Both branches run the SAME single indexed lookup on the unique email
+  // column and nothing else, so the clock does not separate them either. Do
+  // not add a query, a cache, or an await to only one of them.
+  router.post('/api/public/waitlist/status', waitlistStatusIpLimiter, waitlistStatusLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    // The same words /resend refuses with: a syntactically invalid address
+    // is not a fact about the waitlist, so the two surfaces answer it alike.
+    if (!email) {
+      return res.status(422).json({ error: 'A valid email address is required.' });
+    }
+    try {
+      const row = await waitlist.getSignupByEmail(pool, email);
+      if (!row) {
+        return res.json({ ok: true, on_list: false, admitted: false, status: null });
+      }
+      // signupStatus is the ONE derivation of where a row stands, shared with
+      // POST /confirm and GET /more/:token. Deriving it a second time here is
+      // how one row starts being described three ways; `admitted` is mirrored
+      // at the top level exactly as /more/:token does it.
+      const status = signupStatus(row);
+      return res.json({
+        ok: true,
+        on_list: true,
+        admitted: status.admitted,
+        status,
+      });
+    } catch (err) {
+      // No address in the payload: this line is about our failure, not about
+      // whose lookup it was.
+      log.error('public-api', 'waitlist status read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/public/waitlist/confirm/:token — the one-click confirm link

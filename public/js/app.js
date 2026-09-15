@@ -673,6 +673,11 @@ const App = {
     // between them is the whole point of the panel — the celebration is the
     // join's and the state pill is the status read's — and one shot cannot
     // photograph both.
+    // `waitlist-not-found` (#2201) is the third answer that address step can
+    // get: the address is not on the list at all. It carries the note saying
+    // so and the control that turns the dead end into a join, and like the
+    // two above it needs the anonymous boot. Nothing is sent to paint it —
+    // waitlist.tsx sets the note from a literal.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -682,7 +687,7 @@ const App = {
     // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
-        shot !== 'waitlist-code-step' &&
+        shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
@@ -693,7 +698,7 @@ const App = {
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
-         || shot === 'waitlist-code-step'
+         || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
          || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }

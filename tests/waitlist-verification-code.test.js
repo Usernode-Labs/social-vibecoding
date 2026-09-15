@@ -141,12 +141,24 @@ function makePool(state) {
       };
     }
 
-    if (sql.startsWith('SELECT id, email, confirmed_at, more_token FROM waitlist_signups WHERE email = $1')) {
+    // getSignupByEmail. #2201 widened the tuple so POST
+    // /api/public/waitlist/status can derive its block through signupStatus()
+    // off the same indexed lookup the resend path already made; the resend
+    // path still reads only confirmed_at and more_token out of it.
+    if (sql.startsWith('SELECT id, email, submitted_at, confirmed_at, released_at, linked_user_id, more_token FROM waitlist_signups WHERE email = $1')) {
       const [email] = params;
       const s = state.signups.get(email);
       return {
         rows: s
-          ? [{ id: s.id, email: s.email, confirmed_at: s.confirmed_at, more_token: s.more_token }]
+          ? [{
+            id: s.id,
+            email: s.email,
+            submitted_at: s.submitted_at,
+            confirmed_at: s.confirmed_at,
+            released_at: s.released_at,
+            linked_user_id: s.linked_user_id,
+            more_token: s.more_token,
+          }]
           : [],
       };
     }

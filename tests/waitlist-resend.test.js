@@ -43,7 +43,7 @@ const BROKEN = 'broken@example.invalid';
 function makeMockPool() {
   return {
     async query(sql, params) {
-      if (/SELECT id, email, confirmed_at, more_token[\s\S]*FROM waitlist_signups/.test(sql)) {
+      if (/SELECT id, email, submitted_at, confirmed_at, released_at,[\s\S]*FROM waitlist_signups/.test(sql)) {
         const email = params[0];
         if (email === PENDING) {
           return { rows: [{ id: 1, email, confirmed_at: null, more_token: TOKEN }] };

@@ -531,7 +531,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // de-duplicated them. The number that matters is what the merged manifest
   // actually holds, so this entry counts it directly rather than re-deriving
   // it: 638.
-  assert.equal(DAPP.tests.length, 638);
+  // 638 → 640: #2201 gives the check-my-status address step an answer for
+  // a mistyped address, and declares the two things that state must show at
+  // `?shot=waitlist-not-found` — the note that says the address is not on
+  // the list, and the control that offers to join with it. Two and not
+  // three: the manifest is on the 20-slot floor under MAX_DECLARED_TESTS,
+  // so the third property (the code half still down) is asserted from
+  // source in tests/waitlist-two-step.test.js instead of spending a slot
+  // the next proposal needs.
+  assert.equal(DAPP.tests.length, 640);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

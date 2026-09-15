@@ -157,13 +157,20 @@ const MAX_CODE_ATTEMPTS = 5;
 // confirmed, and which more_token to carry.
 //
 // It returns a row rather than a boolean, and that is exactly why it must
-// never reach a response body: the CALLER answers every branch with the
-// same words. Nothing here is non-enumerating on its own.
+// never reach a response body: each CALLER decides what, if anything, of it
+// is safe to say. Nothing here is non-enumerating on its own — /resend
+// answers every branch with the same words, while POST /status answers the
+// branch it found, and both read this one row.
 async function getSignupByEmail(pool, email) {
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
   const { rows } = await pool.query(
-    `SELECT id, email, confirmed_at, more_token
+    // submitted_at / released_at / linked_user_id back the status block
+    // POST /api/public/waitlist/status derives through signupStatus(); the
+    // resend path reads only confirmed_at and more_token, so widening the
+    // tuple is additive and keeps both branches on one indexed lookup.
+    `SELECT id, email, submitted_at, confirmed_at, released_at,
+            linked_user_id, more_token
        FROM waitlist_signups
       WHERE email = $1
       LIMIT 1`,

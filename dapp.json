@@ -1581,6 +1581,20 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist status check says so when the address is not on the list (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-note:not(.hidden)",
+      "expectText": "find that address on the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist not-found offers to join with that address instead (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-join-instead:not(.hidden)",
+      "expectText": "Join the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Waitlist withholds the stage-2 offer until the email is confirmed",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-more-offer.hidden",
