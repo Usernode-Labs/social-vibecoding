@@ -64,6 +64,63 @@ function AppIcon({ meta }: { meta: AppMeta }) {
   return <span className={`${ICON} text-xs font-bold`}>{((meta.name || '?').charAt(0)).toUpperCase()}</span>;
 }
 
+// The four review outcomes, in the order an admin reaches for them, each with
+// WHEN to pick it and WHAT it does. The effects restate
+// src/services/discovery-curation.js `describe()` — the tier an outcome lands
+// an app in — so the admin decides knowing where the app will show up rather
+// than guessing from a label. Keep the two in step.
+const OUTCOMES: { value: string; label: string; when: string; effect: string }[] = [
+  {
+    value: 'working',
+    label: 'Reviewed working',
+    when: 'You used the app and its main flow works from start to finish.',
+    effect: 'Listed under “Reviewed working apps” in Browse apps, and can be added to Featured. Goes back to “Needs re-review” when a new version is deployed.',
+  },
+  {
+    value: 'demo',
+    label: 'Demo only',
+    when: 'It is a sample, showcase or placeholder rather than something people can really use.',
+    effect: 'Moved under “Show more” in Browse apps and still found in search. Cannot be featured.',
+  },
+  {
+    value: 'broken',
+    label: 'Needs fixes',
+    when: 'The main flow fails, shows errors, or is unfinished.',
+    effect: 'Moved under “Show more” in Browse apps and still found in search. Cannot be featured.',
+  },
+  {
+    value: 'unreviewed',
+    label: 'Not yet reviewed',
+    when: 'You have not tested it, or want to clear an earlier review.',
+    effect: 'Listed under “Not yet reviewed” in Browse apps (under “Show more” if it is not running or has no icon). Cannot be featured.',
+  },
+];
+
+/**
+ * What "Reviewed working" needs, checked against the selected app — the same
+ * three conditions the PUT enforces (src/routes/admin.js), each with the fix,
+ * so a disabled checkbox never leaves the admin wondering why.
+ */
+function requirementsFor(app: AppMeta): { ok: boolean; label: string; fix: string }[] {
+  return [
+    {
+      ok: app.status === 'running',
+      label: 'The app is running',
+      fix: `It is ${app.status ? `“${app.status}”` : 'not running'}. Fix or redeploy it first.`,
+    },
+    {
+      ok: !!app.main_sha,
+      label: 'It has a deployed version',
+      fix: 'Nothing has been deployed yet. Deploy it once.',
+    },
+    {
+      ok: !!(app.icon_url || app.icon_emoji),
+      label: 'It has an icon',
+      fix: 'Add an emoji or image icon in the app’s dapp.json, then redeploy.',
+    },
+  ];
+}
+
 // Capture the deployment on selection: refreshing must not silently switch
 // the version covered by the admin's attestation.
 function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => void }) {
@@ -72,7 +129,9 @@ function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => vo
   const [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const canReviewWorking = app?.status === 'running' && app.main_sha && (app.icon_url || app.icon_emoji);
+  const requirements = app ? requirementsFor(app) : [];
+  const canReviewWorking = !!app && requirements.every((r) => r.ok);
+  const outcome = OUTCOMES.find((o) => o.value === review) || OUTCOMES[OUTCOMES.length - 1];
   const save = async () => {
     if (!app) return;
     setSaving(true);
@@ -85,7 +144,7 @@ function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => vo
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setMessage('Review saved. The directory will use it on its next refresh.');
+      setMessage(`Saved “${outcome.label}” for ${app.name || app.slug}. Browse apps and Featured pick it up on their next refresh.`);
       setApp(null);
       setConfirmed(false);
       onSaved();
@@ -99,12 +158,32 @@ function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => vo
     <section className="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800">
       <h3 className={AdminUI.sectionTitle}>Directory review</h3>
       <p className={`${AdminUI.muted} mb-3`}>
-        Test the app’s main flow before marking it working. Running alone is not verification.
-        A working review needs an emoji or image icon in the app’s dapp.json and expires after a new deployment.
-        Demos and apps needing attention stay available under “Show more” and in search.
+        Decide where each app appears in Browse apps, and whether it can be featured on the home screen.
+        Running alone is not verification: an admin has to open the app and use it.
       </p>
+
+      <h4 className={`${AdminUI.label} mb-1`}>How to review an app</h4>
+      <ol className={`${AdminUI.muted} list-decimal pl-5 space-y-1 mb-3`}>
+        <li>Choose the app below. The list shows where each one stands now.</li>
+        <li>Open it with “Open app to test” and use its main flow the way a new visitor would: sign in if it asks, do the thing the app is for, and check the result is saved.</li>
+        <li>Pick the outcome that matches what you saw, then save. Re-test after each new deployment: a working review expires then.</li>
+      </ol>
+
+      <details className="mb-4">
+        <summary className={`${AdminUI.label} cursor-pointer`}>What each outcome does</summary>
+        <dl className="mt-2 space-y-2">
+          {OUTCOMES.map((o) => (
+            <div key={o.value}>
+              <dt className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{o.label}</dt>
+              <dd className={AdminUI.muted}>{`When: ${o.when}`}</dd>
+              <dd className={AdminUI.muted}>{`What happens: ${o.effect}`}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+
       <fieldset disabled={saving} className="space-y-3">
-        <label className={AdminUI.label}>App to review
+        <label className={`${AdminUI.label} block`}>1. App to review
           <select className={AdminUI.select} value={app?.slug || ''} onChange={(e) => {
             const next = apps.find((a) => a.slug === e.target.value) || null;
             setApp(next);
@@ -119,21 +198,38 @@ function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => vo
         {app ? <>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <AppIcon meta={app} />
-            <span>{app.directory?.label || 'Not yet reviewed'}</span>
-            <a className={AdminUI.btn.link} href={`/#app/${encodeURIComponent(app.slug)}`} target="_blank" rel="noopener noreferrer">Open app to test</a>
+            <span>{`Now: ${app.directory?.label || 'Not yet reviewed'}`}</span>
+            <a className={AdminUI.btn.link} href={`/#app/${encodeURIComponent(app.slug)}`} target="_blank" rel="noopener noreferrer">2. Open app to test</a>
           </div>
-          <label className={AdminUI.label}>Review outcome
+          {app.directory?.label === 'Needs re-review' ? (
+            <p className={AdminUI.muted}>A new version was deployed after the last review, so it has to be tested again.</p>
+          ) : null}
+
+          <div data-review-requirements="">
+            <p className={AdminUI.label}>Needed before it can be marked Reviewed working</p>
+            <ul className="mt-1 space-y-1 text-sm">
+              {requirements.map((r) => (
+                <li key={r.label} className="flex items-start gap-2">
+                  <span aria-hidden="true" className={r.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{r.ok ? '✓' : '✗'}</span>
+                  <span>
+                    {r.label}
+                    {r.ok ? null : <span className={`${AdminUI.muted} block`}>{r.fix}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <label className={`${AdminUI.label} block`}>3. Review outcome
             <select className={AdminUI.select} value={review} onChange={(e) => {
               setReview(e.target.value); setConfirmed(false);
             }}>
-              <option value="unreviewed">Not yet reviewed</option>
-              <option value="working">Reviewed working</option>
-              <option value="demo">Demo only</option>
-              <option value="broken">Needs fixes</option>
+              {OUTCOMES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </label>
+          <p className={AdminUI.muted}>{outcome.effect}</p>
           {review === 'working' ? <>
-            {!canReviewWorking ? <p className={AdminUI.muted}>Deploy a running version with an emoji or image icon, then select the app again to review it.</p> : null}
+            {!canReviewWorking ? <p className={AdminUI.muted}>Fix the items marked ✗ above, then choose the app again to review the new version.</p> : null}
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" className="mt-1" checked={confirmed} disabled={!canReviewWorking}
                 onChange={(e) => setConfirmed(e.target.checked)} />
@@ -333,4 +429,4 @@ const AdminFeaturedApps = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminFeaturedApps = AdminFeaturedApps;
 
-export { AdminFeaturedApps, DirectoryReview };
+export { AdminFeaturedApps, DirectoryReview, OUTCOMES, requirementsFor };

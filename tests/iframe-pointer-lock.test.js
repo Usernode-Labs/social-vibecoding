@@ -24,11 +24,15 @@ const path = require('node:path');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('App-tab iframe sandbox carries allow-pointer-lock', () => {
-  const src = read('public/js/app-view.js');
+  const policy = read('frontend/src/features/app-frame/app-frame-policy.js');
+  const fallback = read('public/js/app-view.js');
   assert.match(
-    src,
-    /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"/
+    policy,
+    /allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/
   );
+  assert.match(fallback,
+    /_appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock'/,
+    'the DOM-only fallback keeps the same app sandbox');
 });
 
 test('App-tab iframe allow merges pointer-lock with clipboard-write', () => {

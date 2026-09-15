@@ -53,7 +53,7 @@ import {
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { waitlistOptions } from './waitlist-shared';
 
-const LANDING_TITLE = 'Usernode Social Vibecoding';
+const LANDING_TITLE = 'Homeroom';
 
 /** Directory-load outcome. `loading` is what the prerendered markup ships. */
 type AppsState =
@@ -142,15 +142,27 @@ const ViewerRegion = memo(function ViewerRegion() {
  * (home.js): centered 14x14 icon tile (image > emoji > first letter), then the
  * name row.
  *
- * Gated apps (requires_login — anything the shell probe didn't positively
- * classify as public) render dimmed with a lock badge and an "Account
- * required" caption; tapping one remembers the app deep link and routes to
- * #signup, so the account flow lands the user in the app they wanted.
+ * Account-required apps (requires_login — anything the shell probe didn't
+ * positively classify as public) render dimmed with a lock badge only while
+ * signed out. A signed-out tap remembers the app deep link and routes to
+ * #signup; a waiting-room session already has the account these apps require,
+ * so the same tile opens normally with an app-scoped identity token.
  */
-export function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
+export function LandingTile({
+  app,
+  onOpen,
+  signedIn = false,
+}: {
+  app: PublicApp;
+  onOpen: (app: PublicApp) => void;
+  signedIn?: boolean;
+}) {
   // Only an explicit public verdict unlocks a tile. Missing/stale client
   // metadata must not turn an unknown app into an anonymous launch (#1522).
-  const gated = app.requires_login !== false;
+  // A real session is the other valid unlock: /api/iframe-token deliberately
+  // accepts waiting-room accounts even though the wider platform gate does
+  // not (#1895).
+  const gated = app.requires_login !== false && !signedIn;
   const label = app.name || app.slug;
   return (
     <div
@@ -304,12 +316,14 @@ export function LandingScreen() {
    */
   const resetViewer = useCallback(() => {
     const viewer = byId('app-viewer');
+    // Also cancels a token mint that has not revealed the viewer yet. Without
+    // this, leaving #landing during that await can open the app behind the
+    // next auth screen when the response finally arrives.
+    st.launchId = (st.launchId || 0) + 1;
+    clearViewerCover();
     if (!viewer || viewer.classList.contains('hidden')) return;
     st.openSlug = null;
     setOpenApp(null);
-    // #931: retire the launch generation and drop the cover with it.
-    st.launchId = (st.launchId || 0) + 1;
-    clearViewerCover();
     viewer.classList.add('hidden');
     swapViewerFrame();
     byId('auth-landing-scroll')?.classList.remove('hidden');
@@ -317,10 +331,13 @@ export function LandingScreen() {
   }, [clearViewerCover, refreshHeader, st]);
 
   const openLandingApp = useCallback(
-    (app: PublicApp) => {
-      // Guard the actual viewer entry, not only tile clicks: the legacy
-      // bridge calls this opener too. Never mount a gated app's frame.
-      if (app.requires_login !== false) {
+    async (app: PublicApp) => {
+      const accountRequired = app.requires_login !== false;
+      const signedIn = hasSession();
+      // Guard the actual viewer entry, not only tile presentation: the legacy
+      // bridge calls this opener too. An anonymous visitor still needs an
+      // account; a waiting-room session already has one (#1895).
+      if (accountRequired && !signedIn) {
         (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
           '/app/' + encodeURIComponent(app.slug || ''),
         );
@@ -328,21 +345,48 @@ export function LandingScreen() {
         return;
       }
       if (!app.url) return;
+      const slug = app.slug || '';
+      const launchId = (st.launchId || 0) + 1;
+      st.launchId = launchId;
+      let launchUrl = app.url;
+
+      // Public apps keep their anonymous URL. An account-required app is
+      // loaded only after the platform has minted the app-scoped identity it
+      // already permits for waitlist sessions. URL.searchParams.set both
+      // preserves existing query/fragment state and replaces any stale token
+      // rather than concatenating a second credential.
+      if (accountRequired) {
+        const token = await legacy().AppView?._mintToken?.(slug);
+        if (launchId !== st.launchId) return;
+        if (!token) {
+          legacy().PlatformUI?.toast?.(
+            'Could not sign in to this app. Check your connection and try again.',
+            { error: true },
+          );
+          return;
+        }
+        try {
+          const url = new URL(app.url);
+          url.searchParams.set('token', token);
+          launchUrl = url.toString();
+        } catch {
+          legacy().PlatformUI?.toast?.('This app could not be opened.', { error: true });
+          return;
+        }
+      }
+
       const viewer = byId('app-viewer');
       const scroller = byId('auth-landing-scroll');
       if (!viewer || !scroller) return;
-      const slug = app.slug || '';
       st.openSlug = slug;
       setOpenApp({ slug, name: app.name || slug });
       // #931: the anonymous viewer had the same white-window problem as the
       // signed-in App tab — the frame started loading here, but the zoom
-      // animated a blank iframe and the app popped in afterwards. It needs no
-      // token (public apps only), so the src assignment was already immediate;
-      // what was missing is something to look at while it loads. Mount the same
-      // cover over the frame and cross-fade it out on load, using the shared
-      // ladder in AppView.
-      st.launchId = (st.launchId || 0) + 1;
-      const launchId = st.launchId;
+      // animated a blank iframe and the app popped in afterwards. By this point
+      // any required token is ready, so the src assignment is immediate; what
+      // was missing is something to look at while it loads. Mount the same cover
+      // over the frame and cross-fade it out on load, using the shared ladder in
+      // AppView.
       clearViewerCover();
       const frame = byId<HTMLIFrameElement>('app-viewer-frame');
       const appView = legacy().AppView;
@@ -355,7 +399,7 @@ export function LandingScreen() {
       // The frame is fresh on every open (teardown swaps the element), so this
       // is its INITIAL navigation away from about:blank — the one browsers
       // elide instead of pushing onto the shared history stack.
-      if (frame && app.url) frame.src = app.url;
+      if (frame) frame.src = launchUrl;
       history.pushState({ svAnonAppViewer: true }, '', location.href);
       // The flex-sibling pitfall (#764): #app-viewer and #auth-landing-scroll
       // are flex:1 siblings, so while BOTH are visible (fn reveals the viewer,
@@ -789,7 +833,7 @@ export function LandingScreen() {
         <div className="max-w-3xl mx-auto px-6 py-12">
           <div className="text-center mb-10">
             <h1 className="text-3xl font-bold mb-2">
-              Usernode Social Vibecoding
+              Homeroom
             </h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
               A place where users own and build apps together
@@ -837,15 +881,16 @@ export function LandingScreen() {
               Build apps together, own them together
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-              Usernode Social Vibecoding is a place where users describe the app
+              Homeroom is a place where users describe the app
           they want in chat, an AI builds it, and the community votes the
           changes in. Every app below was built here by the people who use
-          it. They run on the Usernode chain, and contributors own a share
+          it. They run on the Homeroom chain, and contributors own a share
           of what they build.
             </p>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              Platform access opens in batches. The apps below are open to
-          everyone right now.
+              {session
+                ? 'You can use the apps below while you wait. Building and social features unlock when your spot opens.'
+                : 'Platform access opens in batches. Many of the apps below are open to everyone right now.'}
             </p>
             <a
               id="landing-waitlist-link"
@@ -906,8 +951,9 @@ export function LandingScreen() {
               Apps built here
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              Community-built apps on the Usernode chain. Many are open to
-          everyone. The grayed-out ones need an account.
+              {session
+                ? 'Community-built apps on the Homeroom chain. Your signed-in account can use them while you wait.'
+                : 'Community-built apps on the Homeroom chain. Many are open to everyone. The grayed-out ones need an account.'}
             </p>
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
@@ -934,7 +980,12 @@ export function LandingScreen() {
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">No public apps yet.</p>
               ) : (
                 apps.apps.map((app, i) => (
-                  <LandingTile key={app.slug || i} app={app} onOpen={onTileClick} />
+                  <LandingTile
+                    key={app.slug || i}
+                    app={app}
+                    onOpen={onTileClick}
+                    signedIn={session}
+                  />
                 ))
               )}
             </div>

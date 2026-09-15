@@ -171,7 +171,7 @@ test('the Dev board can opt imported active rows into the owner list', async () 
     assert.match(q.sql, /cs\.staging_url/);
     const detail = capturedQueries.find((c) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(c.sql));
     assert.ok(detail, 'imported proposal detail query was issued');
-    assert.deepStrictEqual(detail.params, [[44]]);
+    assert.deepStrictEqual(detail.params, [[44], false]);
     assert.match(detail.sql, /cs\.source = 'imported'/);
     assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);
     assert.match(detail.sql, /cs\.pr_summary_md/);
@@ -280,6 +280,81 @@ test('busy runtime identity does not overwrite the session-pinned backend', asyn
     assert.strictEqual(session.agentModel, null);
   } finally {
     workerProgress.clear(31);
+    server.close();
+  }
+});
+
+// ── #1959: awaiting_input — the Improve panel's "Ready for your input" ──
+//
+// The panel's idle pill used to read "Ready" for every session; the feedback
+// wanted "Ready for your input" — but only when true. The payload carried
+// nothing that could tell a finished spec with open questions from one with
+// nothing to ask, so the endpoint now ships the verdict as ONE boolean,
+// computed here from what it already reads: the newest user/assistant row
+// (whose turn is it, and did the assistant leave answer chips) and the spec
+// body (does its Questions section still have content — the same parser the
+// headless path refuses a build on). The inputs stay off the wire.
+test('awaiting_input: the query reads the last conversational row and the spec body', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer();
+  try {
+    await fetchActiveSessions(server);
+    const q = capturedQueries.find((c) => /FROM chat_sessions cs/.test(c.sql));
+    assert.match(q.sql, /cs\.spec_md/);
+    assert.match(q.sql, /lt\.role AS last_turn_role, lt\.asks AS last_turn_asks/);
+    // The newest user/assistant row: system rows (scout cards, status lines)
+    // are not turns and must not decide whose turn it is.
+    assert.match(q.sql,
+      /WHERE session_id = cs\.id AND role IN \('user', 'assistant'\)\s+ORDER BY id DESC\s+LIMIT 1/);
+    // The same key, read the same way, as the clone path that forwards chips.
+    assert.match(q.sql,
+      /jsonb_array_length\(COALESCE\(metadata->'suggestions', '\[\]'::jsonb\)\) > 0 AS asks/);
+  } finally {
+    server.close();
+  }
+});
+
+test('awaiting_input: true only when the assistant is the one waiting', async () => {
+  const QUESTIONS = '# Goal\n\n## Questions\n\n1. Soft or hard delete?';
+  const NOTHING_TO_ASK = '# Goal\n\n## Questions\n\nNone';
+  poolQueryHandler = async () => ({
+    rows: [
+      // The assistant asked with answer chips, still up.
+      sessionRow({ id: 41, last_turn_role: 'assistant', last_turn_asks: true }),
+      // A finished spec whose Questions section is open, nothing built yet.
+      sessionRow({ id: 42, last_turn_role: 'assistant', last_turn_asks: false, spec_md: QUESTIONS }),
+      // A finished spec with nothing to ask.
+      sessionRow({ id: 43, last_turn_role: 'assistant', last_turn_asks: false, spec_md: NOTHING_TO_ASK }),
+      // Built despite the questions: a session with a PR is past its spec.
+      sessionRow({ id: 44, last_turn_role: 'assistant', last_turn_asks: false, spec_md: QUESTIONS, pr_number: 44 }),
+      // The owner replied: it is their turn that is pending, not a question.
+      sessionRow({ id: 45, last_turn_role: 'user', last_turn_asks: true, spec_md: QUESTIONS }),
+      // No conversation yet.
+      sessionRow({ id: 46, last_turn_role: null, last_turn_asks: null, spec_md: QUESTIONS }),
+    ],
+  });
+  activeWorkers.clear();
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    const byId = Object.fromEntries(body.sessions.map((s) => [s.id, s]));
+    assert.strictEqual(byId[41].awaiting_input, true, 'answer chips up');
+    assert.strictEqual(byId[42].awaiting_input, true, 'a spec with open questions');
+    assert.strictEqual(byId[43].awaiting_input, false, 'a spec with nothing to ask');
+    assert.strictEqual(byId[44].awaiting_input, false, 'a PR outranks the spec');
+    assert.strictEqual(byId[45].awaiting_input, false, 'the owner has the floor');
+    assert.strictEqual(byId[46].awaiting_input, false, 'nothing has been said');
+    for (const s of body.sessions) {
+      assert.strictEqual('spec_md' in s, false, 'the spec body never reaches a list payload (#894)');
+      assert.strictEqual('last_turn_role' in s, false);
+      assert.strictEqual('last_turn_asks' in s, false);
+      assert.ok(s.app_slug && s.last_activity_at, 'everything else still passes through');
+    }
+  } finally {
+    worker.isInFlight = realIsInFlight;
     server.close();
   }
 });

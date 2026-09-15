@@ -448,3 +448,46 @@ test('the live bubble falls back to the model when no frame has landed', () => {
   assert.match(rowHtml(row), /from the model/, 'a frame for another row is ignored');
   setStream('', '');
 });
+
+// ── #1942: a new session's empty state ────────────────────────────────
+
+test('an open, idle session with no messages shows its empty state', () => {
+  const h = makeDevChat();
+  const html = h.render([]);
+  assert.equal(h.t.state().empty, true);
+  assert.match(html, /id="dc-empty-state"/);
+  assert.match(html, /What should this session change\?/);
+});
+
+test('the empty state goes the moment there is a message, a run, or no session', () => {
+  let h = makeDevChat();
+  assert.doesNotMatch(h.render([user('hello')]), /dc-empty-state/, 'a message replaces it');
+  h = makeDevChat({ isStreaming: true });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'a turn in flight is not empty');
+  h = makeDevChat();
+  h.render([], null);
+  assert.equal(h.t.state().empty, false, 'no open session, nothing to describe');
+});
+
+test('a walkthrough or a hand-off launchpad answers "what now?" instead (#1942)', () => {
+  let h = makeDevChat({ _devFlowHtml: () => '<div data-flow-wizard="1"></div>' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the walkthrough is already in the pane');
+  h = makeDevChat({ _launchpadVenue: () => 'web-claude-code' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the launchpad is already in the pane');
+});
+
+test('on a wide screen the new session’s composer comes up to meet the empty state (#1905)', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = css.slice(css.indexOf('/* #1905:'), css.indexOf('}\n}', css.indexOf('/* #1905:')) + 3);
+  assert.match(block, /@media \(min-width: 768px\)/, 'tablet width and up; a phone keeps the box by the keyboard');
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) \{ justify-content: center; \}/);
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) > #dc-messages \{ flex: 0 0 auto;/,
+    'the message pane stops filling the column, so the pair can centre');
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) > #dc-composer-bar \{[^}]*max-width: 44rem;[^}]*align-self: center;/);
+  // Keyed on the empty state alone: the first message removes it, and the
+  // composer goes back to the bottom with no state of its own to clear.
+  assert.doesNotMatch(block, /data-|\.dc-new-session/);
+});

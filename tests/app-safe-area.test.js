@@ -90,13 +90,14 @@ test('every #app-content mount point declares its surface', () => {
 
   const appCalls = APP_VIEW.match(/_setSurface\('app'\)/g) || [];
   const platformCalls = APP_VIEW.match(/_setSurface\('platform'\)/g) || [];
-  // app: beginLaunch, showLaunchCoverShot, renderAppTab's adopt early-exit,
-  // renderAppTab's iframe path.
-  assert.equal(appCalls.length, 4,
-    `expected 4 app-surface call sites, found ${appCalls.length}`);
-  // platform: renderAppTab's status branch, its offline branch, renderDevView.
-  assert.equal(platformCalls.length, 3,
-    `expected 3 platform-surface call sites, found ${platformCalls.length}`);
+  // app: beginLaunch, showLaunchCoverShot, the source-less settled-launch and
+  // offline screenshots, renderAppTab's adopt early-exit, and its iframe path.
+  assert.equal(appCalls.length, 6,
+    `expected 6 app-surface call sites, found ${appCalls.length}`);
+  // platform: renderAppTab's status, offline and unsafe-origin branches, plus
+  // renderDevView.
+  assert.equal(platformCalls.length, 4,
+    `expected 4 platform-surface call sites, found ${platformCalls.length}`);
 });
 
 test('the keep/adopt early-exit still asserts the app surface', () => {

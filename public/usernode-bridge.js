@@ -90,6 +90,7 @@
     removeHomeScreenShortcut: true,
     reorderHomeScreenShortcuts: true,
     openNativeScreen: true,
+    setBackNavigationEnabled: true,
     captureScreenshot: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
@@ -5008,6 +5009,17 @@
       );
     });
   }
+
+  // iOS WebKit's native history gesture. Feature-detect this capability;
+  // embedded apps cannot change the trusted shell's navigation policy.
+  window.usernode.setBackNavigationEnabled = function (state) {
+    if (!state || typeof state.enabled !== 'boolean') {
+      return Promise.reject(new Error('enabled must be a boolean'));
+    }
+    return callNativeChromeAction('setBackNavigationEnabled', {
+      enabled: state.enabled,
+    }, 3000);
+  };
 
   // captureScreenshot() → { contentType: "image/jpeg", base64 }. Captures
   // the currently visible native app window after the feedback dialog hides.

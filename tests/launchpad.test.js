@@ -1,37 +1,18 @@
-// The launchpad — what a session shows instead of a composer when the work
-// is happening somewhere else (#1281).
-//
-// Three of the six venues build elsewhere, and for all three a chat box is
-// a control with nothing on the other end of it: no turn will ever run in
-// this session. The spec's type 2 and 3 wireframes draw that literally —
-// no composer, just the steps — so public/js/launchpad.js owns the panel
-// that stands in its place and dev-chat.js swaps them.
-//
-// What these tests pin:
-//
-//   1. WHICH venues get a launchpad, and that the list agrees with the
-//      `chat: false` rows in build-venues.js rather than being a second
-//      opinion about the same thing;
-//   2. the prefill is genuinely usable — it names the app, carries the
-//      session's own brief, and spells the two connector calls that
-//      bracket the job, because a "tell your agent" block that says
-//      "build the thing" is worse than no block at all;
-//   3. every string that reaches the markup is escaped, since the app slug
-//      and the session title are user content; and
-//   4. the copy buttons carry exactly the text that is rendered above
-//      them, so what you copy is what you read.
-//
-// Run with: node --test tests/launchpad.test.js
+// Shared own-tools setup guide, session context, and web hand-off regressions (#1891).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const Launchpad = require('../public/js/launchpad.js');
+const Launchpad = require('./lib/launchpad');
 const BuildVenues = require('../public/js/build-venues.js');
 
-const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
+const { renderComponent } = require('./lib/render-tsx');
+const ownToolsHtml = (state) => renderComponent(
+  'frontend/src/features/dev-chat/own-tools-guide.tsx', 'OwnToolsGuide',
+  { view: { prompt: Launchpad.prefillText(state), resumeHtml: Launchpad.resumeBannerHtml(state), canImport: state.canImport !== false } },
+);
 
-test('the launchpad venues are exactly the ones with no Usernode chat', () => {
+test('the launchpad venues are exactly the ones with no Homeroom chat', () => {
   // build-venues.js already answers this, per venue, with `chat`. This
   // module keeps its own list so it still works loaded alone — so the two
   // have to be asserted equal, or they are free to drift.
@@ -48,42 +29,19 @@ test('the launchpad venues are exactly the ones with no Usernode chat', () => {
   assert.ok(!Launchpad.isLaunchpad(undefined));
 });
 
-test('the connector URL is derived from the page, never hardcoded', () => {
-  // A self-hosted fork has to print its own origin — the same derivation
-  // the Settings → Connectors field uses, and the reason neither has to
-  // know the deployment's domain.
-  assert.equal(Launchpad.connectorUrl(ORIGIN), `${ORIGIN}/mcp`);
-  assert.equal(Launchpad.connectorUrl('https://example.test/'), 'https://example.test/mcp');
-  assert.equal(Launchpad.connectorUrl('https://example.test///'), 'https://example.test/mcp');
-  assert.match(Launchpad.mcpCommand(ORIGIN), /^claude mcp add --transport http usernode https:/);
-  // Streamable HTTP is what src/routes/mcp-remote.js actually mounts, so
-  // the transport in the command is a fact about the server, not a guess.
-  assert.match(Launchpad.mcpCommand(ORIGIN), /--transport http\b/);
-});
-
-test('the prefill names the app, the brief, and both connector calls', () => {
-  const text = Launchpad.prefillText({
-    slug: 'usernode-2d5619',
-    issueNumber: 1281,
-    sessionTitle: 'Rework build method UI',
-  });
-  assert.match(text, /usernode-2d5619/, 'names the app');
-  assert.match(text, /request #1281/, 'names the request');
-  assert.match(text, /Rework build method UI/, 'carries the title');
-  assert.match(text, /prepare_work/, 'the call that starts the job');
-  assert.match(text, /submit_work/, 'the call that finishes it');
-  assert.match(text, /requestNumber 1281/, 'the request rides on prepare_work');
-  // The base commit is the single instruction a work order most often
-  // loses — see the "know your base commit" rule in AGENTS.md — so the
-  // prefill has to say it rather than leaving the agent to infer it.
-  assert.match(text, /base commit/i);
-  assert.match(text, /testingPaths/, 'or the voters get screenshots of the home page');
+test('the proposal prompt names the app, issue, and brief for either local agent', () => {
+  const text = Launchpad.prefillText({ slug: 'usernode-2d5619', issueNumber: 1891, sessionTitle: 'Fix the guide' });
+  assert.match(text, /Create a proposal for the Homeroom app `usernode-2d5619`/);
+  assert.match(text, /What to build: issue #1891: Fix the guide/);
+  assert.match(text, /Read the issue and its discussion/);
+  assert.match(text, /link the proposal to issue #1891/);
+  assert.doesNotMatch(text, /claude mcp|prepare_work|submit_work|own fork/);
 });
 
 test('a session with no request falls back to its own title, then to a blank', () => {
   const titled = Launchpad.prefillText({ slug: 'app-1', sessionTitle: 'Add a dark mode' });
   assert.match(titled, /What to build: Add a dark mode/);
-  assert.doesNotMatch(titled, /request #/, 'no request number to invent');
+  assert.doesNotMatch(titled, /issue #/, 'no request number to invent');
   assert.doesNotMatch(titled, /requestNumber/, 'and none on the prepare_work call');
 
   const bare = Launchpad.prefillText({ slug: 'app-1' });
@@ -97,99 +55,41 @@ test('a session with no request falls back to its own title, then to a blank', (
 });
 
 test('a non-numeric or nonsense request number is ignored, not printed', () => {
-  for (const issueNumber of ['12; rm -rf /', 0, -3, NaN, null, {}]) {
+  for (const issueNumber of ['12; rm -rf /', 0, -3, 1.5, NaN, null, {}]) {
     const text = Launchpad.prefillText({ slug: 'app-1', issueNumber, sessionTitle: 'A change' });
-    assert.doesNotMatch(text, /request #/, `${JSON.stringify(issueNumber)} must not become a request`);
+    assert.doesNotMatch(text, /issue #/, `${JSON.stringify(issueNumber)} must not become a request`);
     assert.match(text, /What to build: A change/);
   }
 });
 
-test('user content reaches the markup escaped, never as tags', () => {
-  // The slug comes from the URL and the title is written by whoever named
-  // the session. Both land in a <pre> and in a data attribute.
-  const html = Launchpad.ownToolsHtml({
-    origin: ORIGIN,
-    slug: '"><img src=x onerror=alert(1)>',
-    sessionTitle: '</pre><script>alert(2)</script>',
-  });
-  assert.ok(!html.includes('<img'), 'no raw tag survives');
-  assert.ok(!html.includes('<script>'), 'no script survives');
-  // `onerror=alert(1)` survives as TEXT, which is correct and harmless —
-  // what makes it inert is that every `<` and `"` around it is escaped, so
-  // it can neither open a tag nor close the attribute it sits in. That is
-  // the property worth asserting, and it is the same one
-  // tests/credit-options.test.js pins.
-  assert.ok(!html.includes('onerror="'), 'no attribute injection');
-  assert.ok(!html.includes('"><img src=x'), 'the raw payload never appears unescaped');
-  assert.ok(html.includes('&lt;img'), 'it is rendered as escaped text');
-  // The data attribute is the copy payload and is quoted — an unescaped
-  // double quote there would break out into new attributes.
-  const attrs = html.match(/data-launchpad-text="[^"]*"/g) || [];
-  assert.ok(attrs.length >= 2, 'both copy buttons carry their payload');
+test('user content is escaped in the shared guide', () => {
+  const html = ownToolsHtml({ slug: '"><img src=x onerror=alert(1)>', sessionTitle: '</pre><script>alert(2)</script>' });
+  assert.doesNotMatch(html, /<img|<script>/);
+  assert.match(html, /&lt;img/);
+  assert.match(html, /&lt;script/);
 });
 
-test('the own-tools launchpad is three steps, with both copy blocks', () => {
-  const html = Launchpad.ownToolsHtml({ origin: ORIGIN, slug: 'app-1', issueNumber: 7 });
-  assert.match(html, /data-launchpad="own-tools-pr"/);
-  assert.equal((html.match(/dc-launchpad-step"/g) || []).length, 3);
-  assert.match(html, /data-launchpad-copy="connect"/);
-  assert.match(html, /data-launchpad-copy="prefill"/);
-  assert.match(html, /data-launchpad-action="import"/);
-  // What you copy is what you read: the button's payload must be the text
-  // rendered above it, not a second derivation of it.
-  assert.ok(
-    html.includes(Launchpad.escapeHtml(Launchpad.mcpCommand(ORIGIN))),
-    'the command is rendered',
-  );
-  assert.ok(
-    html.includes(`data-launchpad-text="${Launchpad.escapeHtml(Launchpad.mcpCommand(ORIGIN))}"`),
-    'and the copy button carries the same string',
-  );
+test('own-tools reuses the Settings card with three steps and four copy controls', () => {
+  const html = ownToolsHtml({ slug: 'app-1', issueNumber: 7 });
+  assert.match(html, /id="dc-cli-setup-guide"/);
+  assert.match(html, /Set up a local coding agent/);
+  assert.equal((html.match(/<li /g) || []).length, 3);
+  for (const label of ['repository setup commands', 'Codex command', 'Claude Code command', 'example proposal prompt']) {
+    assert.ok(html.includes(`aria-label="Copy ${label}"`), label);
+  }
+  assert.match(html, /<code>codex<\/code>/);
+  assert.match(html, /<code>claude<\/code>/);
+  assert.match(html, /issue #7/);
+  assert.doesNotMatch(html, /cli-tokens-list|settings-sidebar|id="cli-setup-guide"|claude mcp/);
+  const defaults = renderComponent('frontend/src/features/settings/cli-setup-guide.tsx', 'CliSetupGuide');
+  assert.match(defaults, /id="cli-setup-guide"/);
+  assert.match(defaults, /Create a proposal for &lt;app name&gt;/);
 });
 
-test('a viewer who cannot push is told why, not offered a button that fails', () => {
-  const denied = Launchpad.ownToolsHtml({ origin: ORIGIN, slug: 'a', canImport: false });
-  assert.doesNotMatch(denied, /data-launchpad-action="import"/);
-  assert.match(denied, /push access/i, 'it says why instead of going quiet');
-  // The connector path still works for them — submit_work opens the PR —
-  // so the step must not read as a dead end.
-  assert.match(denied, /submit_work/);
-
-  const allowed = Launchpad.ownToolsHtml({ origin: ORIGIN, slug: 'a' });
-  assert.match(allowed, /data-launchpad-action="import"/, 'the default is the button');
-});
-
-test('wire() is idempotent per node and reports copies and actions', () => {
-  const handlers = [];
-  const node = {
-    __handlers: handlers,
-    addEventListener(type, fn) { handlers.push(fn); },
-    contains() { return true; },
-  };
-  const seen = { copies: [], actions: [] };
-  Launchpad.wire(node, {
-    onCopy: (key, text) => seen.copies.push([key, text]),
-    onAction: (action) => seen.actions.push(action),
-  });
-  Launchpad.wire(node, { onCopy() {}, onAction() {} });
-  assert.equal(handlers.length, 1, 'a second wire() call does not stack handlers');
-
-  const fire = (attrs) => handlers[0]({
-    preventDefault() {},
-    target: { closest: () => ({ getAttribute: (k) => attrs[k] || null }) },
-  });
-  fire({ 'data-launchpad-copy': 'prefill', 'data-launchpad-text': 'hello' });
-  assert.deepEqual(seen.copies, [['prefill', 'hello']]);
-  fire({ 'data-launchpad-action': 'import' });
-  assert.deepEqual(seen.actions, ['import']);
-
-  // A click on neither is left alone — the browser keeps whatever default
-  // it had, which is what lets ordinary text selection work inside the
-  // <pre> blocks.
-  handlers[0]({
-    preventDefault() { assert.fail('must not preventDefault a plain click'); },
-    target: { closest: () => null },
-  });
+test('manual PR import remains available only to users with access', () => {
+  assert.doesNotMatch(ownToolsHtml({ canImport: false }), /data-launchpad-action="import"/);
+  assert.match(ownToolsHtml({ canImport: true }), /data-launchpad-action="import"/);
+  assert.match(ownToolsHtml({ canImport: false }), /Set up a local coding agent/);
 });
 
 // ── The swap: dev-chat renders the launchpad WHERE the composer was ─────
@@ -291,7 +191,8 @@ test('the launchpad is wired on every re-render, in its own host', () => {
   const wire = DEV_CHAT_SRC.match(/_wireLaunchpad\(\)\s*\{[\s\S]*?\n  \},/);
   assert.ok(wire, '_wireLaunchpad must exist');
   assert.match(wire[0], /data-flow-wizard/, 'it wires the walkthrough too');
-  assert.match(wire[0], /data-launchpad\b/, 'and the own-tools panel');
+  assert.doesNotMatch(wire[0], /Launchpad\.wire/, 'React handles own-tools controls');
+  assert.doesNotMatch(DEV_CHAT_SRC, /_launchpadCopy\(/, 'no legacy mutation of React copy buttons');
   assert.match(DEV_CHAT_SRC, /DevChat\._wireLaunchpad\(\);/, 'called from renderChatView');
 });
 
@@ -304,40 +205,46 @@ test('the vendor toggle switches in place and stores the new venue', () => {
     'the status is re-read for the new vendor rather than reused');
 });
 
-test('the brief field lives in the card, because the composer is hidden', () => {
+test('the card carries the instructions, because the agent asks for the rest', () => {
+  // This replaces the brief field. The launchpad used to collect what to build
+  // and mint the work order itself, which is why it had a text box here and a
+  // task to get stuck on. It hands over instructions now: the agent asks what
+  // to build and mints its own order through the connector.
   const DevFlowSelect = require('../public/js/dev-flow-select.js');
-  const ready = { github: { linked: true }, fork: { state: 'ready', owner: 'a', repo: 'b' } };
+  const ready = {
+    github: { linked: true },
+    fork: { state: 'ready', owner: 'a', repo: 'b' },
+    connectors: { count: 1 },
+    instructions: 'Ask the user what to build, then call prepare_work.',
+  };
 
-  // On the step you are on, and only there.
-  const html = DevFlowSelect.wizardHtml({ agent: 'codex', status: ready, brief: 'Add dark mode' });
-  assert.match(html, /data-flow-brief="1"/, 'the prepare step carries a brief box');
-  assert.equal((html.match(/data-flow-brief/g) || []).length, 1, 'exactly one');
-  assert.match(html, />Add dark mode</, 'and it keeps what was typed');
-
-  // Once the task exists there is nothing left to describe.
-  const prepared = DevFlowSelect.wizardHtml({
-    agent: 'codex',
-    status: { ...ready, task: { branch: 'b', baseSha: 'abc1234', agent: 'codex' } },
-  });
-  assert.doesNotMatch(prepared, /data-flow-brief/, 'a prepared task needs no brief box');
+  const html = DevFlowSelect.wizardHtml({ agent: 'codex', status: ready });
+  assert.doesNotMatch(html, /data-flow-brief/, 'nothing to type here any more');
+  assert.match(html, /Copy instructions/);
+  assert.match(html, /Ask the user what to build, then call prepare_work\./,
+    'and the text is on the card, for a clipboard that refuses');
 
   // The step copy must not point at a control the launchpad hides.
   assert.doesNotMatch(html, /message box below/,
     'the composer is not on screen in a launchpad venue');
 
-  // It escapes like everything else — the brief is user text going back
-  // into a textarea.
+  // It escapes like everything else: the instructions carry an app name that
+  // came from a user.
   const nasty = DevFlowSelect.wizardHtml({
-    agent: 'codex', status: ready, brief: '</textarea><script>alert(1)</script>',
+    agent: 'codex',
+    status: { ...ready, instructions: '<img src=x onerror=alert(1)>' },
   });
-  assert.ok(!nasty.includes('<script>'), 'no script survives');
-  // The rendered card legitimately contains `</textarea>` — its own closing
-  // tag. What must not appear is the PAYLOAD verbatim, which is what would
-  // mean the brief closed the field and opened a script.
-  assert.ok(!nasty.includes('</textarea><script>'), 'and it cannot close its own field');
-  assert.match(nasty, /&lt;\/textarea&gt;/, 'it lands as escaped text instead');
-});
+  assert.doesNotMatch(nasty, /<img src=x/);
+  assert.match(nasty, /&lt;img src=x/);
 
+  // With no connector there is nothing to hand over yet, so no instructions
+  // block either.
+  const unconnected = DevFlowSelect.wizardHtml({
+    agent: 'codex', status: { ...ready, connectors: { count: 0 } },
+  });
+  assert.match(unconnected, /data-flow-action="link-connector"/);
+  assert.doesNotMatch(unconnected, /Copy instructions/);
+});
 test('preparing reads the card first and the composer only as a fallback', () => {
   // In a launchpad venue #dc-input is hidden, so reading it would make
   // "Prepare work order" permanently impossible — the button would report
@@ -353,7 +260,7 @@ test('preparing reads the card first and the composer only as a fallback', () =>
 });
 
 test('dismissing a launchpad repaints BOTH halves of the swap', () => {
-  // "Build on Usernode instead" changes the SWAP. Repainting only the slot
+  // "Build on Homeroom instead" changes the SWAP. Repainting only the slot
   // would empty the launchpad and leave the composer still hidden behind it
   // — a session with no way to type at all.
   //
@@ -422,11 +329,10 @@ test('the prefill switches shape when there is a branch to continue', () => {
   // already has commits must not start over from the default branch.
   assert.match(resume, /Continue work already started/);
   assert.match(resume, /dev\/evan-1750000000000/, 'names the branch by hand');
-  assert.match(resume, /proposalId 990401/, 'and rides it on both connector calls');
+  assert.match(resume, /Continue session #990401/, 'identifies the existing work');
   assert.match(resume, /Do not start over/i);
-  assert.match(resume, /CURRENT head of that branch/);
-  assert.match(resume, /own fork/, 'the agent still pushes to its own fork');
-  assert.match(resume, /testingPaths/);
+  assert.match(resume, /current head of that branch/);
+  assert.match(resume, /Preserve the existing work/);
 
   // A brand-new session (deferred branch, nothing run yet) keeps the
   // original start-work shape rather than pointing at a branch that is
@@ -440,7 +346,7 @@ test('the prefill switches shape when there is a branch to continue', () => {
   });
   assert.doesNotMatch(fresh, /Continue work already started/);
   assert.doesNotMatch(fresh, /proposalId/);
-  assert.match(fresh, /prepare_work/);
+  assert.match(fresh, /Create a proposal/);
 });
 
 test('a half-filled resume target falls back to starting work', () => {

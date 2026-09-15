@@ -15,6 +15,7 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8',
 );
+const { SW_VERSION } = require('../public/sw.js');
 
 function makeHarness() {
   const requests = [];
@@ -54,7 +55,11 @@ function makeHarness() {
     Improve: {
       onSessionCreated: (session, appSlug) => improveCreates.push({ session, appSlug }),
     },
-    App: { currentTab: 'dev', currentSubTab: 'sessions' },
+    App: {
+      currentTab: 'dev',
+      currentSubTab: 'sessions',
+      user: { openrouterAvailable: false },
+    },
     addEventListener() {},
     removeEventListener() {},
   };
@@ -67,6 +72,7 @@ function makeHarness() {
     requests,
     toasts,
     improveCreates,
+    app: sandbox.App,
     respondWith(fn) { responder = fn; },
   };
 }
@@ -91,6 +97,273 @@ test('OpenRouter model labels show exact rates, cost tier, and advisory compatib
     compatibility: 'blocked',
   });
   assert.equal(limited, 'vendor/limited: Price unavailable · $100 /M input · ? /M output · limited');
+});
+
+test('OpenRouter picker labels and ordering surface favorites, recommendations, and new models', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'vendor/ordinary', name: 'Ordinary', isFavorite: false, isRecommended: false },
+    { id: 'openai/recommended', name: 'Recommended GPT', provider: 'openai', isRecommended: true },
+    { id: 'deepseek/favorite', name: 'Favorite DeepSeek', provider: 'deepseek', isFavorite: true },
+  ];
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models).map((model) => model.id),
+    ['deepseek/favorite', 'openai/recommended', 'vendor/ordinary'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { query: 'deepseek' }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { favoritesOnly: true }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  const label = h.DevChat._openRouterModelOptionLabel({
+    ...models[1], createdAt: new Date().toISOString(), costTier: 'low', compatibility: 'experimental',
+  });
+  assert.match(label, /Recommended GPT · Recommended · New:/);
+});
+
+test('an OpenRouter task opens on favorites without replacing an uncommon current model', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'deepseek/default', isFavorite: true },
+    { id: 'openai/default', isFavorite: true },
+    { id: 'vendor/uncommon', isFavorite: false },
+  ];
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'deepseek/default'),
+    true,
+    'a recommended/default favorite gets the short task list',
+  );
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'vendor/uncommon'),
+    false,
+    'opening the picker preserves a current non-favorite selection',
+  );
+  assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
+  assert.match(SRC, /id="dc-agent-choice-model-search"/);
+  assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
+  assert.match(SRC, /Platform recommendations start in Favorites/);
+});
+
+test('the simplified proposal picker ships through a fresh shell cache', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 19, `expected the proposal-dialog shell cache, got ${SW_VERSION}`);
+});
+
+test('forced catalog refresh and favorite writes bypass browser caches', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return { ok: true, json: async () => ({ defaultBackend: 'codex_openrouter', backends: {}, codexAvailable: true }) };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return { ok: true, json: async () => ({ configured: true, status: 'valid' }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        models: [{ id: 'deepseek/deepseek-v4.1-flash' }],
+        recommendedModelId: 'deepseek/deepseek-v4.1-flash',
+        refreshedAt: '2026-09-10T12:00:00.000Z',
+        totalModels: 1,
+      }),
+    };
+  });
+
+  const catalog = await h.DevChat._loadCodingAgentChoiceData({ forceRefresh: true });
+  assert.equal(catalog.catalogLoaded, true);
+  assert.equal(catalog.models.length, 1);
+  const catalogRequest = h.requests.find((request) => request.url.includes('/models?'));
+  assert.match(catalogRequest.url, /refresh=1/);
+  assert.equal(catalogRequest.options.cache, 'no-store');
+
+  await h.DevChat._setOpenRouterModelFavorite('deepseek/deepseek-v4.1-flash', true);
+  const favoriteRequest = h.requests.at(-1);
+  assert.equal(favoriteRequest.url, '/api/me/coding-agent/models/favorite');
+  assert.equal(favoriteRequest.options.method, 'PATCH');
+  assert.equal(favoriteRequest.options.cache, 'no-store');
+  assert.deepEqual(JSON.parse(favoriteRequest.options.body), {
+    modelId: 'deepseek/deepseek-v4.1-flash', favorite: true,
+  });
+});
+
+test('the first real build action provisions OpenRouter and reloads the saved default', async () => {
+  const h = makeHarness();
+  let preferenceReads = 0;
+  h.respondWith(async (url, options) => {
+    if (url === '/api/me/coding-agent') {
+      preferenceReads += 1;
+      return {
+        ok: true,
+        json: async () => preferenceReads === 1
+          ? { defaultBackend: 'claude_code', backends: {}, codexAvailable: true }
+          : {
+            defaultBackend: 'codex_openrouter',
+            backends: {
+              codex_openrouter: {
+                model: 'z-ai/glm-5.3-flash', reasoningEffort: null, isDefault: true,
+              },
+            },
+            codexAvailable: true,
+          },
+      };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return {
+        ok: true,
+        json: async () => ({ configured: false, status: null }),
+      };
+    }
+    if (url === '/api/me/credentials/openrouter/managed') {
+      assert.equal(options.method, 'POST');
+      assert.equal(options.cache, 'no-store');
+      assert.deepEqual(JSON.parse(options.body), {});
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ ok: true, defaultModel: 'z-ai/glm-5.3-flash' }),
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
+  assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'usernode_managed');
+  assert.equal(preferenceReads, 2, 'the post-provision default is read back');
+  assert.equal(h.app.user.openrouterAvailable, true,
+    'venue availability updates without a page reload');
+  assert.deepEqual(h.requests.map((request) => request.url), [
+    '/api/me/coding-agent',
+    '/api/me/credentials/openrouter',
+    '/api/me/credentials/openrouter/managed',
+    '/api/me/coding-agent',
+  ]);
+});
+
+test('an existing personal OpenRouter key is identified for accurate billing copy', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return {
+        ok: true,
+        json: async () => ({
+          defaultBackend: 'codex_openrouter',
+          backends: { codex_openrouter: { model: 'openai/gpt-6-astra', isDefault: true } },
+          codexAvailable: true,
+        }),
+      };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return {
+        ok: true,
+        json: async () => ({ configured: true, status: 'valid', source: 'personal' }),
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
+  assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'personal');
+  assert.deepEqual(h.requests.map((request) => request.url), [
+    '/api/me/coding-agent',
+    '/api/me/credentials/openrouter',
+  ]);
+});
+
+test('an explicit Claude default never provisions an OpenRouter key', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    assert.equal(url, '/api/me/coding-agent');
+    return {
+      ok: true,
+      json: async () => ({
+        defaultBackend: 'claude_code',
+        backends: { claude_code: { model: null, reasoningEffort: null, isDefault: true } },
+        codexAvailable: true,
+      }),
+    };
+  });
+
+  const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
+  assert.equal(prefs.defaultBackend, 'claude_code');
+  assert.deepEqual(h.requests.map((request) => request.url), ['/api/me/coding-agent']);
+});
+
+test('managed provisioning errors stay actionable instead of falling back to Claude', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return {
+        ok: true,
+        json: async () => ({ defaultBackend: 'claude_code', backends: {}, codexAvailable: true }),
+      };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return { ok: true, json: async () => ({ configured: false, status: null }) };
+    }
+    if (url === '/api/me/credentials/openrouter/managed') {
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({
+          code: 'not_configured',
+          error: 'Company OpenRouter keys are not configured yet. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.',
+        }),
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  await assert.rejects(
+    () => h.DevChat._prepareDefaultCodingAgentForBuild(),
+    (err) => err.code === 'not_configured'
+      && /USERNODE_OPENROUTER_MANAGEMENT_API_KEY/.test(err.message),
+  );
+  assert.equal(h.app.user.openrouterAvailable, false);
+});
+
+test('a concurrent first-use claim accepts the valid key created by the other request', async () => {
+  const h = makeHarness();
+  let preferenceReads = 0;
+  let statusReads = 0;
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      preferenceReads += 1;
+      return {
+        ok: true,
+        json: async () => preferenceReads === 1
+          ? { defaultBackend: 'claude_code', backends: {}, codexAvailable: true }
+          : { defaultBackend: 'codex_openrouter', backends: {}, codexAvailable: true },
+      };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      statusReads += 1;
+      return {
+        ok: true,
+        json: async () => statusReads === 1
+          ? { configured: false, status: null }
+          : { configured: true, status: 'valid', source: 'usernode_managed' },
+      };
+    }
+    if (url === '/api/me/credentials/openrouter/managed') {
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({ code: 'byok_configured', error: 'A key now exists.' }),
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  const prefs = await h.DevChat._prepareDefaultCodingAgentForBuild();
+  assert.equal(prefs.defaultBackend, 'codex_openrouter');
+  assert.equal(prefs.openrouterCredentialSource, 'usernode_managed');
+  assert.equal(statusReads, 2);
+  assert.equal(h.app.user.openrouterAvailable, true);
 });
 
 test('new session creation sends the explicit Claude choice', async () => {

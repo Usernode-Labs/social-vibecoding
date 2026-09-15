@@ -159,7 +159,14 @@ const MANIFEST_FILENAME = 'dapp.json';
 // margin (clears it by ~6s), and RUN_TIMEOUT_MS 710s → 740s to stay the
 // required 120s above it. The step is 30 again, and buys 23 slots over the 587
 // declared here.
-const MAX_DECLARED_TESTS = 630;
+//
+// Raised 630 → 660 by #1960, whose two draft-delete checks put the manifest at
+// 611 against the 610 floor, landing beside main's own growth to 609. Same
+// arithmetic, same coupled move: 660 checks at ~3.9s over a pool of 8 is ~322s
+// of ideal work, so TESTS_DEADLINE_MS goes 620s → 650s to keep the 2x margin
+// (clears it by ~6s), and RUN_TIMEOUT_MS 740s → 770s to stay the required 120s
+// above it. The step buys 29 slots over the 611 declared here.
+const MAX_DECLARED_TESTS = 660;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -278,6 +285,10 @@ const RESERVED_KEYS = new Set([
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
   'USERNODE_PLATFORM_API_URL',
+  // The platform's public origin (services/app-identity-env.js). Reserved
+  // for the same reason as the rest: a manifest that shadowed it could
+  // point an app's "Open in Homeroom" links at a host of its choosing.
+  'USERNODE_PLATFORM_ORIGIN',
 ]);
 
 // Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),

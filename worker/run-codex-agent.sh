@@ -10,8 +10,9 @@
 # Direct-transport (review P0): Codex points DIRECTLY at OpenRouter and
 # authenticates with the user's own key, injected per-turn on this specific
 # `docker exec` as OPENROUTER_API_KEY. It is NOT persisted in the warm
-# container's env/filesystem by the platform; the agent code running in this
-# worker naturally sees the key, which the UI discloses. No platform relay.
+# container's env/filesystem by the platform. Company-funded key material is
+# stored internally and is never returned by the user-facing API. No platform
+# relay.
 #
 # Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
 #   OPENROUTER_API_KEY, AGENT_MODEL
@@ -43,7 +44,7 @@ die() {
 : "${AGENT_MODEL_REASONING_EFFORTS:=}"
 : "${AGENT_MODEL_SUPPORTS_TOOLS:=}"
 : "${AGENT_THREAD_ID:=}"
-: "${COMMIT_MSG:=Changes via Usernode (Codex)}"
+: "${COMMIT_MSG:=Changes via Homeroom (Codex)}"
 : "${TURN_UUID:=}"
 : "${WORKER_JWT:=}"
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is

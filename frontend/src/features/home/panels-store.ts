@@ -27,6 +27,7 @@
 import { createStore } from '../../lib/plain-store.js';
 
 import type { IconView } from './grid-store';
+import type { SeasonProgressView } from '../leaderboard/season-progress';
 
 /** `data-*` attributes the block stamps on its own article AND on its host. */
 export interface PanelStamps {
@@ -49,6 +50,14 @@ export interface DiscoverTileView {
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
   icon: IconView;
+  /**
+   * The featured illustration: its image, how it is framed inside the art
+   * block, and — when its author chose one — the card colour it sits on: a
+   * tone name, or one of the legacy tint numbers saved before the tones
+   * existed. An absent `tint` means the slug's own hash, which is what every
+   * card without an illustration wears.
+   */
+  illustration?: { url: string; darkUrl?: string | null; zoom: number; x: number; y: number; tint?: string | number | null } | null;
   /**
    * The app's own one-line description, from its manifest — null when it
    * declares none, which is most apps. The card draws nothing in its place.
@@ -83,42 +92,38 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
-  /**
-   * The card's picture, from the challenge's kind — null when that kind has
-   * none, or the template names no kind. `label` is what the well draws in
-   * its place.
-   */
+  /** The challenge's event, for the card's deep link to its page; null without one. */
+  eventId: number | null;
+  /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
   icon: string | null;
-  /** The organiser's category, upper-cased — the well's fallback. */
-  label: string;
-  goal: string;
-  /** The task, folded into the row's tooltip — the one place it still shows. */
-  tip: string;
-  done: boolean;
-  reward: string;
-  /** NEVER null: every row draws a track, so no row reserves space for one. */
-  meter: ChallengeMeterView;
-}
-
-/** The ring at the top of the card — how far through the season you are. */
-export interface SeasonView {
-  /** 0-100, the ring's arc. */
-  pct: number;
-  /** "1/6", inside the ring. */
-  fraction: string;
-  /** "3,900 pts left" — what is still on the table, or the count if none. */
-  lead: string;
-  /** "1 of 6 challenges done", or null when `lead` already says it. */
-  sub: string | null;
-  /** The whole fact in one string, for the ring's accessible name. */
-  label: string;
   /**
-   * "7 days left" — how long the SEASON has to run, or null between seasons
-   * and when the payload carries no end date. One fact about the block, not
-   * a field on each row: every open challenge ends when the season does.
+   * The challenge template's illustration slug (shape-checked). The tile draws
+   * it in place of the icon when lib/challenge-illustrations.ts resolves it.
+   */
+  illustration: string | null;
+  /** An uploaded illustration's tone (shape-checked); null for a built-in. */
+  illustrationTone: string | null;
+  goal: string;
+  done: boolean;
+  reward: string | null;
+  /** The shared rail (features/leaderboard/challenge-card.tsx). */
+  state: 'new' | 'progress' | 'done';
+  stateLabel: string;
+  fill: number | null;
+  /** A target above one: the rail draws its count and bar from zero. */
+  counted: boolean;
+  /**
+   * "5d left" on the meta line under the title, beside the reward — the
+   * challenge's own end, else its event's, else the season's; null on a
+   * finished or not-open challenge, or with no end in the future.
    */
   deadline: string | null;
+  /** "Earned N pts" on a finished challenge the viewer scored on. */
+  earned: string | null;
 }
+
+/** How far through the season you are — see features/leaderboard/season-progress.tsx. */
+export type SeasonView = SeasonProgressView;
 
 export interface ChallengesView {
   key: string;

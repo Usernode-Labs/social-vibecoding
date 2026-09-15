@@ -8,19 +8,20 @@ poolMod.getPool = () => ({ query: async (sql) => {
   queries.push(sql);
   if (sql.includes('SELECT a.id, a.collab_visibility')) return { rows: [{ id: 1,
     view_visibility: privateApp ? 'private' : 'public', collab_visibility: 'public' }] };
+  if (sql.includes('SELECT handoff_head_sha')) return { rows: [{ handoff_head_sha: session.checks_commit_sha }] };
   if (sql.includes('FROM chat_sessions cs')) return { rows: session ? [session] : [] };
   return { rows: [] };
 } });
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
-async function get(user) {
+async function get(user, endpoint = 'checks', id = 123) {
   const app = express();
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use(sessionRoutes({}));
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/123/checks`);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/${id}/${endpoint}`);
     return { status: response.status, body: await response.json(), cache: response.headers.get('cache-control') };
   } finally { await new Promise((resolve) => server.close(resolve)); }
 }
@@ -71,4 +72,49 @@ test('shared results still require access to their app', async () => {
 test('missing sessions return 404', async () => {
   reset(); session = null;
   assert.equal((await get({ id: 42 })).status, 404);
+});
+
+
+test('change details use the same privacy gate and an explicit public projection', async () => {
+  reset();
+  assert.equal((await get({ id: 99 }, 'details')).status, 404);
+  assert.ok(!queries.some((sql) => sql.includes('cs.pr_summary_md')));
+  reset({ shared_at: '2026-09-11', app_id: 1, linked_issues: [], pr_summary_md: 'Preview authentication fix' });
+  const result = await get({ id: 99 }, 'details');
+  assert.equal(result.status, 200);
+  assert.equal(result.body.session.pr_summary_md, 'Preview authentication fix');
+  assert.equal(result.cache, 'no-store');
+  const projection = queries.find((sql) => sql.includes('cs.pr_summary_md'));
+  assert.match(projection, /cs\.testing_md/);
+  assert.match(projection, /cs\.test_results/);
+  assert.doesNotMatch(projection, /cs\.\*|cs\.spec_md|chat_session_messages|cc_session|api_key/);
+});
+
+test('managed handoff details derive readiness from the checked revision', async () => {
+  reset({ source: 'cli_handoff', app_id: 1, linked_issues: [], check_state: 'passing',
+    checks_commit_sha: 'a'.repeat(40), staging_url: 'https://preview.example', checks_checked_at: new Date().toISOString() });
+  const result = await get({ id: 42 }, 'details');
+  assert.equal(result.status, 200);
+  assert.equal(result.body.session.proposal_state, 'ready');
+  assert.equal(result.body.session.handoff_head_sha, undefined);
+  reset({ source: 'cli_handoff', app_id: 1, linked_issues: [], checks_commit_sha: 'a'.repeat(40) });
+  assert.equal((await get({ id: 42 }, 'details')).body.session.proposal_state, 'failed');
+});
+
+test('shared demo details reuse the list fixture only in staging demo mode', async () => {
+  reset(); session = null;
+  const previous = process.env.USERNODE_ENV;
+  try {
+    process.env.USERNODE_ENV = 'staging';
+    const result = await get({ id: 42 }, 'details?demo=1', 990002);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.session.id, 990002);
+    assert.equal(result.body.session.transcript_shared, true);
+    assert.equal((await get({ id: 42 }, 'details', 990002)).status, 404);
+    process.env.USERNODE_ENV = 'production';
+    assert.equal((await get({ id: 42 }, 'details?demo=1', 990002)).status, 404);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
 });

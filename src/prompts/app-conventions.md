@@ -1,7 +1,7 @@
-# Usernode platform conventions
+# Homeroom platform conventions
 
-This file is the authoritative spec for how apps on Usernode Social
-Vibecoding work. It is injected into every Mayor and Claude Code
+This file is the authoritative spec for how apps on Homeroom work. It
+is injected into every Mayor and Claude Code
 system prompt so both follow the same conventions when planning
 features, generating code, or explaining things to the user.
 
@@ -124,7 +124,7 @@ Ordered by how badly an agent working offline gets each one wrong.
     present, runs instead of `build`.
 
 One thing NOT to apply: the full document contains a section titled
-"Don't `git push` yourself". That is addressed to Usernode's own build
+"Don't `git push` yourself". That is addressed to Homeroom's own build
 worker, which runs with no GitHub credentials. It does not apply to a
 coding agent working in the user's own fork — pushing your branch is
 exactly what you are being asked to do.
@@ -175,8 +175,8 @@ see "Per-app secrets" below.
 
 ## Auth — iframe token injection
 
-Apps run inside an iframe on the Usernode shell. The shell mints an
-RS256 JWT for the logged-in Usernode user, scoped to **your app**, and
+Apps run inside an iframe on the Homeroom shell. The shell mints an
+RS256 JWT for the logged-in Homeroom user, scoped to **your app**, and
 injects it as a `?token=…` query param on the initial iframe load. The
 app's own frontend forwards that token on subsequent fetches via the
 `x-usernode-token` request header.
@@ -229,7 +229,7 @@ app.use((req, res, next) => {
 Key properties:
 
 - `req.user` contains at minimum `{ id, username, usernode_pubkey, locale }` once authenticated.
-  `usernode_pubkey` is the user's linked Usernode wallet address (`ut1...`) or `null` if not linked.
+  `usernode_pubkey` is the user's linked Homeroom wallet address (`ut1...`) or `null` if not linked.
   `locale` is the user's platform-level language preference — a BCP-47
   tag like `"id"` or `"pt-BR"`, or `null` when they haven't set one
   (see "User language preference" below).
@@ -701,7 +701,7 @@ majority of tables — app state, counters, public posts, settings,
 game scores, leaderboards, etc. — and is the default.
 
 **Tables are PUBLIC by default.** A table is marked private only when
-its rows contain content that another Usernode user must not see if
+its rows contain content that another Homeroom user must not see if
 they open a staging preview of this app.
 
 Mark a table private by adding a Postgres comment:
@@ -1612,7 +1612,7 @@ the strip is reviewable in previews and testers see the real layout.
 
 ## User directory — does this handle exist?
 
-Apps constantly need to answer "is `@someone` a real Usernode user?" —
+Apps constantly need to answer "is `@someone` a real Homeroom user?" —
 an invite field, an @-mention, a hand-off to a teammate. Don't
 approximate a directory from the users your app has happened to see:
 the platform exposes the real one.
@@ -1738,10 +1738,10 @@ canonical branch). Commit cleanly and let the harness finish the job.
 
 `usernode-bridge.js` is the one piece of cross-dapp infrastructure
 that is **not vendored**. It is served as a single canonical copy
-from the Usernode Social Vibecoding platform itself:
+from the Homeroom platform itself:
 
 ```
-https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js
+{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-bridge/v1/bridge.js`.
@@ -1750,7 +1750,7 @@ Every dapp's HTML shell loads this URL directly. Cross-origin
 `<script>` tags are allowed by default; no CORS dance is needed:
 
 ```html
-<script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+<script src="{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js"></script>
 ```
 
 Rules:
@@ -1774,11 +1774,17 @@ Rules:
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
   (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
-- **Self-hosting caveat.** All dapps in the production fleet
-  hard-code the `social-vibecoding.usernodelabs.org` host. Forks
-  running their own SV instance either accept that their dapps load
-  the bridge from upstream prod, or fork the dapps and edit the URL.
-  See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+- **Prefer the RELATIVE path.** These three prefixes are served from the
+  app's own hostname too, so `/usernode-bridge/v1/bridge.js` reaches the
+  same file with no hostname in the app at all. That is what makes a
+  platform domain move survivable: apps scaffolded before the move to the
+  current domain hard-coded the old host, and when it stopped answering
+  they lost the bridge, the kit and their styling all at once. An absolute
+  URL still works and remains correct; a relative one simply cannot go
+  stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
+  the wildcard site's matcher on the docker runtime, and the scaffolded
+  app's own handler under a plain `node server.js`, where there is no edge
+  in front of the app. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Offline — apps that open with no connection
 
@@ -1832,7 +1838,7 @@ saying so is better than a queue that silently disappears.
 The platform owns a single per-user language/locale setting. Apps that
 localize their UI should treat it as the **default** instead of building
 their own detection from `navigator.language` (which reflects the device,
-not the user's Usernode-level choice). It reaches apps two ways:
+not the user's Homeroom-level choice). It reaches apps two ways:
 
 **Expect `null` for nearly every user (SV #1556).** The setting is still
 stored and still delivered on both paths below, but the platform shell is
@@ -1973,8 +1979,8 @@ not a requirement.
 Like the bridge, it is centrally hosted — never vendor it:
 
 ```html
-<link rel="stylesheet" href="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css">
-<script src="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.js"></script>
+<link rel="stylesheet" href="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.css">
+<script src="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.js"></script>
 ```
 
 Canonical source: `social-vibecoding/public/usernode-native/v1/`. The
@@ -2445,13 +2451,13 @@ the platform serves a pinned copy of the Tailwind browser engine from its
 own origin — exactly like the bridge and the native UI kit:
 
 ```
-https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js
+{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
 
 ```html
-<script src="https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js"></script>
+<script src="{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js"></script>
 <script>tailwind.config = { darkMode: 'class' }</script>
 ```
 
@@ -2482,10 +2488,12 @@ Rules:
   be used in production" notice. It is a `warn`, not an error, so it does
   not affect proposal checks — it is kept because the file is verbatim
   upstream, which is what makes its digest verifiable. Nothing to chase.
-- **Self-hosting caveat.** Fleet apps hard-code the
-  `social-vibecoding.usernodelabs.org` host; newly scaffolded apps derive
-  the platform origin from the deployment's own `USERNODE_DOMAIN`, so forks
-  get their own. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
+- **Prefer the RELATIVE path**, `/usernode-tailwind/v1/tailwind.js`: it is
+  served from the app's own hostname on every runtime, so nothing in the
+  app names a host a domain move can invalidate. Older fleet apps still
+  hard-code a platform hostname, which is exactly the state this avoids;
+  newly scaffolded apps derive the origin from the deployment's own
+  `USERNODE_DOMAIN`. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Vendored shared files
 
@@ -2541,7 +2549,7 @@ When a user reports a runtime problem you can't reproduce from the
 source ("nothing happens when I click", "it's broken on my phone", a
 blank screen), the fastest path to a fix is their actual console output
 — but **do not tell them to open browser devtools or press F12.** Most
-users are inside the Usernode mobile app or a phone browser where
+users are inside the Homeroom mobile app or a phone browser where
 devtools don't exist, so that advice dead-ends the conversation (a
 common failure mode: the agent asks for a console trace, the user
 answers "I can't open the terminal / I don't have F12", and the loop
@@ -2604,7 +2612,7 @@ shared infrastructure. Two categories are worth escalating:
 
 - the shared bridge (`usernode-bridge.js`), wallet / signing, or the
   native mobile WebView (e.g. a file picker, camera, or share sheet
-  that never opens inside the Usernode app)
+  that never opens inside the Homeroom app)
 - the staging / build / preview pipeline itself (the preview won't boot
   for reasons unrelated to your code)
 - the merge/checks gate, or a documented platform convention that

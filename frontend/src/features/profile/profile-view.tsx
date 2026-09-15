@@ -135,7 +135,7 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
       <h2 className="font-semibold text-base">Public profile</h2>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
         Private by default. The public page includes only your username,
-        display name, bio and Usernode-hosted photo, not social links, wallet,
+        display name, bio and Homeroom-hosted photo, not social links, wallet,
         email, roles, memberships or private activity.
       </p>
       <div className={`mt-3 text-sm font-medium ${controls.visibilityClass}`}>
@@ -292,23 +292,13 @@ function TokenCard({ token }: { token: any }): ReactNode {
       </div>
     );
   }
-  // #1552: no allocation yet says so, in words. A blurred 0 behind a
-  // "Reveal" button is a build-up to nothing, and it is the state most
-  // people are in.
-  if (token.empty) {
-    return (
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
-        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
-          Token allocation
-        </div>
-        <div className="text-sm text-zinc-500 dark:text-zinc-400">
-          Nothing allocated to you yet. Allocations are made per season, from
-          the season&rsquo;s pool, and are provisional and subject to the
-          program terms.
-        </div>
-      </div>
-    );
-  }
+  // #1825: no allocation, no card. #1552 had replaced a blurred 0 behind
+  // "Reveal" with a card saying so in words, but that is
+  // still a whole card about a program most people are not in, on a screen
+  // that should be about them. The card now appears only for someone it
+  // concerns: a real allocation (below), or a terms gate that may be hiding
+  // one (above).
+  if (token.empty) return null;
   return (
     <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
       <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">

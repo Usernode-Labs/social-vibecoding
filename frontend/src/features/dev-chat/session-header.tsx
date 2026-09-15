@@ -3,13 +3,9 @@
  * See ./session-header-store.ts for what stays the module's and why.
  */
 
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
-import { Button } from '@/components/ui/button';
-import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { useDialog } from '../dialogs/use-dialog';
+import { EllipsisHorizontalIcon, EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -20,9 +16,14 @@ import {
   type MergeLife,
   type SessionHeaderState,
 } from './session-header-store';
+import type { SessionAction } from './session-list-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
+}
+
+function platformUi(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
 /**
@@ -67,17 +68,13 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
  * button by id at call time to anchor the sheet against — so the id, the
  * attributes and the position all stay exactly as `selectorHtml` wrote them.
  */
-function VenueSelect({ venue, details = false, onSelect }: {
-  venue: NonNullable<SessionHeaderState['venue']>;
-  details?: boolean;
-  onSelect?: () => void;
-}): ReactNode {
+function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']> }): ReactNode {
   const busyTitle = 'Wait for the current response to finish before changing where this session is built.';
   return (
     <button
       type="button"
-      id={details ? 'dc-venue-details-select' : 'dc-venue-select'}
-      className={details ? 'dc-venue-select dc-venue-details-select' : 'dc-venue-select max-sm:hidden'}
+      id="dc-venue-select"
+      className="dc-venue-select"
       data-venue-change="1"
       data-venue-current={venue.id}
       data-venue-busy={venue.disabled ? '1' : undefined}
@@ -87,8 +84,7 @@ function VenueSelect({ venue, details = false, onSelect }: {
       title={venue.disabled ? busyTitle : venue.title}
       onClick={venue.disabled
         ? undefined
-        : (e: MouseEvent<HTMLButtonElement>) => onSelect
-          ? onSelect() : controller()?.openVenueSheet?.(e.currentTarget)}
+        : (e: MouseEvent<HTMLButtonElement>) => controller()?.openVenueSheet?.(e.currentTarget)}
     >
       <span className="dc-venue-name">{venue.label}</span>
       {venue.disabled ? (
@@ -157,9 +153,15 @@ function VenueSelect({ venue, details = false, onSelect }: {
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
-  const { previewSessionId, previewUrl, previewActive } = useStoreState(improveStore) as {
-    previewSessionId: number | null; previewUrl: string | null; previewActive: boolean;
+  const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
+    previewSessionId: number | null; previewUrl: string | null;
+    previewBuildable: boolean; previewActive: boolean;
   };
+  // #2069: a live preview OR one the click can build. ensure-staging rebuilds
+  // from the branch's latest commit and has authorized this case since #439;
+  // only this gate had not caught up, so the single control that would restore
+  // a missing preview disappeared exactly when the preview went missing.
+  const hasPreview = !!previewUrl || !!previewBuildable;
   const seeing = !!previewActive;
   const trackRef = useRef<HTMLSpanElement | null>(null);
   const eyeRef = useRef<HTMLButtonElement | null>(null);
@@ -170,7 +172,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   // its text's, so this cannot be computed ahead of the paint. `seeing` and
   // `busy` are the two inputs that change which segment is wide.
   useIsomorphicLayoutEffect(() => {
-    if (!previewUrl) { setThumb(null); return undefined; }
+    if (!hasPreview) { setThumb(null); return undefined; }
     const measure = () => {
       const active = seeing ? eyeRef.current : penRef.current;
       if (!active) return;
@@ -182,11 +184,15 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (ro && trackRef.current) ro.observe(trackRef.current);
     return () => ro?.disconnect();
-  }, [seeing, busy, previewUrl]);
+  }, [seeing, busy, hasPreview]);
 
   // #1594: with no preview to switch to, Building is status, not an action.
   // Keep it compact and neutral; the accent-filled controls remain clickable.
-  if (!previewUrl) {
+  //
+  // #2069 narrows "no preview to switch to": a session whose branch has a
+  // commit HAS one to switch to, it just has to be built first. Only a session
+  // with nothing to build falls through to the status chip.
+  if (!hasPreview) {
     if (!busy) return null;
     return (
       <span
@@ -232,9 +238,11 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label="Preview this change"
+        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
         aria-pressed={seeing ? 'true' : 'false'}
-        title="Preview this change on staging"
+        title={previewUrl
+          ? 'Preview this change on staging'
+          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
@@ -263,82 +271,108 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   );
 }
 
-export function SessionHeader(): ReactNode {
+/**
+ * The session's own actions — Pause / Free worker / Resume / Unarchive /
+ * Archive — behind a ⋯ at the strip's right edge (#1904).
+ *
+ * ── Why a menu, and why these rows ────────────────────────────────────
+ *
+ * Those buttons live on the session's row in the list, and opening the
+ * session put every one of them out of reach: the strip carried the name,
+ * the PR link, the venue and the mode switch, and nothing that acted on the
+ * session itself. The rows here are THE LIST'S — `DevChat._sessionRow`
+ * decides them once and the store carries them (see
+ * ./session-header-store.ts) — so the two surfaces cannot disagree about
+ * what is offered or how Archive is gated, and each row dispatches the same
+ * `DevChat` method by name the list's button does, confirm dialog included.
+ *
+ * ── One call, both idioms ─────────────────────────────────────────────
+ *
+ * `PlatformUI.menu` is the venue dropdown's own presenter (BuildVenues.open):
+ * a bottom action sheet on touch, an anchored popover on desktop, from one
+ * actionSheet-shaped call. The rows are handed to the kit rather than
+ * rendered here for the reason that sheet gives — the kit reparents what it
+ * is handed, and a React subtree under it would reconcile against a parent
+ * that no longer holds it.
+ *
+ * With nothing to offer — a viewer who does not own the session, a merged
+ * one — there is no button at all, rather than a menu with no rows.
+ */
+
+/** A row as `PlatformUI.menu` takes it — the kit's own actionSheet shape. */
+export interface SessionActionItem {
+  label: string;
+  title?: string;
+  destructive: boolean;
+  handler: () => void;
+}
+
+/**
+ * The rows the ⋯ hands the kit, from the store's actions. Each `handler` is
+ * the list button's click: the named `DevChat` method, with the row's own
+ * args — so Archive still goes through `_sessionListArchive`'s confirm, and
+ * Free worker still answers "Worker freed". The list flashed that answer on
+ * the button it was about to replace; a menu row is gone by then, so the
+ * answer becomes a toast.
+ */
+export function sessionActionItems(actions: SessionAction[]): SessionActionItem[] {
+  return actions.map((a) => ({
+    label: a.label,
+    ...(a.title ? { title: a.title } : null),
+    destructive: a.tone === 'danger',
+    handler: () => {
+      const dc = controller();
+      if (!dc || typeof dc[a.fn] !== 'function') return;
+      void Promise.resolve(dc[a.fn](...a.args)).then((flash: unknown) => {
+        if (flash) platformUi()?.toast?.(String(flash));
+      });
+    },
+  }));
+}
+
+/**
+ * Present the rows against the trigger. Resolves once the menu has settled
+ * — a pick or a dismissal — which is what the trigger's `aria-expanded`
+ * follows. Nothing to present without the kit, the same silent degradation
+ * the venue sheet has.
+ */
+export async function openSessionActionsMenu(
+  actions: SessionAction[],
+  anchorEl?: HTMLElement | null,
+): Promise<void> {
+  const pu = platformUi();
+  if (!pu || typeof pu.menu !== 'function') return;
+  await pu.menu({ anchorEl: anchorEl || undefined, items: sessionActionItems(actions) });
+}
+
+function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (!actions.length) return null;
+  return (
+    <button
+      type="button"
+      id="dc-session-actions"
+      className={'shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full '
+        + 'text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 '
+        + 'dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 un-touch-target'}
+      data-session-actions="1"
+      aria-haspopup="menu"
+      aria-expanded={open ? 'true' : 'false'}
+      aria-label="Session actions"
+      title="Session actions"
+      onClick={(e: MouseEvent<HTMLButtonElement>) => {
+        if (open) return;
+        setOpen(true);
+        void openSessionActionsMenu(actions, e.currentTarget).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="w-4 h-4" aria-hidden="true" />
+    </button>
+  );
+}
+
+export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(sessionHeaderStore);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [dialogHome, setDialogHome] = useState<HTMLElement | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
-  useEffect(() => { setDialogHome(document.body); }, []);
-  const afterClose = useRef<(() => void) | null>(null);
-  const details = useDialog('sessionDetails', {
-    onOpen: () => {
-      setShowDetails(true);
-      // The kit moves the card into its own dialog. Name that surface (or
-      // the web fallback) without giving React a second owner of its DOM.
-      const surface = cardRef.current?.closest('.un-modal') || details.rootRef.current;
-      surface?.setAttribute('role', 'dialog');
-      surface?.setAttribute('aria-modal', 'true');
-      surface?.setAttribute('aria-labelledby', 'dc-session-details-title');
-      cardRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    },
-    onClose: () => {
-      setShowDetails(false);
-      if (triggerRef.current?.getClientRects().length) triggerRef.current.focus();
-      const action = afterClose.current;
-      afterClose.current = null;
-      action?.();
-    },
-  });
-  const { close } = details;
-  // Never carry a sheet (or a queued provider action) into another session,
-  // route, or the desktop layout. A status/title refresh alone keeps it open.
-  useEffect(() => {
-    afterClose.current = null;
-    close();
-  }, [s.sessionId, s.branch, close]);
-  useEffect(() => {
-    const leave = () => { afterClose.current = null; close(); };
-    const desktop = window.matchMedia('(min-width: 640px)');
-    const resize = () => { if (desktop.matches) leave(); };
-    desktop.addEventListener('change', resize);
-    window.addEventListener('hashchange', leave);
-    return () => {
-      afterClose.current = null;
-      desktop.removeEventListener('change', resize);
-      window.removeEventListener('hashchange', leave);
-    };
-  }, [close]);
-  useEffect(() => {
-    if (!details.isOpen) return;
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault(); event.stopPropagation(); close();
-      } else if (event.key === 'Tab') {
-        const buttons = Array.from(cardRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || []);
-        const first = buttons[0], last = buttons[buttons.length - 1];
-        const outside = !buttons.includes(document.activeElement as HTMLButtonElement);
-        if (outside || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
-          event.preventDefault(); (event.shiftKey ? last : first)?.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', keydown, true);
-    return () => document.removeEventListener('keydown', keydown, true);
-  }, [details.isOpen, close]);
-  const revealPr = () => {
-    afterClose.current = () => controller()?.revealPrCard?.();
-    close();
-  };
-  const selectVenue = () => {
-    // Wait for the first surface's exit before opening the provider chooser:
-    // no stacked scrims, stale anchors, or focus stolen by the outgoing sheet.
-    afterClose.current = () => {
-      const venue = sessionHeaderStore.get().venue;
-      if (venue && !venue.disabled) controller()?.openVenueSheet?.(triggerRef.current);
-    };
-    close();
-  };
   return (
     <>
       {/* The in-strip ← retired (Streamlined Concept): the platform header's
@@ -355,10 +389,14 @@ export function SessionHeader(): ReactNode {
       >
         {s.title}
       </span>
+      {/* #1941: `shrink-0 whitespace-nowrap` on the PR number, because it is
+          the one child that could WRAP: at 375px it broke into "PR" over
+          "#21" and made the strip two lines tall with nothing on the second
+          line but half a word. It sits on the title's line at every width. */}
       {s.pr ? (
         <button
           id="dc-pr-header-link"
-          className="max-sm:hidden text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="shrink-0 whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
           onClick={() => controller()?.revealPrCard?.()}
         >
@@ -371,48 +409,34 @@ export function SessionHeader(): ReactNode {
            row is the name and the switch, nothing else; hiding it below `sm`
            is the nearest thing to that which still shows it where there is
            room. */
-        <span className="max-sm:hidden text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is
           not competing with the meter, the runner and the budget menu for the
           same strip. A direct child, which a declared check pins; the mode
-          switch sits after it, on the strip's right edge. */}
+          switch sits after it, on the strip's right edge.
+
+          #1940: it shows at EVERY width again. #1816 hid it (and the PR link)
+          below `sm` behind a "Details ▾" button that opened a Session details
+          dialog, which put the one thing people look this strip up for — what
+          the session is built with — a tap and a sheet away. The control caps
+          its own width (`max-width: min(45%, 14rem)`, app.css).
+
+          #1941: on a phone it is the first thing on the strip's SECOND line.
+          "The title is what gives way" gave way completely — at 375px the
+          venue, the switch and the ⋯ together are wider than the strip, so
+          the title's width went to zero and the ⋯ ran off the right edge.
+          The strip wraps below `sm` now (view.tsx): the name and the PR
+          number on one line, this control, the switch and the ⋯ on the next.
+          Two lines, every fact still on the strip, and it stays ONE line
+          from `sm` up. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
-      <button
-        ref={triggerRef} type="button" className="dc-session-details-trigger sm:hidden shrink-0 inline-flex items-center gap-1 min-h-[44px] text-xs font-medium text-violet-700 dark:text-violet-400"
-        aria-haspopup="dialog" aria-expanded={details.isOpen} aria-controls="dc-session-details"
-        onClick={() => details.open()}
-      >Details <span aria-hidden="true">▾</span></button>
-      <ModeSwitch busy={!!s.busy} />
-      {/* The Dev view is itself a portal. Keep the dialog under the body's
-          event boundary: the native kit lifts its card to body, so leaving
-          it under the Dev portal would strand React's delegated clicks.
-          No SSG portal; once mounted, the card remains stable for adoption. */}
-      {dialogHome ? createPortal(
-        <DialogRoot id="dc-session-details" ref={details.rootRef} {...details.backdropProps}>
-          <DialogCard ref={cardRef}>
-            <div className="flex items-center justify-between gap-3">
-              <h2 id="dc-session-details-title" className="text-lg font-semibold">Session details</h2>
-              <Button type="button" variant="neutral" ink="neutral" size="sm" className="min-h-[44px]" onClick={close}>Done</Button>
-            </div>
-            {showDetails ? (
-              <div className="mt-4 space-y-4">
-                <p className="text-base font-semibold break-words">{s.title}</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  {s.pr ? <button type="button" className="min-h-[44px] text-sm text-violet-700 dark:text-violet-400" title={s.prTitle} onClick={revealPr}>{`PR #${s.pr}`}</button>
-                    : <span className="text-sm text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>}
-                  {s.life ? <MergeStatusPill life={s.life} /> : null}
-                </div>
-                {s.venue ? <div>
-                  <p className="mb-2 text-sm text-zinc-500 dark:text-zinc-400">Built with</p>
-                  <VenueSelect venue={s.venue} details onSelect={selectVenue} />
-                </div> : null}
-              </div>
-            ) : null}
-          </DialogCard>
-        </DialogRoot>, dialogHome,
-      ) : null}
+      {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
+      {/* #1904: the session's own actions, last — the far right of the strip,
+          beside the two switchers. Absent, not empty, when there is nothing
+          to offer. */}
+      <SessionActionsMenu actions={s.actions || []} />
     </>
   );
 }

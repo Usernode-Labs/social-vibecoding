@@ -208,3 +208,15 @@ test('demo mock id without ?demo=1 still 404s', async () => {
   const { statusCode } = await callById(routes, { id: 9100024, query: {} });
   assert.equal(statusCode, 404);
 });
+
+test('the canonical change lookup includes underway rows behind an owner-or-shared gate', async () => {
+  const { routes, captured } = loadVotes({ row: { id: 4242, status: 'active', user_id: 1, shared_at: null } });
+  const { payload, statusCode } = await callById(routes, { id: 4242 });
+  assert.equal(statusCode, 200);
+  assert.equal(payload.proposal.status, 'active');
+  const q = captured.calls.find((c) => /cs\.id = \$3/.test(c.sql));
+  assert.match(q.sql, /cs\.status IN \('active', 'paused'\)\s+AND \(cs\.user_id = \$2 OR cs\.shared_at IS NOT NULL\)/);
+  assert.deepEqual(q.params, [1, 1, 4242]);
+  assert.match(q.sql, /cs\.shared_at/);
+  assert.doesNotMatch(q.sql, /cs\.\*|cs\.spec_md|cc_session_id/);
+});

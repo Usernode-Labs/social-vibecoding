@@ -108,6 +108,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -807,13 +808,24 @@ export function WaitlistScreen() {
     >
       {mounted ? (
         <>
+      {/*
+          #1875: the Back control SCROLLS WITH THE PAGE. It was a `fixed`,
+          transparent "← Back" text link, so on a phone the step label, the
+          heading and the form all slid underneath it and the two texts
+          painted over each other. `absolute` inside the screen's own scroller
+          keeps it at the top-left corner above the content and lets it leave
+          with the rest of the page — nothing can pass under it. It takes the
+          sign-in and register screens' 44px round chevron, so it is a real
+          tap target and the three auth screens share one Back.
+      */}
       <a
         href="#landing"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
+        className="absolute left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        aria-label="Back"
       >
-        &larr; Back
+        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         {/*
@@ -869,7 +881,7 @@ export function WaitlistScreen() {
             Every app in the directory was built here, by the people who use it.
           </li>
           <li>
-            They run on the Usernode chain, and contributors own a share of what
+            They run on the Homeroom chain, and contributors own a share of what
           they build.
           </li>
           <li>
@@ -893,8 +905,11 @@ export function WaitlistScreen() {
         >
           <div>
             <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              {/* #1877: the marker sits a hair off the word rather than
+                  touching it, and is hidden from screen readers — the input's
+                  own `required` is what announces the field as required. */}
               Your email address
-              <span className="text-red-700 dark:text-red-400">
+              <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
                 *
               </span>
             </label>
@@ -913,9 +928,12 @@ export function WaitlistScreen() {
             />
           </div>
           <div>
+            {/* #1877: JSX drops the line break between a label's text and the
+                span after it, so without its own margin "Optional" rendered
+                glued to the word ("CountryOptional"). */}
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Country
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
@@ -956,7 +974,7 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>

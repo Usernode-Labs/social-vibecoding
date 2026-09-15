@@ -11,7 +11,7 @@
 //     on each challenge — became a decoration on these (richer) cards, see
 //     "personalization" below;
 //   - its season-scope leaderboard block is gone: it was a thinner copy of the
-//     standings tab, which the "See where the season stands" link now points at.
+//     standings tab, one tab over (#1917 retired the link that pointed there).
 //
 // Hosted in #challenges-root inside #leaderboard-screen (public/index.html);
 // mounted/unmounted by the Leaderboard module (./leaderboard.js) when
@@ -48,7 +48,7 @@
 // HOME for that flag: the profile screen used to list the season's finished
 // challenges and no longer does (see the header of
 // frontend/src/features/profile/profile.js), so the grid groups them, counts
-// them in a summary line and dims them.
+// them in a summary line and marks them on the card's progress rail.
 //
 // That is why `completed` is read from the PUBLIC row rather than from the
 // personalization map it used to come from: the chip, the grouping and the
@@ -78,9 +78,9 @@
 //     retire with it, because it guards a real `href` attribute and React
 //     does not validate schemes.
 //   * The four `addEventListener` sweeps that were re-bound after every
-//     render (the cards, the see-the-standings link, the two overlay
+//     render (the cards, the two overlay
 //     backdrops, the close buttons, the breakdown's Load more and its
-//     participant rows) are named methods now — `_openIdx`, `_toStandings`,
+//     participant rows) are named methods now — `_openIdx` and
 //     `_moreBreakdown` — and the component calls them. The behaviour stayed
 //     here; only the wiring moved.
 //   * The overlays' `hidden` class retired into their descriptors: `detail`
@@ -120,6 +120,15 @@ const TopochainChallenges = {
   // immediately because the router registers it before the pane has
   // mounted, let alone fetched the event's challenge list.
   _pendingDeepLink: null,
+  // The address a card tap pushed for the detail page it opened
+  // (#leaderboard/challenges/<eventId>/<challengeId>), or null. The detail is
+  // a page, so it owns a history entry: the phone's back gesture pops it and
+  // _onHashChange closes the page once the address stops naming it. Null for
+  // a page opened without one (?shot, or a cold deep link whose hash the
+  // section switch has already rewritten).
+  _detailHash: null,
+  // The hashchange listener open() installs, kept so close() can remove it.
+  _hashListener: null,
 
   // Challenge detail overlay state. `_detailChallenge` is the clicked
   // challenge-grid item (already carries card_preview/detail_modal); the
@@ -150,6 +159,24 @@ const TopochainChallenges = {
     return String(s == null ? '' : s);
   },
 
+  // Rewards are organiser prose, rendered verbatim, except that a bare number
+  // gets " pts" — Home's HomePanels.formatReward rule, so the same challenge
+  // reads the same reward on both surfaces. Null for an empty reward.
+  formatReward(reward) {
+    const s = String(reward == null ? '' : reward).trim();
+    if (!s) return null;
+    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+  },
+
+  // "2,000 pts": a points figure with thousands separators. A value that is
+  // not a finite number comes back verbatim, so a surprise payload still
+  // reads as what the server sent.
+  _pts(v) {
+    const n = Number(v);
+    return v != null && v !== '' && Number.isFinite(n)
+      ? `${n.toLocaleString('en-US')} pts` : TopochainChallenges.str(v);
+  },
+
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
   // This is the ONE guard React does not make redundant. Rendering through a
   // component stops attribute breakout for free, but it does NOT stop a
@@ -159,6 +186,30 @@ const TopochainChallenges = {
   // http(s) renders as plain text instead of a clickable link.
   safeHref(url) {
     return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
+  },
+
+  // The challenge template's illustration, as the card and the page are
+  // handed it: a slug of the registry's SHAPE, else null. This file cannot
+  // import frontend/src/lib/challenge-illustrations.ts — it stays an
+  // import-free classic script (see tests/challenge-deep-link.test.js) — so it
+  // checks only the shape the server already checks, and the components
+  // resolve it (a built-in by MEMBERSHIP, an admin upload by its `u-` slug).
+  // Nothing here builds a path from it.
+  ILLUSTRATION_SLUG: /^[a-z0-9][a-z0-9-]{0,63}$/,
+  _illustrationOf(cp) {
+    const slug = cp && cp.illustration;
+    return typeof slug === 'string' && TopochainChallenges.ILLUSTRATION_SLUG.test(slug) ? slug : null;
+  },
+
+  // An uploaded illustration's tone, which the server sends beside the slug
+  // (null for a built-in, which carries its own). Again only its SHAPE: a
+  // lowercase word of the length a tone name has. The registry decides
+  // whether it is one of its TONES and draws an unknown one on gray, so a
+  // tone added there needs no change here.
+  ILLUSTRATION_TONE: /^[a-z]{3,10}$/,
+  _illustrationToneOf(cp) {
+    const tone = cp && cp.illustration_tone;
+    return typeof tone === 'string' && TopochainChallenges.ILLUSTRATION_TONE.test(tone) ? tone : null;
   },
 
   async fetchJson(url) {
@@ -192,11 +243,28 @@ const TopochainChallenges = {
     if (window.TopochainEventContext?.onChange) {
       TopochainChallenges._unsub = TopochainEventContext.onChange(() => {
         if (!TopochainChallenges._open) return;
-        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) return;
+        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) {
+          // The same event — most often the bar's own notification once its
+          // event list lands. Nothing to reload and nothing to close, but a
+          // card's deadline line (_deadlineOf) and the season line over the
+          // grid (_progressView) read that list, so a grid drawn before the list arrived is redrawn
+          // in place. Only the descriptor: _renderGrid would re-run the
+          // screenshot and deep-link hooks.
+          const store = TopochainChallenges._store;
+          const grid = store && store.get().grid;
+          if (grid && grid.kind === 'cards') {
+            store.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+          }
+          return;
+        }
         TopochainChallenges.closeChallengeDetail();
         TopochainChallenges.closeUserProfile();
         TopochainChallenges.loadChallenges();
       });
+    }
+    if (!TopochainChallenges._hashListener && window.addEventListener) {
+      TopochainChallenges._hashListener = (e) => TopochainChallenges._onHashChange(e);
+      window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
     TopochainChallenges.loadChallenges();
   },
@@ -205,6 +273,11 @@ const TopochainChallenges = {
     TopochainChallenges._open = false;
     TopochainChallenges._detailChallenge = null;
     TopochainChallenges._profileUserId = null;
+    TopochainChallenges._detailHash = null;
+    if (TopochainChallenges._hashListener && window.removeEventListener) {
+      window.removeEventListener('hashchange', TopochainChallenges._hashListener);
+    }
+    TopochainChallenges._hashListener = null;
     // An unresolved deep link dies with the screen. Keeping it would make a
     // much later, unrelated visit to this pane pop an overlay the user
     // never asked for.
@@ -395,10 +468,14 @@ const TopochainChallenges = {
       if (other.length) groups.push({ key: 'other', heading: 'Season challenges', cards: other });
       return {
         kind: 'cards',
-        summary: `${onboarding.completed} of ${onboarding.total} onboarding challenges completed`,
+        // Setup is its own scope while it gates the rest; once unlocked the
+        // grid is the whole event again, and so is the progress.
+        progress: onboarding.unlocked
+          ? TopochainChallenges._progressView(doneCount, ordered.length)
+          : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
         notice: onboarding.unlocked
           ? 'Persistent and weekly challenges are unlocked.'
-          : 'Complete these introductory challenges to unlock persistent and weekly challenges.',
+          : 'Finish these to unlock persistent and weekly challenges.',
         onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'ONBOARDING')
           ? onboarding.event_id : null,
         groups,
@@ -417,11 +494,10 @@ const TopochainChallenges = {
 
     return {
       kind: 'cards',
-      // Always present when the grid has rows (including "0 of 8" and
-      // "8 of 8"), so the declared dapp.json check can anchor on
-      // #tc-se-challenge-summary whatever the selected event's data happens
-      // to be.
-      summary: `${doneCount} of ${ordered.length} challenges completed`,
+      // Always present when the grid has rows (including "0/8" and "8/8"),
+      // so the declared dapp.json check can anchor on #tc-se-challenge-summary
+      // whatever the selected event's data happens to be.
+      progress: TopochainChallenges._progressView(doneCount, ordered.length),
       groups,
     };
   },
@@ -437,25 +513,204 @@ const TopochainChallenges = {
     const str = TopochainChallenges.str;
     const cp = c.card_preview || {};
     const m = TopochainChallenges._mine.get(Number(c.id)) || null;
-    const mineTotal = m && Number(m.activities_total) > 0
-      ? Number(m.activities_total) : 0;
     return {
       key: `${c.id}|${i}`,
       idx: i,
       featured: !!(m && m.featured === true),
-      // A finished challenge is DIMMED, not hidden: its detail overlay and
+      // A finished challenge is MARKED, not hidden: its detail overlay and
       // participant breakdown are the interesting part of it, so the card
-      // stays fully clickable — the opacity only takes it out of the way of
-      // whatever is still open.
+      // stays fully clickable and at full strength. The done state lives on
+      // the rail, which _stateOf decides.
       done: TopochainChallenges._isDone(c),
       label: str(cp.label || ''),
       goal: str(cp.goal || ''),
-      task: str(cp.task || ''),
-      reward: cp.reward ? str(cp.reward) : null,
-      // Composed here rather than in the renderer so the number and its unit
-      // stay one text node — see the header of ./challenges-pane.tsx.
-      mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts` : null,
+      // #1914: the challenge kind's icon, the same face Home's block draws
+      // (HomePanels.challengeRowView). `ChallengeTile` renders an empty
+      // neutral square when this is null, which is what every card on this
+      // screen used to get — the payload simply never carried one.
+      icon: str(cp.icon || '').trim().slice(0, 8) || null,
+      reward: TopochainChallenges.formatReward(cp.reward),
+      illustration: TopochainChallenges._illustrationOf(cp),
+      illustrationTone: TopochainChallenges._illustrationToneOf(cp),
+      ...TopochainChallenges._stateOf(c),
+      deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
+        ? null : TopochainChallenges._deadlineOf(c),
     };
+  },
+
+  // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
+  // src/routes/home-panels.js): not marked over by the organiser, and inside
+  // its effective schedule window. The public list carries every enabled
+  // challenge, so a card that is not open gets no countdown, on either surface.
+  _isOpen(c) {
+    if (!c || c.completed === true) return false;
+    const eff = c.effective || {};
+    const now = Date.now();
+    const start = eff.schedule_start ? Date.parse(eff.schedule_start) : NaN;
+    const end = eff.schedule_end ? Date.parse(eff.schedule_end) : NaN;
+    return !(start > now) && !(end < now);
+  },
+
+  // The deadline on a card's meta line: "5d left". The challenge's own end
+  // (`effective.schedule_end`, the organiser's override over the template's)
+  // when one is set, else the selected event's `ends_at`. It stays on every
+  // open card until deadline bands group the grid by when challenges end;
+  // then the band heading says it.
+  _deadlineOf(c) {
+    const own = c && c.effective && c.effective.schedule_end;
+    const ctx = window.TopochainEventContext;
+    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    return TopochainChallenges._timeLeft(own || (ev && ev.ends_at));
+  },
+
+  // The same rule and words as HomePanels.timeLeft, so a challenge says the
+  // same thing on both surfaces. Short, the board's form: whole days rounded
+  // UP ("5d left"; 23.5 hours is "1d left"), hours under a day ("7h left", at
+  // least "1h left"), and null once past or on an unparseable date rather
+  // than a negative count. A copy rather than an import because this module
+  // runs import-free; both test files pin the same table of cases.
+  _timeLeft(raw) {
+    if (!raw) return null;
+    const ends = Date.parse(raw);
+    if (!Number.isFinite(ends)) return null;
+    const ms = ends - Date.now();
+    if (ms <= 0) return null;
+    const hours = Math.ceil(ms / 3600000);
+    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+  },
+
+  // The progress over the grid, as the board's quiet season summary draws it
+  // ("3/9 done in Season 2", one segment per challenge, in
+  // ./season-progress.tsx, which Home's block shares). `scope` names a scope
+  // of its own ("Get started"); otherwise it is the selected event, whose name
+  // can land after the grid does. The onChange redraw in open() fills it in
+  // then, and until it has, the caption is plain "done".
+  _progressView(done, total, scope) {
+    let name = scope || '';
+    if (!name) {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+    }
+    return { done, total, caption: name ? `done in ${name}` : 'done' };
+  },
+
+  // The card's rail: which of the three states a challenge is in, the one
+  // line of copy it shows, and how much of the rail is filled.
+  //
+  //   done      _isDone — the viewer's own `progress.done` when the public row
+  //             carries onboarding progress, otherwise the organiser's
+  //             `completed` flag. The same meaning the summary tally and the
+  //             grouping use, so the rail can never disagree with them.
+  //   progress  something credited. For a COUNTED challenge (a target above
+  //             one) that is any ledger row, because rows are the count on
+  //             both surfaces. For an uncounted one it is POINTS
+  //             (activities_total > 0): a zero-point row is not progress
+  //             there, which is the Flutter app's hasEarnedPoints rule.
+  //   new       everything else, including every card an anonymous visitor
+  //             sees that is not done.
+  //
+  // The fill is a fraction only when the count can honestly be one: a metric
+  // with a numeric target above one that counts ledger rows. Block
+  // production counts blocks, which this read does not carry, and a target of
+  // one is a yes/no — both read "Started" with no fill rather than a bar that
+  // means nothing. The viewer's points stay in the detail overlay.
+  //
+  // BLOCK PRODUCTION IS THE EXCEPTION TO "no points means not started".
+  // Block scores live in leaderboard snapshots and are never written to the
+  // points ledger (src/services/topochain/snapshot-builder.js), and the row
+  // this pane reads carries only the ledger. So a viewer producing blocks can
+  // have zero ledger points while Home's meter, which reads the snapshot,
+  // shows real progress. Rather than claim "Not started", such a card shows
+  // the bare ring with no label and no value: the rail says nothing it cannot
+  // see. Carrying the snapshot count on the row is a server change for a later
+  // slice.
+  //
+  // Every label is SHORT on purpose, and the words are the board's ("Not
+  // started", "Done"). The rail is alone on its row at the card body's full
+  // width (~170px on a 320px phone) and truncates rather than wraps; the ring
+  // carries the state, so the words never repeat it ("In progress · 3/8"
+  // wrapped).
+  // PER-VIEWER PROGRESS FIRST. The public row carries `progress`
+  // ({ done, current, target }) for the season's onboarding steps, computed
+  // server-side by services/topochain/challenge-onboarding.js — including
+  // block production, which it reads from snapshots. When it is there, the
+  // platform has actually counted, so "Not started" is a fact rather than a
+  // guess, and the count and fill come from it. Everything below the
+  // `if (p)` block is the fallback for rows without it.
+  //
+  // A COUNTED RAIL STARTS AT ZERO. Whenever the count is known — a target
+  // above one — the card shows it from the first moment ("0/3 Apps tried",
+  // with a stub of bar; `counted: true` is what draws it) instead of "Not
+  // started", so a challenge with steps is told apart from a yes-or-no one
+  // before anyone begins. "Not started" is the yes-or-no challenge's word.
+  _stateOf(c) {
+    const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
+    const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
+    const p = (c && c.progress) || null;
+    if (TopochainChallenges._isDone(c)) {
+      const earned = points ? `Earned ${points.toLocaleString('en-US')} pts` : null;
+      return { state: 'done', stateLabel: 'Done', fill: 1, counted: false, earned };
+    }
+    if (p) {
+      const target = Number(p.target);
+      const current = p.current == null ? 0 : Math.max(0, Number(p.current) || 0);
+      if (p.current != null && Number.isFinite(target) && target > 1) {
+        const count = Math.min(current, target);
+        // The count honours challenge-row overrides (the server COALESCEs
+        // metric_type/metric_target), so the unit must too: the personalization
+        // row's label is override-aware, the public row's `activity_type` is
+        // the template's alone.
+        const label = (m && m.metric && m.metric.label)
+          || (c.metric && c.metric.label)
+          || (c.activity_type && c.activity_type.metric_label);
+        const unit = label ? ` ${TopochainChallenges.str(label)}` : '';
+        return {
+          state: count > 0 || points > 0 ? 'progress' : 'new',
+          stateLabel: `${count}/${target}${unit}`,
+          fill: count / target,
+          counted: true,
+          earned: null,
+        };
+      }
+      if (current > 0 || points > 0) {
+        return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+      }
+      return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
+    }
+    const metric = (m && m.metric) || null;
+    const at = (c && c.activity_type) || null;
+    // The metric, override-aware from either row: the personalization row's
+    // once it lands (never, signed out or on failure), else the public row's
+    // `metric`, which is the effective one — so a counted challenge shows its
+    // count on first paint and to a signed-out visitor, with the organiser's
+    // target rather than the template's. The template's `activity_type` kind
+    // is the last resort for the block guard only, keeping a block challenge
+    // from claiming "Not started" on a payload without `metric`.
+    const src = metric || (c && c.metric) || null;
+    const kind = (src && src.kind) || (at && at.metric_type) || null;
+    if (!points && kind === 'blocks_produced') {
+      return { state: 'new', stateLabel: '', fill: null, counted: false, earned: null };
+    }
+    const target = Number(src ? src.target : NaN);
+    if (kind && kind !== 'blocks_produced' && Number.isFinite(target) && target > 1) {
+      // ROWS are the count, the way Home's server count works (one ledger row
+      // per unit), so both surfaces print the same number: a zero-point row is
+      // still one of the eight. Points decide only an uncounted challenge.
+      const count = Math.min(m && Array.isArray(m.activities) ? m.activities.length : 0, target);
+      const label = (src && src.label) || (at && at.metric_label);
+      const unit = label ? ` ${TopochainChallenges.str(label)}` : '';
+      return {
+        state: count > 0 || points > 0 ? 'progress' : 'new',
+        stateLabel: `${count}/${target}${unit}`,
+        fill: count / target,
+        counted: true,
+        earned: null,
+      };
+    }
+    if (points) return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+    // Points, not rows: a zero-point ledger row is not a step taken.
+    return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
   },
 
   // A card click, by its index in the flat ordered array. Recomputed rather
@@ -464,14 +719,9 @@ const TopochainChallenges = {
   // fresh grid descriptor, so the index the component is holding belongs to
   // the array this returns.
   _openIdx(idx) {
-    const ordered = TopochainChallenges._ordered();
-    TopochainChallenges.openChallengeDetail(ordered[idx]);
-  },
-
-  // Real hash navigation so the section switch goes through the router
-  // (and the shared event selection is untouched).
-  _toStandings() {
-    window.location.hash = '#leaderboard/topochain';
+    const challenge = TopochainChallenges._ordered()[idx];
+    TopochainChallenges.openChallengeDetail(challenge);
+    TopochainChallenges._pushDetailHash(challenge);
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
@@ -537,27 +787,183 @@ const TopochainChallenges = {
         && TopochainChallenges._eventId() !== want.eventId) return;
     TopochainChallenges._pendingDeepLink = null;
     const match = ordered.find((c) => c && Number(c.id) === want.challengeId);
-    if (match) TopochainChallenges.openChallengeDetail(match);
+    if (!match) return;
+    TopochainChallenges.openChallengeDetail(match);
+    // Reached by a history step while the Challenges tab is already showing
+    // (a card tap's own push, or forward after back): the address still
+    // names this page, so the page owns that entry exactly as a tap would.
+    //
+    // Not when another section is showing. The router resolves the link
+    // BEFORE it switches sections, and that switch replaceStates the address
+    // to #leaderboard/challenges — so a page that claimed the address here
+    // would read the rewrite as navigating away and close itself in the same
+    // event. Such a page owns no entry, like a cold arrival (whose hash the
+    // section switch rewrote before the grid was even fetched): its back disc
+    // just closes it.
+    const section = window.Leaderboard?.section;
+    if (section != null && section !== 'challenges') return;
+    const hash = `#leaderboard/challenges/${TopochainChallenges._eventId()}/${Number(match.id)}`;
+    try {
+      if (location.hash === hash) TopochainChallenges._detailHash = hash;
+    } catch (err) { /* ignore */ }
   },
 
   // ── Challenge detail overlay ─────────────────────────────────────────
 
   openChallengeDetail(challenge) {
     if (!challenge) return;
+    // Already the open page. A card tap opens the page and then pushes its
+    // address, and the router answers that push (twice: popstate and
+    // hashchange) by resolving the same challenge again; without this each
+    // answer would reset the page and refetch its participants.
+    if (TopochainChallenges._detailChallenge === challenge) return;
+    const fromGrid = !TopochainChallenges._detailChallenge;
     TopochainChallenges._detailChallenge = challenge;
     TopochainChallenges._breakdown = null;
     TopochainChallenges._breakdownError = null;
     TopochainChallenges._breakdownLoading = true;
-    // The overlay's visibility IS its descriptor now — _renderDetailOverlay
+    // The page's visibility IS its descriptor — _renderDetailOverlay
     // publishing a non-null `detail` is what used to be the
-    // classList.remove('hidden') on this line.
-    TopochainChallenges._renderDetailOverlay();
+    // classList.remove('hidden') on this line. It is a level of the screen,
+    // so it opens the way one does: pushed, with the platform header as its
+    // nav bar (the pane puts the screen's scroll at the page's top).
+    TopochainChallenges._level(() => {
+      TopochainChallenges._renderDetailOverlay();
+      TopochainChallenges._syncChrome();
+    }, fromGrid ? 'push' : 'none');
     TopochainChallenges._loadBreakdown(0);
   },
 
-  closeChallengeDetail() {
+  closeChallengeDetail(type = 'none') {
+    const wasOpen = !!TopochainChallenges._detailChallenge;
     TopochainChallenges._detailChallenge = null;
-    TopochainChallenges._store?.set({ detail: null });
+    TopochainChallenges._detailHash = null;
+    if (!wasOpen) {
+      TopochainChallenges._store?.set({ detail: null });
+      return;
+    }
+    // Back up a level: the header returns to the screen's own chrome (and the
+    // pane returns the grid to where it was scrolled).
+    TopochainChallenges._level(() => {
+      TopochainChallenges._store?.set({ detail: null });
+      TopochainChallenges._syncChrome();
+    }, type);
+  },
+
+  // A level change, animated the way Settings animates its own ('push' in,
+  // 'pop' out); 'none' applies it at once.
+  _level(fn, type) {
+    if (type && type !== 'none' && window.PlatformUI?.transition) {
+      window.PlatformUI.transition(fn, { type });
+    } else {
+      fn();
+    }
+  },
+
+  // The platform header IS the page's nav bar, as it is for a Settings section
+  // or an app's detail in Browse: while a page is open its chevron points up to
+  // the grid and its title reads "Challenge"; back on the grid the screen's
+  // own chrome returns ("Leaderboard", the house).
+  //
+  // Only while the Leaderboard is the screen on show. A page closed by a
+  // navigation AWAY must never retitle the screen being entered, and restoring
+  // the grid's chrome needs the Challenges tab to be the section showing.
+  _syncChrome() {
+    const app = window.App;
+    if (!app || typeof app.setBackIcon !== 'function' || typeof app.setHeaderTitle !== 'function') return;
+    const lb = window.Leaderboard;
+    if (lb && typeof lb.isOpen === 'function' && !lb.isOpen()) return;
+    const challenge = TopochainChallenges._detailChallenge;
+    if (challenge) {
+      // "Challenge", not the challenge's own name: the page's large title says
+      // which one, and a generic word keeps the bar short and steady.
+      app.setBackIcon('arrow', '#leaderboard/challenges');
+      app.setHeaderTitle('Challenge');
+      return;
+    }
+    // Any section: "Leaderboard" is the whole screen's title, and a page left
+    // for another tab must not keep the page's chevron and word.
+    app.setBackIcon('home');
+    app.setHeaderTitle('Leaderboard');
+  },
+
+  // The platform header's back chevron (and Escape), claimed the way Settings
+  // and Browse claim it (app.js's #back-btn chain). On the grid it declines, so
+  // the chevron's usual destination takes over. On a page:
+  //   * a page a card tap opened owns its entry: up to the grid, spending it;
+  //   * a page reached from ANOTHER place in the app — a Home challenge card,
+  //     another Leaderboard tab — goes back THERE, the rule Settings keeps for
+  //     a link from elsewhere (#1565): replacing it with the grid would strand
+  //     the viewer a level below where they started. The page closes as the
+  //     address moves off it (_onHashChange, or the screen's own exit);
+  //   * a cold arrival (a bookmark, ?shot) has nothing of ours below: up to
+  //     the grid.
+  handleBack() {
+    if (!TopochainChallenges._detailChallenge) return false;
+    const owned = !!TopochainChallenges._detailHash && location.hash === TopochainChallenges._detailHash;
+    let cameFrom = null;
+    try { cameFrom = window.App?.previousRoute?.() ?? null; } catch (err) { cameFrom = null; }
+    if (!owned && cameFrom != null && window.history?.back) {
+      window.history.back();
+      return true;
+    }
+    TopochainChallenges._backFromDetail();
+    return true;
+  },
+
+  // A card tap gives the page its own address and history entry, so the
+  // phone's back gesture (or the browser's) returns to the grid. The page is
+  // already open when the router sees the new hash. Without an event id or a
+  // numeric challenge id there is no address the router could resolve, so no
+  // entry — the page still opens, and its back disc still closes it.
+  _pushDetailHash(challenge) {
+    const eventId = TopochainChallenges._eventId();
+    const ev = eventId == null ? NaN : Number(eventId);
+    const id = Number(challenge && challenge.id);
+    if (!Number.isSafeInteger(ev) || !Number.isSafeInteger(id)) return;
+    const hash = `#leaderboard/challenges/${ev}/${id}`;
+    try {
+      if (location.hash === hash) return;
+      TopochainChallenges._detailHash = hash;
+      location.hash = hash;
+    } catch (err) { /* no history to push: the page works without it */ }
+  },
+
+  // The address moved off the page — the back gesture, the header chevron, a
+  // tab, or any other navigation. Close the page and the profile stacked on it.
+  //
+  // Judged by the address the event ARRIVED at (`newURL`), not only by
+  // location.hash: when a challenge link lands while another Leaderboard tab
+  // is showing, the router opens the page and then its section switch
+  // replaceStates the address to #leaderboard/challenges inside the same
+  // dispatch, and that rewrite is not a navigation away.
+  _onHashChange(e) {
+    const challenge = TopochainChallenges._detailChallenge;
+    if (!challenge) return;
+    let arrived = location.hash;
+    if (e && typeof e.newURL === 'string') {
+      const at = e.newURL.indexOf('#');
+      arrived = at === -1 ? '' : e.newURL.slice(at);
+    }
+    const own = `#leaderboard/challenges/${TopochainChallenges._eventId()}/${Number(challenge.id)}`;
+    if (arrived === own) return;
+    if (TopochainChallenges._detailHash && location.hash === TopochainChallenges._detailHash) return;
+    TopochainChallenges.closeUserProfile();
+    TopochainChallenges.closeChallengeDetail('pop');
+  },
+
+  // Up from the page — the header chevron (handleBack) and Escape. When the
+  // page owns a history entry, going back spends it, so the browser's own back
+  // does not land on the same grid a second time. The page closes here first
+  // rather than waiting for the hashchange, so going up never depends on that
+  // event arriving.
+  _backFromDetail() {
+    const hash = TopochainChallenges._detailHash;
+    TopochainChallenges.closeChallengeDetail('pop');
+    if (!hash || location.hash !== hash) return;
+    try {
+      window.history?.back?.();
+    } catch (err) { /* the page is closed already */ }
   },
 
   async _loadBreakdown(offset) {
@@ -633,30 +1039,66 @@ const TopochainChallenges = {
           // Points and the optional rate are ONE string, composed here: they
           // shared a single <span> in the markup this replaces, and two
           // sibling expressions in JSX are two text nodes.
-          points: e.rate != null ? `${str(e.points)} · ${str(e.rate)}%` : str(e.points),
+          points: e.rate != null
+            ? `${TopochainChallenges._pts(e.points)} · ${str(e.rate)}%`
+            : TopochainChallenges._pts(e.points),
         })),
       };
     } else {
       entries = { kind: 'empty' };
     }
 
-    // Your own contribution on this challenge, when the personalization pass
-    // has it — the same number the card shows, repeated where the detail is.
+    // Under the title, the card's own meta line: how long is left, by the
+    // card's rules (_isOpen, _deadlineOf), and an amount — what the viewer
+    // earned on a finished challenge, their points so far on an open one they
+    // have scored on, otherwise the reward on offer. The rail beneath holds the
+    // state and nothing else, as on the card.
+    const rail = TopochainChallenges._stateOf(challenge);
     const mine = TopochainChallenges._mine.get(Number(challenge.id)) || null;
-    const mineTotal = mine && Number(mine.activities_total) > 0
-      ? Number(mine.activities_total) : 0;
+    const points = mine && Number(mine.activities_total) > 0 ? Number(mine.activities_total) : 0;
+    const reward = TopochainChallenges.formatReward(cp.reward);
+    let amount = null;
+    if (rail.earned) amount = { text: rail.earned, earned: true };
+    else if (points) amount = { text: `${points.toLocaleString('en-US')} pts so far`, earned: false };
+    else if (reward) amount = { text: reward, earned: false };
+
+    const totals = (bd && bd.totals) || {};
+    const participants = Number(totals.participants) > 0 ? Number(totals.participants) : 0;
+    const totalPoints = Number(totals.total_points) > 0 ? Number(totals.total_points) : 0;
+    const loaded = bd && Array.isArray(bd.entries) ? bd.entries.length : 0;
+    // One more page (25, _loadBreakdown's limit) finishes the list: say how
+    // many that is. Beyond one page, "Show all" would promise what one tap
+    // does not deliver.
+    const remaining = participants - loaded;
 
     return {
-      label: str(cp.label || ''),
+      key: str(challenge.id),
+      // The category, uppercase on the page, beside the back disc.
+      eyebrow: cp.label ? str(cp.label) : null,
       goal: str(cp.goal || ''),
-      description: dm.description ? str(dm.description) : null,
-      mineNote: mineTotal ? `You’ve contributed ${mineTotal} pts to this.` : null,
-      requirements: dm.requirements ? str(dm.requirements) : null,
-      rewardLogic: dm.reward_logic ? str(dm.reward_logic) : null,
+      deadline: TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)
+        ? null : TopochainChallenges._deadlineOf(challenge),
+      amount,
+      // The card shows only the title, its meta line and the rail, so the page
+      // is where the task is read; before ITERATION 03 the card showed it and
+      // the overlay never needed it.
+      task: cp.task ? str(cp.task) : null,
+      // The same artwork as the card's tile, for the page's well under the task.
+      illustration: TopochainChallenges._illustrationOf(cp),
+      illustrationTone: TopochainChallenges._illustrationToneOf(cp),
+      state: rail.state,
+      stateLabel: rail.stateLabel,
+      fill: rail.fill,
+      counted: !!rail.counted,
       cta: TopochainChallenges.ctaView(dm),
-      totals: bd
-        ? `${str(bd.totals.participants)} participants · ${str(bd.totals.total_points)} points total`
-        : null,
+      description: dm.description ? str(dm.description) : null,
+      requirements: dm.requirements ? str(dm.requirements) : null,
+      scoring: dm.reward_logic ? str(dm.reward_logic) : null,
+      participants: participants
+        ? `Participants · ${participants.toLocaleString('en-US')}` : 'Participants',
+      pointsTotal: totalPoints ? `${totalPoints.toLocaleString('en-US')} pts between them` : null,
+      moreLabel: remaining > 0 && remaining <= 25
+        ? `Show all ${participants.toLocaleString('en-US')} →` : 'Show more →',
       entries,
     };
   },

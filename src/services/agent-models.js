@@ -77,7 +77,7 @@ function compareByCost(a, b) {
 }
 
 // Sanitize a raw OpenRouter model into the UI-friendly shape.
-function sanitizeModel(m, compatibility) {
+function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   const pricing = m.pricing || {};
   const params = m.supported_parameters || m.parameters || [];
   const reasoningMetadata = !Array.isArray(params) && params.reasoning;
@@ -90,9 +90,18 @@ function sanitizeModel(m, compatibility) {
   const promptPrice = pricePerMillion(pricing.prompt);
   const completionPrice = pricePerMillion(pricing.completion);
   const averagePricePerMillion = averageTokenPrice(promptPrice, completionPrice);
+  const createdSeconds = Number(m.created);
+  const createdDate = Number.isFinite(createdSeconds) && createdSeconds > 0
+    ? new Date(createdSeconds * 1000)
+    : null;
   return {
     id: m.id,
     name: m.name || m.id,
+    provider: String(m.id || '').split('/')[0] || null,
+    canonicalSlug: typeof m.canonical_slug === 'string' ? m.canonical_slug : null,
+    createdAt: createdDate && Number.isFinite(createdDate.getTime())
+      ? createdDate.toISOString()
+      : null,
     contextLength: m.context_length || null,
     maxOutputTokens: m.top_provider?.max_completion_tokens || null,
     inputPricePerMillion: promptPrice,
@@ -103,6 +112,7 @@ function sanitizeModel(m, compatibility) {
     meetsCodexMinimums: meetsStaticMinimums(m),
     supportsReasoning,
     reasoningEfforts,
+    isRecommended: recommended === true,
     compatibility: compatibility.status,
     compatibilityNote: compatibility.note || null,
   };
@@ -154,11 +164,15 @@ async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, 
   }
 
   const overlay = await loadCompatibilityOverlay(pool, 'codex_openrouter');
+  const recommendedIds = Array.isArray(config.openrouterRecommendedModels)
+    ? config.openrouterRecommendedModels
+    : [];
+  const recommendedSet = new Set(recommendedIds);
   const models = raw
     .filter((m) => m && typeof m.id === 'string' && m.id.trim())
     .map((m) => {
       const compat = overlay.get(m.id) || defaultCompatibility(m);
-      return sanitizeModel(m, compat);
+      return sanitizeModel(m, compat, { recommended: recommendedSet.has(m.id) });
     })
     .sort(compareByCost);
 

@@ -32,7 +32,7 @@
 //
 // NAMING — "panel", not "widget". home.js already owns a DIFFERENT concept
 // called "widget" (Home.widgetSectionView / #widget-strip / .widget-tile:
-// the iOS home-screen widget's pinned app grid, whose UI says "Usernode
+// the iOS home-screen widget's pinned app grid, whose UI says "Homeroom
 // widget"). Both render on this same screen, so everything here says
 // `panel`. Nothing user-facing says either: the blocks are titled by their
 // own headings.
@@ -417,25 +417,26 @@ const HomePanels = {
       Number.isFinite(Number(panel.all_total)) ? Number(panel.all_total) : 0
     );
     const expandable = expanded || rows.length < allTotal;
+    const season = HomePanels.seasonView(panel);
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
-      // Still computed, and still the one-line form of the same three fields
-      // the ring draws — it is the block's accessible summary and what the ⋮
+      // Still computed, and still the one-line form of the same counts
+      // the season progress draws — it is the block's accessible summary and what the ⋮
       // menu and the tests read. It is no longer rendered in the section
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
-      season: HomePanels.seasonView(panel),
+      season,
       onboardingNote: panel.onboarding
         ? (panel.onboarding.unlocked
           ? 'Persistent and weekly challenges are unlocked.'
-          : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
+          : 'Finish these to unlock persistent and weekly challenges.')
         : null,
       total,
       allTotal,
       expandable,
       expanded,
-      rows: rows.map((c) => HomePanels.challengeRowView(c)),
+      rows: rows.map((c) => HomePanels.challengeRowView(c, panel)),
     };
   },
 
@@ -517,6 +518,7 @@ const HomePanels = {
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
       icon,
+      illustration: app.featured_illustration || null,
       blurb: HomePanels.appBlurb(app),
       contributors: Number(app.contributor_count) || 0,
     };
@@ -568,116 +570,149 @@ const HomePanels = {
     };
   },
 
-  // Is this challenge COUNTED — "3 of 8 apps tested" — rather than a plain
-  // yes-or-no? It no longer decides whether a bar is drawn (every row draws
-  // one, see challengeRowView); it decides whether that bar has a count to
-  // print beside it and real numbers to announce.
+  // Does this challenge carry a metric with a target? With a target above one
+  // it is COUNTED — "0/8 apps tested" — and challengeRowView gives it a count
+  // and a bar from zero; a target of one is a yes-or-no and gets words.
   hasMeter(c) {
     return !!(c && c.metric && c.progress && c.progress.target != null);
   },
 
-  // TWO LINES, 56px: the well, then goal · count · reward on line one and the
-  // track on line two. Category, task, the organiser CTA and the earned-points
-  // line are deliberately absent — they don't fit at this density and all four
-  // live one tap away on the Challenges screen.
+  // The shape of a challenge illustration slug, the Challenges tab
+  // controller's ILLUSTRATION_SLUG. Spelled out rather than imported from
+  // lib/challenge-illustrations.ts: this module runs in the tests' vm with its
+  // imports stripped (tests/helpers/home-modules.js), and a row needs only
+  // the shape — the card resolves the slug (a built-in by membership, an
+  // upload by its `u-` slug).
+  ILLUSTRATION_SLUG: /^[a-z0-9][a-z0-9-]{0,63}$/,
+  // The shape of an uploaded illustration's tone, the controller's
+  // ILLUSTRATION_TONE, spelled out for the same reason; the registry decides
+  // whether it is one of its TONES.
+  ILLUSTRATION_TONE: /^[a-z]{3,10}$/,
+
+  // ONE CARD ON BOTH SURFACES. Home's Challenges block draws the Challenges
+  // tab's card (features/leaderboard/challenge-card.tsx), so a row carries the
+  // descriptor that tab's controller builds: the rail's state, its one short
+  // label, its fill, and "Earned N pts" on a finished challenge the viewer
+  // scored on. The words are the tab's ("Not started", "3/8 apps tested",
+  // "Started", "Done"), composed here so a number and its unit stay one text
+  // node. Progress is this payload's own — resolveProgress on the server,
+  // which reads snapshot blocks — so "Not started" is a counted fact here.
+  // The card is the title, its deadline and the rail only: the organiser CTA,
+  // the category and the task stay off it, and all three are a tap away on
+  // the Challenges tab.
   //
-  // EVERY ROW HAS A METER. A yes-or-no challenge gets a two-state one — 0 of 1
-  // or 1 of 1 — so the list is one repeated shape rather than some rows with a
-  // bar and some rows with a gap where a bar would be. `binary` is what tells
-  // the row not to print "1/1" beside it: the ✓ and the full track already say
-  // it, and a count on a challenge that was never counted is noise.
-  challengeRowView(c) {
+  // A COUNTED challenge (a target above one) shows its count and bar from
+  // zero — "0/3 Apps tried" — so a challenge with steps never reads as the
+  // plain "Not started" of a yes-or-no one.
+  //
+  // The DEADLINE is the row's `ends_at` — its own schedule_end, else its
+  // event's end, the same date the Challenges tab uses — else the season's
+  // end; none on a finished or not-open challenge. It stays on every open card
+  // until deadline bands group the challenges by when they end.
+  challengeRowView(c, panel) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
-    const current = numeric ? (Number(c.progress.current) || 0) : (done ? 1 : 0);
-    const target = numeric ? Number(c.progress.target) : 1;
+    const target = numeric ? Number(c.progress.target) : null;
+    const current = numeric ? Math.max(0, Number(c.progress.current) || 0) : 0;
+    const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
+    let rail;
+    if (done) {
+      rail = { state: 'done', stateLabel: 'Done', fill: 1, counted: false };
+    } else if (numeric && target > 1) {
+      const count = Math.min(current, target);
+      const unit = c.metric.label ? ` ${c.metric.label}` : '';
+      rail = {
+        state: count > 0 || points ? 'progress' : 'new',
+        stateLabel: `${count}/${target}${unit}`,
+        fill: count / target,
+        counted: true,
+      };
+    } else if (points) {
+      rail = { state: 'progress', stateLabel: 'Started', fill: null, counted: false };
+    } else {
+      rail = { state: 'new', stateLabel: 'Not started', fill: 0, counted: false };
+    }
+    const eventId = Number(c.season_event_id);
     return {
       id: String(c.id),
-      // The card's picture, from the challenge's KIND (see challenge_kinds.icon
-      // in schema.sql — one setting gives every challenge of a kind the same
-      // face). Null on a kind that has none, and on a template with no kind,
-      // which is what the category below is the fallback for.
+      // The event the challenge belongs to, for the card's deep link to its
+      // page on the Challenges tab (goToChallenge); null without one.
+      eventId: Number.isSafeInteger(eventId) && eventId > 0 ? eventId : null,
+      // The kind's icon (challenge_kinds.icon — one setting gives every
+      // challenge of a kind the same face), the tile's fallback when the
+      // template names no illustration the registry resolves or its artwork fails
+      // to load. Null on a kind that has none; with no artwork either, the
+      // tile is then an empty neutral face.
       icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
-      // The organiser's category, upper-cased — the fallback the well draws
-      // when there is no icon. Free text on the template (a VARCHAR, not an
-      // enum), so it is normalised here and capped: the well is a 62px square
-      // and a 50-character category would fill the card with a word.
-      label: String(c.label || 'OTHER').toUpperCase().slice(0, 18),
+      // The template's illustration, which the tile draws in place of the
+      // icon when the registry resolves it; null without one or when malformed.
+      illustration: typeof c.illustration === 'string' && HomePanels.ILLUSTRATION_SLUG.test(c.illustration)
+        ? c.illustration : null,
+      // An uploaded illustration's tone (null for a built-in, which has its
+      // own); the tile draws an upload on gray without a tone it knows.
+      illustrationTone: typeof c.illustration_tone === 'string' && HomePanels.ILLUSTRATION_TONE.test(c.illustration_tone)
+        ? c.illustration_tone : null,
       goal: String(c.goal || ''),
-      // The task is the row's tooltip — the one place the dropped detail still
-      // surfaces without costing height.
-      tip: c.task ? `${c.goal || ''}: ${c.task}` : (c.goal || ''),
       done,
-      reward: HomePanels.formatReward(c.reward),
-      meter: {
-        current,
-        target,
-        label: (numeric && c.metric.label) ? ` ${c.metric.label}` : '',
-        // A binary challenge is 0 or 100 by construction; progressPercent
-        // would answer the same thing, and does, but saying so here is what
-        // keeps a target of 1 from looking like a coincidence.
-        pct: numeric ? HomePanels.progressPercent(current, target) : (done ? 100 : 0),
-        binary: !numeric,
-      },
+      reward: HomePanels.formatReward(c.reward) || null,
+      ...rail,
+      // No countdown on a finished challenge, nor on one the expanded list
+      // carries while it is not open (organiser-closed, or outside its
+      // window). `ends_at` is the challenge's own end, else its event's.
+      deadline: done || c.open === false ? null
+        : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
+      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
     };
   },
 
-  // ── The season ring ────────────────────────────────────────────────
+  // ── The season progress ────────────────────────────────────────────
   //
-  // The counter that used to ride the section HEADING as "· 1 of 6 · 3,900 pts
-  // left", drawn as a ring at the top of the card instead. Two reasons it
-  // moved. The heading already carries the area's name, the leaderboard link
-  // and the ⋮, and 15px of counter after all that pushed the label into an
-  // ellipsis on a phone — its own comment said so. And the fact it states is
-  // the one a challenges block exists to state, which makes it content rather
-  // than chrome.
+  // "3/9 done in Season 2" over one segment per challenge, drawn by
+  // features/leaderboard/season-progress.tsx: the component the Leaderboard
+  // screen's Challenges tab opens on too, so the season reads the same on
+  // both. It replaced a ring with a points lead and a count under it, which
+  // took three lines to say what the segments say in one.
   //
-  // Everything here comes off the panel payload: `done`, `total` and
-  // `points_remaining` are the same three fields summaryLine reads. Nothing is
-  // invented — there is no season NAME on this payload, so the ring says how
-  // far through the set you are and what is still on the table, which is what
-  // a viewer opens the block to find out.
+  // The scope is the season (the payload's own `done` of `total`), except
+  // while setup gates the rest: the block then holds only the setup
+  // challenges, so the progress is setup's ("done in Get started"), the
+  // board's "progress has a scope" rule. Deadlines and points stay on the
+  // cards.
   seasonView(panel) {
     const total = Number(panel && panel.total) || 0;
     if (!total) return null;
-    const done = Math.max(0, Math.min(total, Number(panel.done) || 0));
-    const remaining = panel && panel.points_remaining;
-    const hasPoints = typeof remaining === 'number'
-      && Number.isFinite(remaining) && remaining > 0;
-    const counted = `${done} of ${total} challenges done`;
+    const gate = panel.onboarding;
+    if (gate && !gate.unlocked && Number(gate.total) > 0) {
+      const t = Number(gate.total);
+      return {
+        done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
+        total: t,
+        caption: 'done in Get started',
+      };
+    }
+    const name = panel.season && typeof panel.season.name === 'string'
+      ? panel.season.name.trim() : '';
     return {
-      pct: HomePanels.progressPercent(done, total),
-      fraction: `${done}/${total}`,
-      // The points lead when there are any: "what is left to win" is the
-      // motivating number, and the ring is already showing the fraction.
-      lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
-      sub: hasPoints ? counted : null,
-      deadline: HomePanels.seasonDeadline(panel),
-      label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
+      done: Math.max(0, Math.min(total, Number(panel.done) || 0)),
+      total,
+      caption: name ? `done in ${name}` : 'done',
     };
   },
 
-  // How long the SEASON has left, as the cards say it: "7 days left".
-  // Every open challenge in a season ends when the season does, so this is
-  // one fact about the block rather than a field on each row — which is why
-  // it is stated beside the ring and, on a yes-or-no challenge, in the pill
-  // that has no progress to show.
-  //
-  // Rounded UP, so the last 23 hours read "1 day left" rather than "0";
-  // under an hour reads "Ends today", and a season already past its end
-  // returns null rather than a negative count (the panel is only built for a
-  // running season, so that is a clock skew case, not a state).
-  seasonDeadline(panel) {
-    const raw = panel && panel.season && panel.season.ends_at;
+  // An end date as the cards say it, in the board's short form: whole days
+  // rounded UP ("5d left"; 23.5 hours is "1d left"), hours under a day ("7h
+  // left", at least "1h left"), and null once past or unparseable rather than
+  // a negative count — the panel is only built for a running season, so that
+  // is a clock skew case, not a state. The Challenges tab says the same words
+  // (TopochainChallenges._timeLeft); both test files pin one table.
+  timeLeft(raw) {
     if (!raw) return null;
     const ends = Date.parse(raw);
     if (!Number.isFinite(ends)) return null;
     const ms = ends - Date.now();
     if (ms <= 0) return null;
-    const hours = ms / 3600000;
-    if (hours < 1) return 'Ends today';
-    const days = Math.ceil(hours / 24);
-    return days === 1 ? '1 day left' : `${days} days left`;
+    const hours = Math.ceil(ms / 3600000);
+    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -686,12 +721,28 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
-  // The Challenges heading's "Open leaderboard". The Topochain standings ARE
-  // the Leaderboard screen's primary tab, so they address as the bare hash;
-  // `kind` survives because the ⋮ menu's own row still passes one, and it is
-  // the same real hash navigation as goToChallenges, so the device back
-  // gesture returns home. (It used to be the standings PREVIEW's destination
-  // too, on whichever board that preview had drawn; the preview is gone.)
+  // A challenge CARD opens that challenge's own page, not the list: the
+  // Challenges tab's deep link, #leaderboard/challenges/<event>/<challenge>.
+  // Real hash navigation for the same reason as goToChallenges, and that page's
+  // back chevron returns here. A row with no event id (a demo row) has no
+  // address the tab could resolve, so it lands on the list instead.
+  goToChallenge(eventId, challengeId) {
+    const ev = Number(eventId);
+    const ch = Number(challengeId);
+    if (!Number.isSafeInteger(ev) || ev <= 0 || !Number.isSafeInteger(ch) || ch <= 0) {
+      HomePanels.goToChallenges();
+      return;
+    }
+    location.hash = `#leaderboard/challenges/${ev}/${ch}`;
+  },
+
+  // The Leaderboard screen's standings tab. The Topochain standings ARE the
+  // screen's primary tab, so they address as the bare hash; `kind` survives
+  // because the ⋮ menu's own row still passes one, and it is the same real
+  // hash navigation as goToChallenges, so the device back gesture returns
+  // home. (The Challenges heading's link used to come here as "Open
+  // leaderboard"; since #1916 it reads "Open challenges" and goes through
+  // goToChallenges instead.)
   goToLeaderboard(kind) {
     location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
   },

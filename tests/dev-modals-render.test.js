@@ -63,12 +63,12 @@ function makeAppView(opts) {
     },
     Settings: { state: { hasApiKey: false } },
     BuildVenues: o.venue === false ? undefined
-      : { venue: () => ({ label: 'Usernode', blurb: 'Runs on the platform.' }) },
+      : { venue: () => ({ label: 'Homeroom', blurb: 'Runs on the platform.' }) },
     DevChat: {
       modelOptionText: (m) => `${m.id} — 40-60%`,
       modelNoteText: (m) => `${m.id} does medium changes`,
       MODEL_GUIDANCE_TOOLTIP: 'How to read these',
-      _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)`,
+      _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)${m.isRecommended ? ' · Recommended' : ''}`,
       _openRouterModelCostSummary: (m) => `${m.id} costs $1/Mtok`,
       _openRouterModelCompatibilitySummary: () => 'Tool use supported',
     },
@@ -110,6 +110,16 @@ const autoHtml = (view) => {
   m.autoSessionModalStore.set({ view });
   return renderToHtml(createElement(m.AutoSessionModal));
 };
+const pickerHtml = (view, selectedId = view.preselect) => {
+  const m = mod();
+  return renderToHtml(createElement(m.AutoSessionModelPicker, {
+    view,
+    selectedId,
+    onBack: () => {},
+    onCancel: () => {},
+    onUse: () => {},
+  }));
+};
 const creditsHtml = (view) => {
   const m = mod();
   m.creditOptionsModalStore.set({ view });
@@ -121,62 +131,128 @@ const consentHtml = (view) => {
   return renderToHtml(createElement(m.LlmConsentModal));
 };
 
-const MODELS = [{ id: 'opus' }, { id: 'sonnet' }];
+const MODELS = [
+  { id: 'opus', label: 'Opus', changeSize: { short: 'general coding work' } },
+  { id: 'sonnet', label: 'Sonnet', changeSize: { short: 'simple, small changes' } },
+];
 
 // ── Generate proposal ───────────────────────────────────────────────────
 
-test('the Generate-proposal dialog names the issue, the venue and the models', () => {
+test('the Generate-proposal dialog is a short summary of the issue, model and billing', () => {
   const { AppView, published } = makeAppView();
   AppView._showAutoSessionModal(42, MODELS, 'sonnet');
   const view = lastView(published);
   assert.equal(view.issueNumber, 42);
-  assert.equal(view.pickerLabel, 'Chat model');
   assert.equal(view.preselect, 'sonnet');
+  assert.equal(view.billingNote, 'Uses your available Usernode credits.');
   assert.deepEqual(view.options.map((o) => o.id), ['opus', 'sonnet']);
 
   const html = autoHtml(view);
   assert.match(html, /Generate proposal for issue #42\?/);
-  assert.match(html, /headless AI session/);
-  assert.match(html, /Building in <b>Usernode<\/b>/, 'the venue is named before you confirm');
-  assert.match(html, /id="auto-session-model"/);
-  assert.match(html, /<option value="opus">opus — 40-60%<\/option>/);
-  assert.match(html, /selected/, 'the preselected model is the one selected');
-  assert.match(html, /Experimental/);
+  assert.match(html, /inspect the issue and repository, then create a proposal for review/);
+  assert.match(html, />Sonnet</);
+  assert.match(html, /simple, small changes/);
+  assert.match(html, /Uses your available Usernode credits/);
+  assert.match(html, />Change model</);
+  assert.doesNotMatch(html, /Experimental|Building in|billed to you/);
+  assert.doesNotMatch(html, /<select|type="search"|Favorites|Refresh/,
+    'the catalog controls stay out of the normal confirmation');
 });
 
-test("the picker's caption is the SELECTED model's, with its tooltip", () => {
+test('the OpenRouter summary is concise and accurately names a managed or personal payer', () => {
   const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'sonnet');
+  const models = [{
+    id: 'z-ai/glm-5.3-flash',
+    name: 'GLM 5.3 Flash',
+    provider: 'z-ai',
+    costTier: 'low',
+    isRecommended: true,
+    isFavorite: true,
+  }];
+  AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter', openrouterCredentialSource: 'usernode_managed',
+  });
   const view = lastView(published);
-  // #800: each option carries its own resolved caption, so the change
-  // handler that used to rewrite one <p> is component state.
-  assert.equal(view.options[1].note, 'sonnet does medium changes');
-  assert.equal(view.options[1].noteTitle, 'How to read these');
+  assert.equal(view.options[0].name, 'GLM 5.3 Flash');
+  assert.equal(view.options[0].summary, 'Recommended · Low cost');
+  assert.equal(view.options[0].isRecommended, true);
+  assert.equal(Object.hasOwn(view.options[0], 'isFavorite'), false,
+    'favorites are not part of this dialog');
+  assert.equal(view.billingNote, 'Uses your included OpenRouter credits.');
+  assert.equal(view.personalOpenRouterKey, false);
   const html = autoHtml(view);
-  assert.match(html, /id="auto-session-model-note"[^>]*title="How to read these"/);
-  assert.match(html, /sonnet does medium changes/);
-  assert.doesNotMatch(html, /opus does medium changes/, 'only the selected one is shown');
+  assert.match(html, /Uses your included OpenRouter credits/);
+  assert.doesNotMatch(html, /OpenRouter model|\$1\/Mtok|unverified|Experimental/);
+  assert.doesNotMatch(pickerHtml(view), /Using your own OpenRouter key|Review privacy settings/,
+    'company keys do not show personal-account guidance');
+
+  const personal = makeAppView();
+  personal.AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter', openrouterCredentialSource: 'personal',
+  });
+  const personalView = lastView(personal.published);
+  assert.equal(personalView.billingNote, 'Uses your OpenRouter account.');
+  assert.equal(personalView.personalOpenRouterKey, true);
+  const personalPicker = pickerHtml(personalView);
+  assert.match(personalPicker, /Using your own OpenRouter key/);
+  assert.match(personalPicker, /Model availability follows your OpenRouter privacy settings/);
+  assert.match(personalPicker, /href="https:\/\/openrouter\.ai\/settings\/privacy"/);
+  assert.match(personalPicker, /Review privacy settings/);
 });
 
-test('the OpenRouter branch swaps the copy, the label and the caption source', () => {
+test('the model chooser starts with recommendations and search uses the full catalog', () => {
   const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'opus', { provider: 'openrouter' });
+  const models = [
+    {
+      id: 'z-ai/glm-5.3-flash',
+      name: 'GLM 5.3 Flash',
+      provider: 'z-ai',
+      costTier: 'low',
+      isRecommended: true,
+    },
+    {
+      id: 'openai/gpt-6-astra',
+      name: 'GPT-6 Astra',
+      provider: 'openai',
+      canonicalSlug: 'openai/gpt-6-astra',
+      costTier: 'high',
+      isFavorite: false,
+    },
+  ];
+  AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter',
+  });
   const view = lastView(published);
-  assert.equal(view.pickerLabel, 'OpenRouter model');
-  assert.equal(view.options[0].label, 'opus (openrouter)');
-  assert.equal(view.options[0].note, 'opus costs $1/Mtok. Tool use supported');
-  assert.equal(view.options[0].noteTitle, '', 'the Claude guidance tooltip is Claude-only');
-  const html = autoHtml(view);
-  assert.match(html, /does not use platform Claude credits/);
-  assert.doesNotMatch(html, /headless AI session/);
+
+  assert.equal(view.openRouter, true);
+  assert.equal(view.options[0].isRecommended, true);
+  assert.match(view.options[1].searchText, /GPT-6 Astra openai\/gpt-6-astra openai/);
+
+  const initial = mod().proposalModelMatches(view.options, '', view.preselect, true);
+  assert.deepEqual(initial.map((option) => option.id), ['z-ai/glm-5.3-flash'],
+    'an empty search is the recommended shortlist');
+  const searched = mod().proposalModelMatches(view.options, 'gpt', view.preselect, true);
+  assert.deepEqual(searched.map((option) => option.id), ['openai/gpt-6-astra'],
+    'typing searches non-recommended, non-favorite models in the full catalog');
+
+  const html = pickerHtml(view);
+  assert.match(html, /Choose a model/);
+  assert.match(html, /placeholder="Search all available models…"/);
+  assert.match(html, /GLM 5\.3 Flash/);
+  assert.doesNotMatch(html, /GPT-6 Astra/, 'the broad catalog stays behind search');
+  assert.doesNotMatch(html, /Favorites|Refresh|\$0\.07|unverified/);
 });
 
-test('no build-venues module leaves the venue line empty rather than broken', () => {
-  const { AppView, published } = makeAppView({ venue: false });
-  AppView._showAutoSessionModal(42, MODELS, 'opus');
-  const view = lastView(published);
-  assert.equal(view.venue, null);
-  assert.doesNotMatch(autoHtml(view), /Building in/);
+test('a saved non-recommended model remains visible before searching', () => {
+  const options = [
+    { id: 'recommended', name: 'Recommended', summary: 'Recommended', searchText: 'recommended', isRecommended: true },
+    { id: 'current', name: 'Current', summary: 'High cost', searchText: 'current' },
+    { id: 'hidden', name: 'Hidden', summary: 'Low cost', searchText: 'hidden' },
+  ];
+  assert.deepEqual(
+    mod().proposalModelMatches(options, '', 'current', true).map((option) => option.id),
+    ['recommended', 'current'],
+  );
 });
 
 test('the dialog resolves through the named calls its buttons dispatch', async () => {
@@ -339,4 +415,151 @@ test('Not now resolves null', async () => {
   const pending = AppView.showLlmConsentModal(CONSENT());
   AppView._llmConsentDecline();
   assert.equal(await pending, null);
+});
+
+// ── The relay that opens it (#1909) ─────────────────────────────────────
+//
+// Nothing on the Dev screen opens this dialog: it is reached ONLY from an
+// app's own `usernode.requestLlmAccess()`, relayed by
+// `handleLlmBridgeMessage`. Every case above renders a card that was
+// already asked for, so a relay that never asks is invisible to all of
+// them — which is how "Recipe bot requests permission with no visible
+// prompt" survived: the relay gated on a hand-written two-frame allow-list
+// while the shell owns THREE app frames, so a request from the landing
+// viewer was dropped before the ack and the app was told, 15 seconds
+// later, that it was not running inside the platform at all.
+//
+// These drive the real handler over the real dialog, so the assertion is
+// "the card is published", not "the source text still says so".
+
+/** An owned frame in the stub document, posting back into `posted`. */
+function ownedFrame(sandbox, id, posted) {
+  const frame = fakeNode();
+  frame.id = id;
+  frame.contentWindow = { postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) };
+  sandbox.document._byId[id] = frame;
+  return frame;
+}
+
+/** The bootstrap `GET /api/apps/:slug/llm-grant` the relay awaits. */
+function stubBootstrap(sandbox, { status = 200, body = null } = {}) {
+  const seen = [];
+  sandbox.fetch = async (url, init) => {
+    seen.push(url);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => (body || { app: { name: 'RecipeBot', slug: 'recipe-bot' }, ...CONSENT() }),
+    };
+  };
+  return seen;
+}
+
+/** Post one `__usernode_llm` message and let the relay's awaits settle. */
+async function ask(AppView, source, type = 'request-access', id = 'llm-1') {
+  AppView.handleLlmBridgeMessage({ data: { __usernode_llm: type, id }, source });
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+test('an app in the App tab gets the consent card, as it always has', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-iframe', posted);
+  stubBootstrap(sandbox);
+  AppView.appData = { slug: 'recipe-bot', name: 'RecipeBot', status: 'running' };
+
+  await ask(AppView, frame.contentWindow);
+  assert.equal(posted[0].__usernode_llm, 'ack', 'the bridge must stop its no-shell timer');
+  assert.equal(published.at(-1).kind, 'consent');
+  assert.match(lastView(published).intro, /spend from your daily AI budget/);
+});
+
+test('an app in the landing viewer gets the same card, not silence', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted);
+  stubBootstrap(sandbox);
+  // The landing screen has no `appData` — the viewer's app is recorded where
+  // its document starts loading, which is the cover mount.
+  const timers = [];
+  AppView.mountViewerCover(
+    { classList: { add() {} }, insertAdjacentHTML() {} },
+    frame,
+    { slug: 'recipe-bot', name: 'RecipeBot' },
+    { timers, isCurrent: () => false },
+  );
+  assert.equal(AppView.appData, null, 'the App tab record is genuinely absent here');
+
+  await ask(AppView, frame.contentWindow);
+  timers.forEach(clearTimeout);
+  assert.equal(posted[0].__usernode_llm, 'ack');
+  assert.equal(published.at(-1).kind, 'consent', 'the grant/deny card, on the surface that asked');
+  assert.equal(lastView(published).appName, 'RecipeBot');
+});
+
+test('a recognised request is always answered, even when the app cannot be named', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted);
+  stubBootstrap(sandbox);
+  // No cover mount: nothing in the shell knows which app this frame holds.
+  await ask(AppView, frame.contentWindow);
+  assert.equal(posted[0].__usernode_llm, 'ack');
+  assert.equal(posted[1].__usernode_llm, 'response');
+  assert.match(posted[1].error, /could not be identified/);
+  assert.equal(published.length, 0, 'and no empty dialog is opened over the app');
+});
+
+test('a signed-out visitor is told to sign in, not that something failed', async () => {
+  const { AppView, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted);
+  // The bootstrap is session-authenticated; the landing viewer is the one
+  // owned frame an anonymous visitor can reach.
+  stubBootstrap(sandbox, { status: 401 });
+  AppView.mountViewerCover(
+    { classList: { add() {} }, insertAdjacentHTML() {} },
+    frame,
+    { slug: 'recipe-bot', name: 'RecipeBot' },
+    { timers: [], isCurrent: () => false },
+  );
+  await ask(AppView, frame.contentWindow);
+  assert.match(posted.at(-1).error, /Sign in/);
+});
+
+test('a window this shell does not own is still ignored entirely', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  ownedFrame(sandbox, 'app-iframe', posted);
+  stubBootstrap(sandbox);
+  AppView.appData = { slug: 'recipe-bot' };
+
+  await ask(AppView, { postMessage: (m) => posted.push(m) });
+  assert.deepEqual(posted, [], 'no ack, no reply — the gate is not widened to any frame');
+  assert.equal(published.length, 0);
+});
+
+test('the read-only queries answer from the landing viewer too', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted);
+  stubBootstrap(sandbox, {
+    body: {
+      app: { name: 'RecipeBot', slug: 'recipe-bot' },
+      grant: { status: 'active', dailyCapCents: 250, allowByok: false, spentTodayCents: 12 },
+      maxCapCents: 2500,
+    },
+  });
+  AppView.mountViewerCover(
+    { classList: { add() {} }, insertAdjacentHTML() {} },
+    frame,
+    { slug: 'recipe-bot', name: 'RecipeBot' },
+    { timers: [], isCurrent: () => false },
+  );
+
+  await ask(AppView, frame.contentWindow, 'get-usage');
+  assert.deepEqual(posted.at(-1).value, {
+    granted: true, spentCentsToday: 12, dailyCapCents: 250,
+  });
+  assert.equal(published.length, 0, 'the usage meter never opens the dialog');
 });

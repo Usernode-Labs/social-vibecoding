@@ -105,6 +105,7 @@ const CHROME = process.env.CHROME_PATH
  * un-converted section's own `innerHTML` would report as a violation.
  */
 const OWNED = [
+  { sel: '#dc-launchpad-slot [data-launchpad="own-tools-pr"]' }, // #1891: shared React guide
   { sel: '[data-account-email-form]', when: '#settings/email' },
   // `#home-grid-overlay` is appended into this host by home.js during a drag,
   // which this sweep never performs and so never sees. It is a deliberate
@@ -122,6 +123,10 @@ const OWNED = [
   { sel: '#home-discover-section' },         // features/home/panels/sections.tsx
   { sel: '#home-challenges-section' },       // ditto
   { sel: '#home-create-section' },           // ditto
+  // The Challenges pane (features/leaderboard/challenges-pane.tsx). Scoped to
+  // its route: #challenges-root is only mounted — and only React's — while the
+  // Leaderboard screen's Challenges tab is the section on screen.
+  { sel: '#challenges-root', when: '#leaderboard/challenges' },
   // The transcript (features/group-chat/transcript.tsx). A vote row's inline
   // controls are the one exception, and they are the controller-host seam
   // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
@@ -233,6 +238,9 @@ const OWNED = [
     sel: '#gc-thread-head',
     except: [
       '[data-transcript-body]', '[data-kudos-host]', '#dev-issue-comments',
+      // The change card's tabs give the existing chat controllers their
+      // own empty hosts. Their React subtrees are audited separately below.
+      '[data-change-discussion]', '[data-change-workspace]',
       // saveIssueTitle writes the error line by id while the editor is open.
       '#dev-issue-title-error',
     ],
@@ -323,8 +331,10 @@ const OWNED = [
 ];
 
 const ROUTES = [
+  '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
+  '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree

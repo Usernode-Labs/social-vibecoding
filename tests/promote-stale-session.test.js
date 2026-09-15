@@ -96,7 +96,8 @@ function makeHarness() {
     clearInterval: () => {},
     setTimeout: () => 0,
     clearTimeout: () => {},
-    document,
+    document, location: { search: '' }, URLSearchParams,
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } }, dispatchEvent() {},
     localStorage,
     AbortController,
     fetch: async () => ({ ok: false, status: 500, json: async () => ({}) }),
@@ -126,6 +127,9 @@ function makeHarness() {
   sandbox.globalThis = sandbox;
 
   vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8') + '\n;globalThis.AppView = AppView;', sandbox);
+  sandbox.AppView._renderTopicHead = () => {};
+  sandbox.AppView._loadDevData = async () => {};
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 
@@ -134,6 +138,10 @@ function makeHarness() {
   let renders = 0;
   DevChat.renderMessages = () => { renders += 1; };
   DevChat.scrollToBottom = () => {};
+  DevChat._publishDevView = () => {};
+  DevChat._publishTranscript = () => { renders += 1; };
+  DevChat.renderChatView = () => { renders += 1; };
+  DevChat._testActions = sandbox.AppView._changeActions;
 
   return { DevChat, sandbox, document, alerts, warns, renderCount: () => renders };
 }
@@ -165,7 +173,7 @@ const SESSION_ID = 42;
 // transcript's row model (`DevChat._proposing`, keyed by session), because
 // `renderMessages` runs on every 3s status poll and a repaint mid-request
 // would have restored the label and cleared the re-entry guard.
-const proposing = (DevChat) => DevChat._proposing;
+const proposing = (DevChat) => DevChat._testActions.has(SESSION_ID) ? SESSION_ID : null;
 
 test('navigate-away success: no alert, nothing throws', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
@@ -280,6 +288,6 @@ test('non-JSON error body while current shows the generic message, not "Network 
   net.resolveErr(502 /* HTML body → res.json() throws */);
   await done;
 
-  assert.deepEqual(alerts, ['Failed to promote'], 'proxy HTML body no longer masquerades as a network error');
+  assert.deepEqual(alerts, ['The action could not be completed.'], 'proxy HTML body no longer masquerades as a network error');
   assert.equal(proposing(DevChat), null, 'button restored');
 });

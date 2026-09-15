@@ -117,7 +117,39 @@ async function attachForkLineage(pool, apps) {
 // helper is spread across every row of the home feed and a per-row
 // query would be N round-trips. Omitting it just means "no app-admin
 // rights", which is the correct fallback for an anonymous viewer.
-function accessFlags(app, user, isCollaborator, adminAppIds = null) {
+// #2161: the platform's own row (SELF-HOSTING.md: apps.self_hosted = TRUE,
+// slug = config.selfAppSlug) is a core app. Nobody deletes it from the UI,
+// full admins included: tearing down the row that IS the deployment is an
+// operator task, not a danger-zone click. `selfAppSlug` is the second signal
+// because a staging clone's platform row may predate the self_hosted seed.
+function isCoreApp(app, selfAppSlug = null) {
+  if (!app) return false;
+  if (app.self_hosted === true) return true;
+  return !!selfAppSlug && app.slug === selfAppSlug;
+}
+
+// Why this viewer cannot delete this app right now, or null when they can.
+//   'core'      — the platform's own app (see isCoreApp); blocks everyone.
+//   'shared'    — the creator asked, but the app has other contributors, so
+//                 no one person may destroy it (#1897, #2161).
+//   'not_owner' — neither a full admin nor the creator (or the contributor
+//                 count could not be established, which fails closed).
+// Full admins keep their operational override on shared apps, but the DELETE
+// route makes them acknowledge the other contributors explicitly.
+function deleteBlockReason(app, user, contributorCount, selfAppSlug = null) {
+  if (isCoreApp(app, selfAppSlug)) return 'core';
+  if (user?.canAdminWrite) return null;
+  if (user?.id == null || app?.created_by !== user.id) return 'not_owner';
+  if (Number(contributorCount) === 1) return null;
+  return Number(contributorCount) > 1 ? 'shared' : 'not_owner';
+}
+
+function canDeleteApp(app, user, contributorCount, selfAppSlug = null) {
+  return deleteBlockReason(app, user, contributorCount, selfAppSlug) === null;
+}
+
+function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorCount = null,
+  selfAppSlug = null) {
   const isAdmin = !!user?.isAdmin;
   // `can_collaborate` is a visibility/read affordance → stays on isAdmin
   // (view-only admins keep it). `can_manage` gates mutating management
@@ -130,6 +162,13 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null) {
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
+    // Deletion is deliberately narrower than general app management. App
+    // admins can manage settings, but only a full platform admin or the
+    // creator while they remain the app's ONE contributor may destroy it.
+    can_delete: canDeleteApp(app, user, contributorCount, selfAppSlug),
+    // The reason can_delete is false ('core' | 'shared' | 'not_owner'), so
+    // the settings dialog can say why instead of only hiding the control.
+    delete_block: deleteBlockReason(app, user, contributorCount, selfAppSlug),
   };
 }
 
@@ -358,7 +397,7 @@ function isPlatformRepo(parsed, config) {
 function refuseIfSelfHosted(app, res) {
   if (!app || !app.self_hosted) return false;
   res.status(403).json({
-    error: 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
+    error: 'The Homeroom platform deploys via GitHub Actions; this action does not apply to the self-app row.',
   });
   return true;
 }
@@ -800,9 +839,10 @@ function appRoutes(config) {
           || (req.user?.id != null && a.created_by === req.user.id);
         const lf = (canSeeFailure && a.last_failure && typeof a.last_failure === 'object')
           ? a.last_failure : null;
+        const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
-          contributor_count: contributorCounts.get(a.id) || 0,
+          contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -825,7 +865,8 @@ function appRoutes(config) {
           merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
-          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds),
+          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
+            config.selfAppSlug),
         };
       }));
       // Resolve fork lineage (live source-name lookup, "<deleted>"
@@ -1210,8 +1251,14 @@ function appRoutes(config) {
       const phaseEntry = appRow.status === 'creating'
         ? appCreationPhase.read(appRow.slug) : null;
 
+      const [adminAppIds, contributorCounts] = await Promise.all([
+        appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
+        contributors.loadContributorCounts(pool, [appRow.id]),
+      ]);
+      const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        contributor_count: contributorCount,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
@@ -1219,8 +1266,11 @@ function appRoutes(config) {
         url,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
-        ...accessFlags(appRow, req.user, isCollaborator,
-          await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
+        // The whole-tree verdict under direct merges (services/main-watch.js):
+        // is main green, and are this app's merges paused because it is not?
+        mainCheck: require('../services/main-watch').describe(appRow),
+        ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
+          config.selfAppSlug),
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
@@ -2126,6 +2176,30 @@ function appRoutes(config) {
     }
   });
 
+  // Resume merges while main's unit suite is red (services/main-watch.js).
+  // The pause is the safety net under direct merges — a merge commit whose
+  // suite failed stops every further merge on the app until a fix lands.
+  // This is the admin's "I know, let them through": it applies to exactly
+  // the red sha the app is paused on, so the next red is a new pause. The
+  // cheaper way out is still to merge the fix; this is for when the red is
+  // a flake, an unrelated breakage, or the fix IS the proposal waiting.
+  router.post('/api/apps/:slug/main-check/resume', drainGuard, async (req, res) => {
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
+    try {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const mainWatch = require('../services/main-watch');
+      const resumed = await mainWatch.resume(config, pool, rows[0].id, { by: req.user });
+      if (!resumed) {
+        return res.status(409).json({ error: 'Merges are not paused for this app' });
+      }
+      res.json({ ok: true, mainCheck: resumed });
+    } catch (err) {
+      log.error('apps', 'Main-check resume failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Propose a visibility change (issue #124). The two statuses live in
   // dapp.json's top-level `visibility` block, so changing them is a
   // manifest-editing PR — same lifecycle as a rename: the PR drops into
@@ -2614,13 +2688,85 @@ function appRoutes(config) {
     }
   });
 
-  // Delete an app (admin only)
+  // Delete an app. Full admins retain the operational override; otherwise
+  // the app's creator may delete it only while they are its sole contributor.
+  // The contributor count is read at mutation time (not trusted from the
+  // list/detail payload) so a newly accepted member or merged author closes
+  // the gate before any destructive teardown starts.
+  //
+  // #2161 adds three checks in front of the teardown, in this order:
+  //   1. a core app (isCoreApp) is never deletable here, admins included;
+  //   2. the typed app name is verified HERE, not only in the dialog, so a
+  //      bare request cannot skip the confirmation the UI asks for;
+  //   3. a shared app (other contributors exist) refuses a plain delete. The
+  //      creator is turned away outright; a full admin must send
+  //      acknowledge_shared:true, and the other contributors are notified of
+  //      the attempt either way, and of the deletion when it goes through.
+  //      The vote-backed path for shared apps is request #1898.
   router.delete('/api/apps/:slug', async (req, res) => {
-    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+
+      if (isCoreApp(app, config.selfAppSlug)) {
+        return res.status(403).json({
+          error: 'This is a core platform app. It cannot be deleted from the UI.',
+          reason: 'core',
+        });
+      }
+
+      const eligible = !!req.user?.canAdminWrite
+        || (req.user?.id != null && app.created_by === req.user.id);
+      if (!eligible) {
+        return res.status(403).json({
+          error: "Only a full admin or the app's sole contributor can delete this app",
+          reason: 'not_owner',
+        });
+      }
+      const counts = await contributors.loadContributorCounts(pool, [app.id]);
+      const contributorCount = counts.get(app.id) || 0;
+      const others = Math.max(0, contributorCount - 1);
+      const blocked = deleteBlockReason(app, req.user, contributorCount, config.selfAppSlug);
+      if (!canDeleteApp(app, req.user, contributorCount, config.selfAppSlug)) {
+        if (blocked === 'shared') {
+          await notifyDeleteAttempt(app, req.user);
+          return res.status(403).json({
+            error: `This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'}, `
+              + 'so its creator cannot delete it alone. Deleting a shared app needs the group\'s agreement.',
+            reason: 'shared',
+            contributor_count: contributorCount,
+          });
+        }
+        return res.status(403).json({
+          error: "Only a full admin or the app's sole contributor can delete this app",
+          reason: blocked,
+        });
+      }
+
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const confirmName = typeof body.confirm_name === 'string' ? body.confirm_name.trim() : '';
+      if (!confirmName || confirmName !== String(app.name || '').trim()) {
+        return res.status(400).json({
+          error: "Type the app's exact name to confirm deletion.",
+          reason: 'confirm_name',
+        });
+      }
+
+      const shared = contributorCount > 1;
+      if (shared && body.acknowledge_shared !== true) {
+        await notifyDeleteAttempt(app, req.user);
+        return res.status(409).json({
+          error: `This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'} `
+            + 'who have not agreed to this. Deleting a shared app is meant to go through a group '
+            + 'vote. A platform admin can override by acknowledging the other contributors.',
+          reason: 'shared',
+          contributor_count: contributorCount,
+        });
+      }
+      // Who to tell once the app is gone. Read BEFORE the teardown: the
+      // contributor set is derived from rows the app delete cascades away.
+      const recipients = shared ? await otherContributorIds(app, req.user) : [];
 
       // Teardown through the backend that owns this app. Historical rows
       // without runtime_kind/runtime_name remain Docker-compatible.
@@ -2669,13 +2815,51 @@ function appRoutes(config) {
       await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
       appAccess.invalidateVisibility(app.id, app.slug);
 
-      log.info('apps', 'App deleted', { appId: app.id, slug: app.slug });
+      log.info('apps', 'App deleted', {
+        appId: app.id, slug: app.slug, by: req.user?.id, shared, notified: recipients.length,
+      });
       res.json({ ok: true });
+
+      // Tell the other contributors after the fact. Best-effort: the app is
+      // already gone, so a notification failure must not turn into a 500 for
+      // a delete that succeeded.
+      if (recipients.length) {
+        const notifications = require('../services/notifications');
+        notifications.createAppDeletedNotifications(pool, {
+          appName: app.name, appSlug: app.slug, actorId: req.user?.id ?? null, recipientIds: recipients,
+        }).catch((err) => {
+          log.warn('apps', 'app_deleted notifications failed', { slug: app.slug, err: err.message });
+        });
+      }
     } catch (err) {
       log.error('apps', 'Failed to delete app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // The other contributors of `app` (the shared three-source set minus the
+  // actor), for the two #2161 notifications above.
+  async function otherContributorIds(app, user) {
+    const byApp = await contributors.loadContributors(pool, [app.id]);
+    const ids = (byApp.get(app.id) || []).map((c) => c.user_id);
+    return [...new Set(ids)].filter((id) => id != null && id !== user?.id);
+  }
+
+  // A refused delete of a shared app is still news to the people who share
+  // it. Best-effort and deduplicated in the service (one unread row per
+  // recipient per app), so a retried click is not a second ping.
+  async function notifyDeleteAttempt(app, user) {
+    try {
+      const recipients = await otherContributorIds(app, user);
+      if (!recipients.length) return;
+      const notifications = require('../services/notifications');
+      await notifications.createAppDeleteAttemptNotifications(pool, {
+        appId: app.id, actorId: user?.id ?? null, recipientIds: recipients,
+      });
+    } catch (err) {
+      log.warn('apps', 'app_delete_attempted notifications failed', { slug: app.slug, err: err.message });
+    }
+  }
 
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
@@ -2925,4 +3109,6 @@ function appRoutes(config) {
   return router;
 }
 
-module.exports = { appRoutes, sweepStuckCreatingApps, accessFlags };
+module.exports = {
+  appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, deleteBlockReason, isCoreApp,
+};

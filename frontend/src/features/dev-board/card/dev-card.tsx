@@ -702,7 +702,94 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
   );
 }
 
+// #2061 — the whole ordered list of what a proposal still needs.
+//
+// The tags say what is WRONG. They never say what is REQUIRED, so an absent
+// tag is ambiguous between "the gate passed", "the gate does not apply here"
+// and "the gate has no UI at all" — and two of the seven really had none. A
+// tick is what tells those apart.
+//
+// Stateful on purpose: `open` seeds from the model's viewer-aware rule, and
+// then belongs to the reader. Rendering it straight from the model would snap
+// a card the reader opened shut again on the next websocket repaint.
+const REQ_MARK: Record<string, string> = {
+  done: '✓', active: '', waiting: '!', blocked: '✕', pending: '·',
+};
+const REQ_TONE: Record<string, string> = {
+  done: 'text-emerald-600 dark:text-emerald-400',
+  active: 'text-zinc-500 dark:text-zinc-400',
+  waiting: 'text-amber-600 dark:text-amber-400',
+  blocked: 'text-red-600 dark:text-red-400',
+  pending: 'text-zinc-400 dark:text-zinc-500',
+};
+const REQ_ACTOR: Record<string, string> = {
+  auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group',
+};
+
+function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
+  const [open, setOpen] = useState(x.open);
+  return (
+    <details
+      className="mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 overflow-hidden"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      data-merge-requirements={x.gates.length ? '1' : '0'}
+    >
+      <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[0.72rem] leading-snug text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
+        <span className="font-semibold text-zinc-800 dark:text-zinc-100" data-req-headline>{x.headline}</span>
+        {x.detail ? <span className="truncate text-zinc-500 dark:text-zinc-400">{`· ${x.detail}`}</span> : null}
+        <span className="ml-auto tabular-nums text-[0.68rem] text-zinc-400 dark:text-zinc-500" data-req-count>
+          {`${x.done}/${x.total}`}
+        </span>
+      </summary>
+      <ol className="list-none m-0 border-t border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 py-1">
+        {x.gates.map((g) => (
+          <li
+            key={g.key}
+            className="px-2.5 py-1 grid grid-cols-[1rem_1fr_auto] gap-x-1.5 items-baseline text-[0.72rem]"
+            data-req-gate={g.key}
+            data-req-state={g.state}
+          >
+            <span className={`text-center font-bold ${REQ_TONE[g.state] || REQ_TONE.pending}`} aria-hidden="true">
+              {g.state === 'active'
+                ? <span className="dc-status-spinner inline-block align-[-1px]" />
+                : (REQ_MARK[g.state] || '·')}
+            </span>
+            <span className={g.state === 'done' || g.state === 'pending'
+              ? 'text-zinc-500 dark:text-zinc-400'
+              : 'text-zinc-900 dark:text-zinc-100 font-semibold'}>
+              {g.label}
+            </span>
+            <span className="text-[0.65rem] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+              {REQ_ACTOR[g.actor] || g.actor}
+            </span>
+            {g.note
+              ? <span className="col-start-2 text-[0.68rem] leading-snug text-zinc-400 dark:text-zinc-500">{g.note}</span>
+              : null}
+            {g.action
+              ? (
+                <span className="col-start-2 mt-0.5">
+                  <button
+                    type="button"
+                    className="gc-vote-btn"
+                    title={g.action.title}
+                    data-req-action={g.key}
+                    onClick={(e) => call(g.action!.act, e.currentTarget)}
+                  >
+                    {g.action.label}
+                  </button>
+                </span>
+              )
+              : null}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
+  if (x.t === 'requirements') return <RequirementsRow x={x} />;
   if (x.t === 'note') {
     return (
       <div className="mt-1 px-0.5 text-[0.7rem] leading-snug text-zinc-500 dark:text-zinc-400" data-work-note={x.workState}>
@@ -744,6 +831,12 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
     nodes.push(<MetaPartView key={`p${i}`} p={p} />);
   });
   for (const b of (m.badges || []).filter((b) => b && b.t === 'attr')) nodes.push(<Badge key={b.key} b={b} />);
+  // The status tags — checks, conflicts, behind main — ride HERE, beside the
+  // item's own tags, rather than in the facts row under the bar. The line's
+  // rule used to be "what the item IS, not what state it is in"; the state
+  // bar's rule is now narrower still (the vote and nothing else), and of the
+  // two lines this is the one with room for a list that grows.
+  for (const b of (m.badges || []).filter((b) => b && b.t === 'chip' && b.meta)) nodes.push(<Badge key={b.key} b={b} />);
   // A proposal's linkage arrives as `linked`; a session's "#N" chips arrive
   // among its badges. Same chip, same line.
   for (const b of m.linked || []) nodes.push(<Badge key={b.key} b={b} />);
@@ -801,7 +894,9 @@ export function DevCard(
   // So the card is the row plus the bar expanded and the buttons added, and
   // nothing else moves between the two.
   const chips = (m.badges || []).filter(Boolean);
-  const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip');
+  // `meta` chips are drawn on the meta line above (metaLineNodes), so they
+  // must not be drawn again here.
+  const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta));
   const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
 
   // The preview sits at the band's right end just before the hamburger,

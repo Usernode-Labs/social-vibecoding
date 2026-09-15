@@ -79,6 +79,7 @@ spec:
             - {name: NODE_ENV, value: production}
             - {name: PORT, value: "3000"}
             - {name: APP_RUNTIME, value: kubernetes}
+            - {name: PREVIEW_LIFECYCLE_ENABLED, value: {{ .Values.platform.previewLifecycleEnabled | default false | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}
@@ -113,6 +114,7 @@ spec:
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
+            - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
             - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
             - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}
             - {name: MAX_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxUserPromotedSessions | int64 | quote }}}

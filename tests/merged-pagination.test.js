@@ -47,7 +47,7 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows, total }) {
+function loadVotes({ mergedRows, total, shipped }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -90,6 +90,11 @@ function loadVotes({ mergedRows, total }) {
         // the per-row merged SELECT so the two don't collide.
         if (/COUNT\(\*\)::int AS total/.test(sql)) {
           return { rows: [{ total: typeof total === 'number' ? total : mergedRows.length }] };
+        }
+        // #1922: the whole-history week counts. Unanswered (rows: []) unless
+        // a test passes `shipped`, which is what an older stub looks like.
+        if (/AS shipped_week/.test(sql)) {
+          return { rows: shipped ? [{ shipped_week: shipped.week, shipped_prev_week: shipped.prevWeek }] : [] };
         }
         // Only the merged SELECT returns rows; the topic-attrs query (and
         // anything else) returns empty.
@@ -232,4 +237,42 @@ test('per-row fields survive paging', async () => {
   assert.equal(payload.merged[0].pr_number, 500);
   assert.equal(payload.merged[0].chat_count, 0);
   assert.equal(payload.merged[1].chat_count, 1);
+});
+
+// ── #1922: "shipped this week" is counted over the whole history ─────────
+
+test('the first page carries exact week counts over the whole merged history', async () => {
+  // 21 rows → the page is partial (hasMore), which is exactly when the
+  // Workshop could only say "20+". The counts come from their own query.
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(21), shipped: { week: 34, prevWeek: 27 } });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.equal(payload.hasMore, true);
+  assert.deepEqual(payload.shipped, { week: 34, prevWeek: 27 });
+  const call = captured.calls.find((c) => /AS shipped_week/.test(c.sql));
+  assert.ok(call, 'the week counts are queried');
+  assert.equal(call.params[0], 1, 'scoped to this app only');
+  assert.equal(call.params.length, 2, 'the app id and the week start, nothing else');
+  // Same rows and timestamps as the client's count (app-view.js mergedAtOf).
+  assert.match(call.sql, /COALESCE\(merged_at, created_at\) AS t\s+FROM chat_sessions\s+WHERE app_id = \$1 AND status = 'merged'/);
+  assert.match(call.sql, /FROM issues\s+WHERE app_id = \$1 AND kind = 'close_issue' AND status = 'closed'\s+AND payload \? 'appliedAt'/);
+  // #2176: the calendar week (Monday 00:00 UTC), not a trailing seven days.
+  assert.match(call.sql, /t >= \$2::timestamptz\)::int AS shipped_week/);
+  assert.match(call.sql, /t < \$2::timestamptz\s+AND t >= \$2::timestamptz - interval '7 days'\)::int AS shipped_prev_week/);
+  assert.match(String(call.params[1]), /^\d{4}-\d{2}-\d{2}T00:00:00Z$/, 'the week start rides as a parameter');
+  assert.equal(new Date(call.params[1]).getUTCDay(), 1, 'and it is a Monday');
+  assert.doesNotMatch(call.sql, /AS total\b|cs\.status/, 'never collides with the other stubs');
+});
+
+test('a cursor page does not recount the weeks', async () => {
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(5), shipped: { week: 3, prevWeek: 1 } });
+  const { payload } = await callMerged(routes, captured, { before: '2026-01-30T00:00:00.000Z', before_id: '900' });
+  assert.equal(payload.shipped, undefined);
+  assert.ok(!captured.calls.some((c) => /AS shipped_week/.test(c.sql)));
+});
+
+test('no week counts in the response when the query answers nothing', async () => {
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(3) });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.equal(payload.shipped, undefined, 'the client then counts its page, as before');
+  assert.equal(payload.merged.length, 3);
 });

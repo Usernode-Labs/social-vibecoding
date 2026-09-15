@@ -19,35 +19,37 @@
  *
  * ── Resolved data in, markup out ───────────────────────────────────────
  *
- * Every decision stays in app-view.js: which copy an OpenRouter run gets,
- * what a model option is called (`DevChat.modelOptionText`), which capacity
- * branch the consent dialog is in, whether the BYOK checkbox is forced. The
- * component receives the ANSWER. app-view.js is a classic script the bundle
- * cannot import, and Tailwind's extractor is a regex over source text, so a
- * table copied into a component would exist twice with only one copy able to
- * change.
+ * Every decision stays in app-view.js: the model's short name and summary,
+ * the accurate billing note, which capacity branch the consent dialog is in,
+ * whether the BYOK checkbox is forced. The component receives the ANSWER.
+ * app-view.js is a classic script the bundle cannot import, and Tailwind's
+ * extractor is a regex over source text, so a table copied into a component
+ * would exist twice with only one copy able to change.
  */
 
-/** A `<option>` in the Generate-proposal picker, with its caption. */
+/** One model row in the Generate-proposal picker. */
 export interface ModelOption {
   id: string;
-  label: string;
-  /** The caption under the picker while this option is selected. */
-  note: string;
-  /** That caption's tooltip; empty on the OpenRouter branch. */
-  noteTitle: string;
+  /** Short human-readable model name; never includes rates or compatibility. */
+  name: string;
+  /** One concise recommendation/cost or task-fit line. */
+  summary: string;
+  /** Includes the name, id and provider so search covers the full catalog. */
+  searchText: string;
+  isRecommended?: boolean;
 }
 
 export interface AutoSessionModalView {
   issueNumber: number;
-  /** The paragraph explaining what confirming does. Two branches, one string. */
+  /** The single sentence explaining what confirming does. */
   intro: string;
-  /** "Building in <b>X</b> — your saved default. …", already split. */
-  venue: { label: string; blurb: string } | null;
-  /** 'Chat model' or 'OpenRouter model'. */
-  pickerLabel: string;
+  /** Accurate for a managed key, personal key, or platform Claude run. */
+  billingNote: string;
   options: ModelOption[];
   preselect: string;
+  openRouter?: boolean;
+  /** Show privacy guidance only when the credential is the user's own key. */
+  personalOpenRouterKey?: boolean;
 }
 
 export interface CreditOptionsModalView {

@@ -58,6 +58,57 @@ function isBusy(session) {
 }
 
 /**
+ * Whether an AI turn is in flight for this session RIGHT NOW (#1958).
+ *
+ * `isBusy` above reads the flag the server wrote into the last
+ * /api/me/active-sessions answer, which is true for exactly as long as that
+ * answer is. `SessionState` (public/js/session-state.js) is what the server
+ * has said SINCE: it pushes a `session_state` event on every real turn
+ * boundary, so a turn that ended after the payload was issued is already
+ * idle there — and every other surface that draws this fact (the dev
+ * screen's session list, the board's cards) reads it through the store.
+ * This row was the one that did not, so its pill went Working → Ready one
+ * refetch round trip after the turn ended, and a panel opened later painted
+ * the flag a fetch during the turn had left behind until the open-time
+ * refetch landed. A live entry wins; the payload's flag is the fallback for
+ * a session the store has never heard of.
+ */
+function liveBusy(session) {
+  const fallback = isBusy(session);
+  const live = typeof window !== 'undefined' ? window.SessionState : null;
+  if (!live || typeof live.isBusy !== 'function') return fallback;
+  return !!live.isBusy(session.id, fallback);
+}
+
+/**
+ * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
+ * both the caption's "Needs you" and the pill's "Ready for your input", so
+ * the two cannot say different things.
+ *
+ * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
+ * the transcript (sessionAwaitsInput in routes/sessions.js): the last
+ * conversational row is the assistant's, and it either asked with answer
+ * chips or closed a spec whose Questions section is still open. A finished
+ * spec with nothing to answer, or a finished build, is plain Ready — the
+ * pill says "for your input" only when something in the session is asking.
+ *
+ * The two status values are the seam #1417 left for a connector agent's
+ * notify_awaiting_input. Nothing publishes them into this payload yet; they
+ * stay so a row that does arrive in that state reads right.
+ *
+ * A turn in flight is never waiting on anyone. The live store wins here for
+ * the same reason it wins for `busy` (#1958): the payload is a snapshot, and
+ * a push that starts a turn must take "Needs you" down in the same frame it
+ * puts the spinner up.
+ */
+function awaitsInput(session) {
+  if (!session || liveBusy(session)) return false;
+  if (session.awaiting_input === true) return true;
+  const state = String(session.status || '').toLowerCase();
+  return state === 'awaiting_input' || state === 'needs_input';
+}
+
+/**
  * A PARKED session (owner review).
  *
  * "Changes in progress" and "Changes in other apps" are lists of what is
@@ -80,7 +131,7 @@ function statusLabel(session) {
   if (isBusy(session)) return 'Working…';
   const state = String(session.status || '').toLowerCase();
   if (state === 'paused') return 'Paused';
-  if (state === 'awaiting_input' || state === 'needs_input') return 'Needs you';
+  if (awaitsInput(session)) return 'Needs you';
   return null;
 }
 
@@ -123,7 +174,8 @@ function toRow(session, appNameFallback) {
       || `Session #${session.id}`,
     href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
     status: statusLabel(session),
-    busy: isBusy(session),
+    busy: liveBusy(session),
+    awaitingInput: awaitsInput(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
@@ -160,6 +212,9 @@ function taskToRow(task, appNameFallback) {
       : `#app/${task.app_slug}/dev`,
     status: agentLabel(task.agent),
     busy: false,
+    // Same reasoning as `busy`: whether the agent on the user's machine is
+    // waiting on them is not something this side can see per work order.
+    awaitingInput: false,
     sortAt: timeOf(task.created_at),
   };
 }
@@ -420,6 +475,7 @@ const Improve = {
     improveStore.set({
       previewSessionId: (preview && preview.sessionId) || null,
       previewUrl: (preview && preview.url) || null,
+      previewBuildable: !!(preview && preview.buildable),
     });
   },
 
@@ -725,6 +781,13 @@ const Improve = {
 
   async loadSessions() {
     const token = ++Improve._loadToken;
+    // #1958: stamped BEFORE the request goes out — see SessionState.seed.
+    // This used to hand the seed `data.issuedAt`, a field the endpoint has
+    // never sent, so every payload was stamped at ARRIVAL and an answer that
+    // was in flight while a turn ended put the spinner straight back — the
+    // inversion the store's own comment warns about. DevChat.loadActiveSessions
+    // stamps the same call the same way.
+    const issuedAt = Date.now();
     if (!improveStore.get().sessionsLoaded) improveStore.set({ loadingSessions: true });
     let sessions = [];
     let tasks = [];
@@ -738,7 +801,7 @@ const Improve = {
         // session that finishes while the panel is open updates in place
         // instead of going stale until the next open.
         if (window.SessionState) {
-          window.SessionState.seed(sessions, data.issuedAt);
+          window.SessionState.seed(sessions, issuedAt);
         }
       }
     } catch {
@@ -773,15 +836,24 @@ const Improve = {
   /**
    * Session state changed underneath us.
    *
-   * Two jobs, and the second is the one that matters with the panel SHUT: an
-   * open panel reloads its list, and the button's glyph tracks whether
-   * anything is running at all. `SessionState` is synced from app.js's boot
+   * Three jobs. The rows re-derive from the last payload, so their pills
+   * follow the push (#1958); an open panel then reloads its list; and the
+   * button's glyph tracks whether anything is running at all — the one that
+   * matters with the panel SHUT. `SessionState` is synced from app.js's boot
    * path and re-ticks on its own (faster while something is in flight), so
    * this is live without the panel ever being opened — which is the whole
    * point of putting the cue on the button.
    */
   onSessionStateChanged() {
     Improve.refreshWorking();
+    // #1958: the rows are re-derived from the last payload FIRST, so the
+    // Working → Ready flip IS the push — one frame, no round trip — and it
+    // happens with the panel shut too, so opening it after a turn ended
+    // paints Ready rather than the flag a fetch during the turn left behind.
+    // The reload below (open panels only) still refreshes what the store
+    // cannot know: a title that landed at turn end, the status line, the
+    // activity stamp.
+    if (improveStore.get().sessionsLoaded) Improve._rebucket();
     if (improveStore.get().open) Improve.loadSessions();
   },
 
@@ -857,7 +929,7 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
-   * `fromDev: true` is the mode the Dev "+" menu's "New issue" row used: it
+   * `fromDev: true` is the mode the Dev "+" menu's "File an issue" row uses: it
    * preselects the open app as the target (falling back to Platform for the
    * self-hosted row, or while the repo does not exist yet). That is the right
    * default here for the same reason — the panel is unambiguously about one

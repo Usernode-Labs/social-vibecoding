@@ -75,6 +75,16 @@
     el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
   }
 
+  // #2119: an OpenRouter key's allowance is named from the reset cadence the
+  // server reports for it ('weekly' for company keys carrying the platform
+  // allowance, 'daily' for older ones until they are re-limited, whatever
+  // OpenRouter says for a personal key, which may be nothing), never from a
+  // hard-coded word, so the copy stays truthful for every key it describes.
+  function limitNoun(reset, noun = 'limit') {
+    const cadence = typeof reset === 'string' ? reset.trim().toLowerCase() : '';
+    return cadence ? `${cadence} ${noun}` : noun;
+  }
+
   // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
   //
   // The set stores the EXPANDED names, which is the opposite of the admin
@@ -104,7 +114,7 @@
   // boot instead: App.enterAnonymous reads this key once and toasts it.
   const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
   const NATIVE_SHUTDOWN_NOTICE =
-    'Signed out. Close and reopen the app to finish shutting down Usernode.';
+    'Signed out. Close and reopen the app to finish shutting down Homeroom.';
 
   // A successful native logout replaces the WebView, so nothing below it in
   // this document normally runs. This bounded net covers the case where the
@@ -142,6 +152,11 @@
     _connectorLoadId: 0,
     _githubLink: null,
     _openRouterModels: [],
+    _openRouterSelectedModelId: '',
+    _openRouterRecommendedModelId: '',
+    _openRouterCatalogRefreshedAt: null,
+    _openRouterCatalogTotal: 0,
+    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -195,8 +210,8 @@
     // order, and the first VISIBLE entry is the default section.
     //
     // `gate` names the INNER node whose own `hidden` decides whether the
-    // section is offered at all — Usernode Wallet (wallet linking enabled),
-    // Usernode app (the native bridge's getSettingsState capability) and
+    // section is offered at all — Homeroom Wallet (wallet linking enabled),
+    // Homeroom app (the native bridge's getSettingsState capability) and
     // Admin preview (a real platform admin). Those gates live in
     // _renderWalletSection / _renderUsernodeSection / _renderAdminSection
     // and are read here, never duplicated. Sections with no `gate` are
@@ -226,7 +241,7 @@
       { key: 'username', label: 'Username', group: 'Account' },
       { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
-      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
+      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
@@ -256,7 +271,7 @@
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
       { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
       { key: 'experimental', label: 'Experimental', group: 'Advanced' },
-      { key: 'usernode', label: 'Usernode app', group: 'Advanced', gate: 'settings-usernode-section' },
+      { key: 'usernode', label: 'Homeroom app', group: 'Advanced', gate: 'settings-usernode-section' },
       { key: 'admin-preview', label: 'Admin preview', group: 'Advanced', gate: 'settings-admin-section' },
       { key: 'about', label: 'About', group: 'Advanced' },
     ],
@@ -276,7 +291,7 @@
       // is static in index.html and only ever hidden/shown, never rebuilt
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
 
-      // The Usernode app → connection panel offers wallet recovery only while
+      // The Homeroom app → connection panel offers wallet recovery only while
       // native admission is refused for want of a seeded wallet
       // (_walletRecoveryAvailable). Admission flipping either way — the
       // recovery dialog succeeding, a sign-out — must repaint that panel
@@ -297,19 +312,29 @@
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
       const orClaim = document.getElementById('settings-openrouter-claim');
-      const orCopy = document.getElementById('settings-openrouter-copy');
-      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
+      const orModelSearch = document.getElementById('settings-openrouter-model-search');
+      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
+      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
+      const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
-      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
-      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (orModel) orModel.addEventListener('change', () => {
+        this._openRouterSelectedModelId = orModel.value;
+        this._syncOpenRouterModelDetails();
+      });
+      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
+      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
+        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
+        this._renderOpenRouterModelOptions();
+      });
+      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
+      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
       if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
@@ -368,6 +393,39 @@
           },
           successMessage: RULE_BLOCKS[id].success,
           failureMessage: RULE_BLOCKS[id].failure,
+          selectOnFail: () => {
+            const block = document.getElementById(id);
+            if (!block || !window.getSelection || !document.createRange) return;
+            const range = document.createRange();
+            range.selectNodeContents(block);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          },
+        });
+      }
+
+      // #1892: the two Codex CLI blocks. Read at click time for the same
+      // reason as above: _renderConnectors() swaps the URL placeholder for
+      // the live connector URL after this wiring runs.
+      const CODEX_BLOCKS = {
+        'connector-codex-add': {
+          success: 'Copied. Run it in a terminal where Codex is installed',
+          failure: 'Could not copy the Codex command',
+        },
+        'connector-codex-config': {
+          success: 'Copied. Paste it into ~/.codex/config.toml',
+          failure: 'Could not copy the Codex config entry',
+        },
+      };
+      for (const id of Object.keys(CODEX_BLOCKS)) {
+        this._wireCopyControl(`${id}-copy`, {
+          read: () => {
+            const block = document.getElementById(id);
+            return block ? block.textContent : null;
+          },
+          successMessage: CODEX_BLOCKS[id].success,
+          failureMessage: CODEX_BLOCKS[id].failure,
           selectOnFail: () => {
             const block = document.getElementById(id);
             if (!block || !window.getSelection || !document.createRange) return;
@@ -584,7 +642,7 @@
         // resolve to the same deployment-constant answer.)
         this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
         this._renderIndicator();
-        // `walletLinkEnabled` decides whether the Usernode Wallet row is in
+        // `walletLinkEnabled` decides whether the Homeroom Wallet row is in
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
@@ -705,7 +763,7 @@
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
       Settings._chromeSuspended = !!(opts && opts.chrome === false);
-      // Per-mount state: the Usernode-app auto-retry is offered once per
+      // Per-mount state: the Homeroom-app auto-retry is offered once per
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
@@ -1323,7 +1381,7 @@
     },
 
     // Re-resolve the menu after late-arriving state: `walletLinkEnabled`
-    // lands with refresh()'s /api/auth/me response and the Usernode-app
+    // lands with refresh()'s /api/auth/me response and the Homeroom-app
     // capability with the bridge's async probe, both of which can resolve
     // AFTER a cold-boot deep link has already painted. Without this the
     // menu would be missing those rows until the next navigation.
@@ -1437,7 +1495,7 @@
     // point is to get the session's turns back without waiting out the lease.
     async _detachLocalAgent(agent, button) {
       const label = agent.label || 'this machine';
-      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Usernode. Anything it already committed stays on the branch.`)) return;
+      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.`)) return;
       const status = document.getElementById('settings-local-agents-status');
       button.disabled = true;
       try {
@@ -1505,7 +1563,7 @@
         select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
       }
       // A deployment without the external flows can still express "always
-      // build on Usernode" vs "ask me" — just not the two hand-offs.
+      // build on Homeroom" vs "ask me" — just not the two hand-offs.
       select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
         opt.disabled = !this.state.externalFlowsAvailable;
       });
@@ -1582,8 +1640,8 @@
 
     // ── Rewriting the allow rules for a different connector name ─────────
     //
-    // The two blocks ship covering `usernode` and `Usernode`, the two
-    // spellings Usernode can guess. Anything else — a typo like the `Uesrnode`
+    // The two blocks ship covering `homeroom` and `Homeroom` plus the
+    // pre-rename `usernode` and `Usernode`. Anything else — a typo like the `Uesrnode`
     // from #1218, or a name someone simply chose — needs the same rules with
     // that segment, and asking a user to hand-edit six JSON strings is asking
     // for a seventh mistake. So the page does the edit.
@@ -1712,9 +1770,9 @@
       // behind — the rule the written steps already follow by pointing back
       // at #connector-url rather than naming a host.
       //
-      // The prompt carries the two things people get wrong: that Usernode
+      // The prompt carries the two things people get wrong: that Homeroom
       // uses dynamic client registration (so there is no client ID or secret
-      // to go looking for), and the exact name `usernode`, which is what
+      // to go looking for), and the exact name `homeroom`, which is what
       // Claude Code builds its permission rules from (#1218) and which one
       // account once mistyped, silently missing every rule the platform
       // ships.
@@ -1724,7 +1782,7 @@
       // happens through OAuth inside the product, not in this link.
       const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
         + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
-        + ' Name it exactly "usernode". Walk me through it one step at a time and tell me what to click.';
+        + ' Name it exactly "homeroom". Walk me through it one step at a time and tell me what to click.';
       const chatLinks = [
         ['connector-open-claude', 'https://claude.ai/new?q='],
         ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
@@ -1732,6 +1790,19 @@
       for (const [id, base] of chatLinks) {
         const link = document.getElementById(id);
         if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
+
+      // #1892: the Codex CLI blocks ship with a placeholder where the URL
+      // goes, for the same reason the steps point at #connector-url instead
+      // of naming a host. Swap it for the derived value here, by textContent
+      // and never innerHTML. Idempotent: once swapped, the placeholder is
+      // gone and a re-render finds nothing to replace.
+      const CODEX_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
+      for (const id of ['connector-codex-add', 'connector-codex-config']) {
+        const block = document.getElementById(id);
+        if (block && block.textContent.includes(CODEX_URL_PLACEHOLDER)) {
+          block.textContent = block.textContent.split(CODEX_URL_PLACEHOLDER).join(connectorUrl);
+        }
       }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
@@ -1829,13 +1900,13 @@
 
       let text;
       if (!shown) {
-        text = 'Usernode has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+        text = 'Homeroom has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
       } else {
         const when = Number.isFinite(Date.parse(hint.lastShownAt))
           ? new Date(hint.lastShownAt).toLocaleString()
           : 'recently';
         const times = shown === 1 ? 'once' : `${shown} times`;
-        text = `Usernode sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
+        text = `Homeroom sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
         // Three different answers to "why am I not seeing it", and they are
         // not interchangeable: the budget is spent (comes back next week),
         // the hour since the last one has not passed (comes back shortly), or
@@ -2021,7 +2092,7 @@
         return {
           tone: 'plain',
           title: 'Daily credit tier temporarily unavailable',
-          detail: 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+          detail: 'Homeroom could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
         };
       }
       if (e.policy === 'legacy') {
@@ -2105,8 +2176,8 @@
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
-            ? 'Usernode holds no GitHub access token for your account.'
-            : 'Usernode stores no X access token for your account.')
+            ? 'Homeroom holds no GitHub access token for your account.'
+            : 'Homeroom stores no X access token for your account.')
           : null,
         connect: offersConnect
           ? {
@@ -2181,7 +2252,7 @@
         conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
-        account_mismatch: 'This browser is signed into a different Usernode account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
+        account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
@@ -2802,20 +2873,116 @@
     },
 
     _openRouterModelOptionLabel(model) {
+      const badges = [];
+      if (model?.isFavorite) badges.push('★');
+      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.createdAt) {
+        const age = Date.now() - Date.parse(model.createdAt);
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      }
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+      const needle = String(query || '').trim().toLocaleLowerCase();
+      return (Array.isArray(models) ? models : [])
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          if (favoritesOnly && model?.isFavorite !== true) return false;
+          if (!needle) return true;
+          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+        })
+        .sort((a, b) => {
+          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map(({ model }) => model);
+    },
+
+    _openRouterCatalogAgeText(refreshedAt) {
+      const refreshed = Date.parse(refreshedAt || '');
+      if (!Number.isFinite(refreshed)) return '';
+      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+      if (seconds < 60) return 'Updated just now';
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `Updated ${minutes}m ago`;
+      return `Updated ${Math.round(minutes / 60)}h ago`;
+    },
+
+    _renderOpenRouterModelOptions() {
+      const select = document.getElementById('settings-openrouter-model');
+      if (!select) return;
+      const search = document.getElementById('settings-openrouter-model-search');
+      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
+      const meta = document.getElementById('settings-openrouter-catalog-meta');
+      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
+        query: search?.value || '',
+        favoritesOnly: this._openRouterFavoritesOnly,
+      });
+      select.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        select.appendChild(option);
+      }
+      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
+        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
+          || visibleModels.find((model) => model.isRecommended)
+          || visibleModels[0]
+          || null;
+        if (fallback) this._openRouterSelectedModelId = fallback.id;
+      }
+      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
+        ? this._openRouterSelectedModelId
+        : '';
+      select.disabled = visibleModels.length === 0;
+      if (favoritesOnlyButton) {
+        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+      }
+      if (meta) {
+        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
+        meta.textContent = visibleModels.length
+          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
+          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      }
+      this._syncOpenRouterModelDetails();
     },
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      const star = document.getElementById('settings-openrouter-star-model');
+      const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         if (effort) effort.disabled = true;
+        if (star) {
+          star.disabled = true;
+          star.textContent = '☆';
+          star.setAttribute('aria-pressed', 'false');
+        }
+        if (saveDefault) saveDefault.disabled = true;
         return;
+      }
+      if (saveDefault) saveDefault.disabled = false;
+      if (star) {
+        star.disabled = false;
+        star.textContent = model.isFavorite ? '★' : '☆';
+        star.setAttribute('aria-pressed', String(model.isFavorite === true));
+        const label = model.isFavorite
+          ? 'Remove selected model from favorites'
+          : 'Add selected model to favorites';
+        star.setAttribute('aria-label', label);
+        star.title = label;
       }
       let compatibility = 'Not yet verified for repository coding.';
       if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
@@ -2868,21 +3035,31 @@
         if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
         if (managedMessage) {
           if (managed?.status === 'active') {
-            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+            // The key carries the platform's weekly allowance; a key issued
+            // before that policy keeps its own limit until it is re-limited.
+            const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
+            const carries = managed.limitReset === 'weekly'
+              ? `with the platform's ${amount} weekly allowance`
+              : `with a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+            managedMessage.textContent = `Your Homeroom-managed key is active ${carries}. Admins can block or remove it; you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
             managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
             managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
+            managedMessage.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
           } else if (provisioning.verificationRequired && !provisioning.verified) {
             managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
           } else if (!provisioning.available) {
             managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'no_allowance') {
+            managedMessage.textContent = provisioning.identityGated
+              ? 'Connect and verify GitHub or X in Social accounts & connectors to unlock included credits, then claim the company key.'
+              : 'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.';
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+            managedMessage.textContent = `You can create one included key that carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -2897,8 +3074,12 @@
             info.classList.remove('hidden');
             const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
             const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
-            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
+            const owner = managedOwnsCredential ? 'Homeroom-managed' : 'Personal key';
+            // The stored managed-key cadence is authoritative; a personal
+            // key's comes from OpenRouter's own key-info.
+            const noun = limitNoun((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
+            const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
+            info.textContent = lim ? `${owner} · ${label}: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
@@ -2928,12 +3109,8 @@
           await this._refreshOpenRouter();
           return;
         }
-        const reveal = document.getElementById('settings-openrouter-reveal');
-        const key = document.getElementById('settings-openrouter-revealed-key');
-        if (key) key.value = j.apiKey || '';
-        if (reveal) reveal.classList.remove('hidden');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
         await this._refreshOpenRouter();
       } catch (err) {
         this._setOrStatus(`Network error: ${err.message}`, 'error');
@@ -2942,61 +3119,95 @@
       }
     },
 
-    async _copyManagedOpenRouterKey() {
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (!key?.value) return;
-      try {
-        await navigator.clipboard.writeText(key.value);
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      } catch {
-        key.select();
-        document.execCommand('copy');
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      }
-    },
-
-    _dismissManagedOpenRouterReveal() {
-      const reveal = document.getElementById('settings-openrouter-reveal');
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (key) key.value = '';
-      if (reveal) reveal.classList.add('hidden');
-    },
-
-    async _loadOpenRouterModels() {
+    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
       const sel = document.getElementById('settings-openrouter-model');
       const wrap = document.getElementById('settings-openrouter-models-wrap');
       if (!sel) return;
       try {
-        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
-        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const refresh = forceRefresh ? '&refresh=1' : '';
+        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+          credentials: 'same-origin', cache: 'no-store',
+        });
+        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
-        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
-        // Build options with DOM methods, NOT innerHTML (review P2):
-        // OpenRouter model IDs/names are untrusted catalog data and
-        // could inject markup into the authenticated Settings page.
-        sel.innerHTML = '';
-        for (const m of models) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = this._openRouterModelOptionLabel(m);
-          sel.appendChild(opt);
+        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
+        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
+        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
+        if (!models.length) {
+          this._openRouterSelectedModelId = '';
+          this._renderOpenRouterModelOptions();
+          if (wrap) wrap.classList.remove('hidden');
+          return;
         }
         const recommended = models.some((model) => model.id === cat.recommendedModelId)
           ? cat.recommendedModelId
-          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
-        sel.value = recommended;
-        // Restore the previously-saved model/effort if any.
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        const saved = prefs.backends?.codex_openrouter;
-        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
-        const eff = document.getElementById('settings-openrouter-reasoning');
-        if (eff) eff.value = saved?.reasoningEffort || '';
-        this._syncOpenRouterModelDetails();
+          : (models.find((model) => model.isRecommended)?.id
+            || models.find((model) => model.compatibility === 'verified')?.id
+            || models[0].id);
+        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
+          this._openRouterSelectedModelId = recommended;
+        }
+        if (!forceRefresh) {
+          // Restore the previously-saved model/effort on the initial load.
+          const prefs = await (await fetch('/api/me/coding-agent', {
+            credentials: 'same-origin', cache: 'no-store',
+          })).json();
+          const saved = prefs.backends?.codex_openrouter;
+          if (saved?.model && models.some((model) => model.id === saved.model)) {
+            this._openRouterSelectedModelId = saved.model;
+          }
+          const eff = document.getElementById('settings-openrouter-reasoning');
+          if (eff) eff.value = saved?.reasoningEffort || '';
+        }
+        this._renderOpenRouterModelOptions();
         if (wrap) wrap.classList.remove('hidden');
-      } catch {
-        this._openRouterModels = [];
+      } catch (err) {
+        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
+        throw err;
+      }
+    },
+
+    async _refreshOpenRouterModelsNow() {
+      const button = document.getElementById('settings-openrouter-refresh-models');
+      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
+      this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
+      try {
+        await this._loadOpenRouterModels({ forceRefresh: true });
+        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+      } finally {
+        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+      }
+    },
+
+    async _toggleSelectedOpenRouterFavorite() {
+      const button = document.getElementById('settings-openrouter-star-model');
+      const model = this._openRouterModels.find(
+        (item) => item.id === this._openRouterSelectedModelId,
+      );
+      if (!model || button?.disabled) return;
+      const favorite = model.isFavorite !== true;
+      if (button) button.disabled = true;
+      try {
+        const r = await fetch('/api/me/coding-agent/models/favorite', {
+          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: model.id, favorite }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        model.isFavorite = favorite;
+        this._renderOpenRouterModelOptions();
+        this._setOrStatus(favorite
+          ? `${model.name || model.id} added to favorites.`
+          : `${model.name || model.id} removed from favorites.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        if (button) button.disabled = false;
       }
     },
 
@@ -3037,6 +3248,10 @@
         this._setOrStatus('Key removed.' + note, 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
+        this._openRouterSelectedModelId = '';
+        this._openRouterRecommendedModelId = '';
+        this._openRouterCatalogRefreshedAt = null;
+        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -3047,6 +3262,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
+      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
@@ -3091,7 +3307,7 @@
 
     // Decide whether the wallet option is even offered, then default to
     // the password form. The "Use your wallet instead" link only appears
-    // in the Usernode native app (signMessage available) AND when the
+    // in the Homeroom native app (signMessage available) AND when the
     // logged-in account has a linked wallet to prove control of.
     _renderChangePasswordSection() {
       const section = document.getElementById('change-password-section');
@@ -3137,7 +3353,7 @@
       if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
       if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
       if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
-        this._setCpStatus('Wallet signing is only available in the Usernode app.', 'error');
+        this._setCpStatus('Wallet signing is only available in the Homeroom app.', 'error');
         return;
       }
 
@@ -3488,10 +3704,13 @@
     // Fetched fresh on every modal open. Each active grant renders as
     // a row: app name, $spent / $cap today, a cap editor, the BYOK
     // spillover toggle (only when a key is on file), and Revoke.
-    // Revoked grants show a muted badge — re-approving happens via the
-    // app's own consent dialog, not from here. In staging previews the
-    // page's ?demo=1 is passed through so the (always-empty,
-    // staging:private) grant tables still produce a reviewable list.
+    // Revoked grants show a muted badge and Re-enable (#1957), which
+    // re-grants through the consent dialog's own POST with the cap and
+    // BYOK choice the row still carries — before it, the only way back
+    // was that dialog, which an app that never asks again never opens.
+    // In staging previews the page's ?demo=1 is passed through so the
+    // (always-empty, staging:private) grant tables still produce a
+    // reviewable list.
 
     async _renderLlmGrants() {
       const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
@@ -3517,17 +3736,21 @@
     // inline is decided here, where `this.state.hasApiKey` and the demo flag
     // already live — see the note in ./grants-store.js. The money is
     // pre-formatted for the same reason: cents-to-dollars is this module's
-    // rule, not the component's.
+    // rule, not the component's. `appSlug` and `capCents` ride along for
+    // Re-enable (#1957): the re-grant endpoint is keyed on slug, and the
+    // previous cap is what it restores.
     _grantView(g) {
       const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
       const cap = (g.dailyCapCents || 0) / 100;
       return {
         appId: g.appId,
         appName: String(g.appName ?? ''),
+        appSlug: String(g.appSlug ?? ''),
         revoked: g.status !== 'active',
         spent: spent.toFixed(2),
         cap: cap.toFixed(2),
         capValue: cap.toFixed(2),
+        capCents: Number(g.dailyCapCents) || 0,
         showByok: !!(this.state.hasApiKey || g.allowByok),
         allowByok: !!g.allowByok,
       };
@@ -3538,13 +3761,14 @@
     // reach the API.
     _isDemoGrant(appId) { return appId < 0; },
 
-    // ── The three row handlers ───────────────────────────────────
+    // ── The row handlers ─────────────────────────────────────────
     //
-    // These were closures inside the row builder, wired with addEventListener
-    // to nodes it had just created. They are methods now, called by name from
-    // ./grants-list.tsx, because the component owns the markup and this module
-    // owns the writes. Each still reports through _setLlmGrantsStatus and
-    // re-renders on success, exactly as before.
+    // The first three were closures inside the row builder, wired with
+    // addEventListener to nodes it had just created. They are methods now,
+    // called by name from ./grants-list.tsx, because the component owns the
+    // markup and this module owns the writes. Each still reports through
+    // _setLlmGrantsStatus and re-renders on success, exactly as before.
+    // _onGrantReenable (#1957) is the fourth, written the same way.
 
     async _onGrantCapChange(appId, value) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
@@ -3611,6 +3835,47 @@
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
         status('Revoked.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // The way back from Revoke (#1957). The consent dialog's POST is an
+    // upsert keyed on slug that re-activates a revoked row, so re-enabling
+    // re-sends the cap and BYOK choice the row still carries and the grant
+    // comes back as it was; the active row's controls take over from there.
+    // No confirm dialog: this is not destructive, and the row's copy already
+    // says what the click restores.
+    //
+    // If the old cap no longer fits the user's allowance (the ceiling moved
+    // since the grant was made), the server refuses it with a 400 that
+    // carries no `code` — credit_required and byok_required both do — so
+    // retry once at the server's default cap rather than strand the row
+    // with no way back, and say so. Anything else is reported verbatim,
+    // as the cap editor's errors are.
+    async _onGrantReenable(grant) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(grant.appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      const post = (body) => fetch('/api/me/llm-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ appSlug: grant.appSlug, allowByok: !!grant.allowByok, ...body }),
+      });
+      try {
+        const withCap = grant.capCents > 0;
+        let r = await post(withCap ? { dailyCapCents: grant.capCents } : {});
+        let j = await r.json().catch(() => ({}));
+        let atDefault = false;
+        if (withCap && r.status === 400 && !j.code) {
+          r = await post({});
+          j = await r.json().catch(() => ({}));
+          atDefault = true;
+        }
+        if (!r.ok) { status(j.error || 'Failed to re-enable.', 'error'); return; }
+        const cap = ((j.grant && j.grant.dailyCapCents) || 0) / 100;
+        status(atDefault ? `Re-enabled at the default $${cap.toFixed(2)} daily cap.` : 'Re-enabled.', 'ok');
         this._renderLlmGrants();
       } catch (err) {
         status('Network error: ' + err.message, 'error');
@@ -3945,7 +4210,7 @@
     },
 
     async _unlinkWallet() {
-      if (!await PlatformUI.confirm({ title: 'Unlink your Usernode wallet?', confirmLabel: 'Unlink', danger: true })) return;
+      if (!await PlatformUI.confirm({ title: 'Unlink your Homeroom wallet?', confirmLabel: 'Unlink', danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
@@ -3968,7 +4233,7 @@
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
-    // ── "Usernode app" sections (profile-and-settings-to-web migration) ──
+    // ── "Homeroom app" sections (profile-and-settings-to-web migration) ──
     //
     // The mobile app's native App Settings absorbed into this modal,
     // rendered from the bridge's getSettingsState snapshot (bridge v3,
@@ -4013,19 +4278,19 @@
     // handshake alike, which is exactly what made issue #978 impossible to
     // diagnose from the device.
     USERNODE_READ_ERROR_REASONS: {
-      'timeout': 'The Usernode app didn’t respond in time. ' +
+      'timeout': 'The Homeroom app didn’t respond in time. ' +
         'It may still be starting up.',
-      'rejected': 'The Usernode app reported an error.',
-      'probe-inconclusive': 'The Usernode app hasn’t re-established ' +
+      'rejected': 'The Homeroom app reported an error.',
+      'probe-inconclusive': 'The Homeroom app hasn’t re-established ' +
         'its secure connection for settings. Reopening the app usually ' +
         'fixes this.',
-      'no-transport': 'This screen can’t reach the Usernode app from here.',
-      'not-native': 'This screen can’t reach the Usernode app from here.',
+      'no-transport': 'This screen can’t reach the Homeroom app from here.',
+      'not-native': 'This screen can’t reach the Homeroom app from here.',
       'page-changed': 'The request was cancelled because this page changed.',
-      'privileged-unavailable': 'The Usernode app refused this screen’s ' +
-        'secure connection. See “Usernode app: connection” below.',
+      'privileged-unavailable': 'The Homeroom app refused this screen’s ' +
+        'secure connection. See “Homeroom app: connection” below.',
     },
-    USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
+    USERNODE_READ_ERROR_FALLBACK: 'The Homeroom app returned no settings.',
 
     // ── The connection panel ──────────────────────────────────────────
     //
@@ -4049,7 +4314,7 @@
         'usually re-establishes it. If it keeps happening, reinstalling ' +
         'the app clears the stuck state.',
       'unsupported': 'This app build predates the secure connection this ' +
-        'screen uses. Update the Usernode app to manage its settings here.',
+        'screen uses. Update the Homeroom app to manage its settings here.',
       'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
         'tell whether the secure connection is up. It may still be ' +
         'starting, so try again in a moment.',
@@ -4271,7 +4536,7 @@
       }
     },
 
-    // ── Settings → "Usernode app: widget icons" ──────────────────────
+    // ── Settings → "Homeroom app: widget icons" ──────────────────────
     //
     // Gated on being in the app (or the demo link), NEVER on the
     // capability or the mechanism: this box exists to explain why the
@@ -4326,7 +4591,7 @@
         try { return new Date(ms).toISOString(); } catch (_) { return String(ms); }
       };
       const lines = [
-        'Usernode bridge diagnostics',
+        'Homeroom bridge diagnostics',
         `collected: ${at(diag.collectedAt)}`,
         `origin: ${diag.origin || 'unknown'}`,
         `native: ${diag.isNative} topFrame: ${diag.isTopFrame} ` +
@@ -4372,7 +4637,7 @@
       return lines.join('\n');
     },
 
-    // Rendered FIRST inside the Usernode app section and independent of
+    // Rendered FIRST inside the Homeroom app section and independent of
     // the settings snapshot: when the handshake is refused there is no
     // snapshot, and this panel is the only thing that can say why.
 
@@ -4413,7 +4678,7 @@
       const gated = this._bridgeDiagDemo() || this._walletRecoveryDemo() ||
         this._widgetIconsDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
-      // The gate resolves asynchronously downstream, so the "Usernode app"
+      // The gate resolves asynchronously downstream, so the "Homeroom app"
       // menu row is only settled here — re-render the nav either way.
       if (!gated) {
         this._usernodeGated = false;
@@ -4589,7 +4854,7 @@
     // public/usernode-bridge.js.
     _nativeActionMessage(err, fallback) {
       if (err && err.usernodePrivileged === true) {
-        return 'The Usernode app isn’t accepting changes from this ' +
+        return 'The Homeroom app isn’t accepting changes from this ' +
           'screen. Force-close and reopen the app, then try again.';
       }
       return fallback;
@@ -4650,7 +4915,7 @@
         this._unNotifNotice = {
           tone: 'info',
           text: 'This is a preview of the in-app row. The notification ' +
-            'permission itself lives in the Usernode app.',
+            'permission itself lives in the Homeroom app.',
         };
         return;
       }
@@ -4659,7 +4924,7 @@
         if (!hasRequest) {
           this._unNotifDeadEnd('no-bridge', {
             text: 'Notification permission is only available inside the ' +
-              'Usernode app.',
+              'Homeroom app.',
             settings: false,
           });
           return;
@@ -4684,7 +4949,7 @@
           // that resolves instantly and shows nothing.
           this._unNotifNotice = {
             tone: 'ok',
-            text: 'Notifications are already allowed for Usernode.',
+            text: 'Notifications are already allowed for Homeroom.',
           };
           return;
         }
@@ -4701,7 +4966,7 @@
       } catch (err) {
         this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
           text: err && err.usernodeNoAnswer
-            ? 'The Usernode app didn’t respond to the permission request. ' +
+            ? 'The Homeroom app didn’t respond to the permission request. ' +
               'Force-close and reopen the app, then try again.'
             : this._nativeActionMessage(err,
                 'The permission request could not be started.'),
@@ -4742,7 +5007,7 @@
           tone: 'ok',
           text: isAndroid
             ? 'Permission granted.'
-            : 'Notifications are now allowed for Usernode.',
+            : 'Notifications are now allowed for Homeroom.',
         };
         this._usernodeLoading = false;
       this._publishUsernode();
@@ -4771,7 +5036,7 @@
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          const err = new Error('the Usernode app did not answer in time');
+          const err = new Error('the Homeroom app did not answer in time');
           err.usernodeNoAnswer = true;
           reject(err);
         }, this._UN_NATIVE_ANSWER_MS);
@@ -4801,23 +5066,23 @@
       switch (plan.verdict) {
         case 'no-bridge':
           return 'Notification permission is only available inside the ' +
-            'Usernode app.';
+            'Homeroom app.';
         case 'unsupported':
-          return 'This version of the Usernode app can’t open the ' +
+          return 'This version of the Homeroom app can’t open the ' +
             'notification prompt. Update the app from the App Store.';
         case 'settings':
           return isAndroid
             ? 'Permission was denied. Allow notifications in the system ' +
-              'settings for Usernode.'
-            : 'Notifications are turned off for Usernode. iOS only shows ' +
+              'settings for Homeroom.'
+            : 'Notifications are turned off for Homeroom. iOS only shows ' +
               'its prompt once, so this has to be changed in Settings › ' +
-              'Notifications › Usernode.';
+              'Notifications › Homeroom.';
         case 'declined':
           return 'Permission was not granted.';
         case 'silent':
-          return 'The Usernode app closed without showing the notification ' +
+          return 'The Homeroom app closed without showing the notification ' +
             'prompt. Reopen the app and try again, or allow notifications ' +
-            'in Settings › Notifications › Usernode.';
+            'in Settings › Notifications › Homeroom.';
         default:
           return 'The notification prompt could not be opened.';
       }
@@ -5090,7 +5355,7 @@
     // activity notifications, block production, Terms, the FAQ, the native
     // diagnostics screens — still renders. A failed read used to blank the
     // whole section, turning a transient app hiccup into a dead end.
-    // ── Usernode app section: view builders ────────────────────────────
+    // ── Homeroom app section: view builders ────────────────────────────
     //
     // #1079: `_renderUsernodeBody` and eight sibling renderers built ~800
     // lines of `document.createElement` into #settings-usernode-section.
@@ -5280,10 +5545,10 @@
       return {
         kind: 'permissions',
         demo: !!this._unDemoMode(),
-        heading: 'Usernode app: device permissions',
+        heading: 'Homeroom app: device permissions',
         description: isAndroid
           ? 'Block production needs the app to wake your device at exact slot times.'
-          : 'Notifications let Usernode alert you about node and account activity.',
+          : 'Notifications let Homeroom alert you about node and account activity.',
         // The row IS the control. It used to be an inert div whose only
         // affordance was a chip below, rendered only when the (iOS-meaningless)
         // exactAlarmGranted boolean said "not granted" — so on a build
@@ -5342,8 +5607,8 @@
         return {
           kind: 'unavailable',
           reason: stuck
-            ? 'The Usernode app isn’t accepting this screen’s secure ' +
-              'connection, so notifications can’t be set up. See “Usernode ' +
+            ? 'The Homeroom app isn’t accepting this screen’s secure ' +
+              'connection, so notifications can’t be set up. See “Homeroom ' +
               'app: connection” above.'
             : (admissionPending
               ? 'Finishing secure app sign-in before enabling notifications…'
@@ -5452,7 +5717,7 @@
       }));
     },
 
-    // ── Usernode app section: the named actions the components dispatch ──
+    // ── Homeroom app section: the named actions the components dispatch ──
     //
     // Each was an inline closure passed to `_unButton` / `_unToggle` /
     // `_unStatusRow`. They are named methods so the view model stays plain

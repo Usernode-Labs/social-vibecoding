@@ -1,0 +1,173 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const { once } = require('node:events');
+const poolModule = require('../src/db/pool');
+const access = require('../src/services/app-access');
+const admins = require('../src/services/app-admins');
+const state = { art: null, image: null, manager: true, visible: true, writes: 0 };
+const original = [poolModule.getPool, access.getAppForUser, admins.canManageApp];
+poolModule.getPool = () => ({ query: async (sql, p) => {
+  if (sql.startsWith('SELECT content_type')) return { rows: state.image?.id === p[0] ? [state.image] : state.image?.dark_id === p[0] ? [{ content_type: state.image.dark_content_type, data: state.image.dark_data }] : [] };
+  state.writes++;
+  if (sql.includes('WITH pair')) {
+    if (!p[1] && !state.image) return { rows: [] };
+    state.image = { ...state.image, ...(p[1] ? { id: p[1], content_type: p[2], data: p[3] } : {}),
+      ...(p[7] ? { dark_id: p[4], dark_content_type: p[5], dark_data: p[6] } : {}) };
+    state.art = { ...state.art, ...JSON.parse(p[8]), url: '/app-illustrations/' + state.image.id,
+      darkUrl: state.image.dark_id ? '/app-illustrations/' + state.image.dark_id : null };
+  }
+  else if (sql.includes('WITH image')) { state.art = JSON.parse(p[4]); state.image = { id: p[1], content_type: p[2], data: p[3] }; }
+  else if (sql.includes('WITH removed')) { state.art = null; state.image = null; }
+  else if (state.art) state.art = { ...state.art, ...JSON.parse(p[1]) };
+  return { rows: state.art ? [{ featured_illustration: state.art }] : [] };
+} });
+access.getAppForUser = async () => state.visible ? { id: 1, featured_illustration: state.art } : null;
+admins.canManageApp = async () => state.manager;
+delete require.cache[require.resolve('../src/routes/app-illustrations')];
+const { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TONES, LEGACY_TINTS } = require('../src/routes/app-illustrations');
+const app = express();
+app.use(express.json());
+app.use(illustrationRoutes({}));
+app.use(illustrationImageRoutes({}));
+[poolModule.getPool, access.getAppForUser, admins.canManageApp] = original;
+const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+const endpoint = '/api/apps/gym/featured-illustration';
+
+test('framing and upload limits reject malformed values and active image formats', () => {
+  assert.equal(parseFraming({ zoom: '1', x: 0, y: 0 }), null);
+  for (const zoom of [NaN, Infinity, 0, 4]) assert.equal(parseFraming({ zoom, x: 0, y: 0 }), null);
+  assert.equal(parseFraming({ zoom: 1, x: 101, y: 0 }), null);
+  assert.equal(validateImage(Buffer.from('<svg/>')), null);
+  assert.equal(validateImage(Buffer.alloc(1024 * 1024 + 1)), null);
+  assert.equal(validateImage(png), 'image/png');
+});
+test('the card colour is optional, and only the palette is a card colour', () => {
+  // Absent means "no override" — the card falls back to the slug's own hash —
+  // so the key is left OFF the result rather than written as null, which is
+  // what lets PATCH's jsonb merge leave an already-saved colour alone.
+  assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0 }), { zoom: 1, x: 0, y: 0 });
+  assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0, tint: null }), { zoom: 1, x: 0, y: 0 });
+  // The twelve tones the editor offers, plus the five tints it offered before
+  // them: an illustration saved then keeps its colour through a later reframe.
+  for (const tint of [...TONES, ...LEGACY_TINTS]) {
+    assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0, tint }), { zoom: 1, x: 0, y: 0, tint });
+  }
+  // Anything else is rejected outright rather than dropped, so a client that
+  // means to set a colour is told it did not. A tone is a name and a legacy
+  // tint is a number, and neither is read across: '3' and 'Blue' are not
+  // colours, they are a client sending the wrong shape.
+  for (const tint of [0, 6, -1, 2.5, '3', 'Blue', 'lilac', '', NaN, Infinity, true, {}]) {
+    assert.equal(parseFraming({ zoom: 1, x: 0, y: 0, tint }), null, `rejected: ${JSON.stringify(tint)}`);
+  }
+});
+test('upload, read, reframe, replacement, permission denial and reset', async () => {
+  const server = app.listen(0); await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const request = (path, method = 'GET', body, type = 'application/json') => fetch(origin + path, {
+    method, headers: { 'Content-Type': type }, body: body == null ? undefined : type === 'application/json' ? JSON.stringify(body) : body,
+  });
+  try {
+    let response = await request(endpoint + '?zoom=1.2&x=-15&y=22', 'POST', png, 'application/octet-stream');
+    assert.equal(response.status, 200);
+    const first = (await response.json()).illustration;
+    assert.equal(first.x, -15); assert.equal(first.zoom, 1.2);
+    // An upload that picked no colour stores none, which is how the card keeps
+    // the colour it already had from its slug.
+    assert.equal('tint' in first, false);
+    response = await request(first.url);
+    assert.equal(response.status, 200); assert.match(response.headers.get('cache-control'), /immutable/);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+    response = await request(endpoint, 'PATCH', { zoom: 2, x: 0, y: -50, tint: 'teal' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).illustration.url, first.url);
+    response = await request(endpoint);
+    let saved = (await response.json()).illustration;
+    assert.equal(saved.y, -50); assert.equal(saved.tint, 'teal');
+    // Reframing without a colour keeps the saved one rather than clearing it.
+    response = await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0 });
+    assert.equal((await response.json()).illustration.tint, 'teal');
+    // A colour saved before the tones existed round-trips unchanged, so an
+    // illustration from then is not silently recoloured by a reframe.
+    await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0, tint: 4 });
+    assert.equal((await (await request(endpoint)).json()).illustration.tint, 4);
+    // Out of the set is a 400 on both write paths, and writes nothing.
+    const before = state.writes;
+    assert.equal((await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0, tint: 'lilac' })).status, 400);
+    assert.equal((await request(endpoint + '?zoom=1&x=0&y=0&tint=9', 'POST', png, 'application/octet-stream')).status, 400);
+    assert.equal(state.writes, before);
+    // A replacement image carries the colour picked to sit with it. A query
+    // value is always a string, so the tone arrives ready and the legacy tint
+    // a stale page might still send is coerced back to its number.
+    response = await request(endpoint + '?zoom=1&x=0&y=0&tint=blue', 'POST', png, 'application/octet-stream');
+    saved = (await response.json()).illustration;
+    assert.equal(saved.tint, 'blue');
+    response = await request(endpoint + '?zoom=1&x=0&y=0&tint=2', 'POST', png, 'application/octet-stream');
+    saved = (await response.json()).illustration;
+    assert.equal(saved.tint, 2);
+    response = await request(endpoint + '?zoom=1&x=0&y=0', 'POST', png, 'application/octet-stream');
+    assert.notEqual((await response.json()).illustration.url, first.url);
+    assert.equal((await request(first.url)).status, 404);
+    state.manager = false;
+    const writes = state.writes;
+    for (const method of ['POST', 'PATCH', 'DELETE']) assert.equal((await request(endpoint, method, { zoom: 1, x: 0, y: 0 })).status, 403);
+    assert.equal(state.writes, writes);
+    state.visible = false; assert.equal((await request(endpoint)).status, 404);
+    state.visible = true; state.manager = true;
+    assert.equal((await request(endpoint, 'DELETE')).status, 200);
+    assert.equal((await request(endpoint)).status, 200);
+    assert.equal(state.art, null);
+    assert.equal((await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0 })).status, 409);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+
+test('paired uploads preserve one frame and colour, replace independently, and reject invalid writes', async () => {
+  state.art = null; state.image = null; state.manager = true; state.visible = true;
+  const server = app.listen(0); await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const put = body => fetch(origin + endpoint, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: JSON.stringify(body) });
+  const frame = { zoom: 2, x: 12, y: -9, tint: 'blue' };
+  const light = png.toString('base64');
+  const dark = Buffer.concat([png, Buffer.from('dark')]).toString('base64');
+  try {
+    assert.equal((await put({ ...frame, dark })).status, 409, 'a dark image requires a light fallback');
+    let response = await put({ ...frame, light, dark });
+    assert.equal(response.status, 200);
+    const first = (await response.json()).illustration;
+    assert.notEqual(first.url, first.darkUrl);
+    for (const [key, value] of Object.entries(frame)) assert.equal(first[key], value);
+    for (const [url, bytes] of [[first.url, light], [first.darkUrl, dark]]) {
+      const image = await fetch(origin + url);
+      assert.equal(image.status, 200);
+      assert.match(image.headers.get('cache-control'), /immutable/);
+      assert.equal(Buffer.from(await image.arrayBuffer()).toString('base64'), bytes);
+    }
+    response = await put({ ...frame, zoom: 1.5 });
+    let saved = (await response.json()).illustration;
+    assert.equal(saved.url, first.url); assert.equal(saved.darkUrl, first.darkUrl);
+    assert.equal(saved.zoom, 1.5);
+    response = await put({ ...frame, dark: light });
+    saved = (await response.json()).illustration;
+    assert.equal(saved.url, first.url); assert.notEqual(saved.darkUrl, first.darkUrl);
+    assert.equal((await fetch(origin + first.darkUrl)).status, 404);
+    const darkUrl = saved.darkUrl;
+    response = await put({ ...frame, light: dark });
+    saved = (await response.json()).illustration;
+    assert.notEqual(saved.url, first.url); assert.equal(saved.darkUrl, darkUrl);
+    const before = state.writes;
+    for (const invalid of [null, [], { ...frame, dark: '!!!' }, { ...frame, light: 'PHN2Zy8+' }, { ...frame, dark: 2 }]) {
+      assert.equal((await put(invalid)).status, 400);
+    }
+    state.manager = false;
+    assert.equal((await put({ ...frame, dark: null })).status, 403);
+    state.manager = true;
+    assert.equal(state.writes, before, 'rejected requests do not write either variant');
+    response = await put({ ...frame, dark: null });
+    saved = (await response.json()).illustration;
+    assert.equal(saved.darkUrl, null); assert.equal(saved.tint, 'blue');
+    assert.equal((await fetch(origin + darkUrl)).status, 404);
+    await fetch(origin + endpoint, { method: 'DELETE' });
+    assert.equal((await fetch(origin + saved.url)).status, 404);
+  } finally { server.close(); await once(server, 'close'); }
+});

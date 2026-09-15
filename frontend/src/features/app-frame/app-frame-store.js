@@ -39,7 +39,8 @@ import { createStore } from '../../lib/plain-store.js';
  *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
- *   slug: string, active: boolean, faded: boolean, background: string, cover: LaunchCoverState | null,
+ *   slug: string, active: boolean, faded: boolean, background: string,
+ *   sandboxReady: boolean, cover: LaunchCoverState | null,
  * }} AppFrameState
  */
 
@@ -59,6 +60,8 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   faded: true,
   /** #1581: the embedded document's opaque page color, reported by its bridge. */
   background: '',
+  /** False while the source-less blank document must remain fully restricted. */
+  sandboxReady: false,
   /** The launch cover, or null once revealed. See COVER_DEFAULTS. */
   cover: null,
 }));

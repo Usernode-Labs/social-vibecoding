@@ -17,6 +17,7 @@ import {
   loadConversations,
   loadOlder,
   messagesController,
+  open as openConversation,
   respond,
   selectConversation,
   syncChrome,
@@ -154,7 +155,18 @@ function ConversationList() {
         <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
       </div>
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
-      <div className="messages-list-scroll platform-safe-scroll">
+      {/* #1953: a click on the list's own blank space — below the last row,
+          not on a row or a button — closes the open conversation, as it
+          would in a desktop mail client. Only the list itself counts
+          (`target === currentTarget`), so no row, empty state or retry
+          button is affected. On a phone the list is hidden while a thread is
+          open, so this is a two-pane (md+) gesture. */}
+      <div
+        className="messages-list-scroll platform-safe-scroll"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && snap.route.conversationId) openConversation(null);
+        }}
+      >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
         {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div> : null}

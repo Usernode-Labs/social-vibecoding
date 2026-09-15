@@ -17,9 +17,9 @@
  * kept its copy; it does not any more, and there is no in-page back left in
  * the Dev area to find.
  *
- * What is left is `#dev-topic-thread`, which `GroupChat.mountThread` fills
- * with the thread panel (and, inside that, the topic card app-view.js paints
- * into `#gc-thread-head`).
+ * What is left is `#dev-topic-thread`: change routes mount the full card
+ * with conversation tabs here; issue/governance routes mount the thread
+ * panel and put their topic card into its `#gc-thread-head` slot.
  *
  * ── Why this was the LAST hand-written #app-content in Dev ────────────
  *
@@ -58,8 +58,8 @@ export function DevTopicSubView() {
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
       {/*
-          The thread panel's host. `GroupChat.mountThread` mounts
-          features/group-chat/thread-shell.tsx into it, so React renders it as
+          The topic page's host. The dev-board or group-chat bridge mounts
+          its page into it, so React renders it as
           an empty leaf and never looks inside — the same arrangement
           `#dev-chat-body` has in ./chat-frame.tsx.
       */}

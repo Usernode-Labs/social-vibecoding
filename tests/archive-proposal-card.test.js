@@ -235,8 +235,8 @@ function explorePillId(state) {
   return pill ? pill.explore : null;
 }
 
-test("topic head for another user's proposal wires the pill to the dev chat", () => {
-  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+test("topic head for another user's proposal wires Explore in More to the dev chat", () => {
+  const { AppView, els, published, headHtml, opened } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: 999 });
@@ -244,7 +244,12 @@ test("topic head for another user's proposal wires the pill to the dev chat", ()
   AppView._renderTopicHead();
 
   const html = headHtml();
-  assert.match(html, /gc-explore-chat-btn/, 'the pill is present');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'Explore is not repeated on the card face');
+  const menu = AppView._cardMenus[published.at(-1).card.rail.menuKey];
+  const explore = menu.filter((a) => a.icon === 'explore');
+  assert.equal(explore.length, 1);
+  explore[0].act();
+  assert.deepEqual(opened, [[7, null]]);
   assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
   assert.equal(explorePillId(published[published.length - 1]), 7,
     'the pill carries the session it opens — a painted-but-inert pill is a '
@@ -268,11 +273,11 @@ test("topic head for the viewer's OWN proposal shows no AI button", () => {
   assert.equal(explorePillId(published[published.length - 1]), null);
 });
 
-test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)", () => {
+test("topic head for the viewer's OWN IMPORTED proposal wires Explore in More (#1045)", () => {
   // The head has no delegated handler, so it must both PAINT the pill and
   // bind it — a head whose gate disagrees with the card leaves an inert
   // button. This is the case that regressed: mine && imported.
-  const { AppView, els, published, headHtml } = makeTopicHarness(ME);
+  const { AppView, els, published, headHtml, opened } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME, source: 'imported' });
@@ -280,7 +285,11 @@ test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)",
   AppView._renderTopicHead();
 
   const last = published[published.length - 1];
-  assert.match(headHtml(), /gc-explore-chat-btn/, 'the pill is present on my imported proposal');
+  assert.doesNotMatch(headHtml(), /gc-explore-chat-btn/, 'Explore is not repeated on the card face');
+  const explore = AppView._cardMenus[last.card.rail.menuKey].filter((a) => a.icon === 'explore');
+  assert.equal(explore.length, 1);
+  explore[0].act();
+  assert.deepEqual(opened, [[7, null]]);
   assert.ok(!last.body.actions.pills.some((p) => p.key === 'session'),
     'still no Open session (#687)');
   assert.equal(explorePillId(last), 7, 'and the pill knows which session to open');

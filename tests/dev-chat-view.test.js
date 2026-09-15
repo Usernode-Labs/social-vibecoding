@@ -40,6 +40,15 @@ const SESSION = {
   proposalHint: false, returnHint: false,
 };
 
+test('embedded workspace keeps the real composer and transcript without a second navigation strip', () => {
+  const change = { item: { id: 4073 }, card: {}, body: {} };
+  const embedded = html({ ...SESSION, change, embedded: true });
+  assert.match(embedded, /id="dc-composer-bar"/);
+  assert.match(embedded, /id="dc-messages"/);
+  assert.doesNotMatch(embedded, /Change overview|aria-label="Change views"/);
+  assert.match(html({ ...SESSION, change }), /Change overview/, 'old session bookmarks retain a route back to the card');
+});
+
 const html = (s) => renderToHtml(createElement(mod().DevChatViewView, {
   s: JSON.parse(JSON.stringify(s)),
 }));
@@ -472,4 +481,40 @@ test('#1851: a dev session with a PR displays checks without opening a card menu
     store.set({ ...previous, sessionId: 1852, pr: null });
     assert.doesNotMatch(html(SESSION), /aria-label="Proposal checks"/);
   } finally { store.set(previous); }
+});
+
+// ── #2069: what the header is told about the preview ────────────────────
+
+test('a session with no live preview publishes it as BUILDABLE, not as absent', () => {
+  // _publishPreview used to send null whenever staging_url was null, so the
+  // header's eye — the one control that calls ensure-staging — vanished on
+  // exactly the condition ensure-staging exists to fix.
+  const { DevChat, sandbox } = makeDevChat();
+  const sent = [];
+  sandbox.window.Improve = { setSessionPreview: (p) => sent.push(p) };
+
+  // Field by field: the payload is built inside the vm realm, so a deep
+  // compare against a literal from this one fails on the prototype alone.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: null, can_preview: true };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1).sessionId, 7);
+  assert.equal(sent.at(-1).url, null);
+  assert.equal(sent.at(-1).buildable, true);
+
+  // A live preview is unchanged, and is NOT reported as buildable: the eye
+  // opens it rather than rebuilding it.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: 'https://s/x', can_preview: true };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1).url, 'https://s/x');
+  assert.equal(sent.at(-1).buildable, false);
+
+  // And a session with nothing to build still publishes null, which is what
+  // keeps #1594's status chip for the case it was written for.
+  DevChat.currentSession = { id: 7, status: 'active', staging_url: null, can_preview: false };
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1), null);
+
+  DevChat.currentSession = null;
+  DevChat._publishPreview();
+  assert.equal(sent.at(-1), null, 'and no open session publishes nothing');
 });

@@ -12,6 +12,8 @@ const {
 } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
+const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
+const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
@@ -50,6 +52,7 @@ const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
+const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
@@ -348,7 +351,11 @@ app.get('/claude.md', (_req, res) => {
   const fs = require('fs');
   const fp = path.join(__dirname, 'src', 'prompts', 'app-conventions.md');
   try {
-    const body = fs.readFileSync(fp, 'utf-8');
+    // Through the loader, NOT a raw read: the document carries a
+    // {{PLATFORM_ORIGIN}} token that services/prompts.js resolves to this
+    // deployment's own origin. Reading the file directly here would publish
+    // the token itself to the very people this URL exists for.
+    const body = require('./src/services/prompts').getAppConventions();
     const stat = fs.statSync(fp);
     res.set('Content-Type', 'text/markdown; charset=utf-8');
     res.set('Last-Modified', stat.mtime.toUTCString());
@@ -481,6 +488,12 @@ app.use(issueImageRoutes(config));
 // tags; access control is the unguessable 32-hex avatar id, and the image
 // is published to other users by design.
 app.use(avatarRoutes(config));
+app.use(illustrationImageRoutes(config));
+// Uploaded challenge artwork, public for the same reason: challenge cards draw
+// it with plain <img> tags for anonymous viewers too. Access control is the
+// unguessable 32-hex id; the admin list/upload/archive routes live in
+// topochainAdminRoutes behind the admin gates.
+app.use(challengeIllustrationImageRoutes(config));
 
 // Publicly shared locked report snapshots (report-lock-share). Mounted
 // before authMiddleware like visuals: access control is the unguessable
@@ -545,6 +558,7 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(credentialRoutes(config));
 app.use(appRoutes(config));
+app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
 // (#752): session-cookie authed, called only by public/js/app-view.js's
 // storage bridge handler on behalf of the app iframe.
@@ -583,6 +597,7 @@ app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
+app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
@@ -594,6 +609,30 @@ app.use(workshopThemesRoutes(config));
   if (typeof ws.onBoardChange === 'function') {
     ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
   }
+}
+// A promoted head whose checks were deferred because it conflicted with main
+// (services/check-admission.js) gets them the moment it measures clean —
+// against the preview that is already up for it, so a run rather than a
+// rebuild. Measurement happens on whichever instance took the vote, the
+// sweep or the capture, so the hook is registered on every instance, like
+// the board hook above. recheckSessionChecks is _inFlight-guarded at the
+// capture; a second kick for the same head costs nothing.
+{
+  const integration = require('./src/services/integration');
+  integration.onBecameClean(async (row) => {
+    const pool = getPool(config);
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1 AND cs.status = 'promoted'
+          AND cs.check_state = 'pending' AND cs.check_phase = 'deferred'`,
+      [row.id]
+    );
+    if (!rows[0]) return;
+    await require('./src/services/staging-recovery').recheckSessionChecks({
+      config, pool, session: rows[0], reason: 'conflict-resolved',
+    });
+  });
 }
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
@@ -841,6 +880,27 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
+  // #2045: reconcile the shared hosted-asset backend once per rollout.
+  //
+  // It is otherwise only reconciled from deployApplication, which means a
+  // fix to how it is BUILT does not reach a backend that already exists
+  // until some child app happens to deploy. An app whose Ingress already
+  // carries the asset paths then answers 503 on every one of them — it
+  // cannot detect that, cannot serve those paths itself because the Ingress
+  // rule wins, and cannot fix it from app code. That is the state #2042
+  // left the fleet in, and it is what this call ends.
+  //
+  // Leader-only and fire-and-forget: the backend is singleton
+  // infrastructure, so reconciling it from both colors during a rollout
+  // would race two read-then-replace writes at the same Deployment for no
+  // benefit. Failure is logged and nothing else — an app deploy retries it,
+  // and a platform that cannot reach its own cluster has louder problems.
+  if (require('./src/services/application-runtime').mode(config) === 'kubernetes') {
+    require('./src/services/kubernetes').ensurePlatformAssetBackend(config)
+      .then((name) => log.info('server', 'Hosted-asset backend reconciled', { name }))
+      .catch((err) => log.warn('server', 'Hosted-asset backend reconcile deferred', { err: err.message }));
+  }
+
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
   const { cleanupCliAuth } = require('./src/services/cli-auth');
@@ -1067,7 +1127,22 @@ async function becomeLeader() {
   // restart — actually merges now instead of waiting for a fresh vote.
   // Both stay off the critical path so the server still comes up
   // immediately, like the other recovery steps below.
-  recoverStuckMerges(config)
+  //
+  // The harvest goes first. A checks run whose launcher this rollout just
+  // replaced still has its capture / unit-suite Jobs running (or finished)
+  // on the cluster; services/check-harvest.js seats every such run and
+  // reads its verdict rather than starting it over. Its claim phase is two
+  // writes per run and completes before the chain moves on, so by the time
+  // reconcileStuckChecks looks, every harvestable session reads as in flight
+  // (checkRecoveryInFlight) and only genuinely ownerless rows get re-driven.
+  // The Job reads themselves run detached (`done`); boot never waits on a
+  // Job. No-op outside the Kubernetes capture runtime.
+  const checkHarvest = require('./src/services/check-harvest');
+  checkHarvest.sweep(config, { reason: 'boot' })
+    .catch((err) => {
+      log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
+    })
+    .then(() => recoverStuckMerges(config))
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, re-run any stuck/never-recorded
     // proposal checks so PRs left permanently "still running its tests" by a
@@ -1080,6 +1155,11 @@ async function becomeLeader() {
         err: err.message,
       });
     });
+  // ...and on a timer afterwards: a run orphaned while this process is the
+  // leader (a worker Pod evicted, a follower that launched it and then lost
+  // the election) is picked up within the orphan window instead of waiting
+  // out CHECKS_STALE_MS for the stale sweep to start it over.
+  checkHarvest.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1280,7 +1360,7 @@ module.exports = {
   },
 };
 
-// Scan existing imported apps for privacy violations. Usernode workers
+// Scan existing imported apps for privacy violations. Homeroom workers
 // run with zero GitHub credentials and rely on unauthenticated public
 // HTTPS clones; a private repo can't be cloned by the worker, so dev
 // sessions against it will fail at bootstrap. Surface those rows at
@@ -1595,7 +1675,12 @@ function checkRecoveryInFlight(sessionId) {
   return activeWorkersSvc.isSessionBusy(sessionId)
     || hasInFlightHandoffPipeline(sessionId)
     || stagingSvc.hasInFlightBuild(Number(sessionId))
-    || visualsSvc.hasInFlightCapture(sessionId);
+    || visualsSvc.hasInFlightCapture(sessionId)
+    // A harvest holds the capture seat for its whole read, so the line
+    // above already covers it; this also covers the moment it hands the
+    // seat back to re-drive a run it could not read (check-harvest.js
+    // redrive), which must not be re-driven a second time from here.
+    || require('./src/services/check-harvest').isHarvesting(sessionId);
 }
 
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
@@ -3844,9 +3929,27 @@ async function resumeDetachedTurnInner({
     } else if (recoveryActiveTurn.mode === 'sync') {
       // A sync turn is system work: it posts its own status rows via
       // sync-main's sendStatus and has no Mayor reply on the live path
-      // either, so there is nothing to wrap up here. Logged only.
-      log.info('server', 'Recovered sync turn — no Mayor wrap-up', { sessionId });
+      // either, so there is no wrap-up. What it does have is a caller that
+      // died with the previous process: the merge-queue pass that
+      // dispatched it, which would have cleared the 'integrating' it had
+      // recorded on the row and then attempted the merge. Without that,
+      // the card kept saying "bringing up to date with main" until some
+      // unrelated trigger happened by — and a proposal whose verdict
+      // carried onto the merged head, with nothing left to rebuild, had no
+      // trigger left at all. So the recovered turn hands the proposal back
+      // to the queue itself.
+      log.info('server', 'Recovered sync turn — handing back to the integration queue', {
+        sessionId,
+      });
       terminalLine = '[done]';
+      await require('./src/services/integration').setBlockReasons(pool, sessionId, []);
+      if (session.status === 'promoted' && session.app_id != null) {
+        require('./src/services/conflict-resolver')
+          .checkAndResolveConflicts(config, { app_id: session.app_id })
+          .catch((err) => log.warn('server', 'post-recovery queue kick failed', {
+            sessionId, err: err.message,
+          }));
+      }
     } else {
       const { outcome: finalizeOutcome, summary } = await finalizeRecoveredTurn({
         config, pool, staging, session, sessionId, result, repoOwner, repoName,
@@ -4551,51 +4654,43 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
     }
 
-    // Pass 9: proposal freshness (#1442). Re-measure each promoted proposal
-    // against main so the three numbers on its card — behind-by, whether it
-    // still merges cleanly, and whether its checks' base is still current —
-    // stop being frozen at submission time. Everything the service writes is
-    // advisory except behind_main, which it writes through so the merge gate
-    // reads a current number instead of a stale one.
+    // Pass 9: measure every promoted proposal (#2038).
     //
-    // Candidate order puts never-checked rows first, then the least recently
-    // checked. Rows whose recorded main sha no longer matches the app's are
-    // pulled to the front of that: main moving is exactly the event that
-    // invalidates all three answers, so a proposal that has demonstrably gone
-    // stale is measured before one that has merely aged.
+    // This replaced a freshness pass that was capped at ten rows a sweep with
+    // a five-minute per-row cooldown, because each row cost two to six GitHub
+    // reads against a rate limit. A proposal nobody had opened could therefore
+    // carry numbers that were hours old, and the merge gate read them.
+    //
+    // A measurement is local plumbing against the app's mirror now, so the cap
+    // and the cooldown are gone: every promoted proposal is measured every
+    // pass. That is the fix for the whole class of failures where a proposal
+    // was described confidently and wrongly — including the one that mattered
+    // most, a drifted proposal below the vote threshold that no drain would
+    // ever pick up and nothing else would ever re-measure.
+    //
+    // Grouped by app so one `git fetch` serves every open proposal on it.
     try {
-      const freshness = require('./src/services/proposal-freshness');
-      const gh = require('./src/services/github');
+      const integrationSvc = require('./src/services/integration');
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.main_sha AS app_main_sha
+        `SELECT cs.*, a.slug AS app_slug, a.repo_url
            FROM chat_sessions cs
            JOIN apps a ON cs.app_id = a.id
           WHERE cs.status = 'promoted'
             AND a.repo_url IS NOT NULL
-            AND cs.pr_number IS NOT NULL
-          ORDER BY (a.main_sha IS NOT NULL AND a.main_sha IS DISTINCT FROM cs.freshness_main_sha) DESC,
-                   cs.freshness_checked_at ASC NULLS FIRST
-          LIMIT 50`
+            AND cs.branch_name IS NOT NULL
+          ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
       );
-      const MAX_FRESHNESS_REFRESH_PER_SWEEP = 10;
-      let refreshed = 0;
+      let measured = 0;
       for (const session of rows) {
-        if (refreshed >= MAX_FRESHNESS_REFRESH_PER_SWEEP) break;
         // A session mid-turn is about to move its own head; measuring it now
-        // would record an answer that is wrong by the time it is written.
+        // records an answer that is wrong before it is written.
         if (worker.isInFlight(session.id)) continue;
-        const last = freshnessRefreshAttempts.get(session.id) || 0;
-        if (Date.now() - last < FRESHNESS_REFRESH_COOLDOWN_MS) continue;
-        // Stamp before the work, exactly as Pass 6 does, so a tick landing
-        // during a slow GitHub round trip cannot start a duplicate.
-        freshnessRefreshAttempts.set(session.id, Date.now());
-        refreshed++;
-        // refreshFreshness never throws; the try is for the require/lookup.
-        await freshness.refreshFreshness({ gh, pool }, session, { force: true });
+        const written = await integrationSvc.measure({ pool, session }, { force: true });
+        if (written && !written.skipped) measured++;
       }
-      if (refreshed) log.info('server', 'Refreshed proposal freshness', { count: refreshed });
+      if (measured) log.info('server', 'Measured proposals against main', { count: measured });
     } catch (err) {
-      log.warn('server', 'Proposal-freshness sweep failed', { err: err.message });
+      log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
     }
 
     // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:
@@ -4805,7 +4900,7 @@ function startStalePrSweeper(config) {
       for (const session of rows) {
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         try {
-          // Native PR branches can be updated outside Usernode. Refresh their
+          // Native PR branches can be updated outside Homeroom. Refresh their
           // immutable reviewed revision before any timed governance decision,
           // including automatic rejection. Imported proposals retain their
           // existing imported-head synchronization behavior.
@@ -4836,9 +4931,7 @@ function startStalePrSweeper(config) {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
             explicitApproval: !!session.requires_explicit_approval,
-            // Count only votes on the current immutable revision for both
-            // imported and native GitHub-backed proposals.
-            headSha: sweepRevision.headSha,
+            // #2038: scoped by approval epoch inside the gate.
           });
           // Merge takes precedence: a row that just became mergeable should
           // merge, not reject. checkAndMerge re-confirms both gates atomically.

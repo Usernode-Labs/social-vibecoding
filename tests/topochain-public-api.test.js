@@ -131,6 +131,7 @@ const CHALLENGE_TEMPLATES = [
     created_at: T(-100), updated_at: T(-90), kind: 'REPORT_BUG_CHALLENGE', cta_type: 'link',
     mobile_cta_type: 'deeplink', mobile_cta_label: 'Report', mobile_cta_link: 'app://report',
     metric_type: null, metric_target: null, metric_label: null,
+    illustration: null,
   },
   {
     id: 2, category: 'onchain', goal: 'Produce a block', task: 'Produce at least one block', reward: '250 points',
@@ -139,6 +140,7 @@ const CHALLENGE_TEMPLATES = [
     created_at: T(-100), updated_at: T(-90), kind: 'SEND_TRANSACTION_CHALLENGE', cta_type: 'link',
     mobile_cta_type: 'deeplink', mobile_cta_label: 'Produce', mobile_cta_link: 'app://produce',
     metric_type: 'blocks_produced', metric_target: '1.0000', metric_label: 'blocks',
+    illustration: 'block-production',
   },
 ];
 
@@ -147,6 +149,10 @@ const CHALLENGES = [
     id: 10, season_event_id: 100, challenge_template_id: 1, goal: null, task: null, reward: null,
     description: null, requirements: null, schedule_start: null, schedule_end: null, reward_logic: null,
     cta_button: null, cta_label: null, cta_link: null, enabled: true, display_order: 1, kind: null,
+    // A metric set on the CHALLENGE row over a template with none: the list
+    // item's `metric` must be this effective one, while `activity_type`
+    // stays the template's by contract.
+    metric_type: 'count', metric_target: '3.0000', metric_label: 'bugs filed',
   },
   {
     // Organiser-FINISHED (#981): the one fixture carrying `completed`, so the
@@ -538,6 +544,7 @@ function joinChallengeTemplate(c, t) {
     goal: c.goal, task: c.task, reward: c.reward, description: c.description, requirements: c.requirements,
     schedule_start: c.schedule_start, schedule_end: c.schedule_end, reward_logic: c.reward_logic,
     cta_button: c.cta_button, cta_label: c.cta_label, cta_link: c.cta_link,
+    metric_type: c.metric_type, metric_target: c.metric_target, metric_label: c.metric_label,
     t_id: t.id, t_category: t.category, t_goal: t.goal, t_task: t.task, t_reward: t.reward,
     t_description: t.description, t_requirements: t.requirements, t_schedule_start: t.schedule_start,
     t_schedule_end: t.schedule_end, t_reward_logic: t.reward_logic, t_cta_button: t.cta_button,
@@ -545,6 +552,7 @@ function joinChallengeTemplate(c, t) {
     t_kind: t.kind, t_cta_type: t.cta_type, t_mobile_cta_type: t.mobile_cta_type,
     t_mobile_cta_label: t.mobile_cta_label, t_mobile_cta_link: t.mobile_cta_link,
     t_metric_type: t.metric_type, t_metric_target: t.metric_target, t_metric_label: t.metric_label,
+    t_illustration: t.illustration, t_illustration_tone: t.illustration_tone,
   };
 }
 
@@ -975,6 +983,76 @@ test('GET /season-events/:id/challenges: only enabled challenges, override/effec
   assert.equal(overridden.overrides.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.effective.goal, 'Produce your first block (overridden)');
   assert.equal(overridden.detail_modal.cta_type, 'link'); // always from the template, never overridden
+});
+
+test('GET /season-events/:id/challenges: card_preview carries the TEMPLATE\'s illustration slug, or null', async () => {
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const drawn = body.data.find((c) => c.id === 11);
+  assert.equal(drawn.card_preview.illustration, 'block-production');
+  assert.equal(drawn.activity_type.illustration, 'block-production');
+  // Template-level only: nothing a challenge row sets can override it.
+  assert.equal('illustration' in drawn.overrides, false);
+  assert.equal('illustration' in drawn.effective, false);
+
+  const plain = body.data.find((c) => c.id === 10);
+  assert.equal(plain.card_preview.illustration, null, 'a template without artwork');
+
+  // A challenge whose template row is gone: every t_* column arrives NULL (or
+  // absent) from the LEFT JOIN, and the card simply has no artwork.
+  const { buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
+  const orphan = buildChallengeListItem({ id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true, t_id: null });
+  assert.equal(orphan.card_preview.illustration, null);
+});
+
+// An UPLOADED illustration's tone travels beside its slug, from the scalar
+// subquery TEMPLATE_JOIN_COLUMNS_SQL adds. A built-in slug gets null: its tone
+// lives in the client registry, which ignores the payload's for it anyway.
+test('GET /season-events/:id/challenges: card_preview carries an uploaded illustration\'s tone, null otherwise', async () => {
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const drawn = body.data.find((c) => c.id === 11);
+  assert.equal(drawn.card_preview.illustration_tone, null, 'a built-in slug');
+  assert.equal(drawn.activity_type.illustration_tone, null);
+  assert.equal(body.data.find((c) => c.id === 10).card_preview.illustration_tone, null, 'no artwork at all');
+
+  const { buildChallengeListItem, TEMPLATE_JOIN_COLUMNS_SQL } = require('../src/routes/topochain/challenge-view');
+  const slug = `u-${'c'.repeat(32)}`;
+  const uploaded = buildChallengeListItem({
+    id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true,
+    t_id: 9, t_illustration: slug, t_illustration_tone: 'teal',
+  });
+  assert.equal(uploaded.card_preview.illustration, slug);
+  assert.equal(uploaded.card_preview.illustration_tone, 'teal');
+  assert.equal(uploaded.activity_type.illustration_tone, 'teal');
+  assert.equal('illustration_tone' in uploaded.overrides, false, 'template-level, like the slug');
+
+  const orphan = buildChallengeListItem({ id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true, t_id: null });
+  assert.equal(orphan.card_preview.illustration_tone, null);
+
+  assert.match(TEMPLATE_JOIN_COLUMNS_SQL.replace(/\s+/g, ' '),
+    /\(SELECT ci\.tone FROM challenge_illustrations ci WHERE ci\.slug = ct\.illustration\) AS t_illustration_tone/);
+});
+
+test('GET /season-events/:id/challenges: each item carries its EFFECTIVE metric beside the template', async () => {
+  // The challenge card counts toward this target ("0/3 bugs filed") for every
+  // viewer, signed out included, so it must be the organiser's override when
+  // there is one — the same merge Home's panel and /challenges-api apply.
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const overridden = body.data.find((c) => c.id === 10);
+  assert.deepEqual(overridden.metric, { kind: 'count', target: 3, label: 'bugs filed' },
+    'the challenge row\'s metric, with the target as a number');
+  assert.equal(overridden.activity_type.metric_type, null, '`activity_type` stays the template, by contract');
+
+  const fromTemplate = body.data.find((c) => c.id === 11);
+  assert.deepEqual(fromTemplate.metric, { kind: 'blocks_produced', target: 1, label: 'blocks' },
+    'no override: the template\'s metric');
 });
 
 test('GET /season-events/:id/challenges: publishes the organiser `completed` flag, coerced to a real boolean', async () => {

@@ -164,7 +164,7 @@ test('the capture run feeds one observer to BOTH transports, throttled, with the
   assert.match(src, /if \(urgent \|\| gap >= minGapMs\)/, 'done always flushes; otherwise one snapshot per gap');
   assert.match(src, /onProgress: progress\.observeUnit,/, 'the unit suite reports into the same state');
   assert.match(src, /const unitOutcome = await unitSuitePromise;\n\s+closeProgress\(\);/, 'closed before the verdict is written');
-  assert.match(src, /\} catch \(err\) \{\n\s+closeProgress\(\);\n\s+traceStep\('capture_error'/, 'and on the error path');
+  assert.match(src, /\} catch \(err\) \{\n\s+closeProgress\(\);/, 'and on the error path');
 });
 
 // ── 2b. the unit suite (npm test) reports the same way ──────────────────
@@ -551,8 +551,20 @@ test('the build opens prepare_checks when the container is up, and the capture c
     poolMod.getPool = savedGetPool;
   }
   const src = read('src/services/visuals.js');
-  // Queued: reported from the re-queue branch, before it returns.
-  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]{0,900}reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // Queued: reported from the re-queue branch, before it returns. #2038 put
+  // the supersede check between the park and the report, so the window is
+  // wider — the ORDER is what this pins, not the distance.
+  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]*?reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // #2038: and a run for a DIFFERENT commit does not wait at all. The suite
+  // that is going is testing the old head, and storeChecks only writes when
+  // checks_commit_sha still matches the commit its run started on — which
+  // setChecksPending has already moved — so letting it finish writes the
+  // verdict nowhere and leaves the row 'pending' until the stale sweeper
+  // notices. It is aborted instead, and its finally block drains the queue.
+  assert.match(src, /running\.commitHash !== commitHash/,
+    'the supersede is keyed on the commit having moved, not on any run existing');
+  assert.match(src, /running\.operation\.abort\(lifecycle\.cancelled\(\)\)/,
+    'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
   assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
   assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
@@ -618,6 +630,130 @@ test('the build steps render as a line and a step row, live and finished', () =>
   assert.match(read('public/css/app.css'), /\.dev-ledger-build-step\.is-now \{/);
 });
 
+// ── 2d. the run's cost survives the verdict (#2170) ─────────────────────
+//
+// "built in 20s" and the checks' own time used to vanish the moment the
+// verdict landed: storeChecks nulled checks_progress. A reviewer opening a
+// passed card an hour later had no way to see how long the preview and the
+// checks had taken. The snapshot is reduced now, not dropped.
+
+test('#2170: the verdict keeps the finished build and the checking time on the row instead of dropping them', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } };
+  assert.equal(await visuals.storeChecks(pool, 7, 'abc', { state: 'passing', results: [] }), true);
+  const sql = calls[0].sql;
+  assert.match(sql, /SET check_state = \$1/);
+  assert.doesNotMatch(sql, /checks_progress = NULL,/, 'the live snapshot is reduced, not dropped');
+  assert.match(sql, /checks_progress = NULLIF\(jsonb_strip_nulls\(jsonb_build_object\(/);
+  // Only a FINISHED build is kept: a step still 'now' on the row would draw
+  // a live pipeline under a verdict.
+  assert.match(sql, /'build', CASE WHEN checks_progress #>> '\{build,step\}' = 'done'\s+THEN checks_progress -> 'build' END/);
+  // The checking time is NOW() minus the stamp the testing half opened
+  // with — the row's OLD checks_checked_at, read by the same statement
+  // that overwrites it — so no column had to be added for it.
+  assert.match(sql, /'checksMs', ROUND\(EXTRACT\(EPOCH FROM \(NOW\(\) - checks_checked_at\)\) \* 1000\)::bigint/);
+  assert.match(sql, /checks_checked_at = NOW\(\)/);
+  // A row with neither (no build steps, no stamp) goes back to NULL rather
+  // than carrying an empty object the card would have to learn to ignore.
+  assert.match(sql, /\)\), '\{\}'::jsonb\)/);
+  // The stamp the subtraction reads is the one captureForSession writes as
+  // the testing half opens, and every run that reaches a verdict opens so.
+  const src = read('src/services/visuals.js');
+  assert.match(src, /await setChecksPending\(pool, session\.id, commitHash, 'testing', trigger\)/);
+  // An error verdict has no run to cost — it still clears the snapshot, and
+  // so does the next run's start (tests/set-checks-pending.test.js).
+  await visuals.storeChecks(pool, 7, 'abc', { state: 'error', results: [] }, 'boom');
+  assert.match(calls[1].sql, /checks_progress = NULL,/);
+});
+
+test('#2170: a passed or failed ledger row keeps "built in · checked in" under its count; a building one is unchanged', () => {
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const four = [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 5000 }, { key: 'clone', ms: 2000, via: 'template' }, { key: 'health', ms: 9000 }];
+  const kept = { build: { step: 'done', steps: [...four, { key: 'prepare_checks', ms: 3000 }], totalMs: 18000 }, checksMs: 580000 };
+  const base = {
+    id: 21, status: 'promoted', username: 'maya', source: 'native',
+    yes_count: 1, no_count: 0, votes_required: 1,
+    checks_checked_at: new Date().toISOString(),
+    test_results: [{ name: 'Home loads', path: '/', status: 'pass' }],
+    freshness: { mergeability: 'clean', behindBy: 0, checkedAt: '2026-09-07T09:00:00Z' },
+  };
+  const rowOf = (pr) => plain(AppView._proposalDetailsView(pr).ledger).find((r) => r.key === 'checks');
+  // The line itself, in the sub line's own idiom.
+  assert.equal(AppView._checksTimingsLine({ checks_progress: kept }), 'built in 18s · checked in 9m 40s');
+  // Passed: the count first, then the cost, one `sub` string — the markup
+  // is untouched, so dapp.json's `.dev-ledger-k small` still finds one node.
+  const passed = rowOf({ ...base, check_state: 'passing', checks_progress: kept });
+  assert.equal(passed.sub, '1 passed · built in 18s · checked in 9m 40s');
+  assert.equal(passed.tone, 'ok');
+  assert.equal(passed.progress, undefined, 'no live bar under a verdict');
+  // Failed: the same line under the failing count.
+  const failed = rowOf({ ...base, check_state: 'failing', checks_progress: kept,
+    test_results: [{ name: 'Home loads', path: '/', status: 'fail' }, { name: 'Board renders', path: '/b', status: 'pass' }] });
+  assert.equal(failed.sub, '1 of 2 failing · built in 18s · checked in 9m 40s');
+  // A row with no timings — a verdict older than this change, or one whose
+  // next run has since cleared them — reads exactly as it did.
+  assert.equal(rowOf({ ...base, check_state: 'passing' }).sub, '1 passed');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: null }).sub, '1 passed');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: {} }).sub, '1 passed');
+  // Either half alone: a re-check against a live preview builds nothing, and
+  // a legacy stamp-less row has no checking time.
+  assert.equal(AppView._checksTimingsLine({ checks_progress: { checksMs: 61000 } }), 'checked in 1m 1s');
+  assert.equal(AppView._checksTimingsLine({ checks_progress: { build: kept.build } }), 'built in 18s');
+  // A build that is not finished is never costed: the live shape draws the
+  // pipeline, not a total.
+  assert.equal(AppView._checksTimingsLine({ checks_progress: { build: { step: 'clone', startedAt: 'x', steps: [{ key: 'image_build', ms: 5000 }] } } }), null);
+  // A building card is unchanged: its sub line is the live step, and the
+  // ledger row still carries the bar.
+  const building = rowOf({ ...base, check_state: 'pending', check_phase: 'building', test_results: [],
+    checks_progress: { build: { step: 'clone', startedAt: 'x', steps: [{ key: 'source_fetch', ms: 2000 }] } } });
+  assert.equal(building.sub, 'build: cloning the database');
+  assert.equal(building.progress.build.length, 5);
+  // And a testing card keeps the finished build as its footnote, as before.
+  const testing = rowOf({ ...base, check_state: 'pending', check_phase: 'testing', test_results: [],
+    checks_progress: { ran: 1, passed: 1, failed: 0, expected: 5, build: kept.build } });
+  assert.equal(testing.sub, '1 of 5 run · 1 passed');
+  assert.match(testing.foot.map((f) => f[0]).join(' '), /Preview built in 18s, checks prepared in 3s/);
+});
+
+test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in flight keeps its live one', () => {
+  // The rows stagingMockProposals actually serves, not a hand-made copy —
+  // the topic route's screenshot is taken of these.
+  const src = read('src/routes/votes.js');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
+  const byId = (id) => rows.find((r) => r.id === id);
+  const AppView = makeAppView();
+  for (const row of rows) {
+    const verdict = row.check_state === 'passing' || row.check_state === 'failing';
+    if (verdict) {
+      assert.equal(row.checks_progress.build.step, 'done', `${row.id}: the build is finished`);
+      assert.equal(row.checks_progress.build.totalMs, 19964, `${row.id}: and costed`);
+      assert.equal(row.checks_progress.checksMs, 252000, `${row.id}: so are the checks`);
+      assert.equal(AppView._checksTimingsLine(row), 'built in 20s · checked in 4m 12s');
+    } else if (row.id === 9000028) {
+      assert.equal(row.checks_progress.build.step, 'prepare_checks', 'the live fifth-step row is left alone');
+      assert.equal('checksMs' in row.checks_progress, false);
+    } else {
+      assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
+    }
+  }
+  // The shared steps still draw the queued row exactly as they did.
+  assert.deepEqual(byId(9000028).checks_progress.build.steps.map((s) => [s.key, s.ms]),
+    [['source_fetch', 2555], ['image_build', 5372], ['clone', 2426], ['health', 9585]]);
+  assert.equal(byId(9000001).check_state, 'passing');
+  assert.equal(byId(9000093).check_state, 'failing');
+});
+
 test('a roster already on screen is never replaced by a loading line', async () => {
   // vote_update is broadcast for about two dozen things that are not a vote
   // — a rename, a title heal, a sync, a conflict resolution, a merge, fleet
@@ -664,13 +800,22 @@ test('a roster already on screen is never replaced by a loading line', async () 
   assert.match(src, /else delete AppView\._voteRoster\[sessionId\];/);
 });
 
-test('a pending run says what a pending sync will do to it', () => {
+test('a pending run says what main moving means for it', () => {
   const AppView = makeAppView();
   const base = { check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString() };
   const lines = (pr) => AppView._checksStatusNotes(pr)[0].rows.map((r) => r.parts[0]);
+  // A head that still merges cleanly is never synced: it merges as it
+  // stands, so the run in flight is left to finish. Saying a sync was coming
+  // here was the promise that the direct merge lane retired.
   const behind = lines({ ...base, behind_main: 3 });
-  assert.ok(behind.some((l) => /Main has moved 3 commits ahead\. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit\./.test(l)),
-    'the checks row says the sync ends this run — not left to be inferred from the Behind main pill');
+  assert.ok(behind.some((l) => /Main has moved 3 commits ahead\. That does not restart this run: a proposal that still merges cleanly merges as it stands\./.test(l)),
+    'the checks row says the drift leaves this run alone');
+  assert.ok(!behind.some((l) => /syncs this proposal/.test(l)));
+  // A CONFLICTING head is the one the platform brings up to date, and that
+  // does restart the run — on the resolved commit.
+  const conflict = lines({ ...base, behind_main: 3, freshness: { mergeability: 'conflict', behindBy: 3 } });
+  assert.ok(conflict.some((l) => /Main has moved 3 commits ahead and this proposal conflicts with it\. .*when the platform resolves the conflict the run starts again on the resolved commit\./.test(l)),
+    'the checks row says the resolution ends this run');
   assert.ok(lines({ ...base, behind_main: 1 }).some((l) => /Main has moved 1 commit ahead/.test(l)), 'singular');
   assert.ok(!lines({ ...base, behind_main: 0 }).some((l) => /Main has moved/.test(l)), 'nothing to say when it is level with main');
   assert.ok(!lines(base).some((l) => /Main has moved/.test(l)));
@@ -679,12 +824,47 @@ test('a pending run says what a pending sync will do to it', () => {
   assert.ok(!JSON.stringify(done).includes('Main has moved'));
 });
 
-test('a clean sync does not carry the commit pin out from under a run in flight', () => {
-  const src = read('src/services/sync-main.js');
-  assert.match(src, /const runInFlight = session\.check_state === 'pending';/);
-  assert.match(src, /const carryChecks = result\.syncResult === 'clean' && !runInFlight;/);
-  // The re-kick is the existing non-carry path, so a pending row now takes it.
-  assert.match(src, /if \(!carryChecks\) \{\n\s+await kickChecksForSyncedHead\(config, pool, session, nextSha\);/);
+test('a deferred run is a note about a decision, not a spinner about a run', () => {
+  const AppView = makeAppView();
+  const notes = AppView._checksStatusNotes({
+    id: 7, user_id: 1, status: 'promoted',
+    check_state: 'pending', check_phase: 'deferred', checks_checked_at: new Date().toISOString(),
+    freshness: { mergeability: 'conflict', behindBy: 2 },
+  });
+  assert.equal(notes.length, 1);
+  const note = notes[0];
+  assert.equal(note.spinner, false, 'nothing is running');
+  assert.match(note.heading, /Checks deferred until this merges cleanly/);
+  const text = note.rows.map((r) => r.parts[0]).join(' ');
+  assert.match(text, /preview was built but the automated tests were not run/);
+  assert.match(text, /run automatically once it merges cleanly/);
+  assert.match(text, /Preview built /);
+  assert.ok(!/Main has moved/.test(text), 'the in-flight forecast belongs to a run that is going');
+  assert.ok(note.action, 'the re-run button is how to insist on a verdict for this head as it stands');
+  // The phase copy the Underway card reads names the same decision.
+  assert.equal(AppView._checksPhaseCopy('deferred').title, 'Checks deferred');
+  assert.match(AppView._checksPhaseCopy('deferred').detail, /conflicts with main/);
+});
+
+test('an integration supersedes a check run rather than queueing behind it', () => {
+  // #1728: a sync that left a run in flight cost two abandoned runs (one of
+  // them 490 checks in), two ten-minute dead waits and three full runs for a
+  // single proposal. The run that is going tested the PRE-merge commit and
+  // its verdict is keyed to the commit it started on, so letting it finish
+  // writes a verdict nowhere.
+  //
+  // sync-main used to work around that by deciding whether to carry the
+  // checks pin (`runInFlight` / `carryChecks`). The queue cancels the run
+  // instead, which is the thing that was actually wanted — the supersede
+  // primitive already existed in services/preview-lifecycle.js and simply was
+  // not called from here.
+  const queue = read('src/services/merge-queue.js');
+  assert.match(queue, /preview-lifecycle/,
+    'the queue must reach for the supersede primitive');
+  assert.match(queue, /cancelled\(session\.id/,
+    'and actually cancel the in-flight run before moving the branch under it');
+  assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
+    'the carry-or-not workaround belongs to the deleted vote-carry path');
 });
 
 test('the board card and the running badge carry the live count', () => {

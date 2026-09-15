@@ -16,8 +16,13 @@
  * rather than growing a hybrid with the row as a head and the card
  * de-chromed under it (#1799 did that; it read as a third object belonging
  * to neither size). The open card carries an "Open card" toggle at the end
- * of its facts line that reveals the topic screen's own sections under it,
- * and an "Open on its own page" link for the item's full-screen route.
+ * of its facts line that reveals the topic screen's own sections under it;
+ * once open, that same pill is "Open page ›", the item's full-screen route
+ * (#1886 — it used to be a second link under the card). A card about the
+ * viewer's OWN session carries one more link, "Open session", to the dev
+ * chat behind it (#1887): the session is a destination inside the open
+ * card, never what a tap on the row does — that tap unfolds the card, as
+ * it does for every other kind.
  *
  * ── The item's hooks stay on, at both sizes ──────────────────────────
  *
@@ -115,9 +120,23 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
   if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
   if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
-  if (a['data-shared-session-row']) return `#app/${slug}/dev/shared/${a['data-shared-session-row']}`;
-  if (a['data-session-chip']) return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
+  if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
+  if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
   return null;
+}
+
+/**
+ * Where the SESSION behind a card about the viewer's own session lives: the
+ * owner's dev chat, at its own route. Only `data-session-chip` names one —
+ * an imported PR of the viewer's wears `data-shared-session-row` and has no
+ * dev chat (#846) — and `openHref` never answers with it: a tap on the row
+ * unfolds the card, the open card's "Open page ›" pill is the change's page
+ * (#1886), and the session is this link INSIDE the open card (#1887).
+ */
+export function sessionHref(slug: string, card: DevCardModel): string | null {
+  const a = card.attrs || {};
+  if (!slug || !a['data-session-chip']) return null;
+  return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
 }
 
 /** How many of the card's own chips ride along on a folded row. */
@@ -157,7 +176,12 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
   const s = card.pill?.state || null;
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
-  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  // `meta` chips (the status tags) ride the row's META line, which is
+  // metaLineNodes' — the same seam as the card. The band is the bar, the
+  // remaining state chips and the vote.
+  const chips = (card.badges || [])
+    .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
+    .slice(0, ROW_BADGE_MAX);
   if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
@@ -249,18 +273,32 @@ export function FoldedRow({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
       }}
     >
-      {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
-      <span className="dev-ws-row-main">
+      {/* The card's anatomy, line for line, as three SIBLINGS — which is how
+          the card arranges them: a head (glyph + title), the meta line, then
+          the bar row. The head holds the glyph and the title and nothing
+          else, so the two lines below it start where the card's start: the
+          meta line tabbed 30px in under the title (app.css mirrors the
+          card's own `.dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
+          rule), and the bar row full-width on the padding edge.
+
+          Both of those used to live in a text column beside the glyph, which
+          started the bar row 30px in — so the one line that carries the
+          state drew at two different lengths and two different left edges
+          depending on which size you were looking at, and in a kanban column
+          it ran out of room and ellipsised to a letter or two. The two sizes
+          now differ only by the button row the card adds underneath. */}
+      <span className="dev-ws-row-head">
+        {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
           {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
-        {/* The card's own meta line, node for node: number · author · when,
-            the tags, the linked-issue chips. */}
-        <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
-        <RowBand card={c} trailing={trailing} />
       </span>
+      {/* The card's own meta line, node for node: number · author · when,
+          the tags, the linked-issue chips. */}
+      <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
+      <RowBand card={c} trailing={trailing} />
       {/* The fold mark, not a chevron: a chevron promises a destination, and
           this row has none — the whole surface is a toggle that unfolds the
           card in place. A theme header still wears one, because that is
@@ -315,6 +353,7 @@ export function UnfoldedRow({
   const key = row.card.key;
   useEffect(() => { setDetail(null); }, [key]);
   const href = openHref(slug, row.card);
+  const session = sessionHref(slug, row.card);
   const toggleDetail = () => {
     if (detail) { setDetail(null); return; }
     const body = readAppView<TopicBody>('_workshopCardBody', key);
@@ -336,8 +375,16 @@ export function UnfoldedRow({
   // point of the fold.
   //
   // The one thing the fold still cannot do: the item's own page, for a link
-  // somebody wants to share. On the Workshop it is the link under the sheet;
-  // on the Board "Open card" itself is that link.
+  // somebody wants to share. On the Board "Open card" itself is that link.
+  // On the Workshop it is the SAME control's second step (#1886): "Open
+  // card" opens the card here, and once it is open the pill becomes
+  // "Open page ›", the link out. It used to be a second link under the
+  // sheet — "Open on its own page ›" — beside a pill that also said Open,
+  // which read as the same action twice. Folding the card back is the fold
+  // mark's job, as it is on the Board. A card about the viewer's own
+  // session still carries one link under the sheet, to the session itself
+  // (#1887) — a different destination than the pill's page link, so it is
+  // not folded into that control, and it is the only line drawn there.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
@@ -347,6 +394,8 @@ export function UnfoldedRow({
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
   const openBtn = !placement ? undefined : mode === 'page' ? (
     href ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a> : undefined
+  ) : detail && href ? (
+    <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>{'Open page ›'}</a>
   ) : (
     <button
       type="button"
@@ -370,9 +419,14 @@ export function UnfoldedRow({
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
       ) : null}
-      {href && mode === 'inline' ? (
+      {session && mode === 'inline' ? (
+        // The viewer's own session, under the sheet (#1887). A real link, so
+        // what a bookmark of it holds is the route this opens; the wrapper's
+        // click guard excludes anchors, so it does not fold the card on its
+        // way out. The page link itself rides the pill now (#1886) — this is
+        // the one destination the pill does not cover.
         <div className="dev-ws-sheet-actions">
-          <a href={href} className="dev-ws-link">Open on its own page ›</a>
+          <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>Open session ›</a>
         </div>
       ) : null}
     </div>
@@ -427,8 +481,16 @@ export function CardRowView({
         // lot of prose to land on, and collapsing the whole item because
         // somebody selected a word in it is not a fold, it is losing their
         // place.
+        //
+        // `details` is the merge-requirements checklist (#2061, dev-card.tsx
+        // RequirementsRow). Its summary line — "Nothing needs you", "Waiting
+        // on an admin" — is the disclosure a reader taps to see the steps,
+        // and the same tap used to fold the card, which unmounted the list
+        // they had just opened (#2128). The whole element is excluded, not
+        // the summary alone: once open it is a list to read, like the three
+        // regions below.
         if (el && el.closest(
-          'a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip],'
+          'a, button, input, textarea, select, form, details, [data-attr-chip], [data-issue-chip],'
           + ' .dev-ws-detail, .dev-feed-thread, .dev-feed-comments',
         )) return;
         onToggle();

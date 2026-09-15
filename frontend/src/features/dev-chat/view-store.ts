@@ -42,6 +42,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { OwnToolsGuideView } from './own-tools-guide';
 
 /** One resizable side pane: the spec viewer and the staging preview. */
 export interface PaneView {
@@ -59,8 +60,13 @@ export type DevViewState =
   | { kind: 'none' }
   | {
     kind: 'session';
+    /** The full change card already provides the surrounding navigation. */
+    embedded?: boolean;
+    change?: { item: any; card: any; body: import('../dev-board/topic/model').TopicBody } | null;
     /** #1281's hand-off launchpad: `Launchpad`/`DevFlowSelect`'s markup. */
     launchpadHtml: string;
+    /** #1891: the own-tools setup card is an ordinary React child. */
+    ownToolsGuide?: OwnToolsGuideView | null;
     /**
      * #1348: in a launchpad the composer is hidden and the venue note is
      * usually absent, so the bar's border and padding are dropped — an

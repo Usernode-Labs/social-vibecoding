@@ -137,3 +137,27 @@ test('zero, missing, negative, and invalid costs render no label', () => {
     assert.equal(DevChat._messageCostLabel(value), '', JSON.stringify(value));
   }
 });
+
+// #2118: an OpenRouter reply's figure is the ledger's list-price estimate,
+// never a provider-reported amount. The live row learns that from its usage
+// event, the reloaded row from the persisted metadata, and both say so.
+test('an estimated (OpenRouter) reply cost is marked approximate, live and after a reload', () => {
+  const { render } = makeDevChat();
+  const live = render({
+    ...assistant({ costCents: 1.2 }),
+    model: 'openrouter/openai/gpt-5.3-codex',
+    costEstimated: true,
+  });
+  assert.match(live, /reply ~\$0\.012/);
+
+  const reloaded = render({
+    ...assistant({ cost_cents: '1.2000' }),
+    model: 'openrouter/openai/gpt-5.3-codex',
+    metadata: { openRouterDirect: true, costEstimated: true },
+  });
+  assert.match(reloaded, /reply ~\$0\.012/);
+
+  const exact = render(assistant({ costCents: 1.2 }));
+  assert.match(exact, /reply \$0\.012/);
+  assert.doesNotMatch(exact, /~/);
+});

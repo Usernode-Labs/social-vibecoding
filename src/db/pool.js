@@ -5,6 +5,10 @@ const { isConnectionLimitError } = require('./connection-census');
 let pool;
 
 function getPool(config) {
+  // Lifecycle work uses the same pool with transaction-level ownership checks.
+  // Resolve lazily to avoid a module initialization cycle.
+  const operation = require('../services/preview-lifecycle').current?.();
+  if (operation?.pool) return operation.pool;
   if (!pool) {
     // `max` defaults to pg's built-in 10; config.dbPoolMax lets prod widen
     // it so many concurrent SSE turns + staging DB work don't queue on a

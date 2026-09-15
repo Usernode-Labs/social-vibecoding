@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const proposalUpdate = require('../services/proposal-update');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
@@ -23,6 +24,7 @@ const branchNames = require('../services/branch-names');
 const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
@@ -45,18 +47,20 @@ const modelFallback = require('../services/model-fallback');
 // The ordinary session list deliberately stays lightweight and private, so
 // enrich only imported Underway rows in a second, id-scoped read after the
 // owner/shared visibility query has selected which rows the viewer may see.
-async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
+// The opened detail uses the same public projection for any visible change;
+// `all` is set only AFTER the per-session privacy gate, never on a board list.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { all = false } = {}) {
   const list = Array.isArray(sessions) ? sessions : [];
   const ids = list
-    .filter((s) => s && s.source === 'imported'
-      && (s.status === 'active' || s.status === 'paused'))
+    .filter((s) => s && (all || (s.source === 'imported'
+      && (s.status === 'active' || s.status === 'paused'))))
     .map((s) => Number(s.id))
     .filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return list;
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
-            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.branch_name,
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
@@ -84,9 +88,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
        FROM chat_sessions cs
        JOIN users u ON u.id = cs.user_id
       WHERE cs.id = ANY($1::int[])
-        AND cs.source = 'imported'
-        AND cs.status IN ('active', 'paused')`,
-    [ids]
+        AND ($2::boolean OR (cs.source = 'imported'
+        AND cs.status IN ('active', 'paused')))`,
+    [ids, all]
   );
 
   const rowsByApp = new Map();
@@ -161,7 +165,7 @@ const localAgentDemo = require('../services/local-agent-demo');
 // panel alongside their sessions. Owns external_agent_tasks, so the query
 // lives there rather than being restated here.
 const { listOpenWorkOrders } = require('../services/external-agent-tasks');
-// #945: Usernode-side issue / proposal discussion threads as agent
+// #945: Homeroom-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
 const threadContext = require('../services/thread-context');
@@ -194,7 +198,6 @@ const {
   // #955: the post-sync review advance now covers every native proposal, not
   // just CLI handoffs. Both names are the same function; the historical one is
   // kept because callers and tests import it from here.
-  advanceReviewAfterPlatformSync, advanceSharedReviewAfterSync,
 } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
@@ -420,6 +423,65 @@ const recheckInFlight = new Set();
 // staging that they do NOT render in the read-only view. Because the mock
 // goes through sanitizeTranscript exactly like a real read, that check
 // exercises the real allowlist rather than a hand-written "safe" payload.
+function stagingMockSharedSessions() {
+  return [
+          {
+            id: 990001, session_title: '[Mock] Busy shared session — spinner state',
+            pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
+            // Reverse "#N" issue chip demo: links to mock issue 900001,
+            // which stagingMockIssues serves, so the round trip works.
+            linked_issues: [900001],
+            staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date().toISOString(),
+            chat_count: 0, last_message_at: null, busy: true,
+            // Visible but chat NOT published — no "Read chat" chip. Kept
+            // false on two of the three rows so the demo board shows both
+            // states side by side.
+            transcript_shared: false, message_count: 0,
+          },
+          {
+            id: 990002, session_title: '[Mock] Paused shared session with a preview',
+            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
+            linked_issues: [],
+            staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
+            // The one demo row with a readable chat: its "Read chat" chip
+            // opens the topic page and stagingMockTranscript serves the
+            // matching id, so the round trip works in a demo preview.
+            transcript_shared: true, message_count: 8,
+          },
+          // #689: preview asleep (staging GC'd the container) but the
+          // branch has pushed changes — the pill still renders and routes
+          // through ensure-staging. Clicking it in a demo 404s (fake id)
+          // into the "could not be rebuilt" loader, same as 990002.
+          //
+          // Worth knowing: this row modelled a state a REAL share-only
+          // session could not be in. `can_preview: true` with no
+          // staging_url was reachable only for a session with a pull
+          // request, because the derivation above was `pr_number IS NOT
+          // NULL` — so the demo board showed a rebuild affordance that the
+          // thing it demonstrates never got. The fixture was right and the
+          // derivation was wrong; the derivation now also reads
+          // checks_commit_sha, and this row is honest.
+          {
+            id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
+            pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
+            linked_issues: [],
+            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
+            transcript_shared: false, message_count: 0,
+          }
+  ];
+}
+
 const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
 
 // (#1012) Read-only mock spec version for the group-chat spec panel. Same
@@ -873,7 +935,7 @@ Before dispatching ANY tool, check whether the user's request SUBSTANTIALLY dupl
 // started from the issue panel) wins; otherwise the first entry of the
 // Mayor-declared `linked_issues`. Both ride along on `SELECT cs.*`.
 //
-// Deliberately Usernode-thread ONLY — no GitHub comment fetch here.
+// Deliberately Homeroom-thread ONLY — no GitHub comment fetch here.
 // github.fetchIssueComments is uncached and pages the anonymous API (60
 // req/hr), so refetching it on every Mayor turn would add latency and
 // burn the shared rate limit. The GitHub half of the discussion reaches
@@ -986,7 +1048,7 @@ async function persistScoutPublication({
     ? `Scout revised the spec (now ${lineCount} lines).`
     : `Scout drafted a ${lineCount}-line spec from the codebase.`;
   const scoutText = localAgentLabel
-    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Usernode credits were used.`
+    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
@@ -1039,32 +1101,102 @@ async function persistScoutPublication({
   return { applied: true, ...value };
 }
 
+const AGENT_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+
+class AgentSelectionError extends Error {
+  constructor(statusCode, message, code = null) {
+    super(message);
+    this.name = 'AgentSelectionError';
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+function agentSelectionErrorBody(err) {
+  return {
+    error: err.message,
+    ...(err.code ? { code: err.code } : {}),
+  };
+}
+
+function automaticOpenRouterSetupError(err) {
+  if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+    const message = err.code === 'not_configured'
+      ? 'OpenRouter could not be set up automatically because managed key provisioning is not configured. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.'
+      : `OpenRouter could not be set up automatically. ${err.message}`;
+    return new AgentSelectionError(err.statusCode, message, err.code);
+  }
+  return new AgentSelectionError(
+    503,
+    'OpenRouter could not be set up automatically. Try again; if this continues, ask an administrator to check managed key provisioning.',
+    'provision_failed',
+  );
+}
+
+async function ensureOpenRouterCredential(pool, userId, config) {
+  const credentialStore = require('../services/credential-store');
+  let meta;
+  try {
+    meta = await credentialStore.readMetadata({
+      pool, userId, provider: 'openrouter', purpose: 'coding_agent',
+    });
+  } catch (err) {
+    log.error('sessions', 'OpenRouter credential check failed', {
+      userId, err: err.message,
+    });
+    throw new AgentSelectionError(
+      503,
+      'OpenRouter could not be set up because its credential state could not be checked. Try again; if this continues, contact an administrator.',
+      'credential_check_failed',
+    );
+  }
+  if (meta?.status === 'valid') return { meta, provisioned: null };
+
+  try {
+    const provisioned = await managedOpenRouter.provision({ pool, userId, config });
+    log.info('sessions', 'Automatically provisioned managed OpenRouter credential', {
+      userId,
+      managedKeyId: provisioned.managed?.id || null,
+      model: provisioned.defaultModel || null,
+    });
+    return {
+      meta: { status: 'valid', revision: provisioned.revision },
+      provisioned,
+    };
+  } catch (err) {
+    // A second tab can finish provisioning after the metadata read but
+    // before this caller acquires the per-user reservation lock. Treat the
+    // now-valid credential as success; every other failure remains visible.
+    if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+      try {
+        const refreshed = await credentialStore.readMetadata({
+          pool, userId, provider: 'openrouter', purpose: 'coding_agent',
+        });
+        if (refreshed?.status === 'valid') return { meta: refreshed, provisioned: null };
+      } catch (readErr) {
+        log.error('sessions', 'OpenRouter credential recheck failed after provisioning conflict', {
+          userId, err: readErr.message,
+        });
+      }
+    }
+    log.error('sessions', 'Automatic managed OpenRouter provisioning failed', {
+      userId,
+      code: err?.code || 'provision_failed',
+      err: err?.message || String(err),
+    });
+    throw automaticOpenRouterSetupError(err);
+  }
+}
+
 // Copy the user's DEFAULT coding-agent backend + model + reasoning effort
-// into a freshly created session row (review #8). Used by EVERY session
-// creation path — ordinary dev-chat, headless auto-session, and clone — so
-// "default coding agent" means the same thing regardless of how a session
-// was spawned. Falls back to the legacy claude_code schema default when the
-// user has never set a default but already owns a usable OpenRouter key,
-// OpenRouter is preferred; otherwise the safe fallback is Claude. Best-
-// effort provider fallbacks never throw, while a preference-query DB error
-// still propagates so it cannot be mistaken for "no preference".
-// Resolve the default coding-agent preference for a NEW session WITHOUT
-// mutating the session (plan 9.1). A Codex default is applied only when it
-// is actually usable (feature enabled, user in the beta allowlist, valid
-// OpenRouter credential, and a model present in the preference or the
-// operator default) — otherwise we fall back to a Claude session rather than
-// creating one that is guaranteed to fail its first dispatch. A DB error
-// while reading the preference is NOT treated as "no preference": it lets
-// session creation fail rather than silently choosing another backend.
-//
-// Every one of those fallbacks used to be a server-side log line and
-// nothing else: the user had set "Usernode · OpenRouter" as their default,
-// got a Usernode · Claude session, and the only trace was in the operator's
-// logs. The fallback stays LENIENT on purpose — a session that runs is
-// better than a 4xx — but it now names itself, so the caller can say so.
-// `fallbackReason` is one of 'flag_off' | 'not_in_beta' | 'model_unavailable'
-// | 'no_credential', and is absent whenever the resolved venue is the one
-// the user actually asked for.
+// into every new session path. An explicit Claude default always wins. When
+// OpenRouter is enabled for an eligible user, a missing credential is no
+// longer interpreted as permission to switch providers: the first real
+// build/session action provisions the included managed key, stores OpenRouter
+// as the default, and uses the provisioned model. Feature-policy fallbacks
+// (flag off / beta access revoked) stay lenient and named. Provisioning,
+// credential, and model-catalog failures stop with an actionable error so a
+// broken deployment cannot masquerade as a successful Claude fallback.
 async function resolveDefaultAgentPreference(client, userId, config) {
   const { rows: prefRows } = await client.query(
     `SELECT backend, model_id, reasoning_effort
@@ -1083,7 +1215,8 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     };
   }
 
-  // Codex default — validate it is genuinely usable before applying.
+  // Deployment-policy fallbacks are still intentional. Credential and
+  // provider failures below are not: those must be surfaced to the caller.
   const claudeFallback = (reason) => ({
     backend: 'claude_code',
     provider: 'anthropic',
@@ -1102,45 +1235,79 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     return claudeFallback('not_in_beta');
   }
 
-  let modelId = pref?.model_id;
-  if (!modelId) {
-    modelId = (config && config.openrouterDefaultCodexModel) || null;
-  }
-  if (!modelId) {
-    log.warn('sessions', 'Codex default not applied: no model', { userId });
-    return claudeFallback('model_unavailable');
+  const { meta, provisioned } = await ensureOpenRouterCredential(client, userId, config);
+  if (provisioned) {
+    const modelId = provisioned.defaultModel || null;
+    if (!modelId) {
+      throw new AgentSelectionError(
+        503,
+        'OpenRouter was set up, but no default model is available. Ask an administrator to check OPENROUTER_DEFAULT_CODEX_MODEL and the OpenRouter model catalog.',
+        'model_unavailable',
+      );
+    }
+    return {
+      backend: 'codex_openrouter',
+      provider: 'openrouter',
+      model: modelId,
+      // Provisioning writes this same default atomically with the key.
+      reasoningEffort: null,
+    };
   }
 
-  try {
+  let modelId = pref?.model_id
+    || (config && config.openrouterDefaultCodexModel)
+    || null;
+
+  // Accounts with a usable key but no preference predate the
+  // OpenRouter-default migration. Resolve their first new session against
+  // the live key-visible catalog so a configured future model can fall back
+  // safely until OpenRouter publishes it.
+  if (!pref) {
     const credentialStore = require('../services/credential-store');
-    const meta = await credentialStore.readMetadata({
-      pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
-    });
-    if (!meta || meta.status !== 'valid') {
-      log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
-      return claudeFallback('no_credential');
-    }
-    // Accounts with a usable key but no preference predate the
-    // OpenRouter-default migration. Resolve their first new session against
-    // the live key-visible catalog so a configured future model can fall
-    // back safely until OpenRouter publishes it.
-    if (!pref) {
-      const apiKey = await credentialStore.readSecret({
+    let apiKey;
+    try {
+      apiKey = await credentialStore.readSecret({
         pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
         dataKey: config.dataEncryptionKey,
+        expectedRevision: meta.revision,
       });
-      if (!apiKey) return claudeFallback('no_credential');
+    } catch (err) {
+      log.error('sessions', 'OpenRouter credential decrypt failed', { userId, err: err.message });
+      throw new AgentSelectionError(
+        503,
+        'OpenRouter is configured, but its credential could not be read. Ask an administrator to check credential encryption and managed key provisioning.',
+        'credential_unavailable',
+      );
+    }
+    if (!apiKey) {
+      throw new AgentSelectionError(
+        503,
+        'OpenRouter is configured, but its credential is unavailable. Ask an administrator to check managed key provisioning.',
+        'credential_unavailable',
+      );
+    }
+    try {
       const agentModels = require('../services/agent-models');
       const catalog = await agentModels.listOpenRouterModels({
         pool: client, userId, credentialRevision: meta.revision,
         apiKey, config, forceRefresh: false,
       });
       modelId = catalog.recommendedModelId || modelId;
-      if (!modelId) return claudeFallback('model_unavailable');
+    } catch (err) {
+      log.error('sessions', 'OpenRouter default model catalog failed', { userId, err: err.message });
+      throw new AgentSelectionError(
+        503,
+        'OpenRouter is configured, but its model catalog could not be loaded. Try again; if this continues, contact an administrator.',
+        'model_catalog_unavailable',
+      );
     }
-  } catch (err) {
-    log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
-    return claudeFallback('no_credential');
+  }
+  if (!modelId) {
+    throw new AgentSelectionError(
+      503,
+      'No default OpenRouter model is available. Ask an administrator to check OPENROUTER_DEFAULT_CODEX_MODEL and the OpenRouter model catalog.',
+      'model_unavailable',
+    );
   }
 
   return {
@@ -1151,20 +1318,10 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   };
 }
 
-const AGENT_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
-
-class AgentSelectionError extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.name = 'AgentSelectionError';
-    this.statusCode = statusCode;
-  }
-}
-
 // Resolve an EXPLICIT user choice for a session. Unlike
 // resolveDefaultAgentPreference(), this never falls back to Claude: the
 // caller has chosen a backend and must either get that exact backend or a
-// useful 4xx explaining why it cannot be used. In particular, Codex model
+// useful error explaining why it cannot be used. In particular, Codex model
 // ids are catalog-validated because they become executable Codex config.
 async function resolveExplicitAgentPreference(client, userId, config, {
   backend, model, reasoningEffort,
@@ -1207,19 +1364,33 @@ async function resolveExplicitAgentPreference(client, userId, config, {
 
   const credentialStore = require('../services/credential-store');
   const agentModels = require('../services/agent-models');
-  const meta = await credentialStore.readMetadata({
-    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
-  });
-  if (!meta || meta.status !== 'valid') {
-    throw new AgentSelectionError(400, 'Add your OpenRouter API key in Settings first.');
-  }
+  // Choosing OpenRouter is itself an active build action. If this eligible
+  // user has not configured a key yet, create the included managed key
+  // instead of sending them through Settings or changing providers.
+  const { meta } = await ensureOpenRouterCredential(client, userId, config);
 
-  const apiKey = await credentialStore.readSecret({
-    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
-    dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
-  });
+  let apiKey;
+  try {
+    apiKey = await credentialStore.readSecret({
+      pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+      dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+    });
+  } catch (err) {
+    log.error('sessions', 'Explicit OpenRouter credential decrypt failed', {
+      userId, err: err.message,
+    });
+    throw new AgentSelectionError(
+      503,
+      'OpenRouter is configured, but its credential could not be read. Ask an administrator to check credential encryption and managed key provisioning.',
+      'credential_unavailable',
+    );
+  }
   if (!apiKey) {
-    throw new AgentSelectionError(400, 'Could not read your OpenRouter key; re-enter it in Settings first.');
+    throw new AgentSelectionError(
+      503,
+      'OpenRouter is configured, but its credential is unavailable. Ask an administrator to check managed key provisioning.',
+      'credential_unavailable',
+    );
   }
 
   let catalog;
@@ -1232,7 +1403,11 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     log.warn('sessions', 'Explicit Codex model validation failed', {
       userId, model: modelId, err: err.message,
     });
-    throw new AgentSelectionError(400, 'Could not validate that OpenRouter model right now; try again.');
+    throw new AgentSelectionError(
+      503,
+      'Could not validate that OpenRouter model right now. Try again; if this continues, contact an administrator.',
+      'model_catalog_unavailable',
+    );
   }
   const selectedCatalogModel = Array.isArray(catalog?.models)
     ? catalog.models.find((candidate) => candidate.id === modelId)
@@ -1264,6 +1439,141 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // collab-level access. 404 on deny so private apps' sessions aren't
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
+  // PATCH /api/sessions/:id/linked-issues (#2028)
+  //
+  // A proposal's issue links used to be writable only as a side effect of
+  // creating it or dispatching another coding turn. This is the direct seam
+  // used by the React proposal detail and the hosted connector after the
+  // proposal/PR already exists.
+  //
+  // Owner-scoped for automated callers, with the platform's full write admin
+  // as the browser/API repair hatch. A connector token can belong to an
+  // admin too, so `connectorClientId` keeps that stronger privilege out of
+  // this narrowly delegated tool.
+  // The app-level collab gate above runs first; the 404 below deliberately
+  // hides whether a foreign proposal id exists. Deltas preserve links added
+  // by another tab/agent after the caller last read the proposal, and removal
+  // wins when a number is present in both arrays.
+  router.patch('/api/sessions/:id/linked-issues', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'invalid_request', message: 'Body must be an object.' });
+    }
+    const unsupported = Object.keys(body).filter((key) => !['addIssues', 'removeIssues'].includes(key));
+    if (unsupported.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: `Unsupported field: ${unsupported[0]}.`,
+      });
+    }
+    const parseNumbers = (value, label) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 50) {
+        throw new Error(`${label} must be an array of at most 50 issue numbers.`);
+      }
+      const unique = [];
+      for (const raw of value) {
+        if (!Number.isSafeInteger(raw) || raw <= 0 || raw > 2147483647) {
+          throw new Error(`${label} must contain positive integers up to 2147483647.`);
+        }
+        if (!unique.includes(raw)) unique.push(raw);
+      }
+      return unique;
+    };
+
+    let addIssues;
+    let removeIssues;
+    try {
+      addIssues = parseNumbers(body.addIssues, 'addIssues');
+      removeIssues = parseNumbers(body.removeIssues, 'removeIssues');
+    } catch (err) {
+      return res.status(400).json({ error: 'invalid_request', message: err.message });
+    }
+    if (!addIssues.length && !removeIssues.length) {
+      return res.status(400).json({
+        error: 'invalid_request', message: 'Add or remove at least one issue number.',
+      });
+    }
+
+    try {
+      // Serialize against submit_work's proposal update too: both can project
+      // metadata into the same live PR body, and the later GitHub write must
+      // never restore the earlier one's stale closing block.
+      const outcome = await proposalUpdate.withProposalLock(pool, sessionId, async () => {
+        const { rows } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug, a.repo_url
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        const session = rows[0] || null;
+        const owner = session && Number(session.user_id) === Number(req.user.id);
+        const browserAdmin = session && !req.connectorClientId && req.user.canAdminWrite;
+        if (!session || (!owner && !browserAdmin)) {
+          return { response: { status: 404, body: { error: 'Session not found' } } };
+        }
+
+        const nextLinks = prMetadata.applyIssueDeclarations(
+          session.linked_issues, addIssues, removeIssues
+        );
+        if (nextLinks.length > 50) {
+          return { response: { status: 400, body: {
+            error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
+          } } };
+        }
+        const repo = github.parseGithubUrl(session.repo_url);
+        const result = await proposalUpdate.updateLinkedIssues({
+          pool,
+          gh: github,
+          session,
+          owner: repo && repo.owner,
+          repo: repo && repo.repo,
+          addIssues,
+          removeIssues,
+        });
+        return { session, result };
+      });
+
+      if (outcome.response) {
+        return res.status(outcome.response.status).json(outcome.response.body);
+      }
+      const { session, result } = outcome;
+
+      if (result.changed) {
+        try {
+          const { pushIssueUpdate } = require('../services/ws');
+          pushIssueUpdate({
+            action: 'updated', source: 'linked_issues', sessionId,
+            appId: session.app_id, appSlug: session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'linked-issues broadcast failed', {
+            sessionId, err: err.message,
+          });
+        }
+      }
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        appSlug: session.app_slug,
+        linkedIssues: result.linkedIssues,
+        addedIssues: result.addedIssues,
+        removedIssues: result.removedIssues,
+        changed: result.changed,
+        prBodyUpdated: result.prBodyUpdated,
+        prBodyStatus: result.prBodyStatus,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to update linked issues', { sessionId, message: err.message });
+      return res.status(500).json({ error: 'Could not update linked issues' });
+    }
+  });
 
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
@@ -1334,9 +1644,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
-                cs.test_results,
-                cs.agent_backend, cs.agent_model,
+                cs.test_results, cs.spec_md,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
+                lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
                 CASE WHEN a.icon_image_id IS NOT NULL
@@ -1348,6 +1659,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            FROM chat_session_messages
            WHERE session_id = cs.id
          ) m ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT role,
+                  jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0 AS asks
+           FROM chat_session_messages
+           WHERE session_id = cs.id AND role IN ('user', 'assistant')
+           ORDER BY id DESC
+           LIMIT 1
+         ) lt ON TRUE
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
@@ -1362,10 +1681,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         : null;
       let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
+        // #1959: the three columns selected for sessionAwaitsInput stop here.
+        // The verdict is one boolean; the spec body is the thing the per-app
+        // list refuses to put in a list payload (#894), and the last-turn
+        // pair is meaningless without the rule that reads it.
+        const {
+          spec_md: specMd, last_turn_role: lastTurnRole, last_turn_asks: lastTurnAsks, ...row
+        } = s;
         return {
-          ...s,
+          ...row,
           ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
           busy: isSessionBusy(s.id),
+          awaiting_input: sessionAwaitsInput({
+            lastTurnRole, lastTurnAsks, prNumber: s.pr_number, specMd,
+          }),
           // Keep the pinned snake_case fields untouched. Camel-case fields
           // describe the runtime actually producing progress right now, so a
           // Codex-pinned session delegated to local Claude has an honest busy
@@ -1404,7 +1733,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900002], shared_at: null,
             created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
+            // #1959: this one is WAITING ON ITS OWNER — a spec that ended
+            // with open questions — so the Improve panel's "Ready for your
+            // input" pill is reviewable in a preview, right under the busy
+            // row's "Working"; every other idle mock row reads plain
+            // "Ready". Hand-set, like `busy` on 990102: the mocks are
+            // appended after the map that computes the real verdict.
+            awaiting_input: true,
           },
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
@@ -1418,7 +1754,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [900011], shared_at: null,
             created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // Busy own session — exercises the "working…" state (spinner tag
           // beside the title, which the single-row shell keeps uncrushed).
@@ -1429,7 +1765,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: true,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: true,
           },
           // Visible (shared) own session — renders below the archived
           // toggle under the "Visible to everyone." caption, with the
@@ -1445,7 +1781,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: null,
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // The other half: visible AND transcript-published, so the card
           // renders the "Chat shared" toggle plus the "· chat readable"
@@ -1460,7 +1796,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #747: promoted own session whose id matches the first mock
           // proposal (stagingMockProposals in votes.js), which the
@@ -1475,7 +1811,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // A proposal-in-vote row so the dev drawer's violet "Proposed"
           // card state is reviewable in a demo preview. Unlike 9000001
@@ -1492,7 +1828,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'promoted', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           },
           // #1808: the row PAST the relative form's seven-day floor. Every
           // other mock here is minutes or hours old, so the session rows'
@@ -1508,7 +1844,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             status: 'active', linked_issues: [], shared_at: null,
             created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
           }
         );
       }
@@ -1539,7 +1875,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           agent: 'claude-code',
           created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
-          app_name: 'Usernode',
+          app_name: 'Homeroom',
           // The demo row carries an icon too, or the ONE work-order row a
           // preview can show is the one row whose tile falls back to a letter
           // — which is exactly the state a reviewer would read as the bug.
@@ -1739,12 +2075,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // The pair matters as a pair: `source='imported'` and
       // `external_agent` are what let the card tell "this is building on
-      // Usernode" apart from "this arrived from somewhere else", which is
+      // Homeroom" apart from "this arrived from somewhere else", which is
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
-                created_from_issue_number, agent_backend, agent_model, source, external_agent,
+                created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about
@@ -1752,7 +2088,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 -- _cardPreviewSpec fell back to pr_number, which is null for
                 -- a share-only session and left the owner with no affordance
                 -- at all once the idle GC nulled staging_url.
-                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL)
+                -- #2069: and checks_commit_sha was the same kind of proxy,
+                -- null for the same reason. A shared draft has no pull
+                -- request AND no checks gate, so both halves were absent
+                -- exactly where the comment above says the affordance is
+                -- needed. shared_at asks about THIS session instead of a
+                -- neighbouring subsystem: the share route verifies a pushed
+                -- branch and stamps it at creation, so it is direct evidence
+                -- that there is a commit to build.
+                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
+                   OR shared_at IS NOT NULL)
                   AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
@@ -1856,9 +2201,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url,
-                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
+                -- #2069, as above: a shared draft has neither a pull request
+                -- nor a checks run, and shared_at is the session's own
+                -- evidence that a verified branch was pushed.
+                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL
+                   OR cs.shared_at IS NOT NULL)
                   AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
@@ -1894,62 +2244,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // viewer or a real session; opening their discussion just shows an
       // empty thread (validateThread rejects posts on nonexistent rows).
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        sessions.push(
-          {
-            id: 990001, session_title: '[Mock] Busy shared session — spinner state',
-            pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
-            // Reverse "#N" issue chip demo: links to mock issue 900001,
-            // which stagingMockIssues serves, so the round trip works.
-            linked_issues: [900001],
-            staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date().toISOString(),
-            chat_count: 0, last_message_at: null, busy: true,
-            // Visible but chat NOT published — no "Read chat" chip. Kept
-            // false on two of the three rows so the demo board shows both
-            // states side by side.
-            transcript_shared: false, message_count: 0,
-          },
-          {
-            id: 990002, session_title: '[Mock] Paused shared session with a preview',
-            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
-            linked_issues: [],
-            staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
-            // The one demo row with a readable chat: its "Read chat" chip
-            // opens the topic page and stagingMockTranscript serves the
-            // matching id, so the round trip works in a demo preview.
-            transcript_shared: true, message_count: 8,
-          },
-          // #689: preview asleep (staging GC'd the container) but the
-          // branch has pushed changes — the pill still renders and routes
-          // through ensure-staging. Clicking it in a demo 404s (fake id)
-          // into the "could not be rebuilt" loader, same as 990002.
-          //
-          // Worth knowing: this row modelled a state a REAL share-only
-          // session could not be in. `can_preview: true` with no
-          // staging_url was reachable only for a session with a pull
-          // request, because the derivation above was `pr_number IS NOT
-          // NULL` — so the demo board showed a rebuild affordance that the
-          // thing it demonstrates never got. The fixture was right and the
-          // derivation was wrong; the derivation now also reads
-          // checks_commit_sha, and this row is honest.
-          {
-            id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
-            pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
-            linked_issues: [],
-            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
-            transcript_shared: false, message_count: 0,
-          }
-        );
+        sessions.push(...stagingMockSharedSessions());
       }
 
       res.json({ sessions });
@@ -2012,7 +2307,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           : await resolveDefaultAgentPreference(pool, req.user.id, config);
       } catch (err) {
         if (err instanceof AgentSelectionError) {
-          return res.status(err.statusCode).json({ error: err.message });
+          return res.status(err.statusCode).json(agentSelectionErrorBody(err));
         }
         throw err;
       }
@@ -2020,7 +2315,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The GLOBAL ceiling has no admin tier — it's the host's coding-worker
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
-      // Usernode worker, so they do not spend this budget.
+      // Homeroom worker, so they do not spend this budget.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
@@ -2086,7 +2381,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessionId: rows[0].id,
       });
       // agentFallbackReason: the saved default could not be honoured and a
-      // Usernode · Claude session was created instead. The row itself only
+      // Homeroom · Claude session was created instead. The row itself only
       // records WHAT was chosen, so the reason rides alongside it and the
       // chat renders one sentence naming it. Absent when nothing fell back
       // — the client must not have to distinguish "no fallback" from
@@ -2143,7 +2438,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           : await resolveDefaultAgentPreference(pool, req.user.id, config);
       } catch (err) {
         if (err instanceof AgentSelectionError) {
-          return res.status(err.statusCode).json({ error: err.message });
+          return res.status(err.statusCode).json(agentSelectionErrorBody(err));
         }
         throw err;
       }
@@ -2288,7 +2583,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       });
 
       log.info('sessions', 'Headless session started', { sessionId: session.id, issueNumber, model: selectedModel });
-      // See POST /sessions: same lenient fallback, same named reason.
+      // See POST /sessions: the same named flag/beta policy fallback.
       res.status(201).json({
         session,
         ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
@@ -2342,6 +2637,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
+
+      // Resolve (and, for a first-time eligible user, provision) the coding
+      // agent before reclaiming a global slot or creating a GitHub branch.
+      // A deployment/provisioning failure must leave no clone side effects.
+      let pref;
+      try {
+        pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json(agentSelectionErrorBody(err));
+        }
+        throw err;
+      }
+
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
@@ -2396,7 +2705,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // plan 9 (Commit 7): the clone is inserted with its final
       // default backend/model atomically (no insert-then-patch).
-      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort)
@@ -2547,7 +2855,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         .catch((err) => log.warn('sessions', 'headless_cloned dismiss failed', { err: err.message }));
 
       log.info('sessions', 'Cloned headless session', { src: src.id, sessionId: session.id, user: req.user.username });
-      // See POST /sessions: same lenient fallback, same named reason.
+      // See POST /sessions: the same named flag/beta policy fallback.
       res.status(201).json({
         session,
         ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
@@ -2561,10 +2869,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Check results are fetched on demand, separately from the private dev
   // transcript and the lightweight board feed. The app view gate above still
   // applies; sharing a session exposes these results, never its messages.
-  router.get('/api/sessions/:id/checks', async (req, res) => {
+  router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
     try {
+      if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id));
+        if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
+      }
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
                 cs.check_state, cs.check_phase, cs.check_trigger,
                 cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
@@ -2579,7 +2891,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         || (session.shared_at && ['active', 'paused'].includes(session.status))
         || ['promoted', 'merging', 'merged'].includes(session.status);
       if (!visible) return res.status(404).json({ error: 'Session not found' });
-      res.set('Cache-Control', 'no-store').json({ session });
+      const detail = req.path.endsWith('/details')
+        ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
+        : session;
+      if (req.path.endsWith('/details')) {
+        detail.busy = isSessionBusy(Number(session.id));
+        if (detail.source === 'cli_handoff') {
+          const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
+          detail.proposal_state = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] }).state;
+        }
+      }
+      res.set('Cache-Control', 'no-store').json({ session: detail });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
@@ -3153,11 +3475,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // /sessions already draws.
       //
       // The two resolvers are not interchangeable and the difference is the
-      // point. An EXPLICIT pick must get that backend or a 4xx explaining
-      // why not. A resolved one is lenient: a stored OpenRouter preference
-      // that no longer validates (flag off, beta access gone, no model, key
-      // revoked) falls back to Claude with a `fallbackReason` rather than
-      // refusing to switch, and the client says why above the composer.
+      // point. An EXPLICIT pick must get that backend or an error explaining
+      // why not. A stored default falls back only for deliberate deployment
+      // policy (flag off / beta access gone). Missing credentials trigger
+      // managed provisioning; provisioning or catalog failures stop here and
+      // remain visible rather than silently moving the session to Claude.
       const wantsStoredDefault = backend == null;
       let pref;
       try {
@@ -3170,7 +3492,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           });
       } catch (err) {
         if (err instanceof AgentSelectionError) {
-          return res.status(err.statusCode).json({ error: err.message });
+          return res.status(err.statusCode).json(agentSelectionErrorBody(err));
         }
         throw err;
       }
@@ -4322,7 +4644,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           });
           return res.status(503).json({
             error: err.userMessage
-              || 'Usernode could not prepare this session\'s branch. Send your message again in a moment.',
+              || 'Homeroom could not prepare this session\'s branch. Send your message again in a moment.',
           });
         }
       }
@@ -4553,7 +4875,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // opening ask. The call is scheduled at turn end (below), after the
       // main turn has settled, so its fresh billing check sees the real
       // remaining allowance instead of racing the main model call.
-      // OpenRouter sessions deliberately make no Anthropic side calls.
+      // OpenRouter sessions deliberately make no Anthropic side calls —
+      // they are named without a model call at the top of their branch
+      // below (#1949).
       const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
       // Pre-PR turn-end refresh re-titles from the full request history +
       // latest spec draft. Once a PR exists applyPrMetadata owns the name.
@@ -4612,8 +4936,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // OpenRouter is a complete, single-provider session path. The
         // selected OpenRouter model receives the user's message directly
         // and can either answer it or edit the repository; no Anthropic
-        // Mayor, wrap-up, title, or quick-reply generation runs around it.
+        // Mayor, wrap-up, or quick-reply generation runs around it, and
+        // the session is named without a model call (#1949, below).
         if (isOpenRouterSession) {
+          // #1949: the Haiku titler never runs for these sessions, so they
+          // kept their branch name ("dev/evan-1789…") for life. Name the
+          // session from its opening ask instead — the same trim
+          // applyPrMetadata gives its PR title, so the name holds when the
+          // PR lands. No payer to resolve, so it fires before the busy
+          // gate: the message is already in the transcript whatever
+          // happens next. Fire-and-forget; the helper never rejects.
+          sessionTitles.titleFromFirstMessage({ pool, session, message: messageText, send });
           const agentIdentity = codingAgentRuntimeIdentity(session, null, config);
           const directSpec = await loadSessionSpec(pool, session.id);
           turnHasSpec = !!String(directSpec || '').trim();
@@ -4703,19 +5036,28 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             hasPr: session.pr_number != null,
             hasSpec: turnHasSpec,
           });
+          // #2118: what the turn cost, as the ledger estimated it from the
+          // model's list price (agent_turns.estimated_cost_usd, summed over
+          // the turn's attempts). It rides on the reply row so the row's
+          // "reply ~$x" label survives a reload, flagged as an estimate.
+          const directCostCents = Number.isFinite(toolResult.estimatedCostCents)
+            && toolResult.estimatedCostCents > 0
+            ? toolResult.estimatedCostCents
+            : null;
           const directMeta = JSON.stringify({
             ...(directPills ? { quickReplies: directPills } : {}),
             quickRepliesSource: 'static',
             ...(directKind ? { quickRepliesKind: directKind } : {}),
             openRouterDirect: true,
+            ...(directCostCents != null ? { costEstimated: true } : {}),
           });
           const directModel = agentIdentity.model
             ? `openrouter/${agentIdentity.model}`
             : null;
           const insertDirectReply = (client) => client.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4)`,
-            [session.id, directText, directModel, directMeta],
+            `INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+            [session.id, directText, directModel, directCostCents, directMeta],
           );
           let replyApplied = true;
           if (toolResult.turnId) {
@@ -4735,6 +5077,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
           if (replyApplied) {
             send('mayor_reasoning', { text: directText });
+            // The usage receipt follows the reply on purpose: the client
+            // attaches it to the assistant bubble on screen, and before
+            // mayor_reasoning that bubble is one the next status line
+            // discards. It is also what feeds the composer's "this turn"
+            // figure for an OpenRouter session (#2118).
+            if (directCostCents != null) {
+              send('usage', { costCents: directCostCents, model: directModel, byok: true, estimated: true });
+            }
             if (directPills) send('quick_replies', { replies: directPills });
           }
 
@@ -7109,6 +7459,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
+      // Manual deployment can discover a newer branch head. Claim it before
+      // entering the coordinator, but never regress a concurrently changed pin.
+      if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const claim = await client.query(`SELECT id FROM chat_sessions
+            WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text
+            FOR UPDATE`, [session.id, session.checks_commit_sha || null]);
+          if (!claim.rows.length) throw require('../services/preview-lifecycle').cancelled();
+          await visuals.setChecksPending(client, session.id, commitHash, 'building', 'manual-recheck');
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally { client.release(); }
+      }
+
       // Build and deploy staging (async — respond immediately)
       res.json({ ok: true, status: 'deploying' });
 
@@ -7520,7 +7888,7 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
   if (!list.length && !thread.length) return seed;
 
   // GitHub comments keep their own most-recent-N cap and per-comment clip;
-  // the Usernode half arrives already clipped by thread-context.
+  // the Homeroom half arrives already clipped by thread-context.
   const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
   const clippedGithub = kept.map((c) => ({
     author: (c.author || 'unknown').toString(),
@@ -7605,6 +7973,38 @@ function questionsBodyHasContent(body) {
   if (!cleaned) return false;
   if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
   return true;
+}
+
+// #1959: is a session WAITING ON ITS OWNER? The one verdict behind the
+// Improve panel's "Ready for your input" pill (GET /api/me/active-sessions
+// ships it as `awaiting_input`), so the panel never claims a session needs
+// input when nothing in it is asking.
+//
+// The transcript already knows. Two things in it are a question the user
+// has not answered, and the row ends up here only if the LAST conversational
+// row (user or assistant — the same rows DevChat._qaCurrentGroups walks) is
+// the assistant's: once the owner has replied it is their turn that is
+// pending, not the assistant's question.
+//
+//   1. ANSWER CHIPS. The assistant asked with suggest_answers (#32) and the
+//      chips are still on screen — `metadata.suggestions` on that last row,
+//      the same key the clone path forwards. This is what an auto session
+//      that ended in a question looks like once it is cloned.
+//   2. A SPEC WITH OPEN QUESTIONS. The scout drafted a spec whose Questions
+//      section still has content (specHasBlockingQuestions — the parser the
+//      headless path uses to refuse a build). Only while nothing has been
+//      built from it: a session with a pull request is past its spec, which
+//      is the precedence fallbackKindForTurn already gives a PR over a spec,
+//      and without it a spec built despite its questions would read as
+//      waiting for the rest of the session's life.
+//
+// A turn in flight is never waiting on anyone; the client gates on its live
+// busy state, so this only has to be right for an idle row.
+function sessionAwaitsInput({ lastTurnRole, lastTurnAsks, prNumber, specMd }) {
+  if (lastTurnRole !== 'assistant') return false;
+  if (lastTurnAsks === true) return true;
+  if (prNumber) return false;
+  return specHasBlockingQuestions(specMd);
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\nPosted by this issue\'s proposal session. '
@@ -7943,7 +8343,7 @@ async function runHeadlessSession({
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
     // the open-a-PR instruction (headless mode never opens one), plus the
-    // issue's comments (#150) and its Usernode-side Discussion thread
+    // issue's comments (#150) and its Homeroom-side Discussion thread
     // (#945) so answers to earlier clarifying questions are visible to this
     // run wherever the reporter left them. The thread load never throws —
     // it degrades to the comments-only seed.
@@ -10110,9 +10510,9 @@ const DRAFT_ISSUE_REPORT_TOOL = {
         type: 'string',
         enum: ['platform', 'app'],
         description:
-          'Where the issue is filed. "platform" = the Usernode platform\'s own tracker — use it for the '
+          'Where the issue is filed. "platform" = the Homeroom platform\'s own tracker — use it for the '
           + 'shared bridge, the mobile app, wallet/signing, the staging/preview pipeline, the checks gate, '
-          + 'or a missing platform capability, and whenever the user says "platform issue" or "Usernode '
+          + 'or a missing platform capability, and whenever the user says "platform issue" or "Homeroom '
           + 'issue". "app" = this app\'s own tracker — use it for a bug or request about the app this '
           + 'session is building. When the wording does not say, choose "app" unless the subject clearly '
           + 'lives outside this app\'s repo. On the platform\'s own app both resolve to the same repo.',
@@ -10785,7 +11185,7 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
 // the issue's own `note`. `commentsTruncated` is true when older comments
 // were omitted (long thread or kept-count cap).
 // `threadCtx` ({ pool, appId }, #945): when present, the issue's
-// Usernode-side Discussion thread rides along as `usernodeThread`. Call
+// Homeroom-side Discussion thread rides along as `usernodeThread`. Call
 // sites that can't supply it (or a lookup that finds nothing) simply omit
 // the field — the GitHub halves are unaffected either way.
 async function resolveGithubIssueToolResult(repoOwner, repoName, number, threadCtx = null) {
@@ -10893,7 +11293,7 @@ async function resolveDraftIssueToolResult(tu, ctx) {
 // or draft_issue_report (headless) omit it, and a get_prod_status call
 // without it resolves to not_eligible.
 // `threadCtx` ({ pool, appId }, #945) enriches get_github_issue with the
-// issue's Usernode Discussion thread. Omitted → the field is absent.
+// issue's Homeroom Discussion thread. Omitted → the field is absent.
 function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null, threadCtx = null) {
   if (tu.name === DRAFT_TOOL_NAME) {
     return resolveDraftIssueToolResult(tu, prodCtx);
@@ -11982,6 +12382,13 @@ function describeMarkerlessExit(cause) {
 // a human is present to re-dispatch — and a user-stopped turn is a
 // deliberate end, not a failure to retry.
 
+// #2118: USD to fractional cents at six decimal dollars, the precision the
+// ledger's own estimate is read at, so the composer's meter and the reply
+// row never disagree with agent_turns.
+function codexCostCents(usd) {
+  return Math.round(usd * 1e6) / 1e4;
+}
+
 // ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
 // Encapsulates the logical-turn + per-attempt accounting for BOTH the
 // scout and build call sites so a retry cannot be merged into the prior
@@ -12002,8 +12409,18 @@ async function runCodexAttemptLoop({
   if (runtimeContext?.error) return { error: runtimeContext.error, logicalTurnId };
   if (!runtimeContext) return null; // Claude turn — caller handles it.
 
+  // #2118: what the turn cost, as the ledger recorded it. completeCodexAttempt
+  // already estimates each attempt from its immutable pricing snapshot
+  // (agent_turns.estimated_cost_usd); this sums those over the logical turn
+  // and is where the figure becomes visible: published on the session's
+  // in-memory progress entry so the /status poll's `spend` carries it while
+  // the session is busy (the channel Claude Code's live tracker feeds), and
+  // returned so the caller can send the usage receipt and persist it on the
+  // reply. Null until an attempt reports a finite estimate: an unpriced
+  // model stays unknown, never a false zero.
+  let estimatedCostUsd = null;
   const completeAttempt = async (attempt, result, status, err) => {
-    await agentTurn.completeCodexAttempt({
+    const completion = await agentTurn.completeCodexAttempt({
       pool,
       turnUuid: attempt.turnUuid,
       status,
@@ -12019,6 +12436,14 @@ async function runCodexAttemptLoop({
         : result?.agentRetryFresh ? 'resume_thread_missing' : null,
       errorDetail: err ? agentTurn.sanitizeError(err) : null,
     });
+    const attemptUsd = completion?.estimatedCost?.estimatedCostUsd;
+    if (typeof attemptUsd === 'number' && Number.isFinite(attemptUsd)) {
+      estimatedCostUsd = (estimatedCostUsd || 0) + attemptUsd;
+      workerProgress.setSpend(session.id, {
+        costCents: codexCostCents(estimatedCostUsd),
+        estimated: true,
+      });
+    }
   };
 
   let lastResult = null;
@@ -12135,7 +12560,7 @@ async function runCodexAttemptLoop({
     if (retryFresh) attemptResumeThreadId = null;
     allowRetryPendingForAttempt = retryFresh;
   }
-  return { result: lastResult, error: lastError, logicalTurnId };
+  return { result: lastResult, error: lastError, logicalTurnId, estimatedCostUsd };
 }
 
 
@@ -12751,6 +13176,10 @@ async function runClaudeCodeTool({
   let executionAgentName = agentIdentity.agentName;
   let executionAgentMeta = agentIdentity.metadata;
   let durableTurnId = null;
+  // #2118: the turn's ledger estimate (USD), summed by runCodexAttemptLoop
+  // over its attempts; null for a Claude turn or an unpriced model. Function
+  // scope on purpose: the return below reads it outside the dispatch block.
+  let codexEstimatedCostUsd = null;
 
   // #937: the single way this tool ends on a stop — used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -13720,6 +14149,7 @@ ${buildGuidance.testingGuidance}`;
         }
       } else {
         result = routed.result;
+        codexEstimatedCostUsd = routed.estimatedCostUsd ?? null;
       }
       }
     } catch (e) {
@@ -14392,9 +14822,20 @@ ${buildGuidance.testingGuidance}`;
     // debit BYOK runs against the platform limit by mistake).
     if (isCodexSession) {
       // Codex/OpenRouter spend is billed to the user's OpenRouter account
-      // directly (review #3) — never the Anthropic llm_usage ledger.
-      if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+      // directly (review #3) — never the Anthropic llm_usage ledger. It is
+      // recorded on agent_turns by completeCodexAttempt, and what the chat
+      // gets is that ledger estimate (#2118). A direct session turn's
+      // receipt is the caller's to send, after its reply row is on screen:
+      // sent from here it would precede the completion status line below,
+      // and the client attaches a usage event to the bubble a status line
+      // then discards.
+      if (!directSessionTurn && codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0) {
+        send('usage', {
+          costCents: codexCostCents(codexEstimatedCostUsd),
+          model: `codex-openrouter/${turnModel}`,
+          byok: true,
+          estimated: true,
+        });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -14430,7 +14871,7 @@ ${buildGuidance.testingGuidance}`;
       // …"; the two together are how a reader of the transcript tells a local
       // spec turn from a local build turn months later.
       if (runLocally) {
-        statusText += ` Coding done on ${lease.label}, so no Usernode credits were used.`;
+        statusText += ` Coding done on ${lease.label}, so no Homeroom credits were used.`;
       }
       const completionMeta = {
         ...executionAgentMeta,
@@ -14539,6 +14980,12 @@ ${buildGuidance.testingGuidance}`;
     isError,
     commitSha: commitHash || null,
     turnId: durableTurnId,
+    // #2118: an OpenRouter turn's ledger estimate in fractional cents, for
+    // the direct-turn caller's reply row and usage receipt. Null for a
+    // Claude turn (settled above) and for an unpriced model.
+    estimatedCostCents: codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0
+      ? codexCostCents(codexEstimatedCostUsd)
+      : null,
   };
 }
 
@@ -14573,7 +15020,7 @@ FILING ISSUES — a request to file one is a request for a DRAFT CARD:
 When the user explicitly asks you to create, file, open, log, or raise an issue / bug / ticket — "create a platform issue for step 2", "open an issue for this", "file a bug about the flaky preview", "put that on the tracker" — call draft_issue_report IMMEDIATELY. Write the title and body yourself from the conversation and the CURRENT SPEC DOC block below.
 - NEVER answer such a request by saying you can only read the issue tracker, NEVER offer Send Feedback as the alternative, and NEVER ask the user to choose between two paths. You can file issues; this tool is how.
 - Do NOT dispatch the coding agent to draft a report card. That is minutes of container time for something you do in-process.
-- Choosing target: "platform" for anything about Usernode itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Usernode issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
+- Choosing target: "platform" for anything about Homeroom itself (the shared bridge, the mobile app, wallet/signing, staging/previews, the checks gate, a missing platform capability) or when the user says "platform issue"/"Homeroom issue"; "app" for a bug or request about ${appName} itself. If the wording doesn't say, choose "app" unless the subject clearly lives outside this app's repo. On the platform's own app both resolve to the same repo.
 - Write a REAL issue body, not a one-liner: what is wrong or wanted, where, expected vs actual — or, when the request points at the spec ("an issue for step 2"), the relevant part of the spec in full. The card is what the user reads before tapping, and the body is what whoever works the issue gets.
 - CLARITY GATE carve-out: the card IS the clarification surface — the user reviews the drafted title and body and taps Report or Dismiss. So do not ask clarifying questions first when the subject is identifiable from the conversation or the spec. Ask only when the request has no referent at all.
 - After it returns, reply in 1-2 sentences naming the title and where it will be filed, ending with the confirm cue ("tap Report to platform on the card to file it"), and call suggest_replies as usual. NEVER say the issue has been filed or created — nothing reaches GitHub until the user taps. On a deduped result, name the existing issue instead of claiming you drafted a card. On not_configured / no_repo, say in one sentence that issue filing isn't available here and point at Send Feedback.
@@ -14634,7 +15081,7 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 ==== END PULL REQUEST ====`
     : '';
 
-  return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
+  return `You are the Mayor — a friendly project manager for the app "${appName}" on Homeroom.
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
@@ -14864,4 +15311,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

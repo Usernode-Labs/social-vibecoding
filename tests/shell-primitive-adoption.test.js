@@ -63,8 +63,10 @@ const FIELD_BOXES = [
 
 /** See the header. Every entry is a considered exception. */
 const ALLOWED_BUTTON_FILES = new Set([
-  // #dev-plus-btn and the view-toggle segment fill.
-  'dev-board/board-frame.tsx',
+  // #dev-plus-btn and the view-toggle segment fill. The "+" moved into its
+  // own row component when the Workshop gained a copy of the toolbar; the
+  // exception moved with it.
+  'dev-board/actions-row.tsx',
   // The Kudos pane's two segmented toggles — the All-time / This week window
   // pills and the Kudos / Votes history chips — whose ACTIVE state is the
   // violet fill. Same shape as board-frame's view toggle, and the same

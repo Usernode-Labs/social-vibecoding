@@ -32,6 +32,7 @@ const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
+const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 const {
@@ -145,23 +146,41 @@ const CONTENT_TYPES = {
 // 710s → 740s with 600 → 630 (#1876, whose two-step waitlist declares eight
 // checks where one stood): the deadline moved to 620s, and 120s above it is
 // 740s.
-const RUN_TIMEOUT_MS = 740 * 1000;
+//
+// 740s → 770s with 630 → 660 (#1960): the deadline moved to 650s, and 120s
+// above it is 770s.
+const RUN_TIMEOUT_MS = 770 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
-// once. One Chromium page is ~50-80 MiB of renderer, so eight of them plus
-// the browser process needs materially more than the 1g runOneShot default
-// — an OOM-kill there loses the whole run, sentinel included, and reads to
-// the platform as a crashed container.
-const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '4g';
-// Eight browser groups saturated the former four-core quota even on an
-// idle node. Allow one core per default group without reducing suite time.
+// once. One Chromium page is ~50-80 MiB of renderer (80-150 MiB for this
+// repo's own shell), so sixteen of them plus the browser process needs
+// materially more than the 1g runOneShot default — an OOM-kill there loses
+// the whole run, sentinel included, and reads to the platform as a crashed
+// container. 4g → 6g when the pool doubled 8 → 16; the worker LimitRange
+// allows 16Gi per container, and tests/checks-budget.test.js pins the
+// per-page headroom.
+const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '6g';
+// Eight browser groups saturated the former four-core quota even on an idle
+// node — because Chromium was compositing every page on the CPU through
+// SwiftShader (see CHROMIUM_LAUNCH_ARGS in capture/capture.js, which now
+// puts compositing on Skia's software path). A group costs well under a
+// core with that in place, so 8 covers sixteen groups plus the media pass
+// with room. It stays at 8 rather than growing with the pool: the worker
+// LimitRange caps a container there, and memory is the bound on the pool
+// now, not CPU.
 const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '8';
 
 // Suite bounds handed to the container. Kept here rather than left to the
 // image's own defaults so the platform's timeout arithmetic (below) and the
 // container's agree by construction.
-const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
+//
+// 8 → 16 lanes with software compositing: the pool used to be bound by its
+// own container's CPU, and is now bound by the wire (a cold load is ~5-7s
+// whatever runs beside it), so doubling the lanes roughly halves the suite's
+// wall clock — ~186s → ~80-100s for this repo's 169 groups in replay. The
+// sizing is written up on poolSize in capture/capture.js.
+const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '16';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
 // services/app-manifest.js — the two are one decision, and the note on that
@@ -193,7 +212,17 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 590s → 620s with MAX_DECLARED_TESTS 600 → 630 (#1876): ~307s of ideal work
 // for a full suite, so 620s keeps the 2x margin with ~6s to spare, and
 // RUN_TIMEOUT_MS moves 710s → 740s with it.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '620000';
+//
+// 620s → 650s with MAX_DECLARED_TESTS 630 → 660 (#1960): ~322s of ideal work
+// for a full suite, so 650s keeps the 2x margin with ~6s to spare, and
+// RUN_TIMEOUT_MS moves 740s → 770s with it.
+//
+// Left at 650s when the pool doubled 8 → 16: the ideal work for a full suite
+// halved to ~161s, so the margin is now 4x rather than 2x. Deliberately not
+// tightened — this deadline only ever binds a suite that is wedged, and a
+// healthy one finishes in a fraction of it either way; what it buys is that
+// the container gets to emit its sentinel rather than being killed.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '650000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
@@ -984,11 +1013,28 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // A real verdict ('passing' / 'failing'): clear the failure streak so a
   // later transient error starts its backoff fresh, and drop the now-stale
   // error detail / retry schedule / notify stamp.
+  //
+  // #2170: the live progress is REDUCED here rather than dropped. What the
+  // card can still use once the verdict stands is what the run cost — the
+  // finished build block (kept only once it reads 'done'; a step still
+  // 'now' would draw a live pipeline under a verdict) and how long the
+  // checks took — so a reviewer sees "built in 20s · checked in 9m 40s"
+  // after the run as well as during it. The checking time needs no new
+  // column: checks_checked_at at this point is the stamp the testing half
+  // opened with (captureForSession → setChecksPending 'testing'), and an
+  // UPDATE reads the row's old value on its right-hand side, so it is
+  // NOW() minus that even though the same statement overwrites it. The
+  // counts are not kept — test_results carries the verdict — and the next
+  // run's setChecksPending clears the whole thing, as it always did.
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
-           checks_progress = NULL,
+           checks_progress = NULLIF(jsonb_strip_nulls(jsonb_build_object(
+             'build', CASE WHEN checks_progress #>> '{build,step}' = 'done'
+                           THEN checks_progress -> 'build' END,
+             'checksMs', ROUND(EXTRACT(EPOCH FROM (NOW() - checks_checked_at)) * 1000)::bigint
+           )), '{}'::jsonb),
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -1104,12 +1150,38 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
   return write.rowCount !== 0;
 }
 
-// The two stages a 'pending' run can be in. Anything else (undefined, a
-// typo, a value from a newer writer) collapses to NULL — the card's legacy
-// wording — rather than rendering an unknown caption.
-const CHECK_PHASES = new Set(['building', 'testing']);
+// The stages a 'pending' run can be in. 'building' and 'testing' are the two
+// halves of a run; 'deferred' is a promoted head that conflicts with main and
+// got its preview but no verdict (services/check-admission.js) — nothing is
+// running for it, and nothing will until the head merges cleanly. Anything
+// else (undefined, a typo, a value from a newer writer) collapses to NULL —
+// the card's legacy wording — rather than rendering an unknown caption.
+const CHECK_PHASES = new Set(['building', 'testing', 'deferred']);
 function normalizeCheckPhase(phase) {
   return CHECK_PHASES.has(phase) ? phase : null;
+}
+
+// The deferral stamp. The run captured the preview and stopped: the verdict
+// stays 'pending', the phase says why, and the commit pin keeps the stale
+// sweeper (staging-recovery.checkRunOverdue) and the vote-time kick from
+// re-driving a run that is waiting on a conflict rather than on a runner.
+// Same commit guard as storeChecks: a stamp about a head the row has since
+// left is discarded.
+async function storeChecksDeferred(pool, sessionId, commitSha, detail = null) {
+  const write = await pool.query(
+    `UPDATE chat_sessions
+        SET check_state = 'pending',
+            check_phase = 'deferred',
+            checks_checked_at = NOW(),
+            checks_progress = NULL,
+            check_next_retry_at = NULL,
+            check_error_detail = $3::text
+      WHERE id = $1
+        AND status IN ('active', 'paused', 'promoted', 'merging')
+        AND (checks_commit_sha IS NULL OR $2::text IS NULL OR checks_commit_sha = $2::text)`,
+    [sessionId, commitSha || null, detail ? String(detail).slice(0, 300) : null]
+  );
+  return write.rowCount !== 0;
 }
 
 // Why a check run started. The merge-gate trace used to record trigger
@@ -1130,6 +1202,7 @@ const CHECK_TRIGGERS = new Set([
   'boot-reconcile',    // server boot re-drove an interrupted run
   'stuck-sweep',       // the recovery sweeper re-drove a stalled run
   'fleet-maintenance', // a fleet-wide rebuild
+  'conflict-resolved', // a deferred verdict, run now that the head merges cleanly
 ]);
 function normalizeCheckTrigger(trigger) {
   return CHECK_TRIGGERS.has(trigger) ? trigger : null;
@@ -1402,6 +1475,7 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
   const body = pr.body || '';
   const next = prMetadata.upsertVisualsBlock(body, block);
   if (next !== body) {
+    await require('./preview-lifecycle').current()?.check();
     await github.updatePR(repoOwner, repoName, session.pr_number, { body: next });
   }
   // #1333. The body just changed, so the mirror get_proposal reports as
@@ -1428,7 +1502,10 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
 // finally block. Depth is capped at one per session (a later request
 // overwrites the parked args — the freshest commit is the one worth
 // shooting), so a burst of rebuilds can never fan out into a queue.
-const _inFlight = new Set();
+// #2038: a Map, not a Set — the value carries the running operation's abort
+// handle and the commit it is testing, which is what lets a NEWER run for a
+// DIFFERENT commit supersede it instead of waiting it out.
+const _inFlight = new Map(); // key -> { operation, commitHash }
 const _queued = new Map();
 
 function captureKey(sessionId) {
@@ -1545,17 +1622,99 @@ async function checksAlreadyDecided(pool, sessionId, commitHash) {
 // exact commit. The callers that set it are the ones where a fresh verdict is
 // the whole point of the request — a human pressing "Re-run checks", and the
 // promote-time kick that must not merge on a verdict it did not just take.
+async function publishCaptureError(pool, sessionId, revision, err, send) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await storeCaptureOutcome(client, sessionId, 'failed', { reason: String(err.message).slice(0, 300) });
+    const stored = await storeChecks(client, sessionId, revision,
+      { state: 'error', results: [] }, err.message);
+    await client.query('COMMIT');
+    if (stored) notifyChecks(sessionId, { state: 'error', results: [] }, revision, send);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
+  const lifecycle = require('./preview-lifecycle');
+  if (lifecycle.enabled(config) && !lifecycle.current()) {
+    try {
+      const completed = await lifecycle.run(config, session, commitHash, 'capture', async (operation, fresh) => {
+        const runtime = require('./application-runtime');
+        const state = fresh.staging_runtime_name && await runtime.inspect(config,
+          { runtimeKind: 'kubernetes', runtimeName: fresh.staging_runtime_name });
+        if (fresh.staging_commit_sha !== operation.revision || !fresh.staging_runtime_name
+            || !state?.rolloutReady || state.imageRef !== fresh.staging_image_ref
+            || state.labels?.[require('./staging-env').LABEL_ENV_FP] !== require('./staging-env').expectedStagingFingerprint(config)
+            || !await runtime.probeHealth(config, { runtimeKind: 'kubernetes', runtimeName: fresh.staging_runtime_name })) {
+          throw new Error('Preview revision is not ready for capture');
+        }
+        const edge = await require('./staging').verifyStagingEdge(fresh,
+          new URL(fresh.staging_url).hostname, fresh.staging_url);
+        if (fresh.staging_url.startsWith('https://') && (!edge?.ok || edge.code >= 500)) {
+          throw new Error('Preview edge is not ready for capture');
+        }
+        await operation.check();
+        return captureForSession(config, fresh, app, operation.revision, stagingResult,
+          { ...opts, force: opts.force || !!stagingResult });
+      }, { force: opts.force, onError: (err, pool, operation) =>
+        publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
+      if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+      return completed;
+    } catch (err) {
+      if (lifecycle.isCancelled(err)) return;
+      throw err;
+    }
+  }
+  const operation = lifecycle.current();
   const { send, trigger = null, force = false } = opts || {};
   const key = captureKey(session.id);
   if (_inFlight.has(key)) {
-    // Re-queue instead of dropping: park the NEWER run's arguments (latest
-    // wins, depth 1) for the in-flight run's finally block to re-drive.
-    // `send` is deliberately NOT carried over — by the time the queued run
-    // fires, the requesting turn's SSE stream is long closed, so the queued
-    // run publishes via the session bus + global WS instead.
+    // Re-queue: park the NEWER run's arguments (latest wins, depth 1) for the
+    // in-flight run's finally block to re-drive. `send` is deliberately NOT
+    // carried over — by the time the queued run fires, the requesting turn's
+    // SSE stream is long closed, so the queued run publishes via the session
+    // bus + global WS instead.
     _queued.set(key, { config, session, app, commitHash, stagingResult, trigger, force });
-    log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
+
+    // #2038 — and if the head has MOVED, stop the run that is going.
+    //
+    // Waiting it out is not merely wasteful, it is worse than useless. The
+    // running suite is testing the OLD commit, and storeChecks only writes
+    // when checks_commit_sha still matches the commit its run started on —
+    // which setChecksPending has already moved. So that run finishes and
+    // writes its verdict NOWHERE: the row stays 'pending' with a checked_at
+    // that never advances, and nothing touches it until the stale-checks
+    // sweeper notices CHECKS_STALE_MS later. #1728 measured the cost at two
+    // abandoned runs (one of them 490 checks in), two ten-minute dead waits
+    // and three full runs for one proposal.
+    //
+    // Same commit is a different case and keeps today's behaviour: the two
+    // builds are of one tree, the queued request arrived late rather than
+    // because anything changed, and drainQueued's #1144 rule drops it once
+    // the running one produces a real verdict.
+    const running = _inFlight.get(key);
+    const movedOn = running && running.commitHash && commitHash
+      && running.commitHash !== commitHash;
+    if (movedOn && running.operation && typeof running.operation.abort === 'function') {
+      log.info('visuals', 'Superseding the in-flight capture — the head moved under it', {
+        sessionId: session.id, was: running.commitHash, now: commitHash, trigger,
+      });
+      try {
+        running.operation.abort(lifecycle.cancelled());
+      } catch (err) {
+        log.warn('visuals', 'Could not abort the superseded capture', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+      // The aborted run's finally block drains the queue, so the new run
+      // starts as soon as it unwinds rather than after its full suite.
+      return;
+    }
+
+    log.info('visuals', 'Capture already in flight for this commit — re-queued', {
       sessionId: session.id, commitHash: commitHash || null, trigger,
     });
     // Say so on the card. This wait is the long version of the
@@ -1566,7 +1725,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     reportPrepareChecks(config, session, stagingResult, { queued: true });
     return;
   }
-  _inFlight.add(key);
+  _inFlight.set(key, { operation, commitHash: commitHash || null });
   const pool = getPool(config);
 
   // ── Skip a provably redundant run (#1144) ──
@@ -1617,6 +1776,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // Set once the run's progress state exists (see makeChecksProgressState);
   // a no-op until then so the catch below can always call it.
   let closeProgress = () => {};
+  // The run's identity on the cluster (services/check-runs.js). Under the
+  // preview lifecycle it is the operation's own run id — the Jobs are
+  // labelled with it already; without one, a fresh id plays the same part,
+  // so a harvester can find THIS run's Jobs and nobody else's. The manifest
+  // and its heartbeat exist only where there is something to harvest: a
+  // Kubernetes Job outlives the process that created it, a docker one-shot
+  // does not.
+  const runId = operation?.runId || crypto.randomUUID();
+  const harvestable = config.captureRuntime === 'kubernetes';
+  let stopHeartbeat = () => {};
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -1666,6 +1835,22 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // finished build so the card does not keep a step pulsing under
     // "Running the automated tests…" until the first test frame.
     await finishPrepareChecks(pool, session, commitHash, stagingResult, trigger);
+
+    // A provisional manifest from the moment the row went 'pending', so a
+    // process that dies anywhere between here and the Job launch leaves a
+    // row the harvester re-drives at once (launched: false — there is no
+    // Job to read) instead of one the stale sweeper finds ten minutes on.
+    // The manifest and its heartbeat bypass the lifecycle's guarded pool on
+    // purpose: they describe the run's process, not its ownership of the
+    // session, and a heartbeat must not cost a row lock every fifteen
+    // seconds.
+    if (harvestable) {
+      await checkRuns.record(operation?.cleanupPool || pool, {
+        runId, sessionId: session.id, commitSha: commitHash || null,
+        manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt },
+      });
+      stopHeartbeat = checkRuns.startHeartbeat(operation?.cleanupPool || pool, runId);
+    }
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1939,10 +2124,31 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // origin + token (and self-app hash normalisation) as the after target.
     const declared = await resolveDeclaredTests(repoOwner, repoName, gitRef);
     const declaredTests = declared.tests;
-    const tests = (declaredTests.length
+
+    // Which half of the run this head gets (services/check-admission.js). A
+    // promoted head that conflicts with main is previewed and not judged:
+    // no assertions, no unit suite, and the verdict below is a deferral
+    // stamp rather than a state. Decided AFTER the tests are resolved so the
+    // log line can say what was held back.
+    const admission = await require('./check-admission').decide({
+      pool, session, app, commitHash, trigger,
+    });
+    const shotsOnly = admission.mode === 'shots_only';
+    if (shotsOnly) {
+      log.info('visuals', 'Head conflicts with main — capturing the preview, deferring the verdict', {
+        sessionId: session.id, commitHash: commitHash || null, trigger,
+        declaredTests: declaredTests.length,
+        conflictPaths: (admission.measured && admission.measured.conflictPaths || []).slice(0, 5),
+      });
+      traceStep('admission', 'Verdict deferred: the head conflicts with main', {
+        reason: admission.reason, declaredTests: declaredTests.length,
+      });
+    }
+
+    const tests = (shotsOnly ? [] : (declaredTests.length
       ? declaredTests
       : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
-    ).map((t, index) => {
+    )).map((t, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
       return {
         index,
@@ -1966,7 +2172,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // the pre-#1019 all-blocking semantics, because it is one "loads without
     // console errors" check per capture path and has always gated.
     let dispatched = null;
-    if (declaredTests.length) {
+    if (declaredTests.length && !shotsOnly) {
       try {
         // First run for this app pre-graduates the head the merge gate used
         // to enforce, so turning this on never OPENS a gate that was closed.
@@ -2041,13 +2247,51 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       expected: tests.length,
       // The build half, finished, rides every testing-half snapshot.
       build: buildProgressFromTimings(stagingResult && stagingResult.timings),
-      flush: (snap) => {
-        setChecksProgress(pool, session.id, commitHash, snap).catch(() => {});
+      flush: async (snap) => {
+        if (operation?.signal.aborted) return;
+        try {
+          await operation?.check();
+          await setChecksProgress(pool, session.id, commitHash, snap);
+          await operation?.check();
+        } catch { return; }
         notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
       },
     });
     closeProgress = progress.close;
     const progressObserver = progress.observeCapture;
+
+    // The full manifest, written before either Job exists: everything the
+    // verdict needs that the Jobs' own output does not carry, so a process
+    // that dies from here on leaves a run another process can settle
+    // (services/check-harvest.js → settleCaptureRun). The capture targets
+    // are recorded without their URLs — those embed the capture tokens, and
+    // storeArtifacts wants only the index, path and frame.
+    if (harvestable) {
+      await checkRuns.record(operation?.cleanupPool || pool, {
+        runId, sessionId: session.id, commitSha: commitHash || null,
+        manifest: {
+          launched: true,
+          trigger: trigger || null,
+          debugRunId,
+          startedAt: runStartedAt,
+          shotsOnly,
+          admissionReason: admission.reason || null,
+          media,
+          capturePaths,
+          pathDefaulted,
+          prodRunning,
+          stagingOrigin,
+          targets: targets.map((t) => ({
+            index: t.index, path: t.path, still: t.still || undefined,
+            viewport: t.viewport || undefined, companion: t.companion || undefined,
+          })),
+          testsCount: tests.length,
+          dispatched,
+          ceilingDropped: Number(declared.ceilingDropped) || 0,
+          build: buildProgressFromTimings(stagingResult && stagingResult.timings),
+        },
+      });
+    }
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
     // capture container and awaited after it, so the suite runs in its own
@@ -2055,17 +2299,19 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // ~zero wall clock unless it outlasts the whole capture run. The
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
-    const unitSuitePromise = unitSuite.maybeRunUnitSuite({
+    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
+      signal: operation?.signal, previewRunId: runId,
     }).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
       });
       return null;
     });
+    operation?.track(unitSuitePromise);
 
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning,
@@ -2073,6 +2319,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
       tests: tests.length, declaredTests: declaredTests.length,
       blocking: dispatched ? dispatched.filter((d) => d.graduated).length : tests.length,
+      deferred: shotsOnly || undefined,
     });
     let stdout;
     let runPartial = false;
@@ -2143,11 +2390,18 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           TEST_TIMEOUT_MS,
           TESTS_DEADLINE_MS,
       };
-      if (kubernetesCapture) {
+      if (shotsOnly && !media) {
+        // A deferred verdict on a range with no frontend files: no
+        // assertions to run and no screens to shoot, so there is nothing
+        // for the container to do. The stamp below still lands.
+        stdout = '';
+        res = { partial: false };
+      } else if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
           onStdoutLine: progressObserver,
           memory: CAPTURE_MEMORY,
           cpus: CAPTURE_CPUS,
+          signal: operation?.signal, previewRunId: runId,
           sessionId: session.id,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -2183,7 +2437,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     } finally {
       if (beforeSessionToken) {
-        await pool.query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
+        await (operation?.cleanupPool || pool).query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
           .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
             sessionId: session.id, err: err.message,
           }));
@@ -2198,280 +2452,33 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       partialReason: runPartialReason || undefined,
     });
 
-    const { shots, failures } = parseShots(stdout);
-    for (const f of failures) {
-      log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
-    }
-
-    // #47: the test suite result is stored FIRST so it lands even on the
-    // console-only path (no media artifacts; storeArtifacts returns early).
-    // Best-effort: a missing/partial set degrades to 'error' (the gate
-    // blocks fail-closed, the card shows "couldn't run"), never throws.
-    // The advisory console_* columns are dual-written from the same run for
-    // one release so a rolling deploy's old readers stay coherent.
-    const extraRows = [];
-    try {
-      const overRow = await overCeilingCheckRow(repoOwner, repoName, declared.ceilingDropped);
-      if (overRow) extraRows.push(overRow);
-    } catch (err) {
-      log.warn('visuals', 'Over-ceiling guard failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    }
+    await operation?.check();
     // The unit-suite container started before the capture run; by now it
     // has usually been finished for minutes. Its own timeoutMs bounds this
     // await, and the .catch at launch made rejection impossible.
     const unitOutcome = await unitSuitePromise;
     closeProgress();
-    if (unitOutcome) extraRows.push(unitOutcome.row);
-    const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
-      ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
-      : { extraRows });
+    await operation?.check();
 
-    // Re-label a whole-origin outage as 'error' rather than 'failing'
-    // (#1381). Only rows the container actually produced count — the
-    // synthesized extraRows (over-ceiling guard, unit suite) never load a
-    // page and would otherwise veto the override for free.
-    if (checksResult.state === 'failing') {
-      const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
-      const detail = unreachableOriginDetail(containerRows, stagingOrigin);
-      if (detail) {
-        checksResult.state = 'error';
-        checksResult.errorDetail = detail;
-        log.warn('visuals', 'Checks unreachable origin — recorded as error, not failing', {
-          sessionId: session.id, origin: stagingOrigin, rows: containerRows.length,
-        });
-      }
-    }
-
-    // #1771: a run that did not pass asks whether the shared Postgres was
-    // starved while it ran. Twenty previews each holding six warm
-    // connections, on a server whose max_connections is the stock 100, is
-    // how a proposal's checks came back with 65 failures all citing one
-    // endpoint's 500s and nothing anywhere naming the cause.
-    //
-    // Sampled HERE rather than at the write: this is the moment the run
-    // finished, and storeChecks has a call-order contract two tests pin.
-    //
-    // The census is taken for ANY non-passing run, because the log line is
-    // worth having either way, but it only changes the VERDICT under
-    // connectionExhaustionDetail's every-row rule.
-    if (checksResult.state !== 'passing') {
-      const census = await connectionCensus(getPool(config));
-      if (census && census.saturated) {
-        log.warn('visuals', 'Checks ran while Postgres was near its connection limit', {
-          sessionId: session.id,
-          used: census.used,
-          max: census.max,
-          idle: census.idle,
-          top: census.topDatabases.slice(0, 3),
-        });
-      }
-      if (checksResult.state === 'failing') {
-        const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
-        const detail = connectionExhaustionDetail(containerRows, { origin: stagingOrigin, census });
-        if (detail) {
-          checksResult.state = 'error';
-          checksResult.errorDetail = detail;
-          log.warn('visuals', 'Checks starved of Postgres connections — recorded as error, not failing', {
-            sessionId: session.id,
-            rows: containerRows.length,
-            used: census ? census.used : null,
-            max: census ? census.max : null,
-          });
-        }
-      }
-    }
-
-    const blockingCount = Number.isInteger(checksResult.blockingCount)
-      ? checksResult.blockingCount
-      : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
-    const advisoryCount = Number.isInteger(checksResult.advisoryCount) ? checksResult.advisoryCount : 0;
-    const failingCount = blockingCount;
-    traceStatus = checksResult.state;
-    traceStep('tests', `Suite verdict: ${checksResult.state}`, {
-      state: checksResult.state,
-      tests: checksResult.results.length,
-      failing: failingCount,
-      advisory: advisoryCount || undefined,
-      // The suite runs inside the same container invocation as the shots, so
-      // this is the whole run's wall clock rather than a tests-only slice.
-      durationMs: Date.now() - runStartedAt,
+    // Everything from here is the settlement — shared with the harvester,
+    // which runs it on a Job whose launching process died. One code path
+    // for the verdict, whoever reads the output.
+    const settled = await settleCaptureRun(config, pool, {
+      session, app, commitHash, trigger, send, operation, traceStep, runStartedAt,
+      shotsOnly, admissionReason: admission.reason,
+      media, capturePaths, pathDefaulted, prodRunning, stagingOrigin, targets,
+      testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
+      stdout, runPartial, runPartialReason, unitOutcome,
     });
-    try {
-      const stored = await storeChecks(
-        pool, session.id, commitHash, checksResult, checksResult.errorDetail || null
-      );
-      if (stored) {
-        await storeConsoleCheck(
-          pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
-        );
-        // History moves only when the snapshot actually landed: a run whose
-        // result was discarded as stale must not graduate anything either.
-        // Rows the container never produced are absent here, so a check that
-        // did not run neither graduates nor records a failure.
-        // An 'error' verdict is "we could not find out", not "this check
-        // failed". Recording it would stamp fail_count on checks that never
-        // executed — which is how seven of WorkQuest's rows reached
-        // pass_count 0 / fail_count 2 for a container that logged zero
-        // inbound requests — and, worse, could graduate nothing while
-        // permanently colouring the app's history with a platform outage.
-        if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
-          const historyRows = [];
-          if (dispatched) {
-            const byIndex = new Map(dispatched.map((d) => [d.index, d]));
-            for (const r of checksResult.results) {
-              const d = byIndex.get(r.index);
-              if (!d) continue;
-              // Counts, because a check on its first appearance was observed
-              // NEW_CHECK_RUNS times and all of them are evidence. classify
-              // folded the repeats into this one row, so they arrive here as
-              // `passes` / `fails` rather than as separate rows — which also
-              // keeps one conflict target per check in the upsert.
-              historyRows.push({
-                checkKey: d.checkKey,
-                name: d.name,
-                path: d.path,
-                passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
-                fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
-              });
-            }
-          }
-          // The unit-suite row graduates through the same history: its
-          // first observed pass flips it from advisory to merge-blocking,
-          // and (recordRun's COALESCE) no later failure demotes it.
-          if (unitOutcome) historyRows.push(unitOutcome.history);
-          await checkHistory.recordRun(pool, app.id, historyRows);
-        }
-        log.info('visuals', 'Checks stored', {
-          sessionId: session.id, state: checksResult.state,
-          tests: checksResult.results.length,
-          failing: failingCount,
-          advisory: advisoryCount || undefined,
-          durationMs: Date.now() - runStartedAt,
-        });
-        notifyChecks(session.id, checksResult, commitHash, send);
-      } else {
-        log.info('visuals', 'Discarded stale checks result', {
-          sessionId: session.id, commitHash: commitHash || null,
-        });
-      }
-    } catch (err) {
-      log.warn('visuals', 'Checks store failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // Platform-variables check. Piggybacks on the same recompute trigger
-    // as the test suite so the Checks card fills in together, but it is
-    // computed from the branch's dapp.json diff, not from this run — a
-    // capture failure above leaves the test verdict 'error' while this
-    // one still resolves correctly. Display only: the merge gate in
-    // routes/votes.js re-evaluates live. Fire-and-forget.
-    try {
-      // eslint-disable-next-line global-require
-      const platformEnvCheck = require('./platform-env-check');
-      const { rows: appRows } = await pool.query(
-        'SELECT id, repo_url, self_hosted FROM apps WHERE id = $1',
-        [session.app_id]
-      );
-      if (appRows[0]?.self_hosted) {
-        const verdict = await platformEnvCheck.refreshPlatformEnvCheck({
-          pool,
-          app: appRows[0],
-          session: session.source === 'cli_handoff'
-            ? { ...session, checks_commit_sha: commitHash || null }
-            : session,
-        });
-        if (verdict) {
-          log.info('visuals', 'Platform-env check stored', {
-            sessionId: session.id, state: verdict.state,
-          });
-          // Reuse the existing checks_ready broadcast: every client that
-          // cares about the Checks card already listens for it and
-          // re-fetches the proposal, so a second event type would only
-          // add a code path with the same effect.
-          notifyChecks(session.id, checksResult, commitHash, null);
-        }
-      }
-    } catch (err) {
-      log.warn('visuals', 'Platform-env check failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // #451: a passing verdict is the *other* half of the merge gate (the
-    // first being a winning vote). The vote path already re-drives a merge
-    // when a vote lands, but nothing re-drove it when the checks were the
-    // last thing to turn green — so a PR that crossed the vote threshold
-    // before its checks finished sat in review forever. Re-drive the
-    // app-level merge drain so "checks finished after the votes were in"
-    // auto-merges just like "votes landed after checks were green".
-    // Fire-and-forget; never blocks or fails the capture pipeline.
-    maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
-
-    const dropped = [];
-    const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
-
-    // Persist the capture outcome (state + why anything is missing) so a
-    // proposal with no / partial screenshots is attributable from the DB
-    // instead of from short-lived container logs. Best-effort.
-    const captureState = !media
-      ? 'console_only'
-      : (!stored
-        ? 'failed'
-        : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
-    const captureDetail = {
-      media,
-      pathDefaulted,
-      prodRunning,
-      paths: capturePaths,
-      failures: failures.slice(0, 20),
-      droppedOverCap: dropped.slice(0, 20),
-      beforeFellBack: Array.from(new Set(
-        shots.filter((s) => s.kind === 'before' && s.fellBack).map((s) => s.index)
-      )),
-      // A run killed at the timeout / buffer cap whose already-emitted
-      // frames were salvaged (improvement 5) — the stored set is real but
-      // knowingly incomplete.
-      runCutShort: runPartial ? (runPartialReason || true) : false,
-    };
-    if (!media) captureDetail.reason = 'No frontend files in commit range — console/tests-only run';
-    else if (!stored) captureDetail.reason = 'No usable "after" artifact was produced';
-    else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
-    await storeCaptureOutcome(pool, session.id, captureState, captureDetail).catch((err) => {
-      log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    });
-
-    if (!stored) {
-      if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
-      return;
-    }
-
-    // Interactive ordering: a PR already exists, so patch its body now.
-    // (Headless → lazy-PR ordering is covered by applyPrMetadata's suffix
-    // assembly reading session_visuals at promote time.)
-    if (session.pr_number && repoOwner && repoName && github.isEnabled()) {
-      const block = prMetadata.buildVisualsBlock(stored, caddy.USERNODE_DOMAIN);
-      try {
-        await patchPrBody(pool, session, repoOwner, repoName, block);
-      } catch (err) {
-        log.warn('visuals', 'PR body visuals patch failed', {
-          sessionId: session.id, pr: session.pr_number, err: err.message,
-        });
-      }
-    }
-
-    notifyVisualsReady(session.id, stored, send);
-    log.info('visuals', 'Capture complete', {
-      sessionId: session.id,
-      artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
-      durationMs: Date.now() - runStartedAt,
-    });
+    traceStatus = settled.traceStatus;
+    return settled.result;
   } catch (err) {
     closeProgress();
+    if (lifecycle.isCancelled(err) || operation?.signal.aborted) {
+      traceStatus = lifecycle.isCancelled(operation?.signal.reason || err) ? 'superseded' : 'error';
+      throw operation?.signal.reason || err;
+    }
+    if (operation) throw err;
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
     // The run broke before an outcome could be computed (container build,
@@ -2493,13 +2500,409 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'running' in the admin view. The total is the figure this exists for:
     // it is what "the checks step got slower" is measured in.
     const totalMs = Date.now() - runStartedAt;
-    mergeDebug.endRun(pool, debugRunId, {
+    mergeDebug.endRun(operation?.cleanupPool || pool, debugRunId, {
       status: traceStatus,
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
+    // The manifest goes with the run, whatever ended it: a settled run has
+    // nothing left to harvest, and a superseded or failed one has had its
+    // Jobs cancelled (or is about to) — a harvester finding the row would
+    // only re-drive a run something else already replaced.
+    stopHeartbeat();
+    if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
   }
+}
+
+// The harvester's seat at the in-flight table (services/check-harvest.js).
+// A harvest writes screenshots and a verdict for the session exactly as a
+// live run does, so every surface that asks hasInFlightCapture — proposal
+// submission adopting a new commit, the stuck-checks sweep — must see it
+// as one. A capture request that arrives meanwhile parks itself in _queued
+// as it would behind a live run, and `release(verdict)` drains it under
+// drainQueued's usual rules (same commit + real verdict → dropped). A
+// request for a NEWER commit aborts the holder through `abort`, exactly as
+// #2038 aborts a live run the head has moved under.
+// Returns null when the session already has a run in flight here — the
+// harvester then leaves that run to settle the session itself.
+function holdCapture(sessionId, commitHash, { abort = null } = {}) {
+  const key = captureKey(sessionId);
+  if (_inFlight.has(key)) return null;
+  _inFlight.set(key, {
+    operation: typeof abort === 'function' ? { abort } : null,
+    commitHash: commitHash || null,
+    harvest: true,
+  });
+  let released = false;
+  return (verdict) => {
+    if (released) return;
+    released = true;
+    _inFlight.delete(key);
+    drainQueued(key, sessionId, commitHash || null, verdict || null);
+  };
+}
+
+// Everything after the containers have ended: parse the frames, take the
+// verdict, store both halves, tell the clients. Split from captureForSession
+// so the harvester (services/check-harvest.js) can run exactly this on a
+// Job whose launching process died — same code, same order, same stores,
+// same guards (storeChecks refuses a commit the row has moved past).
+//
+// `run` is the launch-time context a live run has in scope and a harvest
+// reads back from the check_runs manifest: the session, app, commit and
+// trigger; the capture geometry (media, targets, capturePaths, pathDefaulted,
+// prodRunning, stagingOrigin); the dispatch (testsCount, dispatched,
+// ceilingDropped); the admission (shotsOnly, admissionReason); the output
+// (stdout, runPartial, runPartialReason); and the unit-suite outcome, already
+// awaited. `send`, `operation` and `traceStep` are the live run's; a
+// harvest passes null / a no-op. Returns { traceStatus, result }: the
+// verdict the run's trace closes on, and the { state, deferred? } object
+// captureForSession hands its caller.
+async function settleCaptureRun(config, pool, run) {
+  const {
+    session, app, commitHash, trigger = null, send = null, operation = null,
+    traceStep = () => {}, runStartedAt = Date.now(),
+    shotsOnly = false, admissionReason = null,
+    media, capturePaths, pathDefaulted, prodRunning, stagingOrigin, targets,
+    testsCount, dispatched = null, ceilingDropped = 0,
+    stdout, runPartial = false, runPartialReason = '', unitOutcome = null,
+  } = run;
+  const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  let traceStatus = 'error';
+  const { shots, failures } = parseShots(stdout);
+  for (const f of failures) {
+    log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
+  }
+
+  // #47: the test suite result is stored FIRST so it lands even on the
+  // console-only path (no media artifacts; storeArtifacts returns early).
+  // Best-effort: a missing/partial set degrades to 'error' (the gate
+  // blocks fail-closed, the card shows "couldn't run"), never throws.
+  // The advisory console_* columns are dual-written from the same run for
+  // one release so a rolling deploy's old readers stay coherent.
+  const extraRows = [];
+  try {
+    const overRow = await overCeilingCheckRow(repoOwner, repoName, ceilingDropped);
+    if (overRow) extraRows.push(overRow);
+  } catch (err) {
+    log.warn('visuals', 'Over-ceiling guard failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  if (unitOutcome) extraRows.push(unitOutcome.row);
+
+  if (shotsOnly) {
+    // No verdict was taken, so none is stored: the row stays 'pending' in
+    // phase 'deferred' until the head merges cleanly, when the run that
+    // judges it starts (integration.onBecameClean → recheckSessionChecks,
+    // or the checks gate's own kick). The preview half below still lands
+    // — the screenshots are the point of having run at all.
+    traceStatus = 'deferred';
+    traceStep('tests', 'Suite verdict: deferred', {
+      state: 'deferred', reason: admissionReason, durationMs: Date.now() - runStartedAt,
+    });
+    try {
+      const stamped = await storeChecksDeferred(pool, session.id, commitHash,
+        'Checks wait until this proposal merges cleanly with main');
+      if (stamped) {
+        notifyChecksPending(session.id, commitHash, 'deferred', trigger);
+      } else {
+        log.info('visuals', 'Discarded stale deferral stamp', {
+          sessionId: session.id, commitHash: commitHash || null,
+        });
+      }
+    } catch (err) {
+      log.warn('visuals', 'Deferral stamp failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+    const dropped = [];
+    const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
+    const captureState = !media ? 'console_only'
+      : (!stored ? 'failed'
+        : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
+    await storeCaptureOutcome(pool, session.id, captureState, {
+      media, pathDefaulted, prodRunning, paths: capturePaths,
+      failures: failures.slice(0, 20), droppedOverCap: dropped.slice(0, 20),
+      runCutShort: runPartial ? (runPartialReason || true) : false,
+      deferred: true,
+      reason: !media ? 'No frontend files in commit range and the verdict is deferred — nothing to capture'
+        : (!stored ? 'No usable "after" artifact was produced' : undefined),
+    }).catch((err) => {
+      log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    });
+    if (stored) {
+      if (session.pr_number && repoOwner && repoName && github.isEnabled()) {
+        try {
+          await patchPrBody(pool, session, repoOwner, repoName,
+            prMetadata.buildVisualsBlock(stored, caddy.USERNODE_DOMAIN));
+        } catch (err) {
+          log.warn('visuals', 'PR body visuals patch failed', {
+            sessionId: session.id, pr: session.pr_number, err: err.message,
+          });
+        }
+      }
+      await operation?.check();
+      notifyVisualsReady(session.id, stored, send);
+    }
+    log.info('visuals', 'Capture complete; verdict deferred', {
+      sessionId: session.id, artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
+      durationMs: Date.now() - runStartedAt,
+    });
+    return { traceStatus, result: { state: 'pending', deferred: true } };
+  }
+
+  const checksResult = classifyTests(parseTests(stdout), testsCount, dispatched
+    ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
+    : { extraRows });
+
+  // Re-label a whole-origin outage as 'error' rather than 'failing'
+  // (#1381). Only rows the container actually produced count — the
+  // synthesized extraRows (over-ceiling guard, unit suite) never load a
+  // page and would otherwise veto the override for free.
+  if (checksResult.state === 'failing') {
+    const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
+    const detail = unreachableOriginDetail(containerRows, stagingOrigin);
+    if (detail) {
+      checksResult.state = 'error';
+      checksResult.errorDetail = detail;
+      log.warn('visuals', 'Checks unreachable origin — recorded as error, not failing', {
+        sessionId: session.id, origin: stagingOrigin, rows: containerRows.length,
+      });
+    }
+  }
+
+  // #1771: a run that did not pass asks whether the shared Postgres was
+  // starved while it ran. Twenty previews each holding six warm
+  // connections, on a server whose max_connections is the stock 100, is
+  // how a proposal's checks came back with 65 failures all citing one
+  // endpoint's 500s and nothing anywhere naming the cause.
+  //
+  // Sampled HERE rather than at the write: this is the moment the run
+  // finished, and storeChecks has a call-order contract two tests pin.
+  //
+  // The census is taken for ANY non-passing run, because the log line is
+  // worth having either way, but it only changes the VERDICT under
+  // connectionExhaustionDetail's every-row rule.
+  if (checksResult.state !== 'passing') {
+    const census = await connectionCensus(getPool(config));
+    if (census && census.saturated) {
+      log.warn('visuals', 'Checks ran while Postgres was near its connection limit', {
+        sessionId: session.id,
+        used: census.used,
+        max: census.max,
+        idle: census.idle,
+        top: census.topDatabases.slice(0, 3),
+      });
+    }
+    if (checksResult.state === 'failing') {
+      const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
+      const detail = connectionExhaustionDetail(containerRows, { origin: stagingOrigin, census });
+      if (detail) {
+        checksResult.state = 'error';
+        checksResult.errorDetail = detail;
+        log.warn('visuals', 'Checks starved of Postgres connections — recorded as error, not failing', {
+          sessionId: session.id,
+          rows: containerRows.length,
+          used: census ? census.used : null,
+          max: census ? census.max : null,
+        });
+      }
+    }
+  }
+
+  const blockingCount = Number.isInteger(checksResult.blockingCount)
+    ? checksResult.blockingCount
+    : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
+  const advisoryCount = Number.isInteger(checksResult.advisoryCount) ? checksResult.advisoryCount : 0;
+  const failingCount = blockingCount;
+  traceStatus = checksResult.state;
+  traceStep('tests', `Suite verdict: ${checksResult.state}`, {
+    state: checksResult.state,
+    tests: checksResult.results.length,
+    failing: failingCount,
+    advisory: advisoryCount || undefined,
+    // The suite runs inside the same container invocation as the shots, so
+    // this is the whole run's wall clock rather than a tests-only slice.
+    durationMs: Date.now() - runStartedAt,
+  });
+  try {
+    const stored = await storeChecks(
+      pool, session.id, commitHash, checksResult, checksResult.errorDetail || null
+    );
+    if (stored) {
+      await storeConsoleCheck(
+        pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
+      );
+      // History moves only when the snapshot actually landed: a run whose
+      // result was discarded as stale must not graduate anything either.
+      // Rows the container never produced are absent here, so a check that
+      // did not run neither graduates nor records a failure.
+      // An 'error' verdict is "we could not find out", not "this check
+      // failed". Recording it would stamp fail_count on checks that never
+      // executed — which is how seven of WorkQuest's rows reached
+      // pass_count 0 / fail_count 2 for a container that logged zero
+      // inbound requests — and, worse, could graduate nothing while
+      // permanently colouring the app's history with a platform outage.
+      if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
+        const historyRows = [];
+        if (dispatched) {
+          const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+          for (const r of checksResult.results) {
+            const d = byIndex.get(r.index);
+            if (!d) continue;
+            // Counts, because a check on its first appearance was observed
+            // NEW_CHECK_RUNS times and all of them are evidence. classify
+            // folded the repeats into this one row, so they arrive here as
+            // `passes` / `fails` rather than as separate rows — which also
+            // keeps one conflict target per check in the upsert.
+            historyRows.push({
+              checkKey: d.checkKey,
+              name: d.name,
+              path: d.path,
+              passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
+              fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
+            });
+          }
+        }
+        // The unit-suite row graduates through the same history: its
+        // first observed pass flips it from advisory to merge-blocking,
+        // and (recordRun's COALESCE) no later failure demotes it.
+        if (unitOutcome) historyRows.push(unitOutcome.history);
+        await checkHistory.recordRun(pool, app.id, historyRows);
+      }
+      log.info('visuals', 'Checks stored', {
+        sessionId: session.id, state: checksResult.state,
+        tests: checksResult.results.length,
+        failing: failingCount,
+        advisory: advisoryCount || undefined,
+        durationMs: Date.now() - runStartedAt,
+      });
+      notifyChecks(session.id, checksResult, commitHash, send);
+    } else {
+      log.info('visuals', 'Discarded stale checks result', {
+        sessionId: session.id, commitHash: commitHash || null,
+      });
+    }
+  } catch (err) {
+    log.warn('visuals', 'Checks store failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+
+  // Platform-variables check. Piggybacks on the same recompute trigger
+  // as the test suite so the Checks card fills in together, but it is
+  // computed from the branch's dapp.json diff, not from this run — a
+  // capture failure above leaves the test verdict 'error' while this
+  // one still resolves correctly. Display only: the merge gate in
+  // routes/votes.js re-evaluates live. Fire-and-forget.
+  try {
+    // eslint-disable-next-line global-require
+    const platformEnvCheck = require('./platform-env-check');
+    const { rows: appRows } = await pool.query(
+      'SELECT id, repo_url, self_hosted FROM apps WHERE id = $1',
+      [session.app_id]
+    );
+    if (appRows[0]?.self_hosted) {
+      const verdict = await platformEnvCheck.refreshPlatformEnvCheck({
+        pool,
+        app: appRows[0],
+        session: session.source === 'cli_handoff'
+          ? { ...session, checks_commit_sha: commitHash || null }
+          : session,
+      });
+      if (verdict) {
+        log.info('visuals', 'Platform-env check stored', {
+          sessionId: session.id, state: verdict.state,
+        });
+        // Reuse the existing checks_ready broadcast: every client that
+        // cares about the Checks card already listens for it and
+        // re-fetches the proposal, so a second event type would only
+        // add a code path with the same effect.
+        notifyChecks(session.id, checksResult, commitHash, null);
+      }
+    }
+  } catch (err) {
+    log.warn('visuals', 'Platform-env check failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+
+  // #451: a passing verdict is the *other* half of the merge gate (the
+  // first being a winning vote). The vote path already re-drives a merge
+  // when a vote lands, but nothing re-drove it when the checks were the
+  // last thing to turn green — so a PR that crossed the vote threshold
+  // before its checks finished sat in review forever. Re-drive the
+  // app-level merge drain so "checks finished after the votes were in"
+  // auto-merges just like "votes landed after checks were green".
+  // Fire-and-forget; never blocks or fails the capture pipeline.
+  if (!operation) maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+
+  const dropped = [];
+  const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
+
+  // Persist the capture outcome (state + why anything is missing) so a
+  // proposal with no / partial screenshots is attributable from the DB
+  // instead of from short-lived container logs. Best-effort.
+  const captureState = !media
+    ? 'console_only'
+    : (!stored
+      ? 'failed'
+      : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
+  const captureDetail = {
+    media,
+    pathDefaulted,
+    prodRunning,
+    paths: capturePaths,
+    failures: failures.slice(0, 20),
+    droppedOverCap: dropped.slice(0, 20),
+    beforeFellBack: Array.from(new Set(
+      shots.filter((s) => s.kind === 'before' && s.fellBack).map((s) => s.index)
+    )),
+    // A run killed at the timeout / buffer cap whose already-emitted
+    // frames were salvaged (improvement 5) — the stored set is real but
+    // knowingly incomplete.
+    runCutShort: runPartial ? (runPartialReason || true) : false,
+  };
+  if (!media) captureDetail.reason = 'No frontend files in commit range — console/tests-only run';
+  else if (!stored) captureDetail.reason = 'No usable "after" artifact was produced';
+  else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
+  await storeCaptureOutcome(pool, session.id, captureState, captureDetail).catch((err) => {
+    log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  });
+
+  if (!stored) {
+    if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
+    return { traceStatus, result: { state: checksResult.state } };
+  }
+
+  // Interactive ordering: a PR already exists, so patch its body now.
+  // (Headless → lazy-PR ordering is covered by applyPrMetadata's suffix
+  // assembly reading session_visuals at promote time.)
+  if (session.pr_number && repoOwner && repoName && github.isEnabled()) {
+    const block = prMetadata.buildVisualsBlock(stored, caddy.USERNODE_DOMAIN);
+    try {
+      await patchPrBody(pool, session, repoOwner, repoName, block);
+    } catch (err) {
+      log.warn('visuals', 'PR body visuals patch failed', {
+        sessionId: session.id, pr: session.pr_number, err: err.message,
+      });
+    }
+  }
+
+  await operation?.check();
+  notifyVisualsReady(session.id, stored, send);
+  log.info('visuals', 'Capture complete', {
+    sessionId: session.id,
+    artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
+    durationMs: Date.now() - runStartedAt,
+  });
+  return { traceStatus, result: { state: checksResult.state } };
 }
 
 // Improvement 5: drain a re-queued capture (a rebuild that arrived while this
@@ -2962,6 +3365,14 @@ function notifyChecks(sessionId, result, commitSha, send) {
 module.exports = {
   kubernetesCaptureOrigin,
   captureForSession,
+  // The settlement half of a run and the in-flight seat, for the harvester
+  // (services/check-harvest.js) settling a run whose launcher died.
+  settleCaptureRun,
+  holdCapture,
+  notifyChecks,
+  RUN_TIMEOUT_MS,
+  RUN_MAX_BUFFER,
+  storeChecksDeferred,
   // Exported for the regression test: the capture hostname is the only
   // consumer of these columns that needs a NAME rather than any handle
   // `docker` accepts, so the guard lives here and is asserted here.
@@ -2996,6 +3407,9 @@ module.exports = {
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,
+  // The phases a pending run can be in, exported so the connector's output
+  // schema can be held to the same vocabulary (tests/mcp-tools.test.js, #2137).
+  CHECK_PHASES,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,

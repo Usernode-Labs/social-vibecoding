@@ -76,7 +76,7 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
     URL, Headers, Response, Map, Set, Promise,
     caches: { open: async () => {
       cacheReads++;
-      return { match: async () => new Response('<h1>Cached Social Vibecoding</h1>') };
+      return { match: async () => new Response('<h1>Cached Homeroom</h1>') };
     } },
     // The server/provider may take indefinitely long. A hard bypass must
     // neither fetch on its behalf nor arm the shell fallback timer.
@@ -122,6 +122,23 @@ test('native notification invalidations bypass stale API-cache fallbacks', () =>
   assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
 });
 
+test('the key-filtered OpenRouter catalog always reaches the network', () => {
+  assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter'), 'bypass');
+  assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1'), 'bypass');
+});
+
+test('group-chat attachment files and previews never fall back to the SPA shell', () => {
+  const id = 'a'.repeat(32);
+  for (const path of [
+    `/api/apps/demo/chat-attachments/${id}`,
+    `/api/apps/demo/chat-attachments/${id}/view`,
+  ]) {
+    for (const mode of ['navigate', 'cors', 'no-cors']) {
+      assert.equal(classify('GET', path, 'text/html', mode), 'bypass', `${path} (${mode})`);
+    }
+  }
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
@@ -138,6 +155,21 @@ test('shell assets classify as shell', () => {
 test('content-addressed images are cache-first', () => {
   assert.equal(classify('GET', `/app-icons/${'a'.repeat(32)}`), 'immutable');
   assert.equal(classify('GET', `/visuals/${'b'.repeat(32)}`), 'immutable');
+});
+
+// Challenge artwork is deliberately left to the network. It is decoration: an
+// offline card whose picture fails to load draws its kind icon instead, so
+// caching nine SVGs would buy nothing a reader can tell apart. Pinned so a
+// later broadening of the `shell` rules does not start caching them silently.
+test('challenge illustrations bypass the worker, with no offline copy', () => {
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'bypass');
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg', 'image/svg+xml', 'no-cors'),
+    'bypass');
+  // Uploaded artwork too. Its id is immutable, which would suit cache-first, but
+  // it is the same decoration with the same fallback, so it stays on the
+  // network rather than joining the `immutable` app-icon rule.
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'bypass');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'bypass');
 });
 
 // ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into

@@ -375,11 +375,25 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
 const MERGED_TITLE = 'This change is merged and now live in the app.';
 const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
 
-function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): ReactNode {
-  const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
+function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
   return (
     <>
       <StatusLine r={r.status} />
+      <PrCard r={r} embedded={embedded} historical={historical} />
+    </>
+  );
+}
+
+/**
+ * The card under a `changes` row's status line, on its own. `ChangesCard`
+ * draws both; `DevChatTranscript` draws this after the LAST row once later
+ * iterations follow the change (#1889), with the status line left in the
+ * timeline where the change landed.
+ */
+function PrCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
+  const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
+  return (
+    <>
       {/* `revealPrCard` adds `dc-pr-card-highlight` to this node for 1.5s to
           flash it after the header's "PR #12" jump. That stays a classList
           mutation, and it survives every repaint because this `className` is
@@ -388,7 +402,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           the flash — the same rule the adopted dialog roots follow. */}
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
-          {r.prUrl
+          {r.prUrl && !embedded
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
@@ -399,7 +413,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           <div className="dc-pr-card-visuals" style={{ margin: '6px 0 2px' }}
             dangerouslySetInnerHTML={{ __html: r.visualsHtml }} />
         ) : null}
-        <div className="dc-pr-card-actions">
+        {!embedded && !historical ? <div className="dc-pr-card-actions">
           <button
             className="dc-pr-btn dc-pr-btn-preview"
             disabled={!r.preview.enabled}
@@ -434,7 +448,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
               {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
                 : r.propose.kind === 'completed' ? 'Already proposed'
-                  : r.propose.kind === 'blocked' ? r.propose.label : 'Propose to group'}
+                  : r.propose.kind === 'blocked' ? r.propose.label : 'Submit for review'}
             </button>
           ) : null}
           {r.status2.kind === 'merged'
@@ -443,7 +457,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           {r.status2.kind === 'badge'
             ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.status2.html }} />
             : null}
-        </div>
+        </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>
     </>
   );
@@ -612,7 +626,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   );
 }
 
-function Row({ r }: { r: TranscriptRow }): ReactNode {
+function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; embedded?: boolean; historical?: boolean }): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
     case 'failure': return <Failure r={r} />;
@@ -620,7 +634,7 @@ function Row({ r }: { r: TranscriptRow }): ReactNode {
     case 'issueDraft': return <IssueDraftCard r={r} />;
     case 'ccLog': return <CcLog r={r} />;
     case 'attached': return <Attached r={r} />;
-    case 'changes': return <ChangesCard r={r} />;
+    case 'changes': return <ChangesCard r={r} embedded={embedded} historical={historical} />;
     // `CreditOptions.cardHtml`'s markup, whole: two declared checks select
     // into it (`.dc-credits-card > .dc-credits-options`, and its
     // `details[data-credits-dev]`), and the banner and the Generate-proposal
@@ -650,12 +664,65 @@ function Row({ r }: { r: TranscriptRow }): ReactNode {
  * matters for `_bindDevFlowVisibility` in particular: in a hand-off venue the
  * walkthrough renders in the composer's place instead of here, and that path
  * wires the card but not the visibility re-check.
+ *
+ * ── Where the Changes card sits (#1889) ───────────────────────────────
+ *
+ * A `changes` row is persisted by the turn that landed the change, but the
+ * card's actions are the SESSION's: Preview, Test, View on GitHub and Submit
+ * for review all read session state, which is why only the latest card
+ * carries them and every earlier one is `historical`. Anchored to its turn,
+ * that card was left mid-transcript by every later iteration that ended
+ * without a new one — a question answered, a run stopped or failed, a turn
+ * with nothing to commit — and the bottom of the chat had no way to submit.
+ *
+ * So once a later USER turn follows the latest card, the card renders after
+ * the last row, and its status line stays in the timeline as the record of
+ * when the change landed. Three things bound that rule:
+ *
+ *   - A single iteration is unchanged. The wrap-up bubble under the card is
+ *     the same turn, not a new one, and the card stays above it.
+ *   - A turn in flight keeps the card in its slot: the tail then belongs to
+ *     the run (its progress, #990's dots), and the actions come back to the
+ *     bottom with the `renderMessages` that settles the turn — or a new card
+ *     lands, and it is the latest.
+ *   - The embedded workspace never moves it: its cards carry no actions
+ *     (the change card above does), so there is nothing to keep at hand.
+ *
+ * One card either way — `#dc-pr-card`, with the visuals and the actions —
+ * so `revealPrCard` and the declared checks under that id resolve wherever
+ * it sits.
  */
-export function DevChatTranscript(): ReactNode {
+export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(transcriptStore);
+  const latestAt = s.rows.findLastIndex((r) => r.t === 'changes');
+  const latest = latestAt >= 0 ? s.rows[latestAt] as Extract<TranscriptRow, { t: 'changes' }> : null;
+  // #1889: a later iteration — a user turn after the latest card — with the
+  // chat idle. See "Where the Changes card sits" in the header.
+  const trails = !!latest && !embedded && !s.busy
+    && s.rows.some((r, i) => i > latestAt && r.t === 'msg' && r.who === 'user');
   return (
     <>
-      {s.rows.map((r) => <Row key={r.key} r={r} />)}
+      {/* #1942: what a new session is for, where the conversation will be.
+          Centered in the pane, the way a new chat opens in Claude or
+          ChatGPT, and gone the moment the first message arrives. */}
+      {s.empty ? (
+        <div id="dc-empty-state" className="dc-empty-state">
+          <div className="dc-empty-title">What should this session change?</div>
+          <p className="dc-empty-text">
+            Describe it in the box below. The agent works it out with you, builds it, and
+            gives you a preview to try before anything goes to a vote.
+          </p>
+        </div>
+      ) : null}
+      {s.rows.map((r, i) => {
+        if (r.t !== 'changes') return <Row key={r.key} r={r} embedded={embedded} />;
+        if (i !== latestAt) return <Row key={r.key} r={r} embedded={embedded} historical />;
+        // The status line keeps the change's place in the timeline; the
+        // card is drawn after the last row instead.
+        if (trails) return <Row key={r.key} r={r.status} embedded={embedded} />;
+        return <Row key={r.key} r={r} embedded={embedded} />;
+      })}
+      {trails && latest ? <PrCard r={latest} embedded={embedded} /> : null}
       {/* #1049: the walkthrough sits at the END of the transcript, so on an
           empty session it is the only thing in the pane and on a resumed one
           it stays next to the composer the brief is typed into. Another

@@ -12,8 +12,9 @@
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
-// you; `detail` carries the version number as a string). Managed OpenRouter
-// ownership/review events use openrouter_key_created/openrouter_key_review.
+// you; `detail` carries the version number as a string). Actionable managed
+// OpenRouter failures use openrouter_key_review; openrouter_key_created is a
+// historical render-only kind now that successful issuance is routine.
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -350,41 +351,39 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
   return rows;
 }
 
-// Company-funded OpenRouter keys are security/billing objects, so every
-// platform admin receives an ownership record when one is created and a
-// review nudge when the optional verification policy is enabled and its user
-// loses their last verified identity. `detail`
-// carries only the local managed-key id; the raw child key never enters the
-// notification table, logs, WebSocket payload, or admin UI.
-async function createManagedOpenRouterAdminNotifications(pool, {
-  sourceUserId, managedKeyId, kind = 'openrouter_key_created',
+// Successful company-funded OpenRouter issuance is recorded on the managed
+// key itself and visible in Admin > Users; it is not an actionable inbox
+// event. Only a key that needs review creates a notification, and only full
+// admins receive it because read-only admins cannot block, enable, delete, or
+// reconcile the key. `detail` carries only the local managed-key id; the raw
+// child key never enters the notification table, logs, WebSocket payload, or
+// admin UI.
+async function createManagedOpenRouterReviewNotifications(pool, {
+  sourceUserId, managedKeyId,
 }) {
-  if (!sourceUserId || !managedKeyId
-      || !['openrouter_key_created', 'openrouter_key_review'].includes(kind)) return [];
+  if (!sourceUserId || !managedKeyId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, source_user_id, kind, detail)
-     SELECT admin.id, $1, $2::varchar(32), $3::varchar(32)
+     SELECT admin.id, $1, 'openrouter_key_review', $2::varchar(32)
        FROM users admin
       WHERE admin.is_admin = TRUE
-        AND (
-          $2::varchar(32) <> 'openrouter_key_review'
-          OR NOT EXISTS (
-            SELECT 1 FROM notifications existing
-             WHERE existing.user_id = admin.id
-               AND existing.source_user_id = $1
-               AND existing.kind = $2::varchar(32)
-               AND existing.detail = $3::varchar(32)
-               AND existing.read_at IS NULL
-          )
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.source_user_id = $1
+             AND existing.kind = 'openrouter_key_review'
+             AND existing.detail = $2::varchar(32)
+             AND existing.read_at IS NULL
         )
      RETURNING id, user_id, source_user_id, kind, detail, created_at`,
-    [sourceUserId, kind, String(managedKeyId).slice(0, 32)],
+    [sourceUserId, String(managedKeyId).slice(0, 32)],
   );
   return rows;
 }
 
-async function notifyManagedOpenRouterAdmins(pool, args) {
-  const rows = await createManagedOpenRouterAdminNotifications(pool, args);
+async function notifyManagedOpenRouterReviewAdmins(pool, args) {
+  const rows = await createManagedOpenRouterReviewNotifications(pool, args);
   await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
   return rows;
 }
@@ -507,6 +506,51 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 // drawer's pinned Invites section (driven by listPendingInvites below,
 // the authoritative "still actionable" source) — this row is the badge
 // bump + the history entry that remains after the invite resolves.
+// #2161: someone with the standing to delete a shared app tried to, and the
+// route refused the plain delete (the creator of a shared app, or a full
+// admin who has not yet acknowledged the other contributors). The other
+// contributors are told so the intent is not a surprise later. Unread-dedup
+// per (recipient, app): a retried click while the first row is unread does
+// not add a second one. `source_user_id` is the person who tried.
+async function createAppDeleteAttemptNotifications(pool, { appId, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!appId || !ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     SELECT r.user_id, $1, $2, 'app_delete_attempted'
+       FROM unnest($3::int[]) AS r(user_id)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = r.user_id AND n.app_id = $1
+           AND n.kind = 'app_delete_attempted' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, created_at`,
+    [appId, actorId ?? null, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
+// #2161: a full admin deleted a shared app over the other contributors'
+// heads. By the time this runs the app row is gone, and notifications.app_id
+// cascades with it, so the row carries NO app reference: the name rides in
+// `detail` (widened to 255 for this, schema.sql) and the slug is only logged.
+// `source_user_id` is the admin who deleted it.
+async function createAppDeletedNotifications(pool, { appName, appSlug, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!ids.length) return [];
+  const name = String(appName || appSlug || 'an app').slice(0, 255);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT r.user_id, NULL, $1, 'app_deleted', $2
+       FROM unnest($3::int[]) AS r(user_id)
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [actorId ?? null, name, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
 async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
   if (!recipientId || !appId) return [];
   const { rows } = await pool.query(
@@ -977,10 +1021,12 @@ module.exports = {
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
   createSpecSharedNotification,
-  createManagedOpenRouterAdminNotifications,
-  notifyManagedOpenRouterAdmins,
+  createManagedOpenRouterReviewNotifications,
+  notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
   createPrProposedNotifications,
+  createAppDeleteAttemptNotifications,
+  createAppDeletedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
   createApproverInviteNotification,

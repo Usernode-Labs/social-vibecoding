@@ -85,7 +85,7 @@ const RETIRED_IDS = {
   // rendering of it stopped. See frontend/src/features/improve/view-tabs.tsx.
   'switcher-views': 'The chip menu\'s copy of the three-view strip. The menu answers WHICH APP; a control about the app you are already in sat between you and the list you opened the menu for. The Improve panel keeps the strip, and the header\'s back arrow is the way OUT of a Board now.',
   'switcher-view-app': 'Its App segment. `#app-context-row-app` in the Improve panel is the surviving one.',
-  'switcher-view-board': 'Its Board segment; `#app-context-row-board` survives.',
+  'switcher-view-board': 'Its Board segment; `#app-context-row-board` survived it, and then retired in turn — the Workshop and the kanban are one screen in two layouts, so the strip stopped offering the layout as a destination. `#app/<slug>/board` and `?view=kanban` still resolve onto the kanban board.',
   'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survived it, and then retired in turn (below).',
   // ── The Workshop replaced the Activity feed ─────────────────────
   // The strip's middle segment names the lander now: the same cards as the
@@ -274,6 +274,18 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1823: Challenges in the app menu ────────────────────────────
+  'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
+  'app-settings-modal': '#2158: dedicated app settings and danger zone.',
+  'app-delete-name': '#2158: named confirmation before app deletion.',
+  'dev-ws-rail-host': 'Empty anchor outside the frosted .dc-lift-strip wrapper, so the Workshop\'s phone tab bar can be `position: fixed` to the real viewport. That wrapper\'s backdrop-filter establishes a containing block for fixed descendants — walking the rail\'s real ancestor chain it is the only one — and it is shared with the chat/topic frames and three panels, so the bar moves out rather than the blur coming off.',
+  'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
+  // ── OpenRouter catalog controls ──────────────────────────────────
+  'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
+  'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
+  'settings-openrouter-refresh-models': 'Forces a fresh key-visible catalog from OpenRouter and reports when it was refreshed.',
+  'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
+  'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
   // ── #1538: check my status ────────────────────────────────────────
   // The waitlist confirm step doubles as "read where I stand", so the panel
   // that used to print one fixed sentence now prints what the row actually
@@ -304,7 +316,7 @@ const ADDED_IDS = {
   'feedback-first-board': 'Opens the board of the app that received the feedback (#1583).',
   'feedback-first-done': 'Dismisses the first-feedback confirmation without starting work (#1583).',
   'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
-  'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Usernode app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
+  'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
   'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
@@ -321,13 +333,18 @@ const ADDED_IDS = {
   'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
   // ── #1443: the app's own views stayed in the Improve panel ──────
   // They spent one round of #1443 as menu rows, on the argument that they are
-  // destinations. They came back: the menu answers WHICH APP, and these three
-  // answer WHICH PART OF IT, which is the question the panel you open from
-  // inside an app is already about.
-  'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
+  // destinations. They came back: the menu answers WHICH APP, and these answer
+  // WHICH PART OF IT, which is the question the panel you open from inside an
+  // app is already about.
+  //
+  // There were three. `#app-context-row-board` went the way of the Activity
+  // segment before it: the Workshop and the kanban are ONE screen in two
+  // layouts, so the strip was offering a layout where its other segments offer
+  // destinations. Like other post-baseline ids it simply leaves this map
+  // rather than entering RETIRED_IDS. The board route is untouched.
+  'improve-views': 'The block holding them. #1431 built it; #1443 kept it.',
   'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
-  'app-context-row-workshop': 'The app\'s Workshop — the lander: the same cards as the Board, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment.',
-  'app-context-row-board': 'The app\'s Board.',
+  'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
   'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
@@ -553,20 +570,30 @@ const ADDED_IDS = {
   // BOTH blocks above in place, so the copy buttons already there pick up the
   // corrected rules — hence a field and no button of its own.
   'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
+  // #1892: only Claude and ChatGPT had a walkthrough. The Codex CLI gets one
+  // with the two copyable forms its setup takes (the `codex mcp add` command
+  // and the ~/.codex/config.toml entry), and any other MCP client gets the
+  // transport, auth-discovery, callback and tool-name facts the product
+  // walkthroughs leave implicit. The pre blocks ship with a URL placeholder
+  // that Settings._renderConnectors() swaps for the live connector URL.
+  'connector-setup-codex': 'Settings → Connectors walkthrough for the Codex CLI (#1892).',
+  'connector-codex-add': 'The `codex mcp add homeroom --url …` command, URL filled in at render time.',
+  'connector-codex-add-copy': 'Copy button for the Codex command.',
+  'connector-codex-config': 'The `[mcp_servers.homeroom]` entry for ~/.codex/config.toml, URL filled in at render time.',
+  'connector-codex-config-copy': 'Copy button for the config.toml entry.',
+  'connector-setup-generic': 'Settings → Connectors walkthrough for any other MCP client or agent (#1892).',
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
-  'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
+  'messages-share-dialog': 'React-owned typed Homeroom item chooser for Messages (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — eligible users may claim one company-funded OpenRouter key.
-  // These are static settings controls; settings.js owns their state and the
-  // one-time plaintext reveal lifecycle.
+  // These are static settings controls; settings.js owns their state. The
+  // four plaintext reveal controls originally added here were removed when
+  // company-funded credentials became internal-only; like other post-baseline
+  // ids, they leave this map rather than entering RETIRED_IDS.
   'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
   'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
   'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
-  'settings-openrouter-reveal': 'One-time plaintext child-key reveal container (#1344).',
-  'settings-openrouter-revealed-key': 'Read-only one-time child-key value shown only after creation (#1344).',
-  'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
-  'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
   // #1383 — the #apps directory's Sort control. It rides INSIDE
   // #browse-search-bar rather than in a strip of its own: both narrow the

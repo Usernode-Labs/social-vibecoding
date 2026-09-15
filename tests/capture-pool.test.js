@@ -886,9 +886,12 @@ test('a check still waiting on the wire gets another window, floored and capped'
   const page = makeEventPage();
   page.$ = async () => (ready ? {} : null);
   // Requests keep arriving past the fixed window; the element lands well
-  // after it, and only the ROLLING window can still see it.
-  for (const at of [100, 250, 400, 550]) timers.push(setTimeout(() => page.emitRequest(), at));
-  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 620));
+  // after it, and only the ROLLING window can still see it. It lands inside
+  // the roll's own cap (three fixed windows, see ASSERT_ROLL_MAX_FACTOR),
+  // which is the promise: data that is on the wire is caught, a poller that
+  // never stops is not waited for.
+  for (const at of [100, 220, 340, 460]) timers.push(setTimeout(() => page.emitRequest(), at));
+  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 500));
   const started = Date.now();
   try {
     await runTestGroup({ newPage: async () => page },
@@ -943,7 +946,10 @@ test('the rolling window never outlives the group budget, and never undercuts th
     await runTestGroup({ newPage: async () => page },
       [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
       { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20,
-        // 2400ms budget minus the 2000ms reserve → a ~400ms ceiling.
+        // 2400ms budget minus the 2000ms reserve → a ~400ms ceiling. The
+        // roll cap is pushed out of the way so the GROUP ceiling is what
+        // this half exercises; the cap has its own case below.
+        assertRollMaxFactor: 100,
         groupDeadlineAt: Date.now() + 2400 });
   } finally {
     clearInterval(spam);
@@ -972,6 +978,35 @@ test('the rolling window never outlives the group budget, and never undercuts th
   assert.ok(floored < 1500, `and did not roll past it, took ${floored}ms`);
 });
 
+test('a page that never stops fetching is cut off at a few fixed windows, not at the group ceiling', async () => {
+  // A screen that polls — a live feed, a status ticker — makes a request
+  // inside every window, so an element that had not rendered on it used to
+  // roll all the way to the group ceiling: 111s of one lane in a logged run,
+  // ending in "did not finish" because the roll ate the budget the cold-load
+  // fallback needed. The roll is now capped at ASSERT_ROLL_MAX_FACTOR fixed
+  // windows; with a 100ms window and a 20s group budget that is ~300ms
+  // here, not ~18s.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const spam = setInterval(() => page.emitRequest(), 20);
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'ticker', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20,
+        groupDeadlineAt: Date.now() + 20000 });
+  } finally {
+    clearInterval(spam);
+  }
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'fail');
+  assert.match(frames[0].failureReason, /Expected element "#never" was not found/);
+  assert.ok(elapsed >= 290, `it still rolled past the fixed window (${elapsed}ms)`);
+  assert.ok(elapsed < 1500, `but was cut off at the roll cap, not the 18s ceiling (${elapsed}ms)`);
+});
+
 test('runTests hands each group its own ceiling', () => {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -981,6 +1016,33 @@ test('runTests hands each group its own ceiling', () => {
   assert.match(src, /const ASSERT_REPORT_RESERVE_MS = 2000;/);
   // Only request traffic rolls it.
   assert.match(src, /on\(ev, \(\) => \{ activity\.bump\(\); netActivity\.bump\(\); \}\);/);
+  // And it rolls into at most three fixed windows, whatever the group's own
+  // ceiling allows — the floor stays outermost.
+  assert.match(src, /const ASSERT_ROLL_MAX_FACTOR = 3;/);
+  assert.match(src, /Math\.min\(Date\.now\(\) \+ assertMax, groupCeilingAt, rollCeilingAt\)/);
+});
+
+test('the media pass and the suite share the browser side by side', () => {
+  // main() is Chromium-bound, so its shape is pinned at the source: the
+  // screenshot loop is started, NOT awaited, before the suite is dispatched,
+  // and both are settled before the browser closes. Awaiting the loop first
+  // would put the media pass's 6-14s back in front of every check; closing
+  // on the first rejection would tear the suite down mid-flight and read
+  // as a crashed container.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'capture/capture.js'), 'utf8');
+  const main = src.slice(src.indexOf('async function main()'));
+  const shotsAt = main.indexOf('const shots = (async () => {');
+  const suiteAt = main.indexOf('const suite = tests.length');
+  const settleAt = main.indexOf('await Promise.allSettled([shots, suite])');
+  const closeAt = main.indexOf('await browser.close()');
+  assert.ok(shotsAt > 0 && suiteAt > shotsAt && settleAt > suiteAt && closeAt > settleAt,
+    'shots started, suite started, both settled, then the browser closes');
+  assert.ok(!/await shots\b/.test(main.slice(shotsAt, suiteAt)),
+    'the shots are not awaited before the suite starts');
+  assert.match(main, /if \(failed\) throw failed\.reason;/,
+    'a media-pass failure is still surfaced, after both have settled');
 });
 
 test('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
@@ -1031,24 +1093,28 @@ test('the assertion ceiling comes from env with a sane default', () => {
 });
 
 test('pool bounds come from env with sane defaults and a hard ceiling', () => {
-  assert.equal(poolSize({}), 8, 'the default pool');
+  // 8 → 16 when compositing moved off the SwiftShader GPU process and the
+  // pool stopped being bound by its own container's CPU (see poolSize).
+  assert.equal(poolSize({}), 16, 'the default pool');
   assert.equal(poolSize({ TEST_CONCURRENCY: '3' }), 3);
-  assert.equal(poolSize({ TEST_CONCURRENCY: '0' }), 8, 'zero is not a pool');
-  assert.equal(poolSize({ TEST_CONCURRENCY: 'lots' }), 8, 'garbage falls back');
-  assert.equal(poolSize({ TEST_CONCURRENCY: '500' }), 16,
-    'a ceiling, because each page is ~50-80 MiB of renderer and an OOM-kill '
-    + 'loses the whole run rather than one check');
+  assert.equal(poolSize({ TEST_CONCURRENCY: '0' }), 16, 'zero is not a pool');
+  assert.equal(poolSize({ TEST_CONCURRENCY: 'lots' }), 16, 'garbage falls back');
+  assert.equal(poolSize({ TEST_CONCURRENCY: '500' }), 24,
+    'a ceiling, because each page is ~80-150 MiB of renderer and an OOM-kill '
+    + 'loses the whole run rather than one check — tests/checks-budget.test.js '
+    + 'pins that the container is sized for it');
   assert.equal(testTimeoutMs({}), 25000);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '900' }), 900);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 25000);
   // 470000 since #1417, moved with MAX_DECLARED_TESTS 430 → 480 and the
   // platform-side default in services/visuals.js; 520000 with 480 → 530;
   // 560000 with 530 → 560; 570000 with 560 → 580; 590000 with 580 → 600
-  // (#1824); 620000 with 600 → 630 (#1876). The three are asserted
+  // (#1824); 620000 with 600 → 630 (#1876); 650000 with 630 → 660
+  // (#1960). The three are asserted
   // equal to each other elsewhere (tests/checks-budget.test.js); this one
   // pins that the container's own fallback is the raised value, so a run
   // without the env var does not quietly apply the old shorter budget.
-  assert.equal(testsDeadlineMs({}), 620000);
+  assert.equal(testsDeadlineMs({}), 650000);
   assert.equal(testsDeadlineMs({ TESTS_DEADLINE_MS: '1000' }), 1000);
 });
 

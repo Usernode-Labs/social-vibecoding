@@ -246,7 +246,8 @@ test('a shot surface is held up for a bounded window, not opened once', () => {
 test('the dev board card-menu shot is re-asserted, not stopped at the first open', () => {
   const from = appView.indexOf("      if (shot === 'card-menu') {");
   assert.ok(from > -1, "the card-menu shot exists");
-  const fn = appView.slice(from, from + 2600);
+  const fn = appView.slice(from, appView.indexOf('}, 300);', from));
+  assert.ok(fn.includes('data-card-menu="detail:${asked[0]}"'), 'direct links also find full-card menus');
   assert.match(fn, /if \(arrived\) return;/,
     'an open menu is left alone for this tick rather than ending the window');
   assert.match(fn, /if \(App\.currentApp !== slug \|\| \(tries \+= 1\) > \d+\) \{\s*done\(\);/,

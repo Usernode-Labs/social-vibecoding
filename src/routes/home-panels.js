@@ -135,8 +135,20 @@ function buildChallengeRow(r) {
   const ctaLink = eff('cta_link');
   return {
     id: Number(r.id),
+    // The event the challenge belongs to. With `id` it is the Challenges tab's
+    // deep link (#leaderboard/challenges/<event>/<challenge>) a Home card opens.
+    season_event_id: r.season_event_id == null ? null : Number(r.season_event_id),
     label: String(r.t_category || 'OTHER').toUpperCase(),
     icon: r.kind_icon || null,
+    // The template's artwork slug (t_illustration), passed through as stored.
+    // Not part of the `eff` merge: a challenge row has no illustration of its
+    // own. Whether the slug actually draws is the client registry's call; the
+    // card falls back to `icon` when it does not.
+    illustration: r.t_illustration || null,
+    // The tone of an UPLOADED illustration (TEMPLATE_JOIN_COLUMNS_SQL's
+    // t_illustration_tone), null otherwise. The client only honours it for an
+    // uploaded slug and only when it is one of its twelve tones.
+    illustration_tone: r.t_illustration_tone || null,
     goal: eff('goal'),
     task: eff('task'),
     reward: eff('reward'),
@@ -148,6 +160,16 @@ function buildChallengeRow(r) {
     },
     progress,
     earned_points: Number(r.my_points) || 0,
+    // When this challenge closes, for the card's "3d left": its own
+    // schedule_end (override over template, the same COALESCE the open-row
+    // filter uses), else the end of the event it belongs to — the date the
+    // Challenges tab falls back to for that event. Null only when neither is
+    // set; the client then uses `season.ends_at`.
+    ends_at: eff('schedule_end') || r.event_ends_at || null,
+    // Whether it is open now (OPEN_ONLY_WHERE, selected as `is_open`). The
+    // collapsed panel holds only open rows; the expanded list also carries
+    // organiser-closed and out-of-window ones, which show no countdown.
+    open: r.is_open !== false,
   };
 }
 
@@ -224,7 +246,7 @@ async function fetchCurrentSeason(pool) {
 }
 
 // The staging demo season always ends SEVEN DAYS from now, so the card's
-// "7 days left" is the same string on every capture rather than counting
+// "7d left" is the same string on every capture rather than counting
 // down towards a fixed date and eventually reading "ended".
 function demoSeasonEndsAt() {
   return new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
@@ -284,6 +306,8 @@ async function buildChallengesPanel(pool, user, opts) {
               WHERE ua.user_id = $1 AND ua.challenge_id = c.id) AS my_points,
             ${MY_BLOCKS_SQL} AS my_blocks,
             ${doneExpr} AS my_done,
+            se.ends_at AS event_ends_at,
+            (${OPEN_ONLY_WHERE}) AS is_open,
             ck.icon AS kind_icon
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
@@ -358,10 +382,9 @@ async function buildChallengesPanel(pool, user, opts) {
   }
 
   return {
-    // `ends_at` rides along so the client can say how long is left. It is
-    // the SEASON's deadline, not a per-challenge one — every open challenge
-    // in a season ends with it — so it is stated once on the block rather
-    // than repeated on each row.
+    // `ends_at` is the season's end: the deadline a card shows when its
+    // challenge carries no `ends_at` of its own (no schedule_end and no event
+    // end), and what the ring says when no card on screen shows a deadline.
     season: { id: Number(season.id), name: season.name, ends_at: season.ends_at },
     total: totalRows[0]?.total ?? challenges.length,
     // How many rows an expansion would show. `total` is the OPEN count, so
@@ -407,6 +430,7 @@ function demoChallengesPanel(opts) {
       label: 'ONCHAIN',
       goal: 'Staging demo challenge — test the demo dApps',
       icon: '🧪',
+      illustration: 'try-three-apps',
       task: 'Open eight of the demo dApps and leave a note on each.',
       reward: 'Up to 2,100 pts',
       cta: { label: 'Get Started', link: 'https://example.invalid/staging-demo' },
@@ -420,6 +444,7 @@ function demoChallengesPanel(opts) {
       label: 'BUG',
       goal: 'Staging demo challenge — report a reproducible bug',
       icon: '🐞',
+      illustration: 'useful-feedback',
       task: 'Find and file a reproducible bug report against the testnet client.',
       reward: '250 points',
       cta: null,
@@ -438,6 +463,9 @@ function demoChallengesPanel(opts) {
       label: 'SOCIAL',
       goal: 'Staging demo challenge — share the season announcement',
       icon: '📣',
+      // No artwork on purpose: one of the four collapsed rows keeps the
+      // kind emoji, so the fallback is on screen beside the pictures.
+      illustration: null,
       task: 'Share the season announcement post on social media.',
       reward: '50 points',
       cta: null,
@@ -450,6 +478,7 @@ function demoChallengesPanel(opts) {
       label: 'COMMUNITY',
       goal: 'Staging demo challenge — vote on five proposals',
       icon: '🗳️',
+      illustration: 'make-a-proposal',
       task: 'Cast a vote on five open proposals from other builders.',
       reward: '900 pts',
       cta: null,
@@ -467,6 +496,7 @@ function demoChallengesPanel(opts) {
       label: 'COMMUNITY',
       goal: 'Staging demo challenge — give kudos to five builders',
       icon: '👏',
+      illustration: 'proposal-accepted',
       task: 'Send kudos on five merged proposals from other builders.',
       reward: '1500',
       cta: null,
@@ -485,24 +515,30 @@ function demoChallengesPanel(opts) {
       label: 'FLASH',
       goal: 'Staging demo challenge — closed: live feedback session',
       icon: '🎧',
+      illustration: 'useful-feedback',
       task: 'Joined the live feedback call and left notes.',
       reward: '500 points',
       cta: null,
       metric: null,
       progress: { done: true, current: null, target: null },
       earned_points: 500,
+      open: false,
     },
     {
       id: 900515,
       label: 'TECHNICAL',
       goal: 'Staging demo challenge — closed: stress load round',
       icon: '🏋️',
+      illustration: 'network-participation',
       task: 'The stress-load round has finished.',
       reward: 'Up to 500 pts',
       cta: null,
       metric: null,
       progress: { done: false, current: null, target: null },
       earned_points: 0,
+      // Organiser-closed, as the real builder's `is_open` would say: the card
+      // shows no countdown for it.
+      open: false,
     },
   ];
 

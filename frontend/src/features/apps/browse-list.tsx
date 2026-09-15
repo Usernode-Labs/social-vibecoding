@@ -162,24 +162,35 @@ function Row({ view }: { view: RowView }): ReactNode {
   );
 }
 
-export function BrowseRows({ rows, curated = false, moreExpanded = false }: {
+export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded = false }: {
   rows: RowView[] | null;
+  /** Tuck the `more` tier (demos, apps needing fixes) behind Show more. */
   curated?: boolean;
+  /**
+   * Also split the rest under tier headings. Recommended only (#1912): a
+   * metric sort keeps one list in its own order, and still gets Show more.
+   */
+  grouped?: boolean;
   moreExpanded?: boolean;
 }): ReactNode {
   if (!rows) return null;
   const renderRows = (items: RowView[]) => items.map((view) => <Row key={view.slug} view={view} />);
   if (!curated) return <>{renderRows(rows)}</>;
+  const shown = rows.filter((view) => view.directoryTier !== 'more');
   const ready = rows.filter((view) => view.directoryTier === 'ready');
   const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
   const more = rows.filter((view) => view.directoryTier === 'more');
   const heading = 'md:col-span-full px-3 pt-3 pb-1 text-sm font-semibold text-zinc-700 dark:text-zinc-300';
   return (
     <>
-      {ready.length ? <h2 className={heading}>Reviewed working apps</h2> : null}
-      {renderRows(ready)}
-      {unreviewed.length ? <h2 className={heading}>Not yet reviewed</h2> : null}
-      {renderRows(unreviewed)}
+      {grouped ? (
+        <>
+          {ready.length ? <h2 className={heading}>Reviewed working apps</h2> : null}
+          {renderRows(ready)}
+          {unreviewed.length ? <h2 className={heading}>Not yet reviewed</h2> : null}
+          {renderRows(unreviewed)}
+        </>
+      ) : renderRows(shown)}
       {more.length ? (
         <>
           <div className="md:col-span-full p-3">

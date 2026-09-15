@@ -159,7 +159,7 @@ export function WaitingScreen() {
             You're in the queue
           </h1>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic">
-            Usernode Social Vibecoding
+            Homeroom
           </p>
           <div className="rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left space-y-3">
             <p className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
@@ -181,7 +181,7 @@ export function WaitingScreen() {
               href="#landing"
               className="flex h-12 w-full items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 px-5 text-[17px] font-semibold transition-colors text-white"
             >
-              Browse public apps while you wait
+              Use apps while you wait
             </a>
             <button
               id="waiting-logout"

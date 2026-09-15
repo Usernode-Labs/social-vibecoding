@@ -54,12 +54,25 @@ test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => 
   assert.match(direct, /openRouterDirect: true/);
   assert.doesNotMatch(direct, /llm\./);
   assert.doesNotMatch(direct, /resolveBillingPath/);
-  assert.doesNotMatch(direct, /sessionTitles\./);
+  // #1949: the session IS named here, but only by the deterministic,
+  // payer-free trim — never by the Haiku titler the Claude path uses.
+  assert.match(direct, /sessionTitles\.titleFromFirstMessage\(/);
+  assert.doesNotMatch(direct, /sessionTitles\.(?:maybeTitleFirstMessage|refreshFromHistory|generateAndApply)/);
   assert.ok(
     route.indexOf('// OpenRouter is a complete, single-provider session path.')
       < route.indexOf('if (!llm.isEnabled())'),
     'OpenRouter branches before the Anthropic availability gate',
   );
+
+  // #2118: the direct reply carries the ledger's estimate of what the turn
+  // cost, flagged as one, and its usage receipt follows the reply it belongs
+  // to — sent earlier it lands on a bubble the next status line discards.
+  assert.match(direct, /INSERT INTO chat_session_messages \(session_id, role, content, model, cost_cents, metadata\)/);
+  assert.match(direct, /costEstimated: true/);
+  const reply = direct.indexOf("send('mayor_reasoning', { text: directText })");
+  const receipt = direct.indexOf("send('usage', { costCents: directCostCents");
+  assert.ok(reply !== -1 && receipt > reply, 'the usage receipt follows the reply');
+  assert.match(direct, /estimated: true/);
 });
 
 test('direct OpenRouter prompt supports chat replies as well as repository changes', () => {
@@ -72,6 +85,11 @@ test('direct OpenRouter prompt supports chat replies as well as repository chang
   assert.match(tool, /asks for information, analysis, status, or an explanation/);
   assert.match(tool, /directSessionTurn && result\.exitCode === 0/);
   assert.match(tool, /directChatReply \? ccText/);
+  // #2118: the tool hands a direct turn's ledger estimate back to its caller
+  // instead of sending the receipt itself, and never bills it to Claude.
+  assert.match(tool, /codexEstimatedCostUsd = routed\.estimatedCostUsd/);
+  assert.match(tool, /!directSessionTurn && codexEstimatedCostUsd/);
+  assert.match(tool, /estimatedCostCents: codexEstimatedCostUsd/);
 });
 
 test('Generate proposal follows the saved OpenRouter provider without Claude credits', () => {
@@ -80,6 +98,7 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     'async confirmAutoSession(issueNumber)',
     '// Singleton confirm popup for Generate proposal',
   );
+  assert.match(flow, /_prepareDefaultCodingAgentForBuild/);
   assert.match(flow, /defaultBackend === 'codex_openrouter'/);
   assert.match(flow, /coding-agent\/models\?backend=codex_openrouter/);
   assert.match(flow, /backend: 'codex_openrouter'/);
@@ -90,8 +109,10 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '_showAutoSessionModal(issueNumber, models, preselect, modalOptions = {})',
     '// "Start session from proposal"',
   );
-  assert.match(modal, /OpenRouter model/);
-  assert.match(modal, /does not use platform Claude credits/);
+  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
+  assert.match(modal, /Uses your included OpenRouter credits/);
+  assert.match(modal, /Uses your OpenRouter account/);
+  assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });
 
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {

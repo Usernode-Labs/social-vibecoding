@@ -201,9 +201,10 @@ export interface LedgerRow {
   stepDone?: boolean;
   label: string;
   /**
-   * The small line under the label. Two jobs: a count ("1 of 463 failing"),
-   * or, on a numbered step, who acts and when — "snait, now",
-   * "automatic, after 1".
+   * The small line under the label. Two jobs: a count ("1 of 463 failing" —
+   * followed, while the row still carries what the run cost, by "built in
+   * 20s · checked in 9m 40s", #2170), or, on a numbered step, who acts and
+   * when — "snait, now", "automatic, after 1".
    */
   sub?: string | null;
   /** The sentence, in the primary ink. */
@@ -278,8 +279,25 @@ export interface TranscriptSection {
   expanded: boolean;
 }
 
+/** A compact issue reference used by the change detail and its issue picker. */
+export interface IssueLink {
+  n: number;
+  title: string;
+  href: string;
+}
+
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
+  changeId?: number;
+  issues?: IssueLink[];
+  /** Open issues already loaded for this app; the picker filters them locally. */
+  issueOptions?: IssueLink[];
+  /** The proposal owner/full platform admin may change issue associations. */
+  canEditIssues?: boolean;
+  testing?: { html: string | null; path: string | null };
+  activity?: { label: string; at: string }[];
+  workspace?: number | null;
+  discussion?: string | null;
   /**
    * The detail actions. The PILLS are merged onto the card's own action band
    * by `_renderTopicHead` (one action line, as on the board); the head draws

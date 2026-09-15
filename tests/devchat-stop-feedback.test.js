@@ -682,7 +682,7 @@ test('a later server timestamp re-arms the ladder on the already-showing row', (
 // takes the button rather than sitting beside it as a separate icon.
 test('each send state renders the class, the label and the glyph it should', () => {
   const base = {
-    venueNoteHtml: '', hidden: false, models: null, openRouter: null,
+    venueNoteHtml: '', hidden: false, models: null,
     drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
   };
   // The button now sits inside the card's control row, so the slice ends at

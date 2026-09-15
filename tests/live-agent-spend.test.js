@@ -90,13 +90,14 @@ test('missing, synthetic and invalid usage do not produce a bogus amount', () =>
   assert.equal(live.snapshot(tracker), null);
 });
 
-function clientHarness() {
+function clientHarness({ search = '' } = {}) {
   let tick;
   let respond;
   let requests = 0;
   let published;
   const sandbox = {
     console, URLSearchParams,
+    location: { search },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval: () => { tick = null; },
     setTimeout, clearTimeout,
     document: { addEventListener() {}, getElementById: () => null, querySelector: () => null },
@@ -113,10 +114,12 @@ function clientHarness() {
   const chat = sandbox.chat;
   chat.currentSession = { id: 42 };
   chat._isOpenRouterSession = () => false;
+  const realMeter = chat._settledBudgetPillView;
   chat._settledBudgetPillView = () => ({ title: 'Today', parts: [{ text: '$1.00/$25.00' }] });
   chat.renderBudget = () => { published = chat._budgetPillView(); };
   return { chat, tick: () => tick?.(), requests: () => requests,
     respond: (body) => respond({ ok: true, json: async () => body }),
+    useRealMeter: () => { chat._settledBudgetPillView = realMeter; },
     html: () => renderComponent('frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
       JSON.parse(JSON.stringify(published))),
   };
@@ -151,17 +154,124 @@ test('late responses after stop or navigation cannot restore stale spend', async
   assert.equal(h.chat._liveSpend, null);
 });
 
-test('reconnect polling avoids duplicate requests and unsupported runners show no estimate', async () => {
+test('reconnect polling avoids duplicate requests, and a Claude session drops the figure once idle', async () => {
   const h = clientHarness();
   h.chat._startSpendPolling();
   h.chat._progressPollTimer = 5;
   await h.tick();
   assert.equal(h.requests(), 0);
   h.chat._applyLiveSpend({ busy: true, spend: { costCents: 100 } }, 42);
-  h.chat._isOpenRouterSession = () => true;
-  h.chat.renderBudget();
-  assert.doesNotMatch(h.html(), /this turn/);
+  assert.match(h.html(), /this turn/);
   h.chat._applyLiveSpend({ busy: false, spend: { costCents: 100 } }, 42);
   assert.equal(h.chat._liveSpend, null);
   h.chat._stopSpendPolling();
+});
+
+// #2118: an OpenRouter session's figure is the ledger's list-price estimate,
+// known only as the coding run ends and after which the session reads idle
+// while the reply is still being written. So the session polls like a
+// Claude one, keeps what it learned through the idle snapshot and the end
+// of the turn, and starts the next turn clean.
+test('an OpenRouter session shows the turn\'s recorded cost and keeps it once the session idles', async () => {
+  const h = clientHarness();
+  h.chat._isOpenRouterSession = () => true;
+  h.chat._settledBudgetPillView = () => ({ title: null, parts: [] });
+  h.chat._startSpendPolling();
+  const pending = h.tick();
+  await h.tick();
+  assert.equal(h.requests(), 1, 'an OpenRouter session polls too');
+  h.respond({ busy: true, spend: null });
+  await pending;
+  assert.equal(h.chat._liveSpend, null, 'nothing is known until Codex reports usage');
+  h.chat._applyLiveSpend({ busy: true, spend: { costCents: 12.4, estimated: true } }, 42);
+  assert.match(h.html(), /this turn ~\$0\.12/);
+  assert.match(h.html(), /OpenRouter list price/);
+  assert.doesNotMatch(h.html(), /Claude Code/);
+  h.chat._applyLiveSpend({ busy: false, spend: null }, 42);
+  assert.match(h.html(), /this turn ~\$0\.12/, 'an idle snapshot has nothing newer to say');
+  h.chat._stopSpendPolling({ keepSpend: true });
+  assert.match(h.html(), /this turn ~\$0\.12/, 'the figure outlives the turn');
+  h.chat._startSpendPolling();
+  assert.equal(h.chat._liveSpend, null, 'the next turn starts clean');
+  h.chat._stopSpendPolling();
+  assert.doesNotMatch(h.html(), /this turn/);
+});
+
+test('the usage receipt feeds an OpenRouter session\'s figure and leaves a Claude session\'s alone', () => {
+  const h = clientHarness();
+  h.chat._settledBudgetPillView = () => ({ title: null, parts: [] });
+  h.chat._noteTurnUsage({ costCents: 12, estimated: true });
+  assert.equal(h.chat._liveSpend, null, 'Claude usage events are settlement receipts, not the live figure');
+  h.chat._isOpenRouterSession = () => true;
+  h.chat._noteTurnUsage({ costCents: 0 });
+  h.chat._noteTurnUsage({ costCents: 'unknown' });
+  h.chat._noteTurnUsage({});
+  assert.equal(h.chat._liveSpend, null, 'no figure is invented from an empty receipt');
+  h.chat._noteTurnUsage({ costCents: 12, estimated: true });
+  assert.match(h.html(), /this turn ~\$0\.12/);
+});
+
+test('an OpenRouter session\'s meter says what is left on the key, in the key\'s own window', () => {
+  const h = clientHarness();
+  h.useRealMeter();
+  h.chat._isOpenRouterSession = () => true;
+  h.chat.renderBudget();
+  assert.equal(h.html(), '', 'nothing before the allowance read lands');
+  h.chat.openrouterAllowance = {
+    configured: true, source: 'usernode_managed', last4: '7f2c',
+    limit: 1, limitRemaining: 0.86, limitReset: 'daily',
+  };
+  h.chat.renderBudget();
+  assert.match(h.html(), /\$0\.86 left today/);
+  assert.match(h.html(), /text-emerald-700/);
+  assert.match(h.html(), /Your included OpenRouter key has \$0\.86 of its \$1\.00 daily allowance left\. OpenRouter resets it daily\./);
+  h.chat.openrouterAllowance = {
+    configured: true, source: 'personal', last4: 'abcd',
+    limit: 10, limitRemaining: 1.5, limitReset: 'weekly',
+  };
+  h.chat.renderBudget();
+  assert.match(h.html(), /\$1\.50 left this week/);
+  assert.match(h.html(), /text-red-700/, '85% of the limit is spent');
+  assert.match(h.html(), /Your OpenRouter key \(\u2026abcd\) has \$1\.50 of its \$10\.00 weekly allowance left/);
+  h.chat.openrouterAllowance = { configured: true, source: 'usernode_managed', limit: 1, limitRemaining: 0, limitReset: 'daily' };
+  h.chat.renderBudget();
+  assert.match(h.html(), /\$0\.00 left today/);
+  assert.match(h.html(), /font-semibold/);
+  h.chat.openrouterAllowance = { configured: true, source: 'personal', last4: 'abcd', limit: null, limitRemaining: null, limitReset: null };
+  h.chat.renderBudget();
+  assert.equal(h.html(), '', 'a key OpenRouter reports no limit for has nothing to say');
+  h.chat._isOpenRouterSession = () => false;
+  h.chat.openrouterAllowance = { configured: true, limit: 1, limitRemaining: 0.86, limitReset: 'daily' };
+  h.chat.renderBudget();
+  assert.equal(h.html(), '', 'a Claude session never reads the OpenRouter figure');
+});
+
+test('an OpenRouter session refreshes its meter from the live allowance route, or from the shot fixture', async () => {
+  const h = clientHarness();
+  h.useRealMeter();
+  h.chat._isOpenRouterSession = () => true;
+  const refresh = h.chat.refreshBudget();
+  assert.equal(h.requests(), 1);
+  h.respond({ configured: true, source: 'usernode_managed', limit: 1, limitRemaining: 0.74, limitReset: 'daily' });
+  await refresh;
+  assert.match(h.html(), /\$0\.74 left today/);
+
+  // ?shot=openrouter-spend answers the read itself and paints the turn too…
+  const shot = clientHarness({ search: '?shot=openrouter-spend' });
+  shot.useRealMeter();
+  shot.chat._isOpenRouterSession = () => true;
+  await shot.chat.refreshBudget();
+  assert.equal(shot.requests(), 0, 'the fixture answers the read');
+  assert.match(shot.html(), /\$0\.86 left today/);
+  assert.match(shot.html(), /this turn ~\$0\.12/);
+
+  // …but only in an OpenRouter session: a Claude session's budget read runs untouched.
+  const claude = clientHarness({ search: '?shot=openrouter-spend' });
+  claude.useRealMeter();
+  const claudeRefresh = claude.chat.refreshBudget();
+  assert.equal(claude.requests(), 1);
+  claude.respond({ spentCents: 100, limitCents: 2500, remainingCents: 2400, aiEnabled: true });
+  await claudeRefresh;
+  assert.match(claude.html(), /\$1\.00/);
+  assert.doesNotMatch(claude.html(), /this turn|left today/);
 });

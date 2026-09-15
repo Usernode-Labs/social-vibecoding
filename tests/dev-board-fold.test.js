@@ -144,7 +144,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="createPrForIssue">Create proposal<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -190,7 +190,18 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
   assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
   assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
-  assert.match(FOLD, /\{href && mode === 'inline' \? \(\s*<div className="dev-ws-sheet-actions">/, 'the line under the sheet is the Workshop\u2019s');
+  // #1886: no page link under the sheet any more — the Workshop's pill is
+  // the page link once the card is open. The one line the sheet still draws
+  // is #1887's, on a card about the viewer's OWN session: the session is a
+  // destination the pill does not cover, so it keeps a link under the sheet
+  // — on the Workshop only, and alone on its line.
+  assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
+  assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
+  assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
+  assert.match(FOLD, /\{session && mode === 'inline' \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+    'the session link, on the Workshop, and nothing beside it');
+  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
+    'the open Workshop card\u2019s pill is the page link');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
   assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
@@ -208,7 +219,9 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
-  assert.match(WORKSHOP, /import \{ CardRowView, callAppView \} from '\.\.\/card\/fold';/);
+  // (`openHref` rides the same import since the Needs-you feed: its item title
+  // links to the card's own page by the fold's rule, not a second one.)
+  assert.match(WORKSHOP, /import \{ CardRowView, callAppView, openHref \} from '\.\.\/card\/fold';/);
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
     assert.ok(!WORKSHOP.includes(fn), `${fn} is not also in workshop.tsx`);
@@ -342,10 +355,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
     assert.ok(t && /cards=open/.test(t.path), `${name} runs with the cards open`);
   }
 
-  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board is the card area as a kanban, its cards folded to rows');
+  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board resolves onto the stage pane, its cards folded to rows');
   assert.ok(folded, 'the board route check pins the fold');
   assert.equal(folded.path, '/?demo=1#app/usernode-2d5619/board', 'with no cards=open: this IS the default');
-  assert.match(folded.expectSelector, /#dev-kanban-board #dev-kanban \.dev-kanban-col \.dev-ws-rowwrap > \.dev-ws-row\[role="button"\]\[aria-expanded="false"\]\[data-issue-row\]/);
+  // The host moved with the surface: the Board view mode retired and those
+  // columns are the Workshop's stage pane, so the chain is anchored on
+  // `[data-ws-stage]` rather than on the standalone board's own #dev-kanban-board.
+  assert.match(folded.expectSelector, /\[data-ws-stage\] #dev-kanban \.dev-kanban-col \.dev-ws-rowwrap > \.dev-ws-row\[role="button"\]\[aria-expanded="false"\]\[data-issue-row\]/);
 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
@@ -368,8 +384,169 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 578 → 580: the two fold-mark checks, one per state;
   // 580 → 587: the eight #1876 checks that replace one, two states of the
   // two-step waitlist confirm errand × its visible half, its hidden half and
-  // its step line, plus step 2's back link and resend).
-  assert.equal(DAPP.tests.length, 587);
+  // its step line, plus step 2's back link and resend;
+  // 587 → 589: the Workshop's two grouping panes, one check each — the tab
+  // strip in its default state, and `?group=stage` drawing the board's own
+  // columns under it with the summary strip still above them;
+  // 589 → 591: the status bar becoming the vote alone — one check that a
+  // BLOCKED proposal still draws a vote bar, one that its reasons are tags on
+  // the facts line beside it. Two, because those two facts sit on sibling
+  // rows and no single selector can assert both;
+  // 591 → 593: two additional checks cover the underway overview and
+  // workspace deep link;
+  // 593 → 594: the Workshop's working pane, pinning that the search, filters
+  // and "+" render in its sticky head directly above those tabs rather than
+  // in the frame's chrome two strips away;
+  // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
+  // 597 → 598: #1926 repeated conflict notices in card discussions.
+  // 598 → 601: the stale-work-order fix. Two checks shoot the hand-off step of
+  // an ORDINARY work order (?demo=1&order=plain, the fixture added with them) —
+  // that "Start over" is offered there at all, and that copying stays the
+  // primary action beside it — and one covers a continuation;
+  // 601 → 602: review found that withholding the button on a continuation was
+  // a dead end rather than a safeguard, since the launchpad resolves its task
+  // per (user, app) and one continuation pinned every session in the app. The
+  // continuation check now asserts the button IS offered, and a second one
+  // pins the sentence saying what pressing it gives up.
+  // 602 → 607: the launchpad is keyed per session now, so a session that did
+  // not prepare a work order shows none. Two checks shoot that state — the
+  // "What should it build?" field being live, and Prepare being the action
+  // offered — on the ?order=none fixture added with them. Before this, no
+  // route could render it: a session with no order of its own still showed
+  // another session's.
+  // 604 → 601: the launchpad hands over instructions now. Nine checks went with
+  // the surfaces they pinned (the brief field, the Prepare button, the Submit
+  // step, "Start over", the connector note) and six replaced them: the
+  // three-step shape, the instructions to copy and their text on the card, the
+  // absent brief field, the connect-first state, and a continuation saying the
+  // work lands as an update.
+  // 601 → 604: #2038 adds three checks for the card states it renames or
+  // introduces — a proposal being brought up to date, a refused merge named
+  // for what it was rather than as a conflict, and automatic resolution
+  // saying nobody has to act.
+  // 604 → 605: the Needs-you deck's ask box answers for real now, so one
+  // check pins the composer being present on the card. Selector-only, and
+  // deliberately not asserting it is enabled: the box is disabled on a row
+  // with no resolvable reference, which is a legitimate state the demo
+  // fixtures may well be in.
+  // 605 → 604: the Board VIEW MODE retired. Its columns are the Workshop's
+  // "By stage" pane, so three checks moved onto that pane's markup and the
+  // fourth went outright — the kanban-only general-discussion CARD, which the
+  // Workshop already answers for with a row of its own (there is a check for
+  // that row, and another pinning that the Workshop does not draw the card
+  // too). Nothing was declared to replace it.
+  // 604 → 605: #1912 puts Show more on every sort, so one check pins the case
+  // that had none — a metric sort, where the demo and broken samples are the
+  // top two by users and used to lead the directory. It asserts the absence of
+  // the tier headings too, because "one list in its own order" is the half of
+  // the change that a Show-more selector alone would not catch.
+  // 605 → 606: the Needs-you feed replaces the deck. The ask-box check now walks
+  // to the rail's Ask control (the box lives on a sheet), the vote check to
+  // the rail's Vote control, and one new check pins the item's own order:
+  // title, then the sentence a voter reads, then the caption.
+  // 606 → 607: both of the above landed, on either side of a merge.
+  // 607 → 610: #2061 adds three checks for the merge-requirements checklist
+  // — the locked-app gate that had no UI at all, the "nobody has to act"
+  // wording, and the steps listed AFTER the one a proposal is stuck on,
+  // landing on the other side of a second merge.
+  // 610 → 609: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 605 → 604 by retiring the
+  // kanban-only general-discussion check (the entry above with that arrow);
+  // main independently took the SAME 605 to 610 with the five entries listed
+  // between. One −1 and one +5 against a shared 605 is 609 — not the 610 main
+  // reached without this branch's removal, which is the figure the sync's
+  // conflict resolution kept and the repo unit suite then caught. A literal is
+  // the right shape for this assertion precisely because that mismatch is
+  // otherwise silent; it is the arithmetic that needed saying, not the check.
+  // 609 → 610: #1823's Challenges row in the app menu, under Discover.
+  // 610 → 610: #2090 keeps the All items pane — and the search box in it —
+  // on screen when a search matches nothing. It RETARGETS the Workshop
+  // search-bar check rather than adding one (same box, the pane now opened
+  // already narrowed by `?q=` to a search nothing matches, with the note
+  // under it proving the search applied), so the count is unchanged.
+  // 610 → 612: the two #1960 checks on the draft-delete shot, one for the
+  // count the trash left behind and one for which draft is still standing.
+  // 612 → 614: #1956 adds one direct hamburger-menu check for issue cards
+  // and one for proposal cards, both exercising the Share to Messages row.
+  // 614 → 616: the two #2118 checks on the OpenRouter spend shot, one for
+  // what is left on the key and one for what the turn cost.
+  // 616 → 617: #2154 adds the settled half of the app-launch fixture, proving
+  // a terminal status that beats the detail response removes the spinner.
+  // 617 → 618: #2089 adds one board check opened through `?q=` on a word
+  // that appears only in a mock issue's BODY, pinning that the search now
+  // reads past the title.
+  // 617 → 618: the #2113 check on the demo group thread, for the attached
+  // screenshot whose macOS-style name used to make its download 500. Same
+  // base as #2089's bump, on the other side of a merge: two branches each
+  // took 617 to 618 independently, so together they land on 619.
+  // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
+  // Codex CLI block's config.toml entry and one for the generic MCP-client
+  // walkthrough.
+  // 621 → 622: the #2161 check that opens App settings on the platform's own
+  // app (`?shot=app-settings`) and reads the danger zone's blocked notice.
+  // 621 → 622: #2172 adds one check on the Needs-you feed's end card, the
+  // summary one swipe past the last item, on the ?shot=needs-end route that
+  // opens on it.
+  // 621 → 622: the #1941 check on the session screen, pinning the compact
+  // session strip — py-1, wrapping only below sm — with the venue still a
+  // direct child beside the name.
+  // 621 → 622: #2183 adds one check on the since-list's Clear and its
+  // always-drawn Show older, reached through `?shot=since-visit`.
+  // 621 → 622: #2182 independently adds the check that the viewer's strip
+  // stays on screen when it is empty, reached through `?shot=mine-empty`.
+  // 622 → 626: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 621 → 622 alone, with
+  // the #2161 check above; main independently took the SAME 621 to 625 with
+  // the four entries listed above it. One +1 and one +4 against a shared 621
+  // is 626.
+  // 626 → 627: challenge illustrations, one check that a Home challenge card
+  // whose template names an artwork draws it (the demo rows carry slugs).
+  assert.equal(DAPP.tests.length, 627);
+});
+
+test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
+  // The checklist (#2061, dev-card.tsx RequirementsRow) is a <details> on
+  // the open proposal card, and its summary line — "Nothing needs you",
+  // "Waiting on an admin" — is what a reader taps to see the steps. The
+  // wrapper's click guard did not know it: the same tap that opened the
+  // list bubbled to the wrapper, which folded the card and unmounted the
+  // list just opened. The guard excludes `details` now — the whole element,
+  // because once open it is a list to read, like the three regions under
+  // the card — and nothing else about the tap changes: the disclosure is
+  // native, its open state the reader's, and no handler swallows the click.
+  const AppView = makeAppView({ search: '?cards=open&demo=1' });
+  AppView._proposals[0].mergeRequirements = { gates: [
+    { key: 'approvals', label: 'Approvals', actor: 'group', state: 'done', detail: { note: '3 of 3' } },
+    { key: 'integration', label: 'Up to date with main', actor: 'auto', state: 'active',
+      detail: { note: '2 commits behind, so the platform is merging main in' } },
+  ] };
+  const html = kanbanHtml(AppView);
+  // The checklist sits INSIDE the open card, inside the wrapper whose click
+  // folds it — so the guard is the only thing between the tap and the fold.
+  assert.match(html,
+    /class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet"[^>]*><div class="gc-vote-item [^"]*dev-card-dense"[^>]*data-proposal-row="34"(?:(?!class="dev-ws-rowwrap)[\s\S])*?<details [^>]*data-merge-requirements="1"><summary [^>]*><span [^>]*data-req-headline[^>]*>Nothing needs you<\/span>/,
+    'the checklist, its summary line first, on the open card');
+  // The guard: `details` among the native controls, so a tap anywhere on the
+  // checklist — the summary, a step, its note — is the checklist's, and a
+  // tap on the rest of the card still folds it.
+  const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
+  assert.match(view,
+    /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-ws-detail, \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
+    'the open card’s guard excludes the disclosure, and folds on everything else');
+  // The checklist itself is untouched: the native disclosure, its open state
+  // seeded from the model and then the reader's, and neither a
+  // stopPropagation (the guard is the seam, as for every other control) nor
+  // a preventDefault (the tap must still open the list).
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  const req = CARD.slice(CARD.indexOf('function RequirementsRow'), CARD.indexOf('function ExtraRow'));
+  assert.match(req, /<details\s[^>]*onToggle=\{\(e\) => setOpen\(\(e\.currentTarget as HTMLDetailsElement\)\.open\)\}/);
+  assert.ok(!/stopPropagation|preventDefault/.test(req), 'the row neither swallows the click nor blocks the native toggle');
+  // The folded row draws no checklist, and its own guard is unchanged: a tap
+  // on the row — its state chip included — still unfolds it.
+  const folded = kanbanHtml(makeAppView());
+  assert.ok(!folded.includes('data-merge-requirements'), 'no checklist on a folded row');
+  const rowView = FOLD.slice(FOLD.indexOf('function FoldedRow'), FOLD.indexOf('function UnfoldedRow'));
+  assert.match(rowView, /if \(\(e\.target as HTMLElement \| null\)\?\.closest\('a, button'\)\) return;\s*onToggle\(\);/);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
@@ -379,6 +556,41 @@ test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and 
   // card is the column's tile, as it always was.
   assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
   assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+});
+
+test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
+  // #2080 gave the Needs-you deck's three dialogs the bare `.dev-ws-sheet` —
+  // the name the fold's OPEN CARD has carried since the Workshop shipped —
+  // so the dialog's geometry landed on every unfolded card on every Workshop
+  // surface: `position: fixed; inset: 0` at `z-index: 30`, which took the
+  // card out of its column or its strip, painted its own fill across the
+  // viewport and swallowed every click underneath. On By stage and By
+  // category that reads as the whole board going opaque and dead; on Current
+  // status the card opens over the tiles it should be sitting under.
+  //
+  // One rule, three screens — so the full-screen geometry is keyed on the
+  // deck's OWN base class and the bare name stays the fold's.
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+    'the deck’s dialogs are the fixed, full-screen thing');
+  assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
+    'and nothing is keyed on the bare name, which is one open card sitting in its row');
+  for (const kind of ['vote', 'ask', 'comments']) {
+    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
+      `the ${kind} dialog carries the deck’s base class`);
+  }
+  assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
+    'and none of the three carries the fold’s');
+  // The open card keeps the bare name, because two declared checks select it
+  // that way — which is also why the deck is the side that moved.
+  assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
+  // Nothing is DECLARED for the geometry itself, and nothing can be: a
+  // selector cannot read a computed position — the card stayed inside its
+  // column in the DOM the whole time it was painting over the board — and the
+  // manifest holds its last 20 slots clear (tests/proposal-tests-manifest.test.js).
+  // What the gate does pin is the name, twice, which is why the deck is the
+  // side that moved rather than the fold.
+  const onTheSheet = DAPP.tests.filter((t) => /\.dev-ws-rowwrap-open > \.dev-ws-sheet/.test(t.expectSelector || ''));
+  assert.ok(onTheSheet.length >= 2, 'the declared checks still select the open card as `.dev-ws-sheet`');
 });
 
 // ── The card's controls and lines, after the fold (#1787) ─────────────────
@@ -430,7 +642,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="createPrForIssue"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
@@ -446,9 +658,17 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(CARD, /for \(const b of m\.linked \|\| \[\]\) nodes\.push/);
   assert.match(CARD, /filter\(\(b\) => b && b\.t === 'issueChip'\)\) nodes\.push/, 'a session\u2019s #N chips too');
   assert.match(CARD, /<div className="dev-card-meta">\{metaNodes\}<\/div>/);
-  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr' && b\.t !== 'issueChip'\);/);
+  // The STATUS TAGS ride here too, marked `meta` on their spec: the status
+  // band is the vote and its button alone now, and of the two lines this is
+  // the one with room for a list that grows. Both sides of the split are
+  // asserted, because drawing them in both places is the failure mode.
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'chip' && b\.meta\)\) nodes\.push/,
+    'the meta line draws them');
+  assert.match(CARD, /const states = chips\.filter\([\s\S]{0,160}!\(b\.t === 'chip' && b\.meta\)\);/,
+    'and the facts row does not draw them again');
   assert.match(FOLD_SRC, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/);
-  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr' && b\.t !== 'issueChip'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row\u2019s last line keeps the states');
+  assert.match(FOLD_SRC, /!\(b\.t === 'chip' && b\.meta\)\)\s*\.slice\(0, ROW_BADGE_MAX\)/,
+    'the row\u2019s last line keeps the remaining states, not the status tags');
   // Rendered: the fixture issue has an assignee, so its chip sits on the
   // meta line at both sizes and its status band holds nothing.
   const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
@@ -510,17 +730,33 @@ test('Open card never answers a tap with nothing: the Board links out, and an in
 
 test('the declared checks follow the two rows and the row’s last line', () => {
   // Each re-pointed check names the seat that moved: the work-state chip in
-  // the facts row, the vote at the row's bottom-right, Closes #N on the meta
+  // the facts row, the vote on the Needs-you deck, Closes #N on the meta
   // line, the facts row under the status row, and the unclamped title.
+  //
+  // THE VOTE MOVED A SECOND TIME. It sat in the workshop row's trailing slot
+  // until the tab redraft, which retired the row band entirely and made a
+  // vote one full-screen question on Needs you. So the check walks the deck's
+  // subject pane to the card, not a row seat; the loop below now guards the
+  // retired band classes the same way it guards the older ones.
+  //
+  // THE PAIR IS CARD-THEN-SUMMARY, and the first spelling of this check had
+  // it backwards — a later round moved the description UNDER the card, and
+  // `.dev-ws-needs-summary + .gc-vote-item` kept describing the order before
+  // that. Staging caught it, this file did not, which is why the assertion
+  // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row-main > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
+  // control; a second check pins the item's own order (title, then the
+  // sentence, then the caption) with the same `+`/`~` direction.
+  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
+  assert.match(byName(/leads with its title, then the sentence a voter reads/).expectSelector, /\.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption > \.dev-ws-item-by/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
   assert.match(byName(/the vote is one button beside the state bar/).expectSelector, /\.dev-card-status > \.dev-status-pill-block \+ \.dev-vote-btn/, 'the bar row keeps its check as it was');
   for (const t of DAPP.tests) {
-    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat/.test(t.expectSelector || ''),
+    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat|dev-ws-row-band|dev-ws-row-trailing/.test(t.expectSelector || ''),
       `${t.name}: no check names a seat that no longer exists`);
   }
 });
@@ -551,14 +787,57 @@ test('the message count rides the meta line at both sizes, and only when there i
   const quiet = makeAppView();
   quiet._proposals[0].chat_count = 5;
   const folded = kanbanHtml(quiet);
-  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<\/span><span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
+  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
   // The two sizes share one chrome now, too: the card's r22, its 14/14/12
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.
   const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
   assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*gap: 8px;[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  // The 8px glyph gap moved to the head when the row became a column, so the
+  // bar underneath spans the whole row rather than starting past the glyph.
+  assert.match(CSS, /\.dev-ws-row \{[^}]*flex-direction: column; align-items: stretch;/);
+  assert.match(CSS, /\.dev-ws-row-head \{ display: flex; align-items: center; gap: 8px; \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
+});
+
+// Round 15. Four differences the app's owner spotted on screen, each measured
+// in a browser before and after. The first three are one line of CSS apiece;
+// the fourth is the row's shape.
+test('a press changes the fill and nothing else, and the row is the card minus its button row', () => {
+  // -- The press ------------------------------------------------------
+  // The kit gives every button an instant scale on press. The row carries
+  // role="button" and the open card is a plain div, so the scale reached
+  // exactly one of the two sizes: a pressed folded row drew inset and a
+  // pressed open card did not. Opted out the way this stylesheet already
+  // opts the segmented pills out, keeping the kit's brightness dim.
+  assert.match(CSS, /\.dev-ws-row:active \{ transform: none; \}/);
+  assert.match(CSS, /\.create-mode-pill:active,[\s\S]{0,160}\{\s*transform: none;\s*\}/,
+    'the rule this one follows is still there to follow');
+
+  // -- The three lines, and where each starts -------------------------
+  // The card's anatomy is three siblings: head (glyph + title), meta line,
+  // status row. The row used to be a head beside a two-line text column,
+  // which put both lines below the title 30px in. Measured in Chromium at
+  // 340px, folded then open: title 48/48, meta 48/48, status 18/18.
+  assert.match(FOLD, /<span className="dev-ws-row-head">\s*\{c\.icon \? <CardIcon[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>\s*<RowBand/,
+    'head, meta and band are siblings, in the card’s order');
+  assert.ok(!/dev-ws-row-main/.test(FOLD) && !/\.dev-ws-row-main[\s,{>]/.test(CSS),
+    'the text column that held the meta line and the band 30px in is gone');
+  // The meta line's tab is the CARD's rule, condition and all: 30px, and
+  // only when there is a glyph to tab past.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-left: 30px; \}/);
+
+  // -- The two gaps ---------------------------------------------------
+  // Title to meta: the card stacks them flush, the row carried a 1px column
+  // gap plus a 1px margin, so the same two lines sat 2px apart folded and
+  // 0px open. Meta to status: the card's 8px, the row's 4px+1px.
+  assert.match(CSS, /\.dev-ws-row-meta \{[^}]*margin-top: 0;/);
+  assert.ok(!/\.dev-ws-row-head \{[^}]*row-gap/.test(CSS), 'and no gap standing in for it');
+  assert.match(CSS, /\.dev-ws-row-band \{[^}]*margin-top: 8px;/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-badges \{ margin-top: 8px;/,
+    'which is the card’s own');
 });

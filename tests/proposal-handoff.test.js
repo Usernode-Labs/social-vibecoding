@@ -155,6 +155,7 @@ function makeHarness() {
           spec_md: params[8], linked_issues: params[9], staging_url: null,
           check_state: null, check_error_detail: null, pr_number: null, pr_url: null,
           handoff_supersedes_session_id: params[10] || null,
+          external_agent: params[11],
         };
         state.sessions.push(row);
         return { rows: [{ ...row }], rowCount: 1 };
@@ -508,6 +509,33 @@ test('handoff persistence has owner/request and per-event idempotency constraint
   assert.match(route,
     /proposal-handoff\/commits'[\s\S]*requireCliMiddleware[\s\S]*drainGuard[\s\S]*commitUploadJson/,
     'CLI authentication runs before the large commit body parser');
+});
+
+test('handoffs persist explicit provider identity and reject conflicting retries', async () => {
+  const { router, state, subject, restore } = makeHarness();
+  try {
+    assert.equal(subject.parseStartBody(START_BODY).externalAgent, 'external');
+    for (const invalid of ['openrouter', '', null, {}, '<script>']) {
+      assert.throws(() => subject.parseStartBody({ ...START_BODY, externalAgent: invalid }), /externalAgent/);
+    }
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    for (const [index, agent] of ['codex', 'claude-code', 'external'].entries()) {
+      const body = { ...START_BODY, requestId: `provider-${index}`, linkedIssues: [], externalAgent: agent };
+      const req = { params: { slug: 'demo' }, body, cliAuthenticated: true, user: { id: 7, username: 'maker' } };
+      const created = mockRes();
+      await start(req, created);
+      assert.equal(created.statusCode, 201);
+      assert.equal(state.sessions[index].external_agent, agent);
+      assert.equal(created.body.externalAgent, agent);
+      const replay = mockRes();
+      await start(req, replay);
+      assert.equal(replay.body.sessionId, created.body.sessionId);
+      const conflict = mockRes();
+      await start({ ...req, body: { ...body, externalAgent: agent === 'codex' ? 'claude-code' : 'codex' } }, conflict);
+      assert.equal(conflict.statusCode, 409);
+      assert.equal(conflict.body.error, 'request_id_conflict');
+    }
+  } finally { restore(); }
 });
 
 test('handoff validators require a spec-first, bounded, user-visible history contract', () => {

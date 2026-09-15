@@ -47,11 +47,15 @@ stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: cl
 const poolMod = require('../src/db/pool');
 let appRow = null;
 let collaboratorIds = new Set();
+let contributorCount = 1;
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     const s = String(sql);
     if (/FROM apps WHERE slug = \$1/.test(s)) {
       return appRow ? { rows: [appRow] } : { rows: [] };
+    }
+    if (/WITH contributor_ids AS/.test(s) && /COUNT\(\*\)::int AS cnt/.test(s)) {
+      return { rows: [{ app_id: appRow.id, cnt: contributorCount }] };
     }
     if (/FROM app_collaborators/.test(s)) {
       return collaboratorIds.has(params?.[1]) ? { rows: [{ 1: 1 }] } : { rows: [] };
@@ -108,6 +112,7 @@ async function fetchApp(server) {
 test('creator sees lastFailure; raw last_failure column never rides the payload', async () => {
   appRow = makeAppRow();
   collaboratorIds = new Set();
+  contributorCount = 1;
   currentUser = { id: 100, username: 'creator' };
   const server = await startServer();
   try {
@@ -116,6 +121,23 @@ test('creator sees lastFailure; raw last_failure column never rides the payload'
     assert.equal(app.lastFailure.reason, LAST_FAILURE.reason);
     assert.ok(app.lastFailure.log.includes('open Dockerfile'));
     assert.ok(!('last_failure' in app), 'raw column must be stripped');
+    assert.equal(app.contributor_count, 1);
+    assert.equal(app.can_delete, true, 'the sole creator can delete from a cold detail load');
+  } finally {
+    server.close();
+  }
+});
+
+test('creator loses detail-page delete eligibility when another contributor exists', async () => {
+  appRow = makeAppRow();
+  collaboratorIds = new Set();
+  contributorCount = 2;
+  currentUser = { id: 100, username: 'creator' };
+  const server = await startServer();
+  try {
+    const app = await fetchApp(server);
+    assert.equal(app.contributor_count, 2);
+    assert.equal(app.can_delete, false);
   } finally {
     server.close();
   }

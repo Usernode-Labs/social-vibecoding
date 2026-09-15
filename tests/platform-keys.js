@@ -17,6 +17,9 @@
 // and generation costs one ~100ms hit per test file.
 
 const crypto = require('crypto');
+// Same module instance src/config.js compares against, so the
+// CLI_CANONICAL_ORIGIN default below cannot drift from it.
+const { PRODUCTION_ORIGIN } = require('../src/services/cli-auth-constants');
 
 let cachedPair = null;
 
@@ -51,7 +54,14 @@ function setPlatformKeys(overrides = {}) {
     // dotenv will not overwrite these values.
     USERNODE_LOCAL_DEV: '0',
     USERNODE_DOMAIN: 'social-vibecoding.usernodelabs.org',
-    CLI_CANONICAL_ORIGIN: 'https://social-vibecoding.usernodelabs.org',
+    // Not a literal: config.load() rejects any CLI origin that is not
+    // exactly PRODUCTION_ORIGIN, and PRODUCTION_ORIGIN is resolved once,
+    // when cli-auth-constants is first required. Test files require
+    // ../src/config at module top, which happens BEFORE this helper runs,
+    // so USERNODE_DOMAIN above is set too late to influence it and a
+    // hardcoded origin here would only match by luck. Reading the same
+    // memoized value keeps the pair valid whatever the require order.
+    CLI_CANONICAL_ORIGIN: PRODUCTION_ORIGIN,
   };
   const out = {};
   for (const [k, v] of Object.entries({ ...defaults, ...overrides })) {

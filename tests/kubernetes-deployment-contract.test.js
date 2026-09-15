@@ -8,7 +8,11 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
   const dockerfile = read('Dockerfile.kubernetes');
   assert.match(dockerfile, /postgresql-client/);
   assert.doesNotMatch(dockerfile, /docker-cli|docker\.sock/);
-  assert.match(dockerfile, /USER node/);
+  // Numeric, not `node`: the pod runs with runAsNonRoot and no runAsUser, and
+  // Kubernetes can verify a numeric image user only.
+  assert.match(dockerfile, /^USER 1000:1000$/m);
+  assert.doesNotMatch(dockerfile, /^USER node$/m,
+    'runAsNonRoot cannot verify a symbolic image user before startup');
 });
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
@@ -48,7 +52,7 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
-test('Kubernetes workflow publishes all three SHA-addressable images', () => {
+test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   for (const component of ['platform', 'worker', 'capture']) {
     assert.match(workflow, new RegExp(`component: ${component}`));
@@ -59,6 +63,11 @@ test('Kubernetes workflow publishes all three SHA-addressable images', () => {
   assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /steps\.build\.outputs\.digest/);
+  assert.match(workflow, /if: steps\.reuse\.outputs\.digest == ''/);
+  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
+  assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
+  assert.match(workflow, /pull: true/);
+  assert.match(workflow, /needs: build/);
 });
 
 test('migration command validates the target database identifier', () => {
@@ -87,6 +96,22 @@ test('Kubernetes workloads receive the canonical repository and release revision
 test('Kubernetes chart supplies the canonical native testnet ChainId', () => {
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
   assert.match(values, /nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"/);
+});
+
+test('Kubernetes chart preserves both social account-linking credential pairs', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
+  const readme = read('deploy/helm/social-vibecoding-platform/README.md');
+  for (const provider of [
+    { value: 'githubLink', env: 'GITHUB_LINK', callback: 'github' },
+    { value: 'xLink', env: 'X_LINK', callback: 'x' },
+  ]) {
+    assert.match(values, new RegExp(`${provider.value}ClientId: ""`));
+    assert.match(values, new RegExp(`${provider.value}ClientSecret: ""`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
+    assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
+  }
 });
 
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {

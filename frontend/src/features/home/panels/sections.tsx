@@ -47,7 +47,7 @@ import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
  * would differ between the built document and the first client render, which
  * is a hydration mismatch and a console error on `#home`. A `trailing` slot
  * used to sit beside it, carrying the challenges counter on the one condition
- * that its null state matched the prerender's; the counter is the season ring
+ * that its null state matched the prerender's; the counter is the season progress
  * inside the card now (see ./challenges.tsx), and with no second caller the
  * slot went with it. Every heading is constants again.
  *
@@ -125,7 +125,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       // name, a counter, a leaderboard link and the ⋮, four things deep, with
       // the counter the only one of them that was about the DATA.
       //
-      // It is the season ring at the top of the card now (see
+      // It is the season progress at the top of the card now (see
       // ./challenges.tsx). That is a better home for it on both counts: the
       // heading goes back to naming its area, and the fact the block exists to
       // state becomes the first thing inside the block rather than a footnote

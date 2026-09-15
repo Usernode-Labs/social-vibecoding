@@ -33,7 +33,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
  *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string,
- *   loaderVisible: boolean, loaderTitle: string, loaderSub: string,
+ *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
  * }} StagingState
@@ -58,6 +58,7 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   loaderVisible: false,
   loaderTitle: 'Opening preview…',
   loaderSub: '',
+  loaderRetry: false,
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,
@@ -82,7 +83,7 @@ export const stagingRefs = { iframe: null };
 /**
  * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
  *
- * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose',
+ * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose' | 'onRetry',
  *   ((ev?: Event) => void) | null>}
  */
 export const stagingHandlers = {
@@ -91,6 +92,7 @@ export const stagingHandlers = {
   onFullscreen: null,
   onTest: null,
   onTestingClose: null,
+  onRetry: null,
 };
 
 export const visualCompareStore = createStore(/** @type {VisualCompareState} */ ({

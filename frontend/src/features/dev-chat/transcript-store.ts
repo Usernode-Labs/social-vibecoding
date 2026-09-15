@@ -271,9 +271,18 @@ export interface TranscriptState {
   devFlowHtml: string;
   /** #990's trailing dots. Null when a live coding run already shows progress. */
   activity: { label: string } | null;
+  /**
+   * #1889: true while a turn is in flight (`DevChat.isStreaming`). The
+   * component reads it to decide where the latest Changes card sits — in its
+   * turn's slot while the run's tail is painting, after the last row once the
+   * chat is idle again. See `DevChatTranscript`.
+   */
+  busy: boolean;
+  /** #1942: an open, idle session with no messages yet shows its empty state. */
+  empty?: boolean;
 }
 
-export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null };
+export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false, empty: false };
 
 export const transcriptStore = createStore<TranscriptState>(EMPTY_TRANSCRIPT);
 

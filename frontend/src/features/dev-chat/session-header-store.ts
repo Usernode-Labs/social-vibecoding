@@ -35,6 +35,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { SessionAction } from './session-list-store';
 
 /**
  * `MergeStatus.lifecycle()`'s descriptor, as much of it as the pill draws.
@@ -80,6 +81,17 @@ export interface SessionHeaderState {
   life: MergeLife | null;
   /** null when BuildVenues is absent or the id resolves to no venue. */
   venue: VenueButton | null;
+  /**
+   * #1904: the session's own actions — Pause / Free worker / Resume /
+   * Unarchive / Archive — for the strip's ⋯ menu. THE LIST'S rows, verbatim:
+   * `DevChat._headerActions` resolves them through `_sessionRow`, so the two
+   * surfaces cannot disagree about what is offered or how Archive is gated
+   * (the three rules in ./session-list-store.ts's header). Empty for a viewer
+   * who does not own the session — every one of these endpoints is
+   * owner-scoped on the server — and the strip draws no button then, rather
+   * than an empty menu.
+   */
+  actions: SessionAction[];
 }
 
 export const EMPTY_SESSION_HEADER: SessionHeaderState = {
@@ -91,6 +103,7 @@ export const EMPTY_SESSION_HEADER: SessionHeaderState = {
   newChangeTitle: '',
   life: null,
   venue: null,
+  actions: [],
 };
 
 export const sessionHeaderStore = createStore<SessionHeaderState>(EMPTY_SESSION_HEADER);

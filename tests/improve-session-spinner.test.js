@@ -16,9 +16,9 @@
 //   2. It is gated on `busy`. A row that is Ready or Handed off must not
 //      turn — a handed-off work order especially, whose agent runs where
 //      this side cannot see whether a turn is in flight (#1417).
-//   3. The pulse is GONE rather than joined. One fact wants one cue; the
-//      badge keeps its amber, which is what makes a column of tiles
-//      scannable, and gives up the motion the pill now carries.
+//   3. The pulse is GONE rather than joined. One fact wants one cue — and
+//      #1946/#1947 finished that argument by retiring the tile badge
+//      altogether, so the pill is the row's only activity cue now.
 //   4. The arc is recoloured to the pill's own ink. The shared class borders
 //      in `var(--accent)`, which is blue, and a blue arc in an amber pill is
 //      off-palette in both themes.
@@ -112,13 +112,19 @@ test('what counts as busy is untouched', () => {
 
 // ── One fact, one cue ──────────────────────────────────────────────────
 
-test('the tile badge keeps its amber and gives up its pulse', () => {
+test('the tile badge gave up its pulse, and then the badge itself (#1946)', () => {
   const body = stateOfBody();
-  assert.match(body, /badge: 'bg-amber-400',/,
-    'the colour stays — it is what makes a column of tiles scannable');
   assert.doesNotMatch(ROW_TSX, /animate-pulse/,
     'the motion is the pill spinner now; two cues for one fact is the thing '
     + '#1610 already removed from the button that opens this panel');
+  // #1597 kept the badge's amber "because it is what makes a column of tiles
+  // scannable". App feedback triage 2026-09-10 read the same dot the other
+  // way round (rows 39a/39b): the emerald half never meant work at all, and
+  // the amber half repeated the pill beside it without a word. The state
+  // table has no badge left to colour; what the row renders in its place is
+  // tests/improve-session-activity.test.js.
+  assert.doesNotMatch(body, /badge:/,
+    'the state is the pill\'s alone (#1946, #1947)');
 });
 
 // ── The arc takes the pill's ink ───────────────────────────────────────

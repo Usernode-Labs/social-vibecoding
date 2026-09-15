@@ -3,7 +3,7 @@
  * See ./view-store.ts for what it absorbed and what stays legacy-owned.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -16,6 +16,7 @@ import { SessionChecksPanel } from '../dev-board/modals/session-checks';
 import { SessionList } from './session-list';
 import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
+import { OwnToolsGuide } from './own-tools-guide';
 import { devViewStore, type DevViewState, type PaneView } from './view-store';
 
 const HINT
@@ -85,7 +86,7 @@ function DevSessionChecks(): ReactNode {
   return s.sessionId && s.pr ? <ChecksSection key={s.sessionId} sessionId={s.sessionId} /> : null;
 }
 
-function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
+function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
   return (
     <>
       {/* #194: the one-shot "what a proposal is" hint, above everything. */}
@@ -114,12 +115,22 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
 
           No `overflow-hidden`: the session sheet's shoulders are painted
           OUTSIDE its own arc (see `.dc-lift` in app.css), and clipping to
-          the radius would erase exactly them. */}
+          the radius would erase exactly them.
+
+          #1941: ONE COMPACT ROW. `py-1`, not `py-2` — the 28px controls
+          set the row's height and the strip carries no more around them
+          than the platform header does around its own. Below `sm` the row
+          may WRAP, and only there: the title and the PR number take the
+          first line, the venue, the mode switch and the actions menu the
+          second (app.css gives the title the basis that forces that break).
+          It used to stay a single line at every width, which at 375px
+          shrank the title to nothing and pushed the actions menu off the
+          right edge — nothing was folded, it was just gone. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 shrink-0 dc-lift dc-lift-strip"
+        className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 px-3 py-1 shrink-0 dc-lift dc-lift-strip"
       >
-        <SessionHeader />
+        <SessionHeader embedded={s.embedded} />
       </div>
       {/* `display: contents` — #dc-view is a flex column and each banner has
           to stay exactly the flex child it was, rather than becoming a block
@@ -127,7 +138,7 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
         <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
-          {s.returnHint ? (
+          {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"
               className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
@@ -160,15 +171,21 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
               slot collapses when empty (.dc-launchpad-slot:empty), so an
               ordinary session's chat pane is exactly what it was — which is
               why an empty `__html` is the right way to draw nothing here. */}
-          <div
-            id="dc-launchpad-slot" className="dc-launchpad-slot"
-            dangerouslySetInnerHTML={{ __html: s.launchpadHtml }}
-          />
-          <DevSessionChecks />
+          {s.ownToolsGuide ? (
+            <div id="dc-launchpad-slot" className="dc-launchpad-slot">
+              <OwnToolsGuide view={s.ownToolsGuide} />
+            </div>
+          ) : (
+            <div
+              id="dc-launchpad-slot" className="dc-launchpad-slot"
+              dangerouslySetInnerHTML={{ __html: s.launchpadHtml }}
+            />
+          )}
+          {!s.change ? <DevSessionChecks /> : null}
           {/* The element carries the pane's scroll geometry and
               `initScrollTracking` binds click, keydown and scroll on it. */}
           <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto py-2">
-            <DevChatTranscript />
+            <DevChatTranscript embedded={s.embedded} />
           </div>
           {/* platform-safe-bar (app.css): this block is the bottom of the
               screen on a phone, so it carries the home-indicator inset on top
@@ -206,6 +223,19 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
   );
 }
 
+/** Session URLs are the workspace; Open card has its own topic destination. */
+function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
+  useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
+  if (!s.change || s.embedded) return <WorkspaceView s={s} />;
+  return <>
+    <nav className="dev-change-tabs" aria-label="Change views">
+      <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
+      <span className="dev-topic-note">Agent workspace</span>
+    </nav>
+    <WorkspaceView s={s} />
+  </>;
+}
+
 export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
   if (s.kind === 'none') {
     return (
@@ -218,7 +248,7 @@ export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
       </div>
     );
   }
-  return <SessionView s={s} />;
+  return <SessionView key={s.change?.item.id} s={s} />;
 }
 
 export function DevChatView(): ReactNode {

@@ -56,6 +56,20 @@
 // starts every existing install from a known current document. The stable API
 // cache below is deliberately preserved.
 //
+// v10: the first bump made for a change that is not in this file at all.
+// #1985 replaced the Workshop's summary paragraph with three cards, and the
+// whole of that lives in the React bundle and in the document that names its
+// build-scoped URL — exactly the two things a deploy rebuilds and the note
+// below says nothing refreshes. It merged, it deployed, production served the
+// new build, and a browser that already had the app kept drawing the old
+// screen: the change reached nobody who had ever loaded the page before.
+//
+// So the rule this entry is really recording: a change whose user-visible
+// surface is ENTIRELY inside the shell bundle needs a bump in the same
+// proposal, because for those there is no second path to the reader. A
+// change that touches public/js/** or a server response does not — those
+// are fetched per navigation and arrive on their own.
+//
 // This bump is also a deliberate cache retirement, not just a code change
 // (#1673 follow-up).
 //
@@ -81,7 +95,81 @@
 // It is cheap and bounded for the reason the API cache below is NOT
 // versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
 // content-addressed and network-first, and leaves the offline session alone.
-const SW_VERSION = 'v9';
+//
+// v12: the Workshop's grouping tabs and the board pane under them. The
+// control, both panes and their CSS class names are all in the React shell
+// bundle — app-view.js gains only the preference and the publish, and on a
+// stale shell there is no tab strip for it to drive. So the user-visible
+// surface is entirely inside the bundle, which is the case the v10 entry
+// above names.
+//
+// v13: the Workshop's working pane — the search, filters and "+" move out of
+// the frame's chrome into a sticky head above the grouping tabs. The toolbar
+// is React's on both surfaces and the pane is entirely in the shell bundle, so
+// a stale shell would draw the old chrome row and no pane at all.
+//
+// v11: refresh the task-time OpenRouter picker. Its controls live in the main
+// shell bundle, while Settings lives in a lazy chunk; without retiring the
+// cached shell, an existing installation could show the new Settings picker
+// alongside the old in-task model list.
+// Card-action cleanup: retire cached shells so existing previews receive
+// the Build tab, its author default, and the simplified full-card controls.
+//
+// v15: THE FIRST BUMP MADE FOR CHANGES IN EARLIER PROPOSALS, which is the
+// variant none of the notes above covers and the reason this one is long.
+//
+// #4150 moved the Workshop's phone tab bar out of the frosted frame and made
+// it `position: fixed`; #4151 made it edge to edge so its surface reaches the
+// physical bottom. Both live ENTIRELY in public/css/app.css, the React shell
+// bundle and the document that names its build-scoped URL — all three
+// precached in SHELL_ASSETS — which is exactly the case the v10 entry says
+// needs a bump IN THE SAME PROPOSAL. Neither bumped it.
+//
+// So both merged, both deployed, production served them, and an installed PWA
+// and the native app kept drawing the cached shell: the bar still rendered as
+// the floating pill resting 42px up. Two rounds of "still not fixed" were the
+// old stylesheet, not the new one — the changes had never reached the device.
+//
+// WHAT THE v10 ENTRY DOES NOT SAY, and this one does: when the bump is missed,
+// it is still the remedy, just late. A later proposal can retire the cache for
+// work that landed earlier, and this is what that looks like. The reason to
+// prefer the same proposal is not that a later one cannot work — it is that
+// between the two, everyone who already had the app is looking at code nobody
+// can tell is stale, including the person who wrote it.
+//
+// v16: the Workshop's phone bar returns to a floating pill and sits lower.
+// Bumped IN THIS PROPOSAL, which is what the v10 entry asks for and what v15
+// had to be filed late for — app.css and the shell bundle are the whole
+// user-visible surface, so without the bump an installed client renders the
+// previous build for at least one load. That lag is exactly what made two
+// earlier rounds of this bar look unfixed: every report was of the deploy
+// before the one being discussed.
+//
+// v17: the Workshop's selection marker — the tab bar's selected fill becomes
+// one element that slides rather than a background redrawn per tab. app.css
+// and the shell bundle are the whole user-visible surface, so the bump belongs
+// in this proposal, per v10.
+//
+// v18: the marker appears on FIRST open, and the desktop strip stops moving
+// between panes. The whole surface is app.css and the shell bundle again, and
+// v17 is already installed on the devices that previewed the marker — so
+// without this bump the fix reaches nobody who saw the bug.
+//
+// v19: Generate proposal becomes a short confirmation with its full model
+// catalog behind a separate search step. The dialog lives in the shell bundle,
+// so an installed client needs a new shell cache to receive the redesign.
+//
+// v20: the platform rename to Homeroom. The precached document's <title>
+// and /manifest.webmanifest's name/short_name both changed, and both are
+// served from the shell cache — without this bump every existing install
+// keeps showing the old name in the tab and on the home screen indefinitely.
+//
+// v21: an OpenRouter session's composer shows its spend again (#2118). The
+// server now reports the turn's cost and the key's remaining allowance, but
+// the meter that draws them is the shell bundle's, and the installed one
+// skips OpenRouter sessions entirely: without the bump the new responses
+// reach a reader that never asks for them.
+const SW_VERSION = 'v21';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -358,7 +446,6 @@ const SHELL_ASSETS = [
   '/js/social-push.js',
   '/js/build-venues.js',
   '/js/credit-options.js',
-  '/js/launchpad.js',
   // The profile screen's renderer used to be listed here. #1083 chunk F moved
   // it into the React bundle, so /shell/assets/shell.js above is what
   // precaches it now.
@@ -467,10 +554,25 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // The OpenRouter catalog is private, key-filtered, and has its own short
+  // server cache plus an explicit refresh control. Replaying the PWA's much
+  // longer offline copy can hide newly released models and account-policy
+  // changes, while an offline picker cannot start a usable run anyway.
+  if (p === '/api/me/coding-agent/models') return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
+
+  // Group-chat attachment responses are files, not JSON or SPA documents.
+  // In particular, clicking an image opens this URL as a navigation. If the
+  // worker races that navigation against its cached document, the 200ms shell
+  // fallback can replace a slow image response with the app home screen.
+  // Leave both the byte route and the sandboxed HTML preview to the browser;
+  // their server responses already carry the appropriate private cache rules.
+  if (/^\/api\/apps\/[^/]+\/chat-attachments\/[a-f0-9]{32}(?:\/view)?$/.test(p)) {
+    return 'bypass';
+  }
 
   // Online-only rules must run before this fallback. OAuth Connect and
   // callback URLs are document navigations too: serving index.html after

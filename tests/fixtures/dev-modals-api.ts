@@ -6,7 +6,12 @@
  * copies of the module graph and therefore two distinct store objects.
  */
 
-export { AutoSessionModal, AutoSessionCard } from '../../frontend/src/features/dev-board/modals/auto-session-modal';
+export {
+  AutoSessionModal,
+  AutoSessionCard,
+  AutoSessionModelPicker,
+  proposalModelMatches,
+} from '../../frontend/src/features/dev-board/modals/auto-session-modal';
 export { CreditOptionsModal, CreditOptionsCard } from '../../frontend/src/features/dev-board/modals/credit-options-modal';
 export { LlmConsentModal, LlmConsentCard } from '../../frontend/src/features/dev-board/modals/llm-consent-modal';
 export {

@@ -108,7 +108,7 @@ async function makeHarness() {
   // island they feed).
   storeMod.stagingStore.set({
     open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
-    loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
+    loaderRetry: false, loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
     testBtnHidden: true, testBtnTitle: '', testPanelHidden: true, testHtml: '',
     fsBtnHidden: true, fsBtnText: 'Full screen', fsBtnTitle: '',
   });
@@ -192,6 +192,7 @@ async function makeHarness() {
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'usernode-2d5619', self_hosted: false };
+  AppView._tokenFresh = { slug: AppView.appData.slug, token: 'tok-1', at: Date.now() };
   AppView.iframeToken = 'tok-1';
   AppView.iframeTokenSlug = 'usernode-2d5619';
 
@@ -205,7 +206,7 @@ test('the preview iframe is the SAME element across every overlay state change',
   const { AppView, iframe, bridge } = h;
 
   // Open a verified preview: the fast path assigns src once.
-  AppView.swapToStaging('https://preview.example', null, { verified: true });
+  await AppView.swapToStaging('https://preview.example', null, { verified: true });
   assert.equal(bridge.frame(), iframe, 'the bridge still hands out the same element');
   assert.equal(iframe.loads, 1, 'one navigation for the open');
   assert.equal(bridge.stats().navigations, 1, 'and the bridge counted exactly one');
@@ -244,7 +245,7 @@ test('the preview iframe is the SAME element across every overlay state change',
   assert.equal(iframe.loads, 1, 'clearing src is not a navigation');
   assert.equal(bridge.isOpen(), false, 'and the overlay is closed');
 
-  AppView.swapToStaging('https://preview.example', null, { verified: true });
+  await AppView.swapToStaging('https://preview.example', null, { verified: true });
   assert.equal(bridge.frame(), iframe, 'reopen reuses the very same iframe');
   assert.equal(iframe.loads, 2, 'the reopen is the second real navigation');
 });
@@ -255,7 +256,7 @@ test('a "Test this change" retarget navigates once, and only when the src differ
 
   // #127/#237: opening with testing notes + jump lands straight on the deep
   // link and auto-shows the panel.
-  AppView.swapToStaging('https://preview.example', { md: 'do the thing', path: '/deep' }, { verified: true, jump: true });
+  await AppView.swapToStaging('https://preview.example', { md: 'do the thing', path: '/deep' }, { verified: true, jump: true });
   assert.equal(iframe.loads, 1, 'one navigation to the deep link');
   assert.match(iframe.src, /\/deep\?token=tok-1$/, 'jumped to the testing path');
   assert.equal(bridge.isTestPanelHidden(), false, 'the panel auto-opened for the jump path');
@@ -272,7 +273,7 @@ test('a "Test this change" retarget navigates once, and only when the src differ
 test('the visual-compare overlay opens over the preview without disturbing it', async () => {
   const h = await makeHarness();
   const { AppView, iframe, bridge } = h;
-  AppView.swapToStaging('https://preview.example', null, { verified: true });
+  await AppView.swapToStaging('https://preview.example', null, { verified: true });
   const win = iframe.contentWindow;
 
   // openVisualComparison needs a tile; the ids are 32-hex-validated there.
@@ -296,7 +297,7 @@ test('the visual-compare overlay opens over the preview without disturbing it', 
 test('a token refresh re-points the SAME element, and only for its own app', async () => {
   const h = await makeHarness();
   const { AppView, iframe, bridge } = h;
-  AppView.swapToStaging('https://preview.example', null, { verified: true });
+  await AppView.swapToStaging('https://preview.example', null, { verified: true });
   const first = iframe.src;
   assert.equal(iframe.loads, 1);
 
@@ -456,7 +457,7 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
 
   // And the drive above never asked the document for an overlay-owned node.
   const h = await makeHarness();
-  h.AppView.swapToStaging('https://preview.example', null, { verified: true });
+  await h.AppView.swapToStaging('https://preview.example', null, { verified: true });
   h.AppView._setStagingMode('docked');
   h.AppView._updateStagingModeUi();
   h.AppView.closeStagingOverlay();
@@ -477,4 +478,21 @@ test('preview background changes do not navigate and clear with the preview', as
   assert.equal(h.store.get().background, '#0a0d14');
   h.bridge.clearSrc();
   assert.equal(h.store.get().background, '');
+});
+
+test('#1993 React bridge exposes retry state and clears it without replacing the iframe', async () => {
+  const h = await makeHarness();
+  h.AppView._mintToken = async () => null;
+  await h.AppView.swapToStaging('https://preview.example', null, { verified: true });
+  assert.equal(h.store.get().loaderRetry, true);
+  assert.equal(h.iframe.loads, 0, 'no unauthenticated navigation');
+  assert.equal(h.bridge.frame(), h.iframe);
+  h.AppView._mintToken = async () => 'retry-token';
+  await h.handlers.onRetry();
+  assert.equal(h.store.get().loaderRetry, false);
+  assert.equal(h.iframe.loads, 1);
+  assert.equal(h.bridge.frame(), h.iframe, 'retry keeps the same React-owned iframe');
+  assert.match(h.iframe.src, /token=retry-token$/);
+  assert.match(OVERLAY, /useHiddenClass\(retryRef, !state\.loaderRetry\)/);
+  assert.match(OVERLAY, /stagingHandlers\.onRetry\?\.\(\)/);
 });

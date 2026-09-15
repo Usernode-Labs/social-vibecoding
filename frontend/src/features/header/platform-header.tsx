@@ -45,6 +45,7 @@ import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
+import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -225,10 +226,13 @@ export function PlatformHeader() {
     window.Notifications?.init();
   }, []);
 
-  // Chromeless mode hides the bar and floats the "Open in Usernode" pill in
+  // Chromeless mode hides the bar and floats the "Open in Homeroom" pill in
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  useNativeBackNavigation(nativeBackEnabled({
+    visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
+  }));
 
   return (
     <>

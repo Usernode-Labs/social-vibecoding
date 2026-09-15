@@ -22,6 +22,7 @@
  * header gives the reason.
  */
 
+import { AppSettingsDialog } from './app-settings';
 import { CreateAppDialog } from './create-app';
 import { RenameAppDialog } from './rename-app';
 import { CloseIssueDialog } from './close-issue';
@@ -58,6 +59,7 @@ export function Dialogs() {
           existing dialog keeps its byte position in the built document.
       */}
       <WalletRecoveryDialog />
+      <AppSettingsDialog />
     </>
   );
 }

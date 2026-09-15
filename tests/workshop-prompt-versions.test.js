@@ -31,8 +31,11 @@ const STAGES = {
   discovery: {
     constant: 'WORKSHOP_DISCOVERY_VERSION',
     builder: llm.generateWorkshopThemeDefinitions,
-    // version → hash of the builder's source at that version
-    pinned: { 1: '9561f5061d176cc6' },
+    // version → hash of the builder's source at that version.
+    // 2 puts the call on 'medium' effort: at the default ('high') it spent
+    // its 16000 token budget thinking and hit the output limit before its
+    // JSON finished, which froze one board's categories for 17 hours.
+    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e' },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',
@@ -48,7 +51,10 @@ const STAGES = {
     // cards and adds the breadth rule, after a week of 268 commits across
     // eight areas was summarised as "mostly reshaped the Workshop and Dev
     // board" (#1921).
-    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b' },
+    // 4 halves the length and swaps "name the breadth" for two rules that
+    // survive twelve words: two clauses rather than a list, and lead by the
+    // COUNT of items in an area rather than by how visible it is.
+    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b', 4: '5ae848d3fe65b9d1' },
   },
 };
 

@@ -51,6 +51,12 @@ function defaultHandler(sql, params = []) {
   if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql) || /pg_advisory_xact_lock/.test(sql)) {
     return { rows: [] };
   }
+  // App-delete authorization now has a per-app sole-contributor path, so
+  // this test supplies a real non-owned app for the view-only admin rather
+  // than relying on the old global pre-gate.
+  if (/SELECT \* FROM apps WHERE slug = \$1/.test(sql)) {
+    return { rows: scenario.deleteApp ? [scenario.deleteApp] : [] };
+  }
   // GET /api/admin/users list.
   if (/FROM users u/.test(sql)) return { rows: scenario.userList || [] };
   // Per-user app-quota edit locks and reads the current value before writing.
@@ -117,12 +123,20 @@ test('PUT /api/admin/users/:id/app-quota — view-only admin 403, full admin ok'
 
 test('DELETE /api/apps/:slug — view-only admin 403, full admin passes the gate', async () => {
   currentUser = VIEW_ADMIN;
+  scenario.deleteApp = {
+    id: 17,
+    slug: 'demo',
+    created_by: NORMAL.id,
+    runtime_name: null,
+    container_id: null,
+  };
   let res = await req('DELETE', '/api/apps/demo');
   assert.equal(res.status, 403);
 
   // Full admin clears the capability gate; the app doesn't exist in the
   // stub so it falls through to 404 — the point is it's NOT 403.
   currentUser = FULL_ADMIN;
+  scenario.deleteApp = null;
   res = await req('DELETE', '/api/apps/demo');
   assert.notEqual(res.status, 403);
 });
@@ -259,8 +273,12 @@ test('admin-approval (PR): a full admin yes-vote satisfies, a view-only one does
   assert.equal(await adminApproval.hasAdminYesVote(viewYes, 1), false);
 });
 
-test('admin-approval (PR): the locked-app gate is scoped to the reviewed head', async () => {
-  const head = 'a'.repeat(40);
+test('admin-approval (PR): the locked-app gate is scoped to the approval epoch, not the commit', async () => {
+  // #2100 / #2095: this predicate was the last tally still keyed on the
+  // vote's head_sha. A mechanical sync moves the head and keeps the epoch,
+  // so the admin's yes kept satisfying "enough approvals" while this gate
+  // said no admin had voted — and asked the admin who had just voted yes to
+  // vote yes again, which is a no-op for an unchanged vote.
   let captured = null;
   const pool = {
     async query(sql, params) {
@@ -268,9 +286,12 @@ test('admin-approval (PR): the locked-app gate is scoped to the reviewed head', 
       return { rows: [] };
     },
   };
-  await adminApproval.hasAdminYesVote(pool, 9, head);
-  assert.match(captured.sql, /pv\.head_sha = \$2/);
-  assert.deepEqual(captured.params, [9, head]);
+  await adminApproval.hasAdminYesVote(pool, 9);
+  assert.match(captured.sql, /pv\.approval_epoch = cs\.approval_epoch/,
+    'counts the vote iff it belongs to the current approval epoch');
+  assert.doesNotMatch(captured.sql, /head_sha/,
+    'the commit the admin happened to see is not part of the rule');
+  assert.deepEqual(captured.params, [9]);
 });
 
 test('admin-approval (issue): a full admin up-vote satisfies, a view-only one does not', async () => {

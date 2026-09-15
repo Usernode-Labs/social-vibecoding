@@ -21,6 +21,7 @@ const mod = () => (api || (api = loadTsx(
 
 function composerHtml(draft, posting = false) {
   return renderToHtml(createElement(mod().FeedReplyComposer, {
+    slug: 'usernode-2d5619',
     draft,
     posting,
     onDraftChange: () => {},
@@ -36,7 +37,13 @@ test('the reply is a one-row textarea that grows with its controlled value', () 
     SOURCE.indexOf('export function FeedReplyComposer'),
     SOURCE.indexOf('\nexport function FeedThread')
   );
-  assert.doesNotMatch(component, /onKeyDown/,
+  // #2145 gave the field a keydown handler — for ⌘/Ctrl+Enter and for the
+  // `@` list's keys while it is open — but plain Enter is still the
+  // textarea's own, so it still adds a line (tests/feed-reply-mentions.test.js
+  // covers the chord itself).
+  assert.match(component, /if \(!isSendChord\(e\)\) return;/,
+    'only the modifier chord submits from the keyboard');
+  assert.doesNotMatch(component, /key === 'Enter' && !e\.shiftKey/,
     'plain Enter keeps the textarea default: insert a newline');
 
   const html = composerHtml('First line\nSecond line');
@@ -162,7 +169,12 @@ test('the Workshop staging route requires both the textarea and arrow', () => {
   assert.ok(check, 'a declared check names this change');
   // The row has to be unfolded for the composer to exist, which is what the
   // ?shot=feed-comments deep link does to the first issue row.
-  assert.equal(check.path, '/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop');
+  //
+  // ?ws=all JOINED IT when the lander became three tabs. The rows the deep
+  // link unfolds are the category list's, and that list is one tab in now —
+  // without the tab the route lands on Current status and there is no row to
+  // unfold, which is how staging failed this check rather than this file.
+  assert.equal(check.path, '/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop');
   assert.match(check.expectSelector, /textarea\[aria-label="Reply to this item"\]/);
   assert.match(check.expectSelector, /button\[aria-label="Send reply"\]:disabled/);
 });

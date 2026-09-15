@@ -69,8 +69,19 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
   + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
   + 'flex-1 min-w-[10rem]';
 
+/**
+ * #1935: the two one-tap filters for the viewer's own board. They are the
+ * same chip as everything else in the strip, as TOGGLES — selected while on,
+ * with aria-pressed saying so — rather than options buried in the dialog,
+ * because "what is mine" is the filter people reach for most.
+ */
+const QUICK_FILTERS: Array<{ key: 'assignedToMe' | 'createdByMe'; label: string }> = [
+  { key: 'assignedToMe', label: 'Assigned to you' },
+  { key: 'createdByMe', label: 'Created by you' },
+];
+
 export function KanbanFiltersView({
-  mounted, q, count, chips, seq,
+  mounted, q, count, chips, seq, quick,
 }: KanbanFiltersState) {
   if (!mounted) return null;
   return (
@@ -79,7 +90,7 @@ export function KanbanFiltersView({
         key={`q${seq}`}
         id="dev-kanban-search"
         type="search"
-        placeholder="Search title, author, or #"
+        placeholder="Search cards, comments, or #"
         defaultValue={q}
         aria-label="Filter cards"
         className={SEARCH_CLS}
@@ -95,6 +106,18 @@ export function KanbanFiltersView({
       >
         {count > 0 ? `Filters (${count})` : 'Filters'}
       </button>
+      {quick ? QUICK_FILTERS.map(({ key, label }) => (
+        <button
+          key={key}
+          type="button"
+          data-quick-filter={key}
+          aria-pressed={quick[key] ? 'true' : 'false'}
+          className={chipCls(quick[key])}
+          onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
+        >
+          {label}
+        </button>
+      )) : null}
       <span id="dev-kanban-active-chips" className="contents">
         {chips.map((chip) => (
           <button

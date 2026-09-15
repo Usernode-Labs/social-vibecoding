@@ -18,14 +18,21 @@
  * app that says what it is gets opened, and the directory is one tap away for
  * everything else.
  *
- * ── BOTH LANES SURVIVE, as two rails ──────────────────────────────────
+ * ── ONE LANE, NOT TWO ─────────────────────────────────────────────────
  *
- * Featured, then "Popular" (the most-used apps this viewer doesn't have).
- * The reference draws ONE rail, and merging the two would halve the block's
- * height — but the second lane is a deliberate decision (#949 hid it on
- * phones; the fix that brought it back at every width is asserted from
- * dapp.json), and a redesign is not the place to quietly undo it. Same card
- * in both, so the block reads as one idea at two levels of curation.
+ * Discover is ONE category. It used to draw two rails — the curated apps,
+ * then a "Popular" caption row, then the most-used apps this viewer doesn't
+ * have — and the caption was the only thing saying they were different. The
+ * distinction is an implementation detail of how the list is assembled, not
+ * something a reader of the home feed has to be told, so both sources now
+ * flow into a single continuous rail under the one "Discover" heading.
+ *
+ * What did NOT change: the ORDER. Curated first (by `featured_order`), then
+ * popular (by active users) — exactly the sequence the two rails drew in,
+ * concatenated. `discoverView` still derives the two lists separately and
+ * both counts are still stamped on the article, because they describe the
+ * block's composition and dapp.json selects on them; only the rendering is
+ * flat.
  *
  * ── The tiles keep Home's wiring ─────────────────────────────────────
  *
@@ -34,7 +41,10 @@
  * `.card-menu-btn`, so the CARD keeps those class names however it is drawn;
  * it attaches listeners and writes no markup, which is what keeps one owner
  * for the subtree. Per LANE, not per block: a lane whose cards were never
- * wired looks identical in a screenshot while every tap in it is dead.
+ * wired looks identical in a screenshot while every tap in it is dead. With
+ * the merge there is exactly one lane to hand it, which retires the whole
+ * class of bug where the sweep bound the first rail and left the second
+ * inert.
  *
  * It is also IDEMPOTENT (#1567), which the effect below now depends on: the
  * badge really does flip between renders since an add repaints in place, and
@@ -56,13 +66,15 @@
  * a scroll cancels the press rather than competing with it.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PlusWideIcon } from '@/components/ui/icons';
+
+import { clampFrame } from '../../../lib/illustration-framing';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
-import { PanelShell, tintOf } from './ui';
+import { PanelShell, cardTint } from './ui';
 
 function home(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -107,18 +119,47 @@ function CardArt({ icon }: { icon: IconView }) {
  * says nothing rather than padding itself with filler. The name and the art
  * are the floor.
  */
-function DiscoverCard({ tile }: { tile: DiscoverTileView }) {
+function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
+  const [failed, setFailed] = useState(false);
+  const [darkFailed, setDarkFailed] = useState(false);
+  const art = tile.illustration;
+  if (!art || failed) return <CardArt icon={tile.icon} />;
+  // Re-clamped on render, not trusted as stored: the art `cover`s the block,
+  // so a zoom under 1 or an offset past the cover limit would open a gutter
+  // of tint along one edge. The editor cannot produce one; the API's framing
+  // range is wider than the editor's, so the card does not assume it.
+  const frame = clampFrame(art);
+  const style = { transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` };
+  const hasDark = !!art.darkUrl && !darkFailed;
+  return <>
+    <img src={art.url} alt="" draggable={false}
+      className={`home-discover-illustration ${hasDark ? 'illustration-light' : ''}`}
+      onError={() => setFailed(true)} style={style} />
+    {hasDark ? <img src={art.darkUrl!} alt="" draggable={false}
+      className="home-discover-illustration illustration-dark"
+      onError={() => setDarkFailed(true)} style={style} /> : null}
+  </>;
+}
+
+export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: DiscoverTileView; preview?: boolean; previewTheme?: 'light' | 'dark' }) {
   const { added } = tile;
   return (
     <div
-      className={`app-card home-discover-card ${tintOf(tile.slug)} relative flex flex-col cursor-pointer`}
+      // The tint saved with the illustration when its author picked one, and
+      // the hash of the slug when they did not — see `cardTint`. Both branches
+      // are pure functions of props, so the prerender and the client agree.
+      className={`app-card home-discover-card ${cardTint(tile.slug, tile.illustration?.tint)} relative flex flex-col cursor-pointer`}
+      data-preview-theme={preview ? previewTheme : undefined}
       data-slug={tile.slug}
       data-status={tile.status}
       {...(tile.demo ? { 'data-demo': 'true' } : null)}
     >
       <div className="home-discover-art relative">
-        <CardArt icon={tile.icon} />
+        <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
         <button
+          type="button"
+          disabled={preview}
+          tabIndex={preview ? -1 : undefined}
           className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
@@ -221,6 +262,14 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
  * continues (see `.home-discover-rail` in app.css).
  */
 export function DiscoverPanel({ view }: { view: DiscoverView }) {
+  // Curated first, then popular — the same order the two rails drew in, now
+  // as one list. Deduped by slug because the two derivations are independent:
+  // `popularApps` excludes `featured` today, but a flat lane is where that
+  // would show up as the same card twice rather than as one card per rail.
+  const seen = new Set<string>();
+  const tiles = [...view.featured, ...view.popular]
+    .filter((tile) => (seen.has(tile.slug) ? false : (seen.add(tile.slug), true)));
+
   return (
     <PanelShell
       panelKey={view.key}
@@ -228,25 +277,37 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       plate="none"
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
     >
-      {view.featured.length ? (
-        <Lane tiles={view.featured} />
+      {tiles.length ? (
+        <Lane tiles={tiles} />
       ) : (
-        <p className="home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-          Nothing featured right now. Browse the directory.
-        </p>
+        /* #1913: the empty state is a CARD, not a grey caption. It was one
+           centred 12px line, which read as an error note where the rail of
+           cards usually is. Now it wears the rail's own card language — a
+           tinted plate with a hairline — and the whole plate is the way on
+           to the directory, the one thing there is to do here. A fixed tint
+           rather than `cardTint`: it is not an app, so there is no slug to
+           hash, and a constant keeps the prerender and the client equal.
+
+           It is the WHOLE block's empty state now. With two rails it stood
+           in for the curated half only, so it could sit directly above six
+           perfectly good popular cards; one lane makes that a contradiction,
+           and the wording says "discover" because that is the category it is
+           reporting on. */
+        <a
+          href="#apps"
+          className="home-discover-lane home-discover-empty home-tint-2 flex items-center gap-3"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+              Nothing to discover right now
+            </span>
+            <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+              Browse the directory to find an app to try.
+            </span>
+          </span>
+          <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+        </a>
       )}
-      {/*
-          No popular apps → no divider and no second rail, rather than a second
-          apology stacked under the first.
-      */}
-      {view.popular.length ? (
-        <>
-          <div className="home-discover-divider flex-none flex items-center px-2.5">
-            <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Popular</span>
-          </div>
-          <Lane tiles={view.popular} extraClass="home-discover-popular" />
-        </>
-      ) : null}
     </PanelShell>
   );
 }

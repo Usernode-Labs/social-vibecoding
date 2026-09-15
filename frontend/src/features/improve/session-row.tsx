@@ -16,9 +16,10 @@
  *
  *   * A SECOND LINE. The title leads; the app, the state and the time follow
  *     underneath in the caption size. Nothing else in this panel is two lines.
- *   * A LEADING TILE, not a dot. The app's own artwork at 32px, with the state
- *     as a badge on its corner. It answers "which app" by looking rather than
- *     by spending up to 35% of the row's width on a truncated name.
+ *   * A LEADING TILE, not a dot. The app's own artwork at 32px. It answers
+ *     "which app" by looking rather than by spending up to 35% of the row's
+ *     width on a truncated name. It wore the state as a badge on its corner
+ *     too, until #1946/#1947 — see "The badge went with it" below.
  *   * A STATUS PILL. Tinted, on the trailing edge — the one loud element in a
  *     row, and the thing a viewer is actually scanning for.
  *
@@ -63,6 +64,8 @@ export type SessionRowView = {
   href: string;
   status: string | null;
   busy: boolean;
+  /** Waiting on the user — see awaitsInput in ./improve-controller.js (#1959). */
+  awaitingInput: boolean;
   lastActivityAt?: string | null;
 };
 
@@ -81,7 +84,14 @@ export type SessionRowView = {
  *     turn is in flight. The amber is the platform's own "something is
  *     building" colour, borrowed from the header's deploy dot.
  *   - READY, solid emerald once it stops: the success green that says the
- *     change is back with you.
+ *     change is back with you. It reads "Ready for your input" ONLY when the
+ *     session is actually waiting on the user — a question with answer chips
+ *     still up, or a finished spec whose Questions section is open (#1959,
+ *     `awaitingInput`). A finished spec with nothing to ask and a finished
+ *     build are plain "Ready": the feedback that asked for the longer label
+ *     asked for it to be true, and a pill that says "for your input" on
+ *     every idle row says it on none. Same state, same tone — the words
+ *     carry the qualification, not a fourth colour.
  *   - HANDED OFF, outlined, for a work order (#1417). Its agent runs on the
  *     user's own machine, where the platform cannot see whether a turn is in
  *     flight, so the row states what it knows instead of borrowing a liveness
@@ -99,21 +109,47 @@ export type SessionRowView = {
  * app-launch cover. All of those are `.dc-status-spinner-arc`, so this is now
  * too — and the reporter of #1597 read the difference exactly that way.
  *
- * The badge KEEPS its amber and LOSES its animation. Both halves are
- * deliberate. The colour is what makes a column of tiles scannable without
- * reading any of them, which is the badge's whole job; the motion is the
- * pill's now, and one fact wants one cue — the same reasoning that retired
- * #improve-version-dot from the button that opens this panel, where a glyph
- * and a dot were saying the same thing twice.
+ * The badge KEPT its amber and LOST its animation. Both halves were
+ * deliberate: the colour was meant to make a column of tiles scannable
+ * without reading any of them, and the motion became the pill's, because one
+ * fact wants one cue — the same reasoning that retired #improve-version-dot
+ * from the button that opens this panel, where a glyph and a dot were saying
+ * the same thing twice.
+ *
+ * ── The badge went with it (#1946, #1947) ──────────────────────────────
+ *
+ * That last argument finished the job a round later. App feedback triage
+ * 2026-09-10 filed the corner badge twice, once per colour: row 39a asked to
+ * "replace the static green dot with an active work indicator", row 39b to
+ * remove the yellow one and say "sessions actively thinking" some other way.
+ * Two rows, one dot — and both readings are right about it:
+ *
+ *   - EMERALD said "this change is not doing anything", in the platform's
+ *     success colour, on nearly every row in the list. It never moved and it
+ *     never meant work; a reader scanning for what was running had to know
+ *     that green was the colour of NOT running.
+ *   - AMBER said "a turn is in flight" — on a row whose pill was already
+ *     saying exactly that, in the same amber, in a word, with the arc
+ *     turning. A second unlabelled voice for one fact is what #1597 took off
+ *     this badge's motion and #1610 took off the button that opens the panel.
+ *
+ * So the corner badge is gone, and the activity indicator the feedback asked
+ * for is the PILL — which is where it already was. It says `Working` with the
+ * platform's arc while a turn is in flight and drops both the moment the turn
+ * ends, and it reads that from the live session store rather than from the
+ * last payload (#1958, `SessionState.isBusy`), so it is about work happening
+ * rather than about a lifecycle. The arc is `aria-hidden`; the word beside it
+ * is what a screen reader gets. An idle row carries no dot at all — nothing
+ * on it is green any more except the pill's own tinted `Ready`, which says
+ * what it means in words.
  */
 function stateOf(session: SessionRowView): {
-  label: string; pill: string; badge: string; spinner: boolean;
+  label: string; pill: string; spinner: boolean;
 } {
   if (session.busy) {
     return {
       label: 'Working',
       pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
-      badge: 'bg-amber-400',
       spinner: true,
     };
   }
@@ -121,14 +157,12 @@ function stateOf(session: SessionRowView): {
     return {
       label: 'Handed off',
       pill: 'border border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400',
-      badge: 'bg-white dark:bg-zinc-900 ring-1 ring-inset ring-zinc-400 dark:ring-zinc-500',
       spinner: false,
     };
   }
   return {
-    label: 'Ready',
+    label: session.awaitingInput ? 'Ready for your input' : 'Ready',
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-    badge: 'bg-emerald-500',
     spinner: false,
   };
 }
@@ -163,43 +197,36 @@ const PILL_BASE =
 
 /**
  * The 32px app tile. `xs` in the widget language's own scale
- * (@/components/ui/icon-tile), hand-rolled here for one reason: the badge has
- * to be positioned against it, and IconTile takes children rather than a
- * corner slot. Everything else about it — the neutral face, the hairline, the
- * rounding — is that component's, deliberately, so a change to the launcher's
- * tiles is a change to these.
+ * (@/components/ui/icon-tile), hand-rolled here rather than borrowed: this
+ * one is a <span> inside an anchor and it CLIPS the app's artwork behind a
+ * hairline, neither of which IconTile does. Everything else about it — the
+ * neutral face, the size, the rounding — is that component's, deliberately,
+ * so a change to the launcher's tiles is a change to these.
+ *
+ * It was a positioning context as well until #1946: the state's corner badge
+ * was absolutely positioned against it. With the badge retired the tile
+ * answers "which app" and nothing else, so `relative` and the wrapper that
+ * carried it are gone with it.
  */
 function AppTile({ session }: { session: SessionRowView }) {
   const { icon } = session;
-  const state = stateOf(session);
   return (
-    <span className="relative shrink-0">
-      <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
-        {icon.kind === 'image' ? (
-          <img
-            src={icon.src}
-            alt=""
-            loading="lazy"
-            draggable={false}
-            className="h-full w-full object-cover"
-          />
-        ) : icon.kind === 'emoji' ? (
-          <span className="text-base leading-none" aria-hidden="true">{icon.emoji}</span>
-        ) : (
-          <span className="text-sm font-semibold leading-none text-zinc-600 dark:text-zinc-300">
-            {icon.letter}
-          </span>
-        )}
-      </span>
-      {/* The state, again, at a glance — the pill spells it out, and this is
-          what makes a column of tiles scannable without reading any of them.
-          `border-2` in the panel's own surface colour is what cuts it out of
-          the tile rather than sitting on top of it. */}
-      <span
-        className={'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full '
-          + 'border-2 border-white dark:border-zinc-900 ' + state.badge}
-        aria-hidden="true"
-      />
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
+      {icon.kind === 'image' ? (
+        <img
+          src={icon.src}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          className="h-full w-full object-cover"
+        />
+      ) : icon.kind === 'emoji' ? (
+        <span className="text-base leading-none" aria-hidden="true">{icon.emoji}</span>
+      ) : (
+        <span className="text-sm font-semibold leading-none text-zinc-600 dark:text-zinc-300">
+          {icon.letter}
+        </span>
+      )}
     </span>
   );
 }

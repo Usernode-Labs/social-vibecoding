@@ -27,6 +27,10 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const BOARD_FRAME_SRC = read('frontend/src/features/dev-board/board-frame.tsx');
+// `#dev-actions` — the filter host and the "+" — is its own component since the
+// Workshop gained a copy of the toolbar in its pane. The row's own assertions
+// read it directly; everything else about the frame still reads the frame.
+const ACTIONS_SRC = read('frontend/src/features/dev-board/actions-row.tsx');
 const FILTERS_SRC = read('frontend/src/features/dev-board/kanban-filters.tsx');
 
 function makeAppView(over) {
@@ -188,12 +192,12 @@ test('the empty filter host reserves the loaded search row height', () => {
   assert.match(FILTERS_SRC, /if \(!mounted\) return null;/,
     'the loading filter island has no child that could hold the row open');
   assert.match(
-    BOARD_FRAME_SRC,
+    ACTIONS_SRC,
     /readOnly && selfHosted \? 'hidden' : ''/,
     'the add button cannot be the loading spacer for every viewer'
   );
 
-  const host = BOARD_FRAME_SRC.match(
+  const host = ACTIONS_SRC.match(
     /id="dev-kanban-filterbar" className="([^"]+)"/
   );
   assert.ok(host, 'the filter host keeps a literal, auditable class list');

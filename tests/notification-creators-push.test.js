@@ -4,8 +4,8 @@
 // the four invite kinds, stale_pr, check_failed, the pr_proposed fan-out
 // targeting rules, and the filterToCollaborators visibility scope. Every
 // kind asserted here is also checked against the closed push policy
-// (ALLOWED_KINDS) so a dispatch site cannot drift out of the reviewed
-// kind/category registry without this file noticing.
+// (ALLOWED_KINDS), including intentional in-app-only exclusions, so a
+// dispatch site cannot drift without this file noticing.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -128,6 +128,40 @@ test('a missing inviter degrades to a system notification, not a failure', async
   const pool = fakePool({});
   await notifications.createCollabInviteNotification(pool, { appId: 10, recipientId: 7 });
   assert.deepEqual(pool.state.inserts[0].params, [7, 10, null]);
+});
+
+// ── managed OpenRouter review ──────────────────────────────────────────
+
+test('managed OpenRouter notifications are actionable review alerts for full admins only', async () => {
+  const pool = fakePool({});
+  const rows = await notifications.createManagedOpenRouterReviewNotifications(pool, {
+    sourceUserId: 7,
+    managedKeyId: 19,
+  });
+  const insert = pool.state.inserts[0];
+
+  assert.equal(ALLOWED_KINDS.has('openrouter_key_review'), false,
+    'admin review alerts remain in-app only');
+  assert.match(insert.sql,
+    /SELECT admin\.id, \$1, 'openrouter_key_review', \$2::varchar\(32\)/);
+  assert.match(insert.sql, /admin\.is_admin = TRUE AND admin\.admin_readonly = FALSE/,
+    'read-only admins are excluded because they cannot reconcile a key');
+  assert.match(insert.sql,
+    /existing\.kind = 'openrouter_key_review'.*existing\.read_at IS NULL/,
+    'one unread alert per admin and key');
+  assert.doesNotMatch(insert.sql, /openrouter_key_created/,
+    'successful issuance is never an inbox event');
+  assert.deepEqual(insert.params, [7, '19']);
+  assert.equal(rows.length, 1);
+});
+
+test('managed OpenRouter review alerts require both an owner and a key', async () => {
+  for (const input of [{ sourceUserId: 7 }, { managedKeyId: 19 }, {}]) {
+    const pool = fakePool({});
+    assert.deepEqual(
+      await notifications.createManagedOpenRouterReviewNotifications(pool, input), []);
+    assert.equal(pool.state.queries.length, 0);
+  }
 });
 
 // ── stale_pr / check_failed ─────────────────────────────────────────────

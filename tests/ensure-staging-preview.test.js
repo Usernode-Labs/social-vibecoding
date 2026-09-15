@@ -48,7 +48,7 @@ function makeDom() {
   };
   ['staging-overlay', 'staging-iframe', 'staging-back', 'staging-loader',
     'staging-loader-title', 'staging-loader-sub', 'staging-url-label',
-    'staging-test-btn', 'staging-testing-panel'].forEach(mk);
+    'staging-test-btn', 'staging-retry-btn', 'staging-testing-panel'].forEach(mk);
   return {
     els,
     document: {
@@ -91,6 +91,8 @@ function makeAppView(fetchImpl, { stubSwap = true } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
+  AppView.appData = { slug: 'usernode-2d5619', self_hosted: true };
+  AppView._tokenFresh = { slug: AppView.appData.slug, token: 'test-token', at: Date.now() };
   // Spy on swapToStaging — the terminal "open the iframe" step. We don't want
   // its real readiness machinery, just to know it was called and with what.
   const swaps = [];
@@ -194,7 +196,7 @@ test('#816 a verified {ready} opens the iframe with ZERO readiness probes', asyn
 
   assert.deepEqual(calls, ['/api/sessions/7/ensure-staging'],
     'the ensure POST is the only request — the host is never probed');
-  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/',
+  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=test-token',
     'iframe pointed at the preview immediately');
   assert.doesNotMatch(loaderText(dom), REBUILD_COPY, 'never shows the rebuild estimate');
   assert.equal(dom.els['staging-loader'].classList._hidden, false,
@@ -247,7 +249,7 @@ test('#816 an UNVERIFIED {ready} falls back to the readiness poll', async () => 
 
   assert.equal(calls.length, 2, 'the host IS probed when the server could not verify it');
   assert.equal(calls[1], 'https://live.example', 'probes the origin root, not a deep link');
-  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/', 'opens once the host answers');
+  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=test-token', 'opens once the host answers');
 });
 
 test('#816 only the {rebuilding} branch shows the 20–60 second estimate', async () => {
@@ -314,4 +316,156 @@ test('#816 no loader copy anywhere claims a TLS certificate is being issued', as
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const loaderBlock = html.slice(html.indexOf('id="staging-loader"'), html.indexOf('id="staging-loader"') + 700);
   assert.doesNotMatch(loaderBlock, /TLS certificate/i, 'index.html default copy is neutral too');
+});
+
+// #1993: drive the real token mint and frame assignment together. Existing
+// readiness cases above start with a fresh cached token; these deliberately
+// exercise missing, delayed, expired, and failed credentials.
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+const tokenResponse = (token) => ({ ok: true, json: async () => ({ token }) });
+const readyResponse = () => ({ ok: true, json: async () => ({ status: 'ready', verified: true, url: 'https://live.example' }) });
+
+function authHarness(fetchImpl) {
+  const h = makeAppView(fetchImpl, { stubSwap: false });
+  h.AppView._tokenFresh = null;
+  return h;
+}
+
+test('#1993 preview joins a delayed initial mint and never navigates without its token', async () => {
+  const response = deferred();
+  let mints = 0;
+  const { AppView, dom } = authHarness(async (url) => {
+    if (url.includes('/iframe-token')) { mints++; return response.promise; }
+    return readyResponse();
+  });
+  const initial = AppView.refreshToken('usernode-2d5619');
+  const opening = AppView.ensureStaging(7, null, null, {});
+  await tick();
+  assert.equal(mints, 1, 'joins the in-flight request started by Dev navigation');
+  assert.equal(dom.els['staging-iframe'].src, '', 'no tokenless navigation');
+  assert.match(dom.els['staging-loader-title'].textContent, /signing in/i);
+  response.resolve(tokenResponse('joined-token'));
+  await Promise.all([initial, opening]);
+  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=joined-token');
+});
+
+test('#1993 failed token request exposes a retry that obtains a new token', async () => {
+  let mints = 0;
+  const { AppView, dom } = authHarness(async () => {
+    mints++;
+    return mints === 1 ? { ok: false } : tokenResponse('retry-token');
+  });
+  await AppView.swapToStaging('https://live.example', null, { verified: true });
+  assert.equal(dom.els['staging-iframe'].src, '');
+  assert.match(dom.els['staging-loader-title'].textContent, /could not sign in/i);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false);
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(mints, 2);
+  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=retry-token');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+});
+
+test('#1993 a timed-out token request can be retried and does not hold the single-flight slot', async () => {
+  let attempts = 0;
+  const h = authHarness(async (_url, { signal }) => {
+    if (++attempts > 1) return tokenResponse('after-timeout');
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+  });
+  h.AppView.TOKEN_REQUEST_TIMEOUT_MS = 5;
+  // Keep the short deadline referenced; the shared harness normally unrefs timers.
+  h.sandbox.setTimeout = setTimeout;
+  await h.AppView.swapToStaging('https://live.example', null, { verified: true });
+  assert.equal(h.dom.els['staging-iframe'].src, '');
+  await h.AppView._staging()._handlers.onRetry();
+  assert.equal(h.dom.els['staging-iframe'].src, 'https://live.example/?token=after-timeout');
+  h.AppView.closeStagingOverlay();
+});
+
+test('#1993 read-only previews authenticate without requesting a rebuild', async () => {
+  const calls = [];
+  const { AppView, dom } = authHarness(async (url) => {
+    calls.push(url);
+    return tokenResponse('reader-token');
+  });
+  AppView.appData.can_collaborate = false;
+  await AppView.ensureStaging(7, 'https://live.example', null, {});
+  assert.deepEqual(calls, ['/api/iframe-token?app=usernode-2d5619', 'https://live.example']);
+  assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=reader-token');
+});
+
+test('#1993 rebuild completion acquires authentication before navigating', async () => {
+  const calls = [];
+  const { AppView, dom } = authHarness(async (url) => {
+    calls.push(url);
+    if (url.includes('ensure-staging')) return { ok: true, json: async () => ({ status: 'rebuilding' }) };
+    return tokenResponse('rebuilt-token');
+  });
+  await AppView.ensureStaging(7, null, null, {});
+  assert.equal(dom.els['staging-iframe'].src, '');
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  assert.equal(dom.els['staging-iframe'].src, 'https://rebuilt.example/?token=rebuilt-token');
+  assert.ok(calls.includes('/api/iframe-token?app=usernode-2d5619'));
+});
+
+for (const action of ['close', 'switch app', 'new preview']) {
+  test(`#1993 ${action} cancels an older token completion`, async () => {
+    const response = deferred();
+    const { AppView, dom } = authHarness(async () => response.promise);
+    const opening = AppView.swapToStaging('https://old.example', null, { verified: true });
+    await tick();
+    let newer;
+    if (action === 'close') AppView.closeStagingOverlay();
+    if (action === 'switch app') AppView.appData = { slug: 'other-app' };
+    if (action === 'new preview') newer = AppView.swapToStaging('https://new.example', null, { verified: true });
+    response.resolve(tokenResponse('late-token'));
+    await Promise.all([opening, newer]);
+    assert.equal(dom.els['staging-iframe'].src, action === 'new preview' ? 'https://new.example/?token=late-token' : '');
+  });
+}
+
+test('#1993 app switch during ensure-staging cannot open the old URL under the new identity', async () => {
+  const response = deferred();
+  const { AppView, dom } = authHarness(async () => response.promise);
+  const opening = AppView.ensureStaging(7, null, null, {});
+  AppView.appData = { slug: 'other-app' };
+  response.resolve(readyResponse());
+  await opening;
+  assert.equal(dom.els['staging-iframe'].src, '');
+});
+
+test('#1993 app switch during rebuild ignores the old completion', async () => {
+  const { AppView, dom } = authHarness(async () => ({ ok: true, json: async () => ({ status: 'rebuilding' }) }));
+  await AppView.ensureStaging(7, null, null, {});
+  AppView.appData = { slug: 'other-app' };
+  await AppView.onStagingRebuildResult(7, { url: 'https://old.example' });
+  assert.equal(dom.els['staging-iframe'].src, '');
+});
+
+test('#1993 ignores another app’s cached token and an expired fresh-cache entry', async () => {
+  for (const cached of [
+    { slug: 'other-app', at: Date.now() },
+    { slug: 'usernode-2d5619', at: Date.now() - 61_000 },
+  ]) {
+    const h = authHarness(async (url) => {
+      assert.equal(url, '/api/iframe-token?app=usernode-2d5619');
+      return tokenResponse('correct-token');
+    });
+    h.AppView._tokenFresh = { ...cached, token: 'wrong-token' };
+    h.AppView.iframeToken = 'wrong-token';
+    h.AppView.iframeTokenSlug = 'other-app';
+    await h.AppView.swapToStaging('https://live.example', null, { verified: true });
+    assert.equal(h.dom.els['staging-iframe'].src, 'https://live.example/?token=correct-token');
+  }
+});
+
+test('#1993 token remains on the preview origin with a hostile testing path', async () => {
+  const h = authHarness(async () => tokenResponse('private-token'));
+  h.AppView.appData.self_hosted = false;
+  await h.AppView.swapToStaging('https://live.example', { path: '/\\attacker.example/path' }, { verified: true, jump: true });
+  assert.equal(h.dom.els['staging-iframe'].src, 'https://live.example/?token=private-token');
 });

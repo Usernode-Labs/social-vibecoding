@@ -125,6 +125,10 @@ test('every kind names itself the same way for every row of that kind', async ()
     [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Spec shared', 'Notifications overhaul'],
     [{ kind: 'mention', messageContent: 'can you take a look at the board?' },
       'Mentioned you', 'can you take a look at the board?'],
+    // #2161: the app_deleted row has no app row left, so the name it names
+    // is the one the creator stored in `detail`.
+    [{ kind: 'app_deleted', appName: null, appSlug: null, detail: 'Notes' },
+      'Deleted a shared app you contributed to', 'Notes'],
   ];
   for (const [n, label, subject] of cases) {
     const l = await lines(n);
@@ -167,6 +171,15 @@ test('the three conversation verbs lost their trailing preposition', async () =>
 
 // ─── 2. Nothing to name means two lines, not a blank one ────────────────
 
+test('a deletion attempt names the app under the row and the person on the row (#2161)', async () => {
+  const l = await lines({ kind: 'app_delete_attempted' });
+  assert.equal(l.label, 'Tried to delete this shared app');
+  assert.equal(l.subject, '', 'the app is the meta line\u2019s job');
+  assert.equal(l.meta, 'Notes · by @ada · 4m ago');
+  const gone = await lines({ kind: 'app_deleted', appName: null, appSlug: null, detail: 'Notes' });
+  assert.equal(gone.meta, 'Account · by @ada · 4m ago', 'no app row is left to name');
+});
+
 test('a kind that is entirely its own label carries no subject', async () => {
   for (const kind of ['collab_invite', 'collab_invite_accepted',
     'approver_invite', 'approver_invite_accepted']) {
@@ -189,7 +202,8 @@ test('no row can reach the renderer with an empty kind line', async () => {
     'agent_awaiting_input', 'collab_invite', 'approver_invite', 'mention',
     'reply', 'openrouter_key_created', 'openrouter_key_review',
     'conversation_message', 'conversation_invite', 'conversation_mention',
-    'conversation_reply', 'conversation_reaction', 'something_unheard_of'];
+    'conversation_reply', 'conversation_reaction', 'app_delete_attempted', 'app_deleted',
+    'something_unheard_of'];
   for (const kind of kinds) {
     const view = (await load())({ ...ROW, kind });
     assert.equal(typeof view.label, 'string', `${kind} has a label`);
@@ -197,13 +211,20 @@ test('no row can reach the renderer with an empty kind line', async () => {
   }
 });
 
-test('the two key rows keep the name as their subject and claim no actor', async () => {
+test('OpenRouter key rows name the provider, owner, and no false actor', async () => {
   // `sourceUsername` there is WHOSE key it is, not who did something, so
   // "by @them" would be a false claim — it stays on the subject line.
-  const l = await lines({ kind: 'openrouter_key_review', sourceUsername: 'grace' });
-  assert.equal(l.label, 'Company key needs review');
-  assert.equal(l.subject, '@grace');
-  assert.equal(l.meta, 'Admin · 4m ago', 'no by-line');
+  const review = await lines({ kind: 'openrouter_key_review', sourceUsername: 'grace' });
+  assert.equal(review.label, 'OpenRouter key needs admin review');
+  assert.equal(review.subject, '@grace');
+  assert.equal(review.meta, 'Admin · 4m ago', 'no by-line');
+
+  // Existing successful-issuance rows remain understandable even though
+  // successful provisioning no longer creates new ones.
+  const legacy = await lines({ kind: 'openrouter_key_created', sourceUsername: 'grace' });
+  assert.equal(legacy.label, 'OpenRouter access enabled');
+  assert.equal(legacy.subject, '@grace');
+  assert.equal(legacy.meta, 'Admin · 4m ago', 'no by-line');
 });
 
 // ─── 3. The renderer draws them in that order ───────────────────────────
@@ -268,7 +289,7 @@ test('the three lines are visually ranked, not three of the same thing', () => {
 
 test('a push test has clear account-level copy without inventing a completed session', async () => {
   const row = (await load())({ ...ROW, kind: 'test_alert', appName: null, appSlug: null, sessionId: null });
-  assert.equal(row.label, 'Usernode test alert');
+  assert.equal(row.label, 'Homeroom test alert');
   assert.equal(row.appLine, '');
   assert.match(row.segments[0].v, /You requested a push notification test/);
 });

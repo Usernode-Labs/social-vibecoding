@@ -54,8 +54,19 @@ const UNIT_CHECK_INDEX = -3;
 // Override for self-hosters whose worker image is named differently.
 const UNIT_SUITE_IMAGE = process.env.UNIT_SUITE_IMAGE || 'usernode-worker:latest';
 const UNIT_SUITE_TIMEOUT_MS = parseInt(process.env.UNIT_SUITE_TIMEOUT_MS, 10) || 600 * 1000;
-const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '4';
-const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '2g';
+// 4 → 8 CPUs, 2g → 4g. `node --test` fans out one process per file at
+// (available cores − 1), and node 22 reads the container's cgroup quota
+// for that, so the quota IS the concurrency: at 4 CPUs this repo's ~870
+// test files run three at a time and take 140-195s in the check pod. Three
+// processes kept only ~1.9 cores busy locally (86s; the rest is I/O waits
+// and timers), and seven took the same suite to 48s — the speed-up is
+// close to linear because the files are startup-bound, not compute-bound.
+// Memory follows the process count — every test process is a whole node
+// with the app's modules loaded, and an OOM-kill fails the row for a
+// reason that has nothing to do with the tests. 8 is the worker
+// LimitRange's per-container CPU ceiling.
+const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '8';
+const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '4g';
 const UNIT_SUITE_MAX_BUFFER = 32 * 1024 * 1024;
 
 // failureReason rides in test_results inside every proposal payload — keep
@@ -257,8 +268,9 @@ async function storeExpectedTests(pool, appId, total) {
 // the checks run then proceeds exactly as before this feature existed.
 // `onProgress(snapshot)` is called with the tracker's snapshot each time a
 // stdout line changes it, and once more with phase 'done' when the run
-// ends; the caller owns any throttling. Never throws.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null }) {
+// ends; the caller owns any throttling. Normal failures become check rows;
+// explicit cancellation propagates to the preview lifecycle owner.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -305,6 +317,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
       onStdoutLine: observe,
+      signal, previewRunId,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
@@ -326,6 +339,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     readSummary(result?.stdout);
     passed = true;
   } catch (err) {
+    if (signal?.aborted) throw signal.reason;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     reason = failureDetail(err.stdout, err.stderr, { timedOut });
@@ -340,6 +354,14 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
   });
 
+  return shapeOutcome({ passed, reason, graduated, summary });
+}
+
+// The unit-suite check as the checks pipeline consumes it: one extraRows
+// entry plus its check-history record. Shared by the live run above and the
+// harvest path below so the two can never drift in shape.
+function shapeOutcome({ passed, reason, graduated, summary }) {
+  const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
   return {
     row: {
       index: UNIT_CHECK_INDEX,
@@ -357,11 +379,44 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   };
 }
 
+// Harvest path (services/check-harvest.js): the suite's Job ran to an end
+// without the process that launched it, and this shapes the same outcome
+// from the Job's final output. `succeeded` is the Job's own verdict (exit
+// code 0), `graduated` the flag the launching run recorded in its manifest —
+// the history has not moved since. A caller that streamed the log while the
+// Job was still running passes its `tracker`; the summary counters are
+// re-fed regardless, which is idempotent (they replace, never add).
+async function outcomeFromLog({
+  pool, appId, sessionId, succeeded, stdout, stderr = '', timedOut = false,
+  graduated = false, tracker = null,
+}) {
+  const t = tracker || makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
+  for (const line of String(stdout || '').split('\n')) {
+    if (/^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) t.feed(line);
+  }
+  const passed = !!succeeded;
+  let reason = '';
+  if (!passed) {
+    reason = failureDetail(stdout, stderr, { timedOut });
+    if (!reason) reason = timedOut ? 'npm test timed out' : 'npm test failed';
+  }
+  const finalSnap = t.finish(passed);
+  const summary = finalSnap.summary || null;
+  if (summary && Number.isInteger(summary.tests)) await storeExpectedTests(pool, appId, summary.tests);
+  log.info('unit-suite', 'Unit suite outcome read from its finished Job', {
+    sessionId, appId, passed, graduated, tests: summary ? summary.tests : undefined,
+  });
+  return shapeOutcome({ passed, reason, graduated, summary });
+}
+
 module.exports = {
   maybeRunUnitSuite,
+  outcomeFromLog,
   makeUnitSuiteTracker,
   loadExpectedTests,
   storeExpectedTests,
+  UNIT_SUITE_TIMEOUT_MS,
+  UNIT_SUITE_MAX_BUFFER,
   // Exported for tests.
   hasRunnableTestScript,
   failureDetail,

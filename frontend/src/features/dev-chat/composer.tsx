@@ -10,13 +10,12 @@
  * A listener is not a DOM write, and keeping them there keeps ONE owner for
  * the draft, the shortcut routing and the attachment lifecycle.
  *
- * What did need handlers are the two controls whose only job is to call a
- * named function: the chat-model picker's `change` and the OpenRouter row's
- * "Change model". Both were `addEventListener` calls at the bottom of
- * `renderChatView`, re-bound on every render because the element was new.
+ * What did need a handler is the grouped model select, whose only job is to
+ * call a named function. It used to be an `addEventListener` at the bottom
+ * of `renderChatView`, re-bound on every render because the element was new.
  */
 
-import { type MouseEvent, type ReactNode } from 'react';
+import { type ChangeEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -58,10 +57,8 @@ const ROW_BTN
   = 'dc-row-btn shrink-0 text-zinc-700 dark:text-zinc-200 hover:text-violet-600'
   + ' dark:hover:text-violet-400 transition-colors';
 
-const MUTED_XS = 'text-xs text-zinc-500 dark:text-zinc-400';
-
-// The chat-model picker, bare. It reads as text with a caret, and
-// `.dc-model-select` (app.css) is what strips the button back to that.
+// The chat-model picker is a native grouped select. It reads as text with a
+// caret, and `.dc-model-select` (app.css) strips the control back to that.
 const MODEL_SELECT
   = 'dc-model-select text-[13px] text-zinc-900 dark:text-zinc-100 focus:outline-none'
   + ' focus:ring-2 focus:ring-violet-500 rounded';
@@ -224,26 +221,6 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
           looks its controls up by id, and a getElementById that starts
           returning null would throw on a route the checks load. */}
       <div id="dc-composer-controls" hidden={s.hidden || undefined}>
-        {/* #907: where the next coding turn runs — three states, two of
-            which draw nothing at all. It stays ABOVE the card: it is a
-            statement about the session, not a control of the message. */}
-        {s.openRouter ? (
-          <div id="dc-venue-detail" className="dc-venue-detail">
-            <span className={MUTED_XS}>OpenRouter model:</span>
-            <span id="dc-openrouter-model" className="dc-openrouter-model" title={s.openRouter.model}>
-              {s.openRouter.model}
-            </span>
-            <button
-              type="button" id="dc-openrouter-model-change" className="dc-openrouter-model-change"
-              disabled={s.openRouter.changeDisabled}
-              onClick={() => controller()?._onOpenRouterModelChange?.()}
-            >Change model</button>
-            <div
-              id="dc-agent-note"
-              className="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"
-            >{s.openRouter.note}</div>
-          </div>
-        ) : null}
         <div className="dc-above-card flex flex-wrap items-center gap-2">
           <RunnerControlsBar />
         </div>
@@ -296,36 +273,41 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             <BudgetPillBar />
             {s.models ? (
               <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">
-                {/* The SHEET, not a <select> (2B). The venue control in the
-                    session header opens the kit's anchored menu — a bottom
-                    action sheet on touch, a popover on desktop — and this is
-                    the only other picker on the screen, so it was the one
-                    remaining native dropdown beside it. `openModelSheet`
-                    (dev-chat.js) is the mirror of `openVenueSheet`.
-
-                    That is also what gives the guidance somewhere to live:
-                    #1589 dropped "general coding work" from this control
-                    because a <select>'s CLOSED box shows whatever its
-                    selected option says, and the long one set the row's
-                    width. A sheet row is not the closed control, so each
-                    model can carry its blurb in the open list while the
-                    button stays the model's NAME and nothing else.
-
-                    The caret is INSIDE the button now. It used to be a
-                    sibling because a stripped <select> draws none and could
-                    not contain one; with a button there is no reason for
-                    half the control to be unclickable. */}
-                <button
-                  type="button" id="dc-model-select" className={MODEL_SELECT}
-                  aria-haspopup="menu"
-                  aria-label={`Chat model: ${s.models.selectedLabel}`}
-                  onClick={(e: MouseEvent<HTMLButtonElement>) => (
-                    controller()?.openModelSheet?.(e.currentTarget)
-                  )}
+                {/* One selector answers both questions the old split left in
+                    different places: which model, and which key pays for it.
+                    optgroups keep OpenRouter and Anthropic models distinct
+                    even when both groups contain a Claude model. The option
+                    labels repeat the key source because an optgroup label is
+                    not visible once the native control is closed. */}
+                <select
+                  id="dc-model-select" className={MODEL_SELECT}
+                  aria-label="Chat model and API key"
+                  value={s.models.selected}
+                  disabled={s.models.changeDisabled}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const value = e.currentTarget.value;
+                    // Switching a session backend is asynchronous, and the
+                    // "Add more" row is an action rather than a selection.
+                    // Keep the control truthful until the published session
+                    // state supplies the next value.
+                    e.currentTarget.value = s.models?.selected || '';
+                    controller()?._onModelPicked?.(value);
+                  }}
                 >
-                  <span className="dc-model-name">{s.models.selectedLabel}</span>
-                  <ChevronDownIcon width={14} height={14} aria-hidden="true" />
-                </button>
+                  {s.models.groups.map((group) => (
+                    <optgroup key={group.id} label={group.label}>
+                      {group.options.map((option) => (
+                        <option
+                          key={option.value} value={option.value}
+                          disabled={option.disabled || undefined}
+                        >{option.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <ChevronDownIcon
+                  className="dc-model-caret" width={14} height={14} aria-hidden="true"
+                />
               </div>
             ) : null}
             <span className="flex-1"></span>

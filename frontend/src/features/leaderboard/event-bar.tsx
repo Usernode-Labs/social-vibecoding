@@ -12,13 +12,20 @@
  * ── The `<select>` is a plain one, deliberately ────────────────────────
  *
  * `@/components/ui/select` exists and is the shell's field-styled native
- * select. It is not used here: its base is `w-full` and its variants pad
- * `px-3 py-2`, where this picker is `max-w-[16rem]` at `px-2 py-1.5`. Routing
- * it through the primitive would move the control's size on a screen whose
- * contract for this conversion is that nothing moves. The classes below are
- * already in the widget language — the reskin reached them through the token
- * layer — so what is left is a sizing decision with its own evidence to
- * gather, not part of a renderer swap.
+ * select: a filled `bg-zinc-100` box at `rounded-lg`, drawn for forms. The
+ * ITERATION 03 board draws this picker as something else, a full-width white
+ * pill on the card surface with the event's name at 15px and a blue chevron.
+ * So it stays a native `<select>` (the value/onChange contract and the
+ * dapp.json anchor on `#tc-ev-select` are unchanged) with the chevron drawn
+ * over it. The visible "Event" label went with the board; `aria-label` keeps
+ * the control named.
+ *
+ * ── Challenges draws no hero ───────────────────────────────────────────
+ *
+ * The Challenges tab names the event in its own progress ("3/9 done in
+ * Season 2") and in the picker, so a hero card repeating the name and dates
+ * above it is left out there. Standings keeps its hero until a slice of its own.
+ * The section comes from ./section-store.ts, the seam the tab strip reads.
  *
  * ── `hidden` on the host is still someone else's ───────────────────────
  *
@@ -30,8 +37,10 @@
  * renders the host's CHILDREN, never the host.
  */
 
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { eventBarStore } from './event-bar-store.js';
+import { useLeaderboardSection } from './section-store';
 
 interface EventOptionView {
   id: number;
@@ -118,42 +127,50 @@ function Hero({ hero }: { hero: HeroView }) {
   );
 }
 
+const PICKER = 'w-full appearance-none rounded-2xl border border-zinc-200 dark:border-zinc-800 '
+  + 'bg-white dark:bg-zinc-900 py-3 pl-4 pr-11 text-[0.9375rem] font-medium text-zinc-800 '
+  + 'dark:text-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
+
 export function EventBarView({
-  mounted, options, placeholder, selectedId, hero,
-}: EventBarState) {
+  mounted, options, placeholder, selectedId, hero, section,
+}: EventBarState & { section?: string }) {
   if (!mounted) return null;
+  const showHero = hero != null && section !== 'challenges';
   return (
     <>
-      <div className="flex flex-wrap items-center justify-end gap-3 mb-3">
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-zinc-500 dark:text-zinc-400">Event</span>
-          <select
-            id="tc-ev-select"
-            className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-[16rem]"
-            // A `<select>`'s onChange IS the native `change` event — it fires
-            // on commit, not per keystroke — so the paged-query rule that
-            // applies to text inputs does not apply here.
-            value={placeholder !== null ? '' : String(selectedId ?? '')}
-            onChange={(e) => {
-              const id = parseInt(e.target.value, 10);
-              if (!Number.isInteger(id)) return;
-              context()?.select?.(id);
-            }}
-          >
-            {placeholder !== null ? <option value="">{placeholder}</option> : null}
-            {options.map((ev) => (
-              <option key={ev.id} value={String(ev.id)}>{ev.label}</option>
-            ))}
-          </select>
-        </label>
+      <div className="relative w-full sm:max-w-xs">
+        <select
+          id="tc-ev-select"
+          aria-label="Event"
+          className={PICKER}
+          // A `<select>`'s onChange IS the native `change` event — it fires
+          // on commit, not per keystroke — so the paged-query rule that
+          // applies to text inputs does not apply here.
+          value={placeholder !== null ? '' : String(selectedId ?? '')}
+          onChange={(e) => {
+            const id = parseInt(e.target.value, 10);
+            if (!Number.isInteger(id)) return;
+            context()?.select?.(id);
+          }}
+        >
+          {placeholder !== null ? <option value="">{placeholder}</option> : null}
+          {options.map((ev) => (
+            <option key={ev.id} value={String(ev.id)}>{ev.label}</option>
+          ))}
+        </select>
+        <ChevronDownIcon
+          aria-hidden="true"
+          className="pointer-events-none absolute right-4 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 text-violet-600 dark:text-violet-400"
+        />
       </div>
-      <div id="tc-ev-hero">
-        {hero ? <Hero hero={hero} /> : null}
+      <div id="tc-ev-hero" className={showHero ? 'mt-3' : undefined}>
+        {showHero && hero ? <Hero hero={hero} /> : null}
       </div>
     </>
   );
 }
 
 export function EventBar() {
-  return <EventBarView {...useStoreState<EventBarState>(eventBarStore)} />;
+  const { section } = useLeaderboardSection();
+  return <EventBarView {...useStoreState<EventBarState>(eventBarStore)} section={section} />;
 }

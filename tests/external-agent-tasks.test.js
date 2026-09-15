@@ -202,7 +202,7 @@ test('the work order creates the branch itself — the platform no longer does',
     // accepted now, and a differently-named branch is never a reason to
     // redo a finished commit.
     assert.match(order, /git push -u origin HEAD/, `${status}: and pushed`);
-    assert.match(order, /Usernode has no write access to your GitHub account/,
+    assert.match(order, /Homeroom has no write access to your GitHub account/,
       `${status}: and says why the agent has to do it`);
   }
 });
@@ -553,10 +553,10 @@ test('every guidance step is an action the HUMAN takes, never agent narration', 
 
     // The hand-off back to this conversation is always last — and it now
     // sets the expectation that the coding agent submits for ITSELF, since
-    // the Usernode connector is attached to the account rather than to one
+    // the Homeroom connector is attached to the account rather than to one
     // conversation. The human is told what to expect and when to come back,
     // not asked to relay a branch name.
-    assert.match(result.guidance[result.guidance.length - 1], /submit the change to Usernode itself/);
+    assert.match(result.guidance[result.guidance.length - 1], /submit the change to Homeroom itself/);
     assert.match(result.guidance[result.guidance.length - 1], /can't submit/);
     assert.match(result.guidance[result.guidance.length - 2], /exactly as written/);
   }
@@ -573,6 +573,18 @@ test('guidance names the actual web UI of the client that called it', async () =
   assert.ok(codex.guidance[2].includes('someuser/recipe-box'));
   assert.equal(codex.guidance.length, 5);
 
+  // #1892: the last step's "if it says it can't submit" names the remedy for
+  // the product. Claude: add the connector on claude.ai, new session. Codex:
+  // nothing can be added today, so the branch name comes back by hand.
+  const claudeLast = claude.guidance[claude.guidance.length - 1];
+  assert.match(claudeLast, /add the connector on claude\.ai \(Settings → Connectors on Homeroom shows how\) and start a new session/);
+  assert.doesNotMatch(claudeLast, /paste back the branch name/);
+  const codexLast = codex.guidance[codex.guidance.length - 1];
+  assert.match(codexLast, /Codex can't add the Homeroom connector today/);
+  assert.match(codexLast, /paste back the branch name it prints and I'll submit it/);
+  assert.doesNotMatch(codexLast, /claude\.ai/);
+  for (const step of [claudeLast, codexLast]) assert.doesNotMatch(step, /—/, 'no em dash in the new step');
+
   // An unrecognised client gets the one thing true everywhere — and is the
   // only variant where a terminal is likely enough to mention the CLI.
   const other = await prepareWith({ clientName: 'some-cli/0.1' }, FORK_MISSING);
@@ -588,17 +600,17 @@ test('an explicitly chosen agent beats sniffing the calling client', async () =>
   // and every prepared task would otherwise come back as 'external', with
   // guidance that names no product and a badge that names no agent.
   for (const agent of ['claude-code', 'codex']) {
-    const picked = await prepareWith({ agent, clientName: 'Usernode' }, FORK_MISSING);
+    const picked = await prepareWith({ agent, clientName: 'Homeroom' }, FORK_MISSING);
     assert.equal(picked.ok, true);
     assert.equal(picked.agent, agent, 'the resolved agent comes back to the caller');
     assert.equal(picked.guidance.length, 5, 'the hosted-web-UI guidance, not the generic four');
   }
   assert.match(
-    (await prepareWith({ agent: 'claude-code', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    (await prepareWith({ agent: 'claude-code', clientName: 'Homeroom' }, FORK_MISSING)).guidance[1],
     /https:\/\/claude\.ai\/code/,
   );
   assert.match(
-    (await prepareWith({ agent: 'codex', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    (await prepareWith({ agent: 'codex', clientName: 'Homeroom' }, FORK_MISSING)).guidance[1],
     /https:\/\/chatgpt\.com\/codex/,
   );
 
@@ -656,7 +668,7 @@ test('the work order is addressed to the agent and to nobody else', async () => 
   assert.match(result.workOrder, /git clone https:\/\/github\.com\/someuser\/recipe-box\.git recipe-box/);
   assert.match(result.workOrder, /git remote add upstream https:\/\/github\.com\/usernode-bot\/recipe-box/);
   // And it still forbids opening the pull request on the normal path —
-  // Usernode opens it, so the change arrives as a proposal with a preview,
+  // Homeroom opens it, so the change arrives as a proposal with a preview,
   // checks and a vote rather than a bare PR nobody is voting on.
   assert.match(result.workOrder, /Do not open the pull request yourself in the normal path/);
 });
@@ -2174,6 +2186,31 @@ test('the notice degrades to fit the guidance budget, never overflows it', () =>
   }
 });
 
+// #2136. The line is relayed to a person, and a person finds a proposal by
+// its pull request number — on GitHub, on the Dev board — not by the session
+// id that lives in a URL. So the PR number leads when there is one, with the
+// id (what a continuation is asked for by) beside it.
+test('the notice names the proposal by its pull request when it has one', () => {
+  const mine = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3140, prNumber: 52, mine: true, author: 'evan', webPath: null }],
+  });
+  assert.match(mine, /up for a vote — PR #52 \(proposal 3140\)\./);
+  const theirs = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3141, prNumber: 60, mine: false, author: 'dana', webPath: null }],
+  });
+  assert.match(theirs, /up for a vote — PR #60 \(proposal 3141\), opened by dana\./);
+  // A card that was never proposed has no pull request: the old form, and
+  // never "PR #null".
+  const bare = svc.buildDuplicateNotice({
+    issueNumber: 12,
+    openProposals: [{ proposalId: 3140, prNumber: null, mine: true, author: 'evan', webPath: null }],
+  });
+  assert.match(bare, /up for a vote — proposal 3140\./);
+  assert.doesNotMatch(bare, /PR #/);
+});
+
 // ── The work order's new text ──────────────────────────────────────────
 
 function fullOrder(overrides = {}) {
@@ -2199,8 +2236,8 @@ function fullOrder(overrides = {}) {
 
 test('the work order names the task and says who it belongs to', async () => {
   const order = fullOrder();
-  assert.match(order, /Usernode task id:\s+31/);
-  assert.match(order, /Usernode app slug:\s+recipe-box/);
+  assert.match(order, /Homeroom task id:\s+31/);
+  assert.match(order, /Homeroom app slug:\s+recipe-box/);
   // The exact sentence a production run needed and did not have: it had a
   // live connector, the right account and the taskId one call away, and
   // declined on a guess about who owned it.
@@ -2258,11 +2295,11 @@ test('the work order presents every submit shape, in order of preference', async
   // The push comes before the submit, and the patch after both.
   assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
   assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
-  // The connector reaches Usernode even though the sandbox cannot.
+  // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
 
-test('the work order tells an agent with no Usernode tools what that means and how to finish', async () => {
+test('the work order tells an agent with no Homeroom tools what that means and how to finish', async () => {
   // The connector is per Claude / ChatGPT account, so a second account has
   // none — and the old step 6 treated a missing connector as an unexplained
   // state with a single remedy (hand it back). Now it names the cause,
@@ -2270,40 +2307,79 @@ test('the work order tells an agent with no Usernode tools what that means and h
   // who started the hand-off.
   const assistant = fullOrder();
   // Next to the first thing the connector is needed for: the rules pointer.
-  assert.match(assistant, /If this session has NO Usernode tools, the connector was never added to\n {2}the Claude or ChatGPT account you are running in/);
+  assert.match(assistant, /If this session has NO Homeroom tools, the connector was never added to\n {2}the Claude or ChatGPT account you are running in/);
   assert.match(assistant, /the excerpt below is enough to build with/);
   assert.match(assistant, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m,
     'the settings URL is on its own indented line, like a command');
   // And under WHEN YOU ARE DONE.
-  assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
+  assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
   assert.match(assistant, /Push the branch anyway; the work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 2/);
   // Started by a chat assistant: hand it back, patch included.
   assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
   assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
-  assert.match(assistant, /If they started from the Usernode tab instead/);
-  assert.doesNotMatch(assistant, /Otherwise finish from Usernode/);
+  assert.match(assistant, /If they started from the Homeroom tab instead/);
+  assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
   assert.equal(assistant.split('https://usernode.example/#settings/connectors').length - 1, 2);
 
   // Started from the browser walkthrough: that tab's Submit button finishes.
   const walkthrough = fullOrder({ startedFromWalkthrough: true });
-  assert.match(walkthrough, /Otherwise finish from Usernode: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /Otherwise finish from Homeroom: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
   assert.match(walkthrough, /its Submit button opens the proposal/);
   assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
 
-  // No origin, no URL — the page is still named.
+  // No origin, no URL — the page is still named, and so is each product's
+  // remedy, minus the one value that needs an origin.
   const noOrigin = fullOrder({ webPath: '' });
   assert.doesNotMatch(noOrigin, /#settings\/connectors/);
-  assert.match(noOrigin, /Settings → Connectors,\n {3}which has the connector URL/);
+  assert.doesNotMatch(noOrigin, /^ {4}\S*\/mcp$/m, 'no origin, no connector URL line');
+  assert.match(noOrigin, /Settings → Connectors on Homeroom has the click-by-click steps:/);
+  assert.match(noOrigin, /Claude Code on the web: on claude\.ai, add a custom connector/);
+});
+
+test('#1892: a session with no Homeroom tools is told the remedy for ITS product, not just the settings page', () => {
+  // "The user adds it at Settings → Connectors" was the whole answer, and it
+  // is the same answer for a product where it works (Claude Code on the web
+  // picks up a connector added on claude.ai, in a NEW session) and one where
+  // nothing can be added today (Codex on the web has no custom MCP setting;
+  // the Codex CLI's sign-in callback is refused by the hosted connector, per
+  // the Codex block on Settings → Connectors). The work order now says which
+  // is which, in the RULES bullet and again under step 6, with the connector
+  // URL derived from the same origin as the settings page.
+  const order = fullOrder();
+  // The connector URL is its own indented line, like the settings URL, and
+  // appears in both places.
+  assert.equal(order.split('\n').filter((l) => l === '    https://usernode.example/mcp').length, 2,
+    'the connector URL is on its own indented line, in the rules and in step 6');
+  // RULES bullet: per product.
+  assert.match(order, /For Claude Code on the web, the user\n {2}adds it on claude\.ai as a custom connector named `homeroom` with the URL\n {2}below, and a NEW Claude Code session picks it up \(this one will not\)\./);
+  assert.match(order, /Codex cannot add it today: Codex on the web has no custom MCP setting,\n {2}and the Codex CLI's sign-in uses a localhost callback the hosted\n {2}connector refuses\./);
+  // Step 6: the same two remedies, then the settings page, then the retry.
+  const step6 = order.slice(order.indexOf('6. IF THE USERNODE TOOLS ARE NOT AVAILABLE'), order.indexOf('Once they have, retry'));
+  assert.match(step6, /How the user adds it depends on the product you are:/);
+  assert.match(step6, /- Claude Code on the web: on claude\.ai, add a custom connector named\n {5}`homeroom` with the URL below, then start a NEW Claude Code session;\n {5}this one will not pick it up\./);
+  assert.match(step6, /^ {4}https:\/\/usernode\.example\/mcp$/m);
+  assert.match(step6, /- Codex: there is no way to add it today\. Codex on the web has no custom\n {5}MCP setting, and the Codex CLI's sign-in uses a localhost callback the\n {5}hosted connector refuses, so hand the branch back as below\./);
+  assert.match(step6, /Settings → Connectors on Homeroom has the click-by-click steps:\n {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
+  // The new lines carry no em dash (platform convention); the lines around
+  // them predate the rule and are not rewritten here.
+  for (const line of step6.split('\n').slice(4)) {
+    if (/Once they have/.test(line)) break;
+    assert.doesNotMatch(line, /—/, `no em dash: ${line}`);
+  }
+  // Both work-order variants share the block.
+  const update = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } });
+  assert.match(update, /How the user adds it depends on the product you are:/);
+  assert.equal(update.split('\n').filter((l) => l === '    https://usernode.example/mcp').length, 2);
 });
 
 test('the update work order says the same for a missing connector, in its own terms', async () => {
   const update = fullOrder({
     targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
   });
-  assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added/);
+  assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added/);
   assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
   assert.match(update, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
   assert.doesNotMatch(update, /save the patch/, 'an update never sends a patch — that opens a second proposal');
@@ -2330,7 +2406,7 @@ test('renderPreparedTask derives "started from the walkthrough" from client_id',
   const fromTab = svc.renderPreparedTask({
     ...common, task: { ...row, client_id: 'usernode-web:claude-code' }, clientId: 'usernode-web:claude-code',
   });
-  assert.match(fromTab.workOrder, /Otherwise finish from Usernode/);
+  assert.match(fromTab.workOrder, /Otherwise finish from Homeroom/);
   const fromChat = svc.renderPreparedTask({
     ...common, task: { ...row, client_id: 'claude-ai-abc' }, clientId: 'claude-ai-abc',
   });
@@ -2370,11 +2446,11 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // A host model that truncates should cost background guidance, never the
   // base commit, the push commands or the task id.
   const rulesAt = order.indexOf('PLATFORM RULES');
-  for (const essential of [BASE_SHA, 'git push -u origin HEAD', 'Usernode task id', 'submit_work']) {
+  for (const essential of [BASE_SHA, 'git push -u origin HEAD', 'Homeroom task id', 'submit_work']) {
     assert.ok(order.indexOf(essential) < rulesAt, `${essential} survives a truncation`);
   }
   // And the hosted-asset warning sits immediately above it.
-  for (const url of svc.HOSTED_ASSETS) assert.ok(order.includes(url), url);
+  for (const path of svc.HOSTED_ASSET_PATHS) assert.ok(order.includes(path), path);
   assert.match(order, /That\s+is your SANDBOX, not the change/i);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
   // The rule holds by consequence, not by an enforcement claim: nothing the
@@ -2382,7 +2458,7 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // two checks reject this (#1215).
   assert.doesNotMatch(order, /rejected by/i);
   assert.match(order, /No automated check catches that/);
-  assert.match(order, /staging preview Usernode builds/);
+  assert.match(order, /staging preview Homeroom builds/);
   assert.match(order, /https:\/\/usernode\.example\/claude\.md/);
 
   // Omitted entirely when there is nothing to append — never an empty heading.
@@ -2416,7 +2492,7 @@ test('an unreadable GitHub produces hedged wording, never "you have no fork"', a
   assert.match(result.guidance[0], /If you don't already have/);
   assert.match(result.guidance[0], /Skip this if you already have one/);
   assert.doesNotMatch(result.guidance.join('\n'), /the copy you just made/);
-  assert.match(result.workOrder, /Usernode could not read GitHub just now/);
+  assert.match(result.workOrder, /Homeroom could not read GitHub just now/);
   assert.match(result.workOrder, /no-op if you do/);
   assert.doesNotMatch(result.workOrder, /you do not have one yet/);
 });
@@ -3078,7 +3154,7 @@ test('a proposal id that is not a proposal, or is on another app, is invalid_req
   assert.match(elsewhere.message, /is not on recipe-box/);
 });
 
-test('a fork-home proposal Usernode cannot describe is a platform fault, not the caller’s', () => {
+test('a fork-home proposal Homeroom cannot describe is a platform fault, not the caller’s', () => {
   // The branch NAME matters on this path in a way it never did for new work:
   // an open pull request cannot be repointed, so this exact ref is the only
   // one that can advance the proposal. A name git would reject means the
@@ -3152,7 +3228,7 @@ test('a bot-owned update gets a fresh branch whose name says which proposal it r
   assert.notEqual(result.branch, 'session-512', 'the caller cannot push to the app’s own repository');
 });
 
-test('a proposal head Usernode cannot read produces a retryable refusal, not a work order', async () => {
+test('a proposal head Homeroom cannot read produces a retryable refusal, not a work order', async () => {
   const gh = baseGh({ getBranchSha: async () => { throw new Error('502'); } });
   const { result, queries } = await prepareUpdate(BOT_PROPOSAL, { gh });
   assert.equal(result.ok, false);
@@ -3213,7 +3289,7 @@ test('the update work order names the proposal, its head, and where it is being 
   const order = result.workOrder;
   assert.match(order, /You are UPDATING a proposal that is already up for a vote/);
   assert.match(order, /THE PROPOSAL YOU ARE UPDATING/);
-  assert.match(order, /Usernode proposal id:\s+512/);
+  assert.match(order, /Homeroom proposal id:\s+512/);
   assert.match(order, /Its title:\s+Add a dark-mode toggle/);
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
   // The line a production run needed: the agent had the proposal id and no
@@ -3231,12 +3307,12 @@ test('the update work order says, up front, that submitting clears the votes', a
 test('the update work order tells the agent to fetch the proposal’s head from UPSTREAM', async () => {
   // The commit lives only in the app's repository on a bot-owned branch, so
   // `git checkout -b <b> <sha>` in a fresh fork clone cannot find it — which
-  // is exactly the failure that reads as "Usernode gave me a bad SHA".
+  // is exactly the failure that reads as "Homeroom gave me a bad SHA".
   const { result } = await prepareUpdate(BOT_PROPOSAL);
   assert.match(result.workOrder, /THE STARTING COMMIT IS IN THE APP'S REPOSITORY, not in your fork/);
   assert.match(result.workOrder, new RegExp(`git fetch upstream ${BASE_SHA}`));
   assert.match(result.workOrder, new RegExp(`git checkout -b ${result.branch} ${BASE_SHA}`));
-  assert.match(result.workOrder, /only Usernode writes/);
+  assert.match(result.workOrder, /only Homeroom writes/);
   assert.match(result.workOrder, /You do NOT need access to it/);
 });
 
@@ -3255,7 +3331,7 @@ test('a fork-home update work order says USE the existing branch, and to check i
 
 test('the update work order asks for proposalId, and never offers the patch fallback', async () => {
   const { result } = await prepareUpdate(BOT_PROPOSAL);
-  assert.match(result.workOrder, /SUBMIT THE UPDATE, through the Usernode connector/);
+  assert.match(result.workOrder, /SUBMIT THE UPDATE, through the Homeroom connector/);
   assert.match(result.workOrder, /with proposalId 512/);
   assert.match(result.workOrder, /taskId 44/);
   // The two refusals an update gets that new work never does, each with the
@@ -3347,7 +3423,7 @@ test('the session work order says CONTINUING, and names the session it continues
   assert.match(order, /You are CONTINUING work in progress on "Recipe Box"/);
   assert.doesNotMatch(order, /already up for a vote/);
   assert.match(order, /THE WORK YOU ARE CONTINUING/);
-  assert.match(order, /Usernode session id:\s+601/);
+  assert.match(order, /Homeroom session id:\s+601/);
   assert.match(order, /Its title:\s+Fix the failing dark-mode check/);
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
   assert.match(order, /Where its owner is reading it:\s+https:\/\/usernode\.example\/#app\/recipe-box\/dev\/sessions\/601/);
@@ -3385,14 +3461,14 @@ test('the session work order keeps every mechanical instruction the update path 
   const order = result.workOrder;
   // Same starting commit, fetched the same way from upstream…
   assert.match(order, /THE STARTING COMMIT IS IN THE APP'S REPOSITORY, not in your fork/);
-  assert.match(order, /session's own head, on a branch only Usernode writes/);
+  assert.match(order, /session's own head, on a branch only Homeroom writes/);
   assert.match(order, new RegExp(`git fetch upstream ${BASE_SHA}`));
   assert.match(order, new RegExp(`git checkout -b ${result.branch} ${BASE_SHA}`));
   assert.match(order, new RegExp(`It must start at the session's head:\\s+${BASE_SHA}`));
   assert.match(order, /NOT the app's main branch/);
   assert.match(order, /work already done here/);
   // …and the same submission, with the same two refusals and no patch route.
-  assert.match(order, /SUBMIT THE UPDATE, through the Usernode connector/);
+  assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
   assert.match(order, /with proposalId 601/);
   assert.match(order, /base_mismatch/);
   assert.match(order, /branch_moved/);
@@ -3407,11 +3483,11 @@ test('the session work order closes on "not up for a vote yet", not on the PR re
   assert.doesNotMatch(order, /cannot merge however the vote goes/);
   assert.doesNotMatch(order, /every submission clears the votes again/);
   assert.match(order, /Do not open a pull request — this work is not up for a vote yet/);
-  assert.match(order, /who started it promotes it from Usernode when it is ready/);
+  assert.match(order, /who started it promotes it from Homeroom when it is ready/);
   assert.doesNotMatch(order, /this proposal already has one/);
   // The ownership appendix says session, and says ADD TO rather than revise.
   assert.match(order, /Session 601 belongs to the same account, which is why you can add to/);
-  assert.match(order, /Usernode only advances a session from a fork owned by the GitHub/);
+  assert.match(order, /Homeroom only advances a session from a fork owned by the GitHub/);
 });
 
 test('the proposal work order is untouched by all of this', async () => {
@@ -4058,7 +4134,7 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
   assert.match(block, /refs\/heads\/\$\{targetBranch\}:\$\{expectedRemoteSha\.toLowerCase\(\)\}/);
   assert.match(block, /--force-with-lease=\$\{lease\}/);
   assert.doesNotMatch(block.slice(0, block.indexOf('return { ok: true')), /'--force'|"--force"|`--force`/);
-  // The fork is read UNAUTHENTICATED: Usernode holds no credential for the
+  // The fork is read UNAUTHENTICATED: Homeroom holds no credential for the
   // user's GitHub account, and this path does not change that.
   assert.match(block, /sourceCloneUrl\(forkOwner, forkRepo\)/);
   assert.match(block, /UNAUTHENTICATED/);
@@ -4068,4 +4144,326 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
   const returns = block.slice(0, block.indexOf('\n}\n'));
   assert.doesNotMatch(returns, /cleanup:/, 'there is no branch to clean up — only a head that moved');
   assert.match(returns, /return \{ ok: true, headSha: verified\.headSha/);
+});
+
+
+// ── The stale-work-order fix ────────────────────────────────────────────
+//
+// Two readers, one row, and they want opposite things from an expired
+// reservation — the same split findOpenTaskBySession already documents.
+
+test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async () => {
+  const LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+  // submitWork's `slug` + `branch` recovery: the default, and it must still
+  // see an expired row. That row is the only record of the base commit the
+  // pushed branch was cut from, and mirrorForkBranch runs its ancestry check
+  // `if (baseSha)` — so filtering it here would drop base_mismatch protection
+  // from exactly the long-running job most likely to need it.
+  const recovery = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], recovery), 3, 'recipe-box'
+  );
+  assert.doesNotMatch(recovery[0].sql, /expires_at/,
+    'recovery keeps seeing an expired task');
+  assert.deepEqual(recovery[0].params, [3, 'recipe-box']);
+
+  // The walkthrough: opts in, because resumable is not the same as permanent.
+  const walkthrough = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], walkthrough), 3, 'recipe-box', { unexpiredOnly: true }
+  );
+  assert.match(walkthrough[0].sql, /AND t\.expires_at > NOW\(\)/,
+    'an expired reservation stops pinning the launchpad');
+  // Same parameters either way: the filter is a literal, never interpolated
+  // user input.
+  assert.deepEqual(walkthrough[0].params, [3, 'recipe-box']);
+
+  // Still open to the caller's OWN rows for this app, both ways round.
+  for (const q of [recovery[0], walkthrough[0]]) {
+    assert.match(q.sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
+    assert.match(q.sql, /ORDER BY t\.id DESC LIMIT 1/);
+  }
+});
+
+test('discardTask abandons one open row of the caller\'s, for one app, and nothing else', async () => {
+  const queries = [];
+  const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
+  assert.equal(await svc.discardTask(pool, 3, 7, 4242), 4242);
+
+  const update = queries[0];
+  assert.match(update.sql, /SET status = 'abandoned'/,
+    "'abandoned' is the status the CHECK constraint already allows");
+  // Owner AND app AND still-open, all three: a replayed request must reach
+  // neither somebody else's reservation, nor one of the caller's own filed
+  // under a different app whose slug happens to be in the URL, nor reopen
+  // bookkeeping on one already submitted.
+  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3 AND status = 'open'/);
+  assert.deepEqual(update.params, [4242, 3, 7]);
+
+  // Matching nothing is null, not a cheerful success — the route turns that
+  // into unknown_task rather than telling the user it put something away.
+  const q2 = [];
+  assert.equal(
+    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 7, 4242),
+    null
+  );
+
+  // A junk id never reaches the database at all.
+  const q3 = [];
+  const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
+  for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
+    assert.equal(await svc.discardTask(junkPool, 3, 7, bad), null, `${bad} is not a task id`);
+  }
+  assert.equal(q3.length, 0, 'no query is issued for any of them');
+
+  // A database that THROWS propagates. It used to be flattened to null, which
+  // the route answers as 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
+  const throwing = { async query() { throw new Error('database is on fire'); } };
+  await assert.rejects(() => svc.discardTask(throwing, 3, 7, 4242), /database is on fire/);
+});
+
+test('an EXPIRED reservation stops blocking the same brief for ever', async () => {
+  // The dead end the walkthrough change opened up. The partial unique index
+  // external_agent_tasks_open_request_idx is (user_id, app_id, request_key)
+  // WHERE status='open' with NO expiry predicate, so an expired row still
+  // holds the key — while findOpenTaskByRequest, which is what the conflict
+  // path re-selects through, filters expiry and cannot see it. Nothing sweeps
+  // the table, so before this the second prepare of the same brief returned
+  // `platform_unavailable` and would have done so for ever.
+  const queries = [];
+  assert.equal(
+    await svc.abandonExpiredRequest(
+      fakePool([['UPDATE external_agent_tasks', [{ id: 91 }, { id: 92 }]]], queries),
+      3, 7, 'brief:deadbeef'
+    ),
+    2
+  );
+  const q = queries[0];
+  assert.match(q.sql, /SET status = 'abandoned'/);
+  // EXPIRED ones only, and only this caller's, this app's, this request's. A
+  // blanket sweep here would abandon live reservations the caller is working
+  // in — this is unblocking one insert, not garbage collection.
+  assert.match(q.sql, /AND status = 'open' AND expires_at <= NOW\(\)/);
+  assert.match(q.sql, /WHERE user_id = \$1 AND app_id = \$2 AND request_key = \$3/);
+  assert.deepEqual(q.params, [3, 7, 'brief:deadbeef']);
+
+  // Nothing expired: zero, and the caller still fails rather than looping.
+  assert.equal(
+    await svc.abandonExpiredRequest(fakePool([['UPDATE external_agent_tasks', []]], []), 3, 7, 'k'),
+    0
+  );
+
+  // And prepareWork only reaches for it AFTER the unexpired re-select has come
+  // back empty — so it can never close a row somebody is still using.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const block = src.slice(src.indexOf('  if (!row) {'), src.indexOf('  const workOrder'));
+  assert.ok(block.indexOf('findOpenTaskByRequest') < block.indexOf('abandonExpiredRequest'),
+    'the live lookup comes first');
+  assert.match(block, /row = await insertTask\(\);/, 'and the insert is retried once after clearing');
+});
+
+
+// ── Per-session work orders ─────────────────────────────────────────────
+//
+// The walkthrough used to resolve its task per (user, app), so one open work
+// order answered for every session: "New change" opened a fresh session
+// already showing an unrelated, often long-finished order.
+
+const SESSION_LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+test('loadOpenTaskForSession finds THIS session\'s task, not the app\'s newest', async () => {
+  const q = [];
+  const row = await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7, origin_session_id: 990404 }]]], q),
+    3, 'recipe-box', 990404, { unexpiredOnly: true }
+  );
+  assert.equal(row.id, 7);
+  assert.equal(q.length, 1, 'one query: its own task was there, so no orphan scan');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+  assert.match(q[0].sql, /AND t\.expires_at > NOW\(\)/);
+  assert.deepEqual(q[0].params, [3, 'recipe-box', 990404]);
+
+  // Without unexpiredOnly it is the same lookup minus that predicate.
+  const q2 = [];
+  await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q2), 3, 'recipe-box', 990404
+  );
+  assert.doesNotMatch(q2[0].sql, /expires_at/);
+  assert.match(q2[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('...and no session means no task, rather than the app\'s newest', async () => {
+  // The failure that would reintroduce the bug: falling back to the app-wide
+  // row here would make every session show every other session's order again.
+  for (const bad of [undefined, null, 0, -3, 1.5, NaN, 'abc', {}]) {
+    const q = [];
+    assert.equal(
+      await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q), 3, 'r', bad),
+      null,
+      `${JSON.stringify(bad)} is not a session`
+    );
+    assert.equal(q.length, 0, 'and no query is issued for it');
+  }
+});
+
+test('a work order belonging to no session is NOT handed to a new one', () => {
+  // The inverse of what this used to do, and the whole point of the change.
+  // Adopting the newest orphan turned one permanently stale launchpad into a
+  // QUEUE of them: every new change claimed the next one off the pile.
+  //
+  // The reasoning behind adoption was wrong twice. Factually, orphans were
+  // never invisible — listOpenWorkOrders filters on `session_id` (the shared
+  // column) and expiry, never on origin_session_id, so the Improve panel
+  // listed them throughout. Conceptually, a work order is one ATTEMPT at an
+  // issue, so an attempt whose session is gone is not a backlog item to hand
+  // out; it is over.
+  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function loadOpenTaskForSession('),
+    svcSrc.indexOf('async function abandonTasksForSession(')
+  );
+  assert.ok(fn.length > 0, 'the lookup is where this test thinks it is');
+  assert.ok(!/origin_session_id IS NULL/.test(fn), 'no orphan scan remains');
+  assert.ok(!/adoptTaskForSession/.test(fn), 'and nothing is claimed on a read');
+  assert.equal((fn.match(/await pool\.query\(/g) || []).length, 2,
+    'two literals: this session with and without the expiry filter, and nothing else');
+});
+
+test('...so a session with no work order of its own gets none', async () => {
+  const q = [];
+  assert.equal(
+    await svc.loadOpenTaskForSession(
+      fakePool([['FROM external_agent_tasks t JOIN apps a', []]], q),
+      3, 'recipe-box', 990404, { unexpiredOnly: true }
+    ),
+    null
+  );
+  assert.equal(q.length, 1, 'one query, and no second look for somebody else\'s order');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('archiving a session ends the attempt it was making', async () => {
+  const q = [];
+  assert.equal(
+    await svc.abandonTasksForSession(fakePool([['UPDATE external_agent_tasks', [{ id: 5 }, { id: 6 }]]], q), 990404),
+    2
+  );
+  assert.match(q[0].sql, /SET status = 'abandoned'/);
+  assert.match(q[0].sql, /WHERE origin_session_id = \$1 AND status = 'open' AND session_id IS NULL/);
+  assert.deepEqual(q[0].params, [990404]);
+
+  // `session_id IS NULL` is the one exclusion and it is load-bearing: that
+  // column means the work has been SHARED as a card on the Dev board, which
+  // outlives the chat session it was started from. Closing its reservation
+  // would strand a submission the group can already see.
+  assert.match(q[0].sql, /session_id IS NULL/);
+
+  // No session is a no-op, never a blind UPDATE.
+  const q2 = [];
+  for (const bad of [null, undefined, 0, -3, 'abc', 1.5]) {
+    assert.equal(await svc.abandonTasksForSession(fakePool([['UPDATE', [{}]]], q2), bad), 0);
+  }
+  assert.equal(q2.length, 0);
+});
+
+test('the archive path calls it, and never fails over it', () => {
+  const life = fs.readFileSync(path.join(__dirname, '..', 'src/services/session-lifecycle.js'), 'utf8');
+  assert.match(life, /externalAgentTasks\.abandonTasksForSession\(pool, sessionId\)/,
+    'archiving ends the attempt');
+  // finalizeArchivedSession is the funnel every archive path runs through,
+  // including proposal_start's atomic archive-and-replace.
+  const fin = life.slice(life.indexOf('async function finalizeArchivedSession('));
+  assert.ok(fin.indexOf('abandonTasksForSession') >= 0, 'from inside the funnel, not one caller');
+  assert.match(fin.slice(fin.indexOf('abandonTasksForSession')), /\.catch\(/,
+    'best-effort: an archive must not fail because a reservation could not be closed');
+});
+
+test('the one-time backfill closes litter, not live work', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  const backfill = schema.slice(
+    schema.indexOf("UPDATE external_agent_tasks\nSET status = 'abandoned'\nWHERE status = 'open'\n  AND origin_session_id IS NULL")
+  ).split(';')[0];
+  assert.ok(backfill.length > 0, 'the backfill is in schema.sql');
+
+  // Browser-minted only. Connector rows (Claude, ChatGPT) have no session by
+  // nature, are genuinely in flight, and submit by task id — closing those
+  // would break live work.
+  assert.match(backfill, /client_id LIKE 'usernode-web:%'/);
+  // Never a shared card's reservation.
+  assert.match(backfill, /session_id IS NULL/);
+  // And bounded in time, which is what makes it one-time rather than a rule:
+  // without it the clause would keep matching on every boot and would close an
+  // order minted by a browser running JS cached from before the client began
+  // sending its session — one whose launchpad can still see it.
+  assert.match(backfill, /created_at < TIMESTAMPTZ '20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\+00'/);
+});
+
+test('preparing records the launchpad it was prepared in', async () => {
+  const queries = [];
+  const calls = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 61 }]]], queries);
+  const result = await withFetch(FORK_READY, calls, () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+
+  const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
+  assert.match(insert.sql, /origin_session_id\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12\)/,
+    'and the placeholder list grew with it');
+  assert.equal(insert.params[11], 990404, 'with the session that asked');
+
+  // The connector has no session at all, and that is a null rather than a
+  // refusal — those rows are adopted by the first launchpad that looks.
+  const q2 = [];
+  await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool: fakePool([['INSERT INTO external_agent_tasks', [{ id: 62 }]]], q2),
+      config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'Add a button.', origin: 'https://usernode.example' }
+  ));
+  assert.equal(q2.find((q) => /INSERT INTO/.test(q.sql)).params[11], null);
+});
+
+test('reusing a work order moves it to the launchpad that asked', async () => {
+  // One open task per request stays the invariant — asking twice must not mint
+  // a second job. But being told "you already have this" only helps if you can
+  // then SEE it, so the order follows the session that asked rather than
+  // staying visible in the one it was first prepared in.
+  const queries = [];
+  const existing = {
+    id: 71, user_id: 3, app_id: 7, branch_name: 'usernode/x', base_sha: BASE_SHA,
+    fork_owner: 'someuser', fork_repo: 'recipe-box', brief: 'Add a button.',
+    issue_number: null, origin_session_id: 990001,
+  };
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/UPDATE external_agent_tasks/.test(sql)) return { rows: [{ origin_session_id: 990404 }] };
+      if (/FROM external_agent_tasks/.test(sql)) return { rows: [existing] };
+      return { rows: [] };
+    },
+  };
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+  assert.equal(result.reused, true, 'still a reuse, not a second job');
+  assert.equal(queries.filter((q) => /INSERT INTO/.test(q.sql)).length, 0, 'nothing was minted');
+
+  const move = queries.find((q) => /UPDATE external_agent_tasks/.test(q.sql));
+  assert.ok(move, 'the existing order is re-pointed');
+  assert.match(move.sql, /SET origin_session_id = \$3/);
+  assert.deepEqual(move.params, [71, 3, 990404]);
 });

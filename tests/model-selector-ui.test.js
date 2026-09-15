@@ -1,4 +1,4 @@
-// UI contract for the #800 model selector in frontend/src/features/dev-chat/dev-chat.js.
+// UI contract for the grouped model/key selector in the dev-chat composer.
 //
 // Same approach as openSession-streaming-reset.test.js: dev-chat.js is a
 // plain browser script (`const DevChat = {…}`), so we load its source
@@ -7,19 +7,14 @@
 // rather than on tokens in the source.
 //
 // What must hold:
-//   1. No price text ($ / MTok) survives anywhere in the picker — that
-//      was the whole point of the issue. Nor any measured figure: the
-//      picker is entirely static editorial copy now.
-//   2. Each option reads "<label>: <what kind of work it is for>", and
-//      the copy positions Opus and Fable as peers (heavy coding vs.
-//      design/taste) rather than a size ladder.
-//   3. The composer paints NO caption under the dropdown (#1353 removed
-//      it — the option the user picked already carries the guidance), while
-//      the sentence itself survives for app-view's Generate-proposal popup,
-//      where the list is met once.
-//   4. Missing guidance degrades to bare labels — never a crash.
-//   5. The guidance copy in dev-chat.js's seed map has not drifted from
-//      src/services/models.js, which is authoritative.
+//   1. OpenRouter is the first native optgroup, Anthropic is the second, and
+//      every option repeats its key source in the closed control.
+//   2. The OpenRouter shortlist prefers the saved model, otherwise the
+//      server-recommended GLM, while preserving the current session model.
+//   3. "Add more OpenRouter models…" opens the existing catalog dialog.
+//   4. Provider changes route through reset-agent-context; direct Anthropic
+//      model changes remain a lightweight local preference.
+//   5. The existing no-price/no-caption and allowlist drift contracts hold.
 //
 // Run with: node --test tests/model-selector-ui.test.js
 
@@ -249,11 +244,40 @@ function guidanceMap() {
   };
 }
 
+function pickerData(overrides = {}) {
+  return {
+    defaultBackend: 'codex_openrouter',
+    backends: { codex_openrouter: { model: null, reasoningEffort: 'high' } },
+    codexAvailable: true,
+    credentialConfigured: true,
+    recommendedModelId: 'z-ai/glm-5.3-flash',
+    models: [
+      {
+        id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash',
+        isFavorite: true, isRecommended: true, compatibility: 'verified',
+        supportsReasoning: true,
+      },
+      {
+        id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5',
+        isFavorite: true, compatibility: 'verified', supportsReasoning: true,
+      },
+      {
+        id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash',
+        isFavorite: false, compatibility: 'verified', supportsReasoning: false,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 function render(overrides) {
   const h = makeHarness();
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
   if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
+  h.DevChat._modelPickerData = overrides && 'pickerData' in overrides
+    ? overrides.pickerData
+    : pickerData();
   // build-venues.js is outside this focused harness. Mirror its ordinary
   // in-chat result so provider-specific composer controls are exercised.
   h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
@@ -287,116 +311,75 @@ test('the seed MODELS map carries no price and no measured figures', () => {
   assert.ok(!('claude-haiku-4-5' in DevChat.MODELS));
 });
 
-// ── 2. option text: what kind of work, not how big ──────────────────
+// ── 2. one grouped selector, with explicit key provenance ───────────
 
-test('the composer\'s picker is a sheet button naming the model (#1589)', () => {
-  // #1589's finding was about a CLOSED <select>: it shows the selected
-  // option's own text, so the guidance set its width — 276px of a 344px
-  // strip on a phone, which put the label above the control and the credit
-  // meter below it. Names brought it to 89px and the row to one line.
-  //
-  // The control is a button opening the kit's menu now, so there are no
-  // options in the markup at all — but the closed control is still exactly
-  // the name, which is what that measurement was about.
-  const { html } = render();
-  assert.ok(!/<option/.test(html), `no native dropdown survives; got: ${html}`);
-  assert.match(html, /<button[^>]*id="dc-model-select"[^>]*aria-haspopup="menu"/);
-  assert.match(html, /<span class="dc-model-name">Opus 5<\/span>/);
+test('the composer renders OpenRouter first and Anthropic second', () => {
+  const { html, view } = render();
+  assert.match(html, /<select[^>]*id="dc-model-select"[^>]*aria-label="Chat model and API key"/);
+  const openRouterAt = html.indexOf('<optgroup label="OpenRouter key">');
+  const anthropicAt = html.indexOf('<optgroup label="Anthropic key">');
+  assert.ok(openRouterAt >= 0, 'the OpenRouter group is missing');
+  assert.ok(anthropicAt > openRouterAt, 'Anthropic must follow OpenRouter');
+  assert.equal(view().models.groups[0].id, 'openrouter');
+  assert.equal(view().models.groups[1].id, 'anthropic');
+});
+
+test('every closed-control label names the key that will be used', () => {
+  const { html, view } = render();
+  const groups = view().models.groups;
+  assert.ok(groups[0].options.every((option) => (
+    option.value.endsWith('__add_more__') || option.label.startsWith('OpenRouter key ·')
+  )));
+  assert.ok(groups[1].options.every((option) => option.label.startsWith('Anthropic key ·')));
+  assert.match(html, /OpenRouter key · Claude Sonnet 4\.5/,
+    'an Anthropic-authored OpenRouter model still says which key pays');
+  assert.match(html, /Anthropic key · Opus 5/);
   assert.ok(!html.includes('general coding work'),
-    'the guidance belongs to the OPEN sheet — in the closed control it is '
-    + 'the width problem #1589 measured.');
-  assert.ok(!html.includes('simple, small changes'),
-    'and the unselected models are not in the composer\'s markup at all.');
+    '#1589: verbose guidance must not widen the closed native control');
 });
 
-test('…and the sheet\'s rows carry the guidance the button cannot (2B)', () => {
-  // The blurb comes back where there is room for it: one row, one line. It
-  // is `changeSize.short` rather than `modelOptionText`, because the row
-  // already opens with the name and the helper would repeat it.
-  const { view } = render();
-  assert.deepEqual(view().models.options, [
-    { id: 'claude-sonnet-5', label: 'Sonnet 5', blurb: 'simple, small changes' },
-    { id: 'claude-opus-5', label: 'Opus 5', blurb: 'general coding work' },
-    {
-      id: 'claude-fable-5-1',
-      label: 'Fable 5.1',
-      blurb: 'design, taste, and difficult coding',
+test('the OpenRouter shortlist starts with saved choice, otherwise GLM', () => {
+  const fallback = render();
+  assert.equal(
+    fallback.view().models.groups[0].options[0].value,
+    'openrouter:z-ai/glm-5.3-flash',
+    'the server-recommended GLM is the first-use fallback',
+  );
+
+  const savedData = pickerData({
+    backends: {
+      codex_openrouter: {
+        model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
+      },
     },
-  ]);
-  assert.equal(view().models.selectedLabel, 'Opus 5');
+  });
+  const saved = render({ pickerData: savedData });
+  assert.equal(
+    saved.view().models.groups[0].options[0].value,
+    'openrouter:anthropic/claude-sonnet-4.5',
+    'a valid saved model outranks GLM',
+  );
 });
 
-test('openModelSheet asks the kit, marks the current row, and picks (2B)', () => {
-  // The mirror of openVenueSheet: the kit sets row labels with textContent,
-  // so the blurb and the tick ride IN the label, and the tick trails the
-  // row exactly as build-venues.js puts it.
-  const h = makeHarness();
-  h.DevChat.MODELS = guidanceMap();
-  h.DevChat.selectedModel = 'claude-opus-5';
-  h.DevChat._currentVenueId = () => 'usernode-claude';
-  let opened = null;
-  h.sandbox.PlatformUI = {
-    hasKit: () => true,
-    menu: (opts) => { opened = opts; return Promise.resolve(null); },
-  };
-  h.DevChat.openModelSheet(null);
-  assert.ok(opened, 'the kit menu was never opened');
-  assert.match(opened.title, /model/i);
-  // `Array.from` rather than `.map`: `items` was built inside the vm
-  // context, so its Array prototype is that realm's and deepEqual compares
-  // prototypes.
-  assert.deepEqual(Array.from(opened.items, (i) => i.label), [
-    'Sonnet 5 \u2014 simple, small changes',
-    'Opus 5 \u2014 general coding work \u2713',
-    'Fable 5.1 \u2014 design, taste, and difficult coding',
-  ]);
-  opened.items[2].handler();
-  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
-});
-
-test('openModelSheet is a no-op without the kit, exactly as the venue sheet is', () => {
-  const h = makeHarness();
-  h.DevChat.MODELS = guidanceMap();
-  h.DevChat.selectedModel = 'claude-opus-5';
-  h.DevChat._currentVenueId = () => 'usernode-claude';
-  h.sandbox.PlatformUI = { hasKit: () => false, menu: () => {
-    throw new Error('menu must not be reached without a kit');
-  } };
-  h.DevChat.openModelSheet(null);
-  assert.equal(h.DevChat.selectedModel, 'claude-opus-5');
-});
-
-test('the declared checks follow the control they guard (#1589, 2B)', () => {
-  // These two used to select `#dc-model-select option[value=…]`, one per
-  // model. A sheet has no options in the document — only the SELECTED model
-  // is on screen — so the pair became what a browser can still see: the
-  // closed control is a menu button naming the model, and no native
-  // dropdown is left in the composer. The guidance positioning they once
-  // guarded is asserted on the shared helper below, and still rendered by
-  // the Generate-proposal picker.
+test('the declared checks follow the grouped native selector', () => {
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const picker = dapp.tests.filter(
-    (t) => (t.expectSelector || '').includes('dc-model-select')
-      || (t.expectSelector || '').includes('#dc-composer-controls:not(:has(select))'));
-  assert.equal(picker.length, 2, 'both picker checks are still declared');
-  assert.ok(picker.some((t) => /aria-haspopup="menu"/.test(t.expectSelector)
-    && t.expectText === 'Opus 5'), 'the closed control is still guarded');
-  assert.ok(picker.some((t) => /:not\(:has\(select\)\)/.test(t.expectSelector)),
-    'and so is the absence of the <select> this replaced');
-  for (const t of picker) {
-    assert.ok(!/coding work|design, taste/.test(t.expectText || ''),
-      'a check asking for the guidance in the CLOSED control would fail on '
-      + 'every build — it lives in the open sheet now');
-  }
+    (t) => (t.expectSelector || '').includes('dc-model-select'));
+  assert.equal(picker.length, 3, 'direct selection, catalog door, and OpenRouter selection are guarded');
+  assert.ok(picker.some((t) => /optgroup\[label="Anthropic key"\]/.test(t.expectSelector)
+    && /Anthropic key/.test(t.expectText || '')), 'the direct key source is guarded');
+  assert.ok(picker.some((t) => /__add_more__/.test(t.expectSelector)
+    && /Add more OpenRouter/.test(t.expectText || '')), 'the catalog action is guarded');
+  assert.ok(picker.some((t) => /openai\/gpt-5\.3-codex/.test(t.expectSelector)
+    && /OpenRouter key/.test(t.expectText || '')), 'the OpenRouter key source is guarded');
 });
 
-test('the guidance copy survives on the helper, for the picker that has room', () => {
-  // `modelOptionText` is UNCHANGED and still the Generate-proposal picker's
-  // option text (public/js/app-view.js). The positioning it encodes —
+test('the guidance copy survives on the helper and proposal summaries stay concise', () => {
+  // The positioning encoded by `changeSize.short` remains the same:
   // Sonnet = simple/small, Opus = general coding, Fable = design/taste plus
-  // the most difficult coding — is guarded here rather than through the
-  // composer's markup, which no longer carries it.
+  // the most difficult coding. Generate proposal now renders the short value
+  // as a separate summary instead of concatenating it into an option label.
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
   assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
@@ -405,12 +388,14 @@ test('the guidance copy survives on the helper, for the picker that has room', (
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  assert.match(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
-    'and that popup still calls it');
+  assert.match(APP_VIEW, /m\.changeSize && m\.changeSize\.short/,
+    'the proposal summary reads the same authoritative short guidance');
+  assert.doesNotMatch(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
+    'the dialog no longer builds a verbose select label');
 });
 
-test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
-  const { html } = render({
+test('OpenRouter sessions select their pinned model in the same grouped control', () => {
+  const { html, view } = render({
     session: {
       id: 7,
       branch_name: 'dev/openrouter',
@@ -420,21 +405,20 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
     },
   });
 
-  assert.match(html, /OpenRouter model:/);
-  assert.match(html, /id="dc-openrouter-model"/);
-  assert.match(html, /anthropic\/claude-sonnet-4\.5/);
-  assert.match(html, /id="dc-openrouter-model-change"/);
-  assert.match(html, /Change model/);
-  assert.match(html, /All chat and coding in this session use anthropic\/claude-sonnet-4\.5 through OpenRouter and bill your OpenRouter key\./);
-
-  assert.doesNotMatch(html, /Chat model:/);
-  assert.doesNotMatch(html, /id="dc-model-select"/);
+  assert.match(html, /id="dc-model-select"/);
+  assert.match(html, /OpenRouter key · Claude Sonnet 4\.5/);
+  assert.equal(view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5');
+  assert.equal(view().models.groups[0].id, 'openrouter');
+  assert.equal(view().models.groups[1].id, 'anthropic');
+  assert.doesNotMatch(html, /id="dc-openrouter-model"/,
+    'the separate row above the composer is retired');
+  assert.doesNotMatch(html, /id="dc-openrouter-model-change"/);
   assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
   assert.doesNotMatch(html, /Opus 5: general coding work/);
   assert.doesNotMatch(html, /Fable 5.1: design, taste, and difficult coding/);
 });
 
-test('the OpenRouter model button opens the provider-locked catalog', () => {
+test('the Add more option opens the provider-locked catalog', async () => {
   const h = makeHarness();
   h.DevChat.currentSession = {
     id: 7,
@@ -443,19 +427,78 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
     agent_model: 'deepseek/deepseek-v4-flash',
   };
   h.DevChat._currentVenueId = () => 'usernode-openrouter';
+  h.DevChat._modelPickerData = pickerData();
   let calledWith = null;
-  h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
+  h.DevChat._switchCurrentCodingAgent = async (...args) => { calledWith = args; };
+  h.DevChat._ensureModelPickerData = async () => h.DevChat._modelPickerData;
 
   h.DevChat.renderChatView();
-  // #1078: the button is the composer component's, so its click dispatches
-  // into DevChat by NAME rather than through a listener bound per render.
-  assert.match(h.composer.html(), /id="dc-openrouter-model-change"/,
-    'the button renders');
-  h.DevChat._onOpenRouterModelChange();
+  assert.match(h.composer.html(), /value="openrouter:__add_more__"/,
+    'the action renders as the final OpenRouter option');
+  await h.DevChat._onModelPicked('openrouter:__add_more__');
 
-  assert.ok(calledWith, 'the Change model button was not wired');
+  assert.ok(calledWith, 'the catalog option was not wired');
   assert.equal(calledWith[0], null);
   assert.equal(calledWith[1].fixedBackend, 'codex_openrouter');
+});
+
+test('an OpenRouter session without a pinned model falls back to saved choice, then GLM', () => {
+  const session = { id: 7, agent_backend: 'codex_openrouter', agent_model: null };
+  const glm = render({ session });
+  assert.equal(glm.view().models.selected, 'openrouter:z-ai/glm-5.3-flash');
+
+  const saved = render({
+    session,
+    pickerData: pickerData({
+      backends: { codex_openrouter: { model: 'anthropic/claude-sonnet-4.5' } },
+    }),
+  });
+  assert.equal(saved.view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5');
+});
+
+test('provider picks reset context with the matching backend and saved effort', async () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat._modelPickerData = pickerData();
+  h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
+    ? 'usernode-openrouter'
+    : 'usernode-claude';
+  const calls = [];
+  h.DevChat._switchCurrentCodingAgent = async (choice) => { calls.push(choice); };
+
+  await h.DevChat._onModelPicked('openrouter:z-ai/glm-5.3-flash');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
+    backend: 'codex_openrouter',
+    model: 'z-ai/glm-5.3-flash',
+    reasoningEffort: 'high',
+  });
+
+  h.DevChat.currentSession.agent_backend = 'codex_openrouter';
+  h.DevChat.currentSession.agent_model = 'z-ai/glm-5.3-flash';
+  await h.DevChat._onModelPicked('anthropic:claude-fable-5-1');
+  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
+    backend: 'claude_code', model: null, reasoningEffort: null,
+  });
+});
+
+test('a provider switch disables the selector and collapses rapid duplicate picks', async () => {
+  const h = render();
+  let release;
+  let calls = 0;
+  h.DevChat._switchCurrentCodingAgent = async () => {
+    calls += 1;
+    await new Promise((resolve) => { release = resolve; });
+  };
+
+  const first = h.DevChat._onModelPicked('openrouter:z-ai/glm-5.3-flash');
+  await Promise.resolve();
+  assert.equal(h.view().models.changeDisabled, true);
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+  assert.equal(calls, 1, 'the second pick must not race the first reset');
+  release();
+  await first;
+  assert.equal(h.view().models.changeDisabled, false);
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
@@ -498,11 +541,7 @@ test('the composer paints no model caption at all (#1353)', () => {
     'and the filler is gone rather than left pointing at an absent element');
 });
 
-test('the caption text itself survives, for the picker that is met once', () => {
-  // app-view.js's Generate-proposal popup renders it: there the model list
-  // is new to the reader, and a full sentence is worth its line. The
-  // lower-casing of the first character is what makes it read as one
-  // sentence after the label.
+test('the retired long-caption helper stays safe but Generate proposal no longer uses it', () => {
   const { DevChat } = makeHarness();
   assert.equal(
     DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
@@ -523,23 +562,16 @@ test('the caption text itself survives, for the picker that is met once', () => 
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  // The popup builds its caption PER OPTION now (#1367 retired the change
-  // handler that rewrote one <p>), so the call site takes the model rather
-  // than the currently-chosen one — but it is still this helper.
-  assert.match(APP_VIEW, /DevChat\.modelNoteText\(m\)/, 'and that popup still calls it');
+  assert.doesNotMatch(APP_VIEW, /DevChat\.modelNoteText\(m\)/,
+    'the simplified dialog does not render the redundant long caption');
 });
 
-test('the picker still follows the selection without a caption to update', () => {
-  // The sheet's handler dispatches into `_onModelPicked` — which also
-  // republishes, so the model carries the new selection AND the closed
-  // control's label, rather than an element keeping either.
+test('the direct picker still follows the selection without a caption to update', async () => {
   const { DevChat, view } = render({ selected: 'claude-opus-5' });
-  assert.equal(view().models.selected, 'claude-opus-5');
-  assert.equal(view().models.selectedLabel, 'Opus 5');
-  DevChat._onModelPicked('claude-fable-5-1');
+  assert.equal(view().models.selected, 'anthropic:claude-opus-5');
+  await DevChat._onModelPicked('anthropic:claude-fable-5-1');
   assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
-  assert.equal(view().models.selected, 'claude-fable-5-1');
-  assert.equal(view().models.selectedLabel, 'Fable 5.1');
+  assert.equal(view().models.selected, 'anthropic:claude-fable-5-1');
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
@@ -558,16 +590,15 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
 test('a model with no guidance renders a bare label', () => {
-  // Since #1589 every composer option is a bare label; what this still pins
-  // is that a meta with no `changeSize` reaches the picker at all rather
-  // than rendering an empty option, and that no caption comes back with it.
+  // The key source is intentionally appended; missing editorial guidance
+  // must still leave a useful model name rather than an empty option.
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
   const { html, view } = render({ models });
 
-  assert.ok(html.includes('<span class="dc-model-name">Opus 5</span>'),
-    'expected the bare label on the closed control');
-  assert.deepEqual(view().models.options, [
-    { id: 'claude-opus-5', label: 'Opus 5', blurb: '' }]);
+  assert.ok(html.includes('Anthropic key · Opus 5'),
+    'expected the model and key source in the control');
+  assert.deepEqual(view().models.groups[1].options, [
+    { value: 'anthropic:claude-opus-5', label: 'Anthropic key · Opus 5' }]);
   assert.ok(!html.includes('best for'));
 });
 
@@ -575,7 +606,7 @@ test('an option with no label at all falls back to the model id', () => {
   // The composer reads `meta.label` directly now instead of going through
   // modelOptionText, so its own empty case has to be its own.
   const { html } = render({ models: { 'claude-opus-5': {} } });
-  assert.ok(html.includes('<span class="dc-model-name">claude-opus-5</span>'),
+  assert.ok(html.includes('Anthropic key · claude-opus-5'),
     'an id is a worse name than "Opus 5" and a much better one than nothing');
 });
 
@@ -641,11 +672,11 @@ test('an attached machine gets a selector and a live chip', () => {
   const html = runnerHtml();
   assert.match(html, /Run on:/);
   assert.match(html, /<option value="local"[^>]*>Evan&#x27;s laptop<\/option>/);
-  assert.match(html, /<option value="platform">Usernode<\/option>/);
+  assert.match(html, /<option value="platform">Homeroom<\/option>/);
   assert.match(html, /Running on your machine/);
   // The chip explains the division of labour, because "running on your
-  // machine" otherwise reads as "Usernode has stopped doing anything".
-  assert.match(html, /Usernode still opens the PR/);
+  // machine" otherwise reads as "Homeroom has stopped doing anything".
+  assert.match(html, /Homeroom still opens the PR/);
 });
 
 test('a label the user typed on their own machine is escaped, not interpreted', () => {
@@ -675,10 +706,10 @@ test('a machine that has gone leaves a past-tense chip, not a live one', () => {
   assert.match(html, /Last turn: laptop/);
   // No selector: there is nothing left to select between.
   assert.ok(!html.includes('dc-runner-select'));
-  assert.match(html, /the next turn runs on Usernode/);
+  assert.match(html, /the next turn runs on Homeroom/);
 });
 
-test('choosing Usernode hands the session back and never leaves a half-set select', async () => {
+test('choosing Homeroom hands the session back and never leaves a half-set select', async () => {
   const { DevChat, runnerView } = makeHarness();
   const requests = [];
   let confirmed = true;
@@ -707,7 +738,7 @@ test('choosing Usernode hands the session back and never leaves a half-set selec
     onChange()(event);
     await new Promise((resolve) => setImmediate(resolve));
     // The select snaps back before the async work: a dropdown left reading
-    // "Usernode" while the lease is still held is a lie about where the next
+    // "Homeroom" while the lease is still held is a lie about where the next
     // turn goes.
     assert.equal(event.target.value, 'local');
     assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);

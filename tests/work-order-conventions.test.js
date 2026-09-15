@@ -1,7 +1,7 @@
 // The offline conventions appendix carried inside a connector work order.
 //
-// Every Usernode app's notes tell a coding agent to fetch the platform
-// conventions from the Usernode site at the start of a session. A hosted
+// Every Homeroom app's notes tell a coding agent to fetch the platform
+// conventions from the Homeroom site at the start of a session. A hosted
 // agent's container BLOCKS that host, so it never reads them — and then
 // reasons its way to the very things the document forbids. The observed run
 // came within one decision of vendoring the three centrally hosted assets
@@ -14,7 +14,7 @@
 //   1. The excerpt is a REGION OF app-conventions.md, not a copy. A copy
 //      would drift, and drifted platform rules are worse than none.
 //   2. It EXCLUDES "Don't `git push` yourself" — a section addressed to
-//      Usernode's own credential-less build worker. Pasted at an agent
+//      Homeroom's own credential-less build worker. Pasted at an agent
 //      pushing to the user's own fork, it forbids the required step.
 //
 // Run with: node --test tests/work-order-conventions.test.js
@@ -105,7 +105,7 @@ test('the excerpt states the vendoring rule without claiming a check enforces it
 test('the excerpt does NOT forbid the one thing the agent has to do', () => {
   const essentials = prompts.getWorkOrderEssentials();
 
-  // "Don't `git push` yourself" addresses Usernode's own build worker,
+  // "Don't `git push` yourself" addresses Homeroom's own build worker,
   // which runs with no GitHub credentials at all. A fork-pushing agent that
   // reads it as its own instruction stops dead on the required step — so
   // the SECTION is excluded from the excerpt.
@@ -157,19 +157,26 @@ test('the work order names all three hosted assets and the full document URL', (
 
   // The three files whose absence made the app render unstyled in a
   // sandbox browser and one declared check fail.
-  assert.equal(svc.HOSTED_ASSETS.length, 3);
-  for (const url of svc.HOSTED_ASSETS) {
+  assert.equal(svc.HOSTED_ASSET_PATHS.length, 3);
+  // They are named on THIS DEPLOYMENT's origin, taken from the webPath the
+  // task was created from — not on a compiled-in hostname. The literal this
+  // used to assert, social-vibecoding.usernodelabs.org, stopped answering
+  // when the platform moved to my.onhomeroom.com, and every work order went
+  // on handing agents three dead links and inviting them to write that host
+  // into the app they were building.
+  for (const url of svc.hostedAssetUrls('https://usernode.example')) {
     assert.ok(order.includes(url), `the work order names ${url}`);
-    assert.match(url, /^https:\/\/social-vibecoding\.usernodelabs\.org\//);
+    assert.match(url, /^https:\/\/usernode\.example\//);
   }
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-bridge')));
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-native')));
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-tailwind')));
+  assert.doesNotMatch(order, /social-vibecoding\.usernodelabs\.org/);
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-bridge')));
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-native')));
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-tailwind')));
 
   // The diagnosis, so a less careful agent does not "fix" the sandbox.
   assert.match(order, /may not be able to reach that host/);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
-  assert.match(order, /staging preview Usernode builds/);
+  assert.match(order, /staging preview Homeroom builds/);
 
   // And it does NOT claim a check enforces any of this. Nothing the platform
   // runs inspects an app's source for a vendored copy or a CDN tag, so the
@@ -250,7 +257,7 @@ test('the work order says the appendix is partial and names the lookup', () => {
   // The reason the call works when the site does not answer. Without this an
   // agent that has already been refused by the host assumes the connector
   // is down too and stops asking.
-  assert.match(order, /sandbox cannot reach the Usernode website/i);
+  assert.match(order, /sandbox cannot reach the Homeroom website/i);
   assert.match(order, /connector traffic does not go through your container/i);
 });
 

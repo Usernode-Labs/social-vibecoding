@@ -24,12 +24,16 @@
  * public/js/session-transcript.js fills on expand.
  */
 
-import { Fragment } from 'react';
-import type { MouseEvent, ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
 import { useStoreState } from '../../../lib/use-store-state';
+import { Button } from '@/components/ui/button';
+import { PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { Input } from '@/components/ui/input';
 import { DevCard, ActionButton } from '../card/dev-card';
 import { topicHeadStore } from './topic-store';
+import { ChangeConversation } from './conversation';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -37,6 +41,7 @@ import type {
   NoteTone,
   ProposalDetails,
   RosterView,
+  IssueLink,
   TextRun,
   TopicBody,
   TranscriptSection,
@@ -463,15 +468,370 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   );
 }
 
-export function TopicHead(): ReactNode {
-  const { card, body } = useStoreState(topicHeadStore);
+export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+  const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} />;
+}
+
+/** Refresh from the endpoint that owns this lifecycle's metadata. */
+export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
+  const id = item.id;
+  const av = (window as any).AppView;
+  const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
+  const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+  const response = await fetch(`${url}${av?._demoQS?.() || ''}`, { signal });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
+  const session = review ? payload.proposal : payload.session;
+  if (review && !signal.aborted) {
+    if (owner) av._invalidateVoteRoster(id);
+    await av._loadVoteRoster(id);
+  }
+  return session;
+}
+
+const MAX_LINKED_ISSUES = 50;
+const MAX_ISSUE_SUGGESTIONS = 6;
+
+/** Normalize the persisted issue list before comparing or editing it. */
+export function normalizeLinkedIssues(values: number[]): number[] {
+  return [...new Set(values.map(Number)
+    .filter((n) => Number.isSafeInteger(n) && n > 0 && n <= 2147483647))]
+    .sort((a, b) => a - b);
+}
+
+/** An exact number remains addable when the open-issue catalog cannot name it. */
+export function parseExactIssueNumber(value: string): { issue: number | null; error: string } {
+  const token = value.trim();
+  if (!/^#?[1-9]\d*$/.test(token)) return { issue: null, error: '' };
+  const issue = Number(token.replace(/^#/, ''));
+  if (!Number.isSafeInteger(issue) || issue > 2147483647) {
+    return { issue: null, error: `“${token}” is too large to be an issue number.` };
+  }
+  return { issue, error: '' };
+}
+
+/** Rank local matches predictably: exact number, number prefix, title prefix, title body. */
+export function filterIssueOptions(query: string, options: IssueLink[], selected: number[]): IssueLink[] {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return [];
+  const numberNeedle = needle.replace(/^#/, '');
+  const selectedSet = new Set(normalizeLinkedIssues(selected));
+  const seen = new Set<number>();
+  return options
+    .filter((issue) => {
+      if (!Number.isSafeInteger(issue.n) || issue.n <= 0
+          || selectedSet.has(issue.n) || seen.has(issue.n)) return false;
+      seen.add(issue.n);
+      return true;
+    })
+    .map((issue) => {
+      const number = String(issue.n);
+      const title = String(issue.title || '').toLocaleLowerCase();
+      const score = number === numberNeedle ? 0
+        : number.startsWith(numberNeedle) ? 1
+          : title.startsWith(needle) ? 2
+            : title.includes(needle) ? 3 : 4;
+      return { issue, score };
+    })
+    .filter((match) => match.score < 4)
+    .sort((a, b) => a.score - b.score || a.issue.n - b.issue.n)
+    .slice(0, MAX_ISSUE_SUGGESTIONS)
+    .map((match) => match.issue);
+}
+
+/** Build the server's delta without replacing links another caller may have added. */
+export function linkedIssueDelta(before: number[], after: number[]): {
+  addIssues: number[]; removeIssues: number[];
+} {
+  const previous = normalizeLinkedIssues(before);
+  const next = normalizeLinkedIssues(after);
+  return {
+    addIssues: next.filter((n) => !previous.includes(n)),
+    removeIssues: previous.filter((n) => !next.includes(n)),
+  };
+}
+
+function IssueIdentity({ issue }: { issue: IssueLink }): ReactNode {
   return (
-    <div className="dev-topic">
+    <>
+      <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
+        {`#${issue.n}`}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{issue.title}</span>
+    </>
+  );
+}
+
+function IssueAssociations({
+  proposalId,
+  issues,
+  issueOptions,
+  linkedIssues,
+  editable,
+  onSaved,
+}: {
+  proposalId: number;
+  issues: IssueLink[];
+  issueOptions: IssueLink[];
+  linkedIssues: number[];
+  editable: boolean;
+  onSaved: (issues: number[]) => void;
+}): ReactNode {
+  const normalized = normalizeLinkedIssues(linkedIssues);
+  const signature = normalized.join(', ');
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState(normalized);
+  const [query, setQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    if (!editing) setSelected(normalized);
+  }, [signature, editing]);
+
+  const selectedSignature = normalizeLinkedIssues(selected).join(', ');
+  const changed = selectedSignature !== signature;
+  const optionsByNumber = new Map([...issueOptions, ...issues].map((issue) => [issue.n, issue]));
+  const selectedIssues = selected.map((n) => optionsByNumber.get(n) || {
+    n, title: `Issue #${n}`, href: `#${n}`,
+  });
+  const suggestions = filterIssueOptions(query, issueOptions, selected);
+  const exact = parseExactIssueNumber(query);
+  const exactOption = exact.issue && !selected.includes(exact.issue)
+    && !suggestions.some((issue) => issue.n === exact.issue)
+    ? { n: exact.issue, title: 'Add by issue number', href: `#${exact.issue}` } : null;
+
+  const openEditor = () => {
+    setSelected(normalized);
+    setQuery('');
+    setError('');
+    setNotice('');
+    setEditing(true);
+  };
+  const cancelEditor = () => {
+    setSelected(normalized);
+    setQuery('');
+    setError('');
+    setEditing(false);
+  };
+  const addIssue = (issue: number) => {
+    if (selected.includes(issue)) return;
+    if (selected.length >= MAX_LINKED_ISSUES) {
+      setError(`A proposal can link at most ${MAX_LINKED_ISSUES} issues.`);
+      return;
+    }
+    setSelected((current) => normalizeLinkedIssues([...current, issue]));
+    setQuery('');
+    setError('');
+  };
+  const removeIssue = (issue: number) => {
+    setSelected((current) => current.filter((n) => n !== issue));
+    setError('');
+  };
+  const handleSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditor();
+      return;
+    }
+    if (event.key !== 'Enter' || !query.trim()) return;
+    event.preventDefault();
+    if (suggestions[0]) addIssue(suggestions[0].n);
+    else if (exactOption) addIssue(exactOption.n);
+    else if (exact.error) setError(exact.error);
+    else setError('Choose a matching issue or enter its issue number.');
+  };
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving || !changed) return;
+    const { addIssues, removeIssues } = linkedIssueDelta(normalized, selected);
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const response = await fetch(`/api/sessions/${proposalId}/linked-issues`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addIssues, removeIssues }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || body.error || 'Could not update issues.');
+      const saved = Array.isArray(body.linkedIssues) ? body.linkedIssues.map(Number) : selected;
+      onSaved(saved);
+      setSelected(normalizeLinkedIssues(saved));
+      setQuery('');
+      setEditing(false);
+      setNotice(body.prBodyStatus === 'github_unavailable'
+        ? 'Issues saved. The pull request could not be updated yet; saving again will retry it.'
+        : 'Issues saved.');
+    } catch (err) {
+      setError(err instanceof TypeError ? 'Network error. Try again.' : (err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <aside className="dev-change-issues" aria-label="Issues this change addresses">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="dev-topic-h">{issues.length === 1 ? 'Addresses issue' : 'Addresses issues'}</h4>
+        {editable && !editing ? <Button
+          type="button"
+          variant="unstyled"
+          size="inline"
+          ink="none"
+          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
+          aria-expanded="false"
+          onClick={openEditor}
+        >
+          {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+            : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
+          {issues.length ? 'Edit issues' : 'Add issue'}
+        </Button> : null}
+      </div>
+      {!editing ? (issues.length ? <div className="mt-2 space-y-1.5">{issues.map((issue) => (
+        <a
+          key={issue.n}
+          href={issue.href}
+          className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 transition-colors hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80"
+          onClick={(event) => {
+            if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'issue', issue.n);
+          }}
+        ><IssueIdentity issue={issue} /></a>
+      ))}</div> : <p className="dev-topic-note">No issues linked yet.</p>) : null}
+      {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span>{`Selected (${selected.length})`}</span>
+            <span>{`${MAX_LINKED_ISSUES - selected.length} remaining`}</span>
+          </div>
+          {selectedIssues.length ? <div className="space-y-1.5">{selectedIssues.map((issue) => (
+            <div key={issue.n} className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 dark:bg-zinc-800/80" data-selected-issue={issue.n}>
+              <IssueIdentity issue={issue} />
+              <button
+                type="button"
+                className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
+                aria-label={`Remove #${issue.n}: ${issue.title}`}
+                onClick={() => removeIssue(issue.n)}
+              ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
+            </div>
+          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No issues selected.</p>}
+        </div>
+        <div>
+          <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+            Add another issue
+          </label>
+          <div className="relative mt-1.5">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+            <Input
+              id={`linked-issues-${proposalId}`}
+              className="pl-10"
+              value={query}
+              onChange={(event) => { setQuery(event.target.value); setError(''); }}
+              onKeyDown={handleSearchKey}
+              placeholder="Search by number or title"
+              autoComplete="off"
+              autoFocus
+            />
+          </div>
+          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching issues">
+            {suggestions.map((issue) => (
+              <button
+                key={issue.n}
+                type="button"
+                className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                aria-label={`Add #${issue.n}: ${issue.title}`}
+                onClick={() => addIssue(issue.n)}
+              ><IssueIdentity issue={issue} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
+            ))}
+            {exactOption ? <button
+              type="button"
+              className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+              aria-label={`Add issue #${exactOption.n}`}
+              onClick={() => addIssue(exactOption.n)}
+            ><IssueIdentity issue={exactOption} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
+            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open issues. Enter an exact issue number to add it.</p> : null}
+          </div> : null}
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open issues in this app. Exact issue numbers can always be added.</p>
+        </div>
+        {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
+          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save issues'}</Button>
+        </div>
+      </form> : null}
+      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
+    </aside>
+  );
+}
+
+/** The same card on the owner session and public review/discussion page.
+ * Full public metadata is fetched separately from the lightweight board.
+ * This endpoint cannot return private agent messages or credentials.
+ */
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
+}): ReactNode {
+  const root = useRef<HTMLDivElement>(null);
+  const [loaded, setLoaded] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const id = item?.id;
+  useEffect(() => {
+    if (!id || !active) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = (event: Event) => {
+      if ((event as CustomEvent).detail === Number(id)) setRevision((n) => n + 1);
+    };
+    window.addEventListener('change-detail-refresh', refresh);
+    async function load() {
+      try {
+        // These portals can remain mounted while another screen is open.
+        if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') return;
+        const session = await readChangeDetail(item, owner, abort.signal);
+        if (!abort.signal.aborted) { setLoaded(session); setError(''); }
+      } catch (err) {
+        if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(load, 10000);
+      }
+    }
+    void load();
+    return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('change-detail-refresh', refresh); };
+  }, [id, revision, owner, active, item?.status]);
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const session = item && loaded?.id === id ? { ...item, ...loaded } : item;
+  const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
+  const card = built?.card || initialCard;
+  const body: TopicBody = built?.body || initialBody;
+  const applyLinkedIssues = (linkedIssues: number[]) => {
+    setLoaded((current: any) => ({ ...(current || session || {}), id, linked_issues: linkedIssues }));
+    if (av?.appData?.slug && typeof av._loadDevData === 'function') {
+      Promise.resolve(av._loadDevData()).catch(() => {});
+    }
+    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+  };
+  return (
+    <div ref={root} className="dev-topic">
+      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
+        {(body.issues?.length || body.canEditIssues) && id ? <IssueAssociations
+          proposalId={Number(id)}
+          issues={body.issues || []}
+          issueOptions={body.issueOptions || []}
+          linkedIssues={Array.isArray(session?.linked_issues) ? session.linked_issues : []}
+          editable={body.canEditIssues === true}
+          onSaved={applyLinkedIssues}
+        /> : null}
         <DevCard model={card} />
       </div>
-      <TopicBodySections body={body} />
+      <TopicBodySections body={conversation ? { ...body, transcript: null, activity: [] } : owner ? { ...body, transcript: null } : body} />
+      {conversation && body.changeId ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
     </div>
   );
 }
@@ -529,6 +889,12 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
             </div>
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
+          {body.testing ? <details className="dev-topic-details">
+            <summary className="dev-topic-details-summary">Testing instructions</summary>
+            {body.testing.html ? <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: body.testing.html }} />
+              : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
+          </details> : null}
+          {body.changeId && !tiles ? <details className="dev-topic-details"><summary className="dev-topic-details-summary">Screenshots</summary><p className="dev-topic-note">No screenshots have been captured yet.</p></details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
         </section>
       ) : null}
@@ -537,6 +903,10 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
+      {body.activity?.length ? <section className="dev-topic-sheet"><details className="dev-topic-details">
+        <summary className="dev-topic-details-summary">Activity</summary>
+        {body.activity.map((event) => <p key={event.label} className="dev-topic-note">{event.label} · <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time></p>)}
+      </details></section> : null}
       {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
           so app.css can run it into the Discussion sheet below the head. */}
       {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}

@@ -132,8 +132,11 @@ export interface ActionSpec {
 
 /** Everything that can appear in the status band, as a tagged union. */
 export type BadgeSpec =
-  /** A plain tinted chip: work state, imported, paused, checks, console errors. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string> }
+  /** A plain tinted chip: work state, imported, paused, checks, console errors.
+   *  `meta` rides the META LINE with the priority/assignee/category tags
+   *  instead of the facts row — see metaLineNodes. The status tags set it, so
+   *  the status row is left to the vote and its button alone. */
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
   /** The same chip with a click — the work-state chip that opens its target. */
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
@@ -176,10 +179,44 @@ export interface TitleSpec {
   title: string;
 }
 
+/** One step of "what this still needs before it merges" (#2061). */
+export interface RequirementSpec {
+  key: string;
+  label: string;
+  /** 'auto' | 'author' | 'admin' | 'group' — who can clear it. */
+  actor: string;
+  /** 'done' | 'active' | 'waiting' | 'blocked' | 'pending'. */
+  state: string;
+  /** The one-line "why", when the gate recorded one. */
+  note?: string | null;
+  /**
+   * The one control a gate can carry, for the viewer who can clear it. Today
+   * only `main_healthy` has one: an admin's "Resume merges" while main's
+   * unit suite is red. Absent for everyone else.
+   */
+  action?: { label: string; title?: string; act: ActionRef } | null;
+}
+
 /** An extra row under the four bands (the work note, the admin claim list). */
 export type ExtraSpec =
   | { t: 'note'; key: string; text: string; workState: string }
-  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] };
+  | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] }
+  | {
+    t: 'requirements';
+    key: string;
+    /** The collapsed line — the whole answer for most people. */
+    headline: string;
+    detail?: string | null;
+    done: number;
+    total: number;
+    /**
+     * Whether to open on first paint. The card opens itself only when the
+     * step it is stuck on is one THIS viewer can clear; an admin-approval
+     * row put in front of a non-admin is a chore they cannot do.
+     */
+    open: boolean;
+    gates: RequirementSpec[];
+  };
 
 /** The card's right-edge rail: ⋯ at the top, the eye at the bottom. */
 export interface RailSpec {
@@ -259,8 +296,22 @@ export type ListRow =
     thread?: FeedThreadRef | null;
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
+    /**
+     * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
+     * only. Null when the proposal has none — a legacy one, or a summary pass
+     * that failed — and the deck says so rather than leaving a gap.
+     */
+    summary?: string | null;
     /** The server has themes but has not placed this card into one yet. */
     placing?: boolean;
+    /**
+     * Which item the Needs-you deck's ask box is asking about — an ADDRESS,
+     * never content. The server resolves the kind/ref pair against this
+     * app's own rows (services/workshop-ask.js), so nothing the client says
+     * about the card can reach the model. Null on a row with no resolvable
+     * reference, and the box is then not drawn.
+     */
+    askAbout?: { kind: 'proposal' | 'gov' | 'issue'; ref: number } | null;
   }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
@@ -324,6 +375,45 @@ export interface DevWorkshopView {
   viewerId?: number | null;
   /** The no-items note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
+  /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
+  tab: 'status' | 'needs' | 'all' | null;
+  /**
+   * The models the ask box may talk to — the dev session's own list
+   * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
+   * the picker is then not drawn at all.
+   */
+  models: { list: { id: string; label: string; note: string }[]; selected: string | null };
+  /**
+   * The Needs-you tab's queue, in order: the proposals owed a vote, then the
+   * issues nobody has claimed. One card, one question, three answers — the
+   * row carries the question and what Yes and No DO, so the deck renders
+   * buttons rather than deciding policy.
+   */
+  queue: (ListRow & {
+    kind: 'vote' | 'claim';
+    ask: string;
+    yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    /** The caption's facts, lifted off the card's meta line. */
+    who?: string | null;
+    ago?: string;
+    number?: number | null;
+    /** An issue's body as one plain run, the claim item's sub-hero. */
+    body?: string | null;
+    /**
+     * The item's picture: the first before/after capture pair the checks
+     * shot, one still per side. Null when there is none, and the feed then
+     * leaves the space under the summary empty rather than faking one.
+     */
+    visuals?: {
+      path: string;
+      mobile: boolean;
+      before: string | null;
+      after: string | null;
+      beforeWebm: string | null;
+      afterWebm: string | null;
+    } | null;
+  })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
   votes: {
     /** Still owed by this viewer. */
@@ -335,6 +425,7 @@ export interface DevWorkshopView {
     /** ALL of them: the rest are revealed in place, not on another screen. */
     rows: ListRow[];
   };
+
   /**
    * The viewer's OWN work in flight on this app: their dev sessions and the
    * proposals they opened. Unfiltered, like `votes` — your own work is yours
@@ -351,10 +442,19 @@ export interface DevWorkshopView {
    */
   since: {
     baseline: number;
+    /** Newest activity stamp among `rows`, for Clear; 0 when nothing is new. */
+    through: number;
     shipped: number;
     opened: number;
     proposed: number;
     rows: ListRow[];
+    /**
+     * The rest of the same list — what moved BEFORE the baseline, newest
+     * first, which the reader has already seen. `Show older` walks into it
+     * and Clear moves the new rows here (#2183). `rows` is capped; `total`
+     * is the whole rest.
+     */
+    seen: { total: number; rows: ListRow[] };
   } | null;
   /** First-visit orientation: the board's shape in numbers. */
   /**
@@ -383,7 +483,34 @@ export interface DevWorkshopView {
      * field is '' when that window held nothing, and its card is then not
      * drawn at all — which is why these are strings rather than optional.
      */
-    cards: { lastWeek: string; thisWeek: string; open: string } | null;
+    cards: {
+      lastWeek: string;
+      thisWeek: string;
+      open: string;
+      /** Weeks before last week, newest first: one Monday-anchored window each. */
+      older: { start: number; line: string }[];
+      /** Monday of the app's first week of activity, when the server says. */
+      firstWeek: number | null;
+    } | null;
+    /**
+     * The same lines as a WALK BACKWARDS through the app's weeks, oldest
+     * first — which is the order they are drawn, top to bottom. The pane
+     * shows only the last entry (`open`) and reveals the rest one step at a
+     * time, newest end first. Empty when no line has ever been written.
+     *
+     * `startMs`/`endMs` bound the window a line was written from, so the
+     * pane can caption an older week with its dates; both are 0 on `open`,
+     * which is not a window at all.
+     */
+    weeks: {
+      key: string;
+      title: string;
+      line: string;
+      startMs: number;
+      endMs: number;
+    }[];
+    /** Monday of the app's first week of activity, when the server says. */
+    firstWeek: number | null;
     /**
      * The same answer flattened to one paragraph. It is what a row last
      * written under the previous digest prompt holds, so it keeps such a
@@ -395,6 +522,12 @@ export interface DevWorkshopView {
   } | null;
   /** One unclaimed open issue to suggest, as a row. Null while filtering. */
   nextUp: ListRow | null;
+  /**
+   * #1934: the next unclaimed issues after `nextUp`, capped at
+   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty while
+   * filtering or when there is nothing past the first.
+   */
+  nextMore: ListRow[];
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
   discussion: ListRow | null;
   themes: WorkshopTheme[];
@@ -424,7 +557,10 @@ export interface DevWorkshopView {
     /** The shared filter bar is narrowing what the themes hold. */
     filtered: boolean;
   };
-  /** A row to open on paint (the ?shot= deep links) — theme id and item key. */
+  /**
+   * A row to open on paint (the ?shot= deep links): the row's scope — a
+   * theme id, or `mine` for "What you are working on" — and its key.
+   */
   autoExpand: { theme: string; key: string } | null;
 }
 
@@ -442,7 +578,7 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
-  /** The app, for the open card's "Open on its own page" link. */
+  /** The app, for the open card's page link ("Open page ›", #1886). */
   slug?: string;
   canPost?: boolean;
   /**

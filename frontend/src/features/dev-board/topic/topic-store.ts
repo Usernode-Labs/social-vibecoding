@@ -8,6 +8,7 @@ import type { DevCardModel } from '../card/model';
 import type { TopicBody } from './model';
 
 export interface TopicHeadState {
+  item?: any;
   card: DevCardModel | null;
   body: TopicBody | null;
 }

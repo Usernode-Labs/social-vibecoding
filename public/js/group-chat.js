@@ -599,7 +599,11 @@ const GroupChat = {
     // clause it fell through to `message`, and the row acquired an avatar, an
     // author name and a trip through the markdown pipeline it was never meant
     // to have.
-    const isSystem = kindRaw === 'system' || (kindRaw === 'spec_share' && !isSpecShare);
+    // Conflict resolution posts `conflict`, including the repeated synced-with-
+    // main notices. They are system events too: treating them as human messages
+    // bypasses the transcript's repeat folding on both history and live updates.
+    const isSystem = kindRaw === 'system' || kindRaw === 'conflict'
+      || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
     const username = msg.username || 'System';
     const me = App.user && App.user.username;
@@ -786,10 +790,14 @@ const GroupChat = {
       });
       // Multi-line submit semantics, same as the general composer: Enter
       // sends, Shift+Enter inserts a newline, touch keyboards always insert
-      // a newline (Send button sends). Bubble phase so the autocomplete's
+      // a newline (Send button sends) — and ⌘/Ctrl+Enter sends anywhere
+      // (#2145), touch included: it is the chord every other composer on the
+      // platform answers to, and the one way to send from a hardware
+      // keyboard on a touch screen. Bubble phase so the autocomplete's
       // capture-phase Enter handling wins while its dropdown is open.
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+        if (e.key !== 'Enter') return;
+        if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
           e.preventDefault();
           submitThread();
         }

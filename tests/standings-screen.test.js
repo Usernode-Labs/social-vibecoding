@@ -45,6 +45,7 @@ const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/
 // #1191 slice 6 conversion 7 split the challenges pane the same way conversion
 // 5 split the standings pane: chJs decides, this renders.
 const chTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
+const chCardTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenge-card.tsx'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 // The bar's MARKUP moved to a component in #1191; topochain-event-context.js
 // keeps the data, the picks and the subscription, and pushes a view model.
@@ -108,16 +109,16 @@ test('Leaderboard.section defaults to the standings', () => {
 // and keys are asserted where they now live. `_renderSectionTabs` is still the
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
-test('the tab strip leads with the standings, labelled simply "Leaderboard"', () => {
+test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
   const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
   assert.deepEqual(labels, [
-    ['topochain', 'Leaderboard'],
-    ['kudos', 'Kudos'],
     ['challenges', 'Challenges'],
-  ], 'standings first and called Leaderboard; the kudos board is the Kudos tab');
+    ['kudos', 'Kudos'],
+    ['topochain', 'Leaderboard'],
+  ], 'what you can do first, the ranking last; the standings tab is still called Leaderboard');
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
   // app.js, dapp.json checks) and must survive both the relabelling and the
   // move: they are the attribute dapp.json selects on.
@@ -372,10 +373,10 @@ test('the challenges pane decorates the public grid with your own points', () =>
   const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
-  assert.match(chTsx, /See where the season stands/,
-    'the retired season-leaderboard block is replaced by a link to the standings tab');
-  assert.match(chJs, /window\.location\.hash = '#leaderboard\/topochain'/,
-    'and that link goes through the router, so the shared event selection survives');
+  // #1917: the "See where the season stands" link under the grid is gone —
+  // the standings are a tab away in the strip above it.
+  assert.doesNotMatch(chTsx, /See where the season stands|tc-se-to-standings/);
+  assert.doesNotMatch(chJs, /_toStandings/);
 });
 
 // ─── Completed challenges live here now (#981) ───────────────────────────
@@ -412,7 +413,14 @@ test('the challenges grid summarises and groups the completed set', () => {
   // declared dapp.json check lose its anchor.
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
-  assert.match(chJs, /challenges completed/, 'and states the tally in words');
+  // ITERATION 03 moved the tally into the shared season progress
+  // ("3/9 done in Season 2" over one segment per challenge) rather than
+  // "3 of 9 challenges completed". This pin moved with it, deliberately.
+  assert.match(chJs, /caption: name \? `done in \$\{name\}` : 'done'/, 'and states the tally in words');
+  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+    'which is what the summary line carries');
+  assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
+    'drawn by the component Home shares');
   assert.match(chTsx, /\{g\.heading\}/,
     'the grouping subheading renders');
   assert.match(chJs, /heading: 'Completed'/,
@@ -425,7 +433,15 @@ test('the challenges grid summarises and groups the completed set', () => {
     'the subheading is gated on BOTH groups being non-empty');
   assert.match(chJs, /done: TopochainChallenges\._isDone\(c\)/,
     'the card descriptor carries the completed flag');
-  assert.match(chTsx, /opacity-60/, 'and completed cards are dimmed');
+  // ITERATION 03 retired the dimming: a finished card is marked on its
+  // progress rail and stays at full strength, so the pin moved from the
+  // card's opacity to the rail's done recipe.
+  assert.doesNotMatch(chTsx, /opacity-60/, 'completed cards are no longer dimmed');
+  assert.match(chCardTsx,
+    /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
+    'completed cards carry the done rail instead');
+  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+    'and the rail names the state in the board\'s word for it');
 });
 
 test('the standings pane cross-links to the challenges tab without ever painting an error', () => {

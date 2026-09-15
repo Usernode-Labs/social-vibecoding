@@ -628,6 +628,14 @@ const Notifications = {
       App.showCreateModal();
       return;
     }
+    // #2161: the app this row is about no longer exists, so there is nothing
+    // to open. Home is the one screen that is still true.
+    if (item.kind === 'app_deleted') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+      else window.location.hash = '#home';
+      return;
+    }
     if (item.kind === 'app_quota_requested') {
       Notifications._dismissSheetForNav();
       App.navigateToAdminConsole('users');
@@ -1550,7 +1558,7 @@ function rowView(n) {
   };
 
   if (n.kind === 'test_alert') {
-    return { ...base, label: 'Usernode test alert', icon: '🔔',
+    return { ...base, label: 'Homeroom test alert', icon: '🔔',
       segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
   }
 
@@ -1609,6 +1617,29 @@ function rowView(n) {
     };
   }
 
+  // #2161: the two deletion rows. An attempt still has its app (the meta
+  // line names it, the click opens it); a completed deletion has no app row
+  // left, so the name rides in `detail` and the meta line says Account.
+  if (n.kind === 'app_delete_attempted') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Tried to delete this shared app', null),
+    };
+  }
+  if (n.kind === 'app_deleted') {
+    return {
+      ...base,
+      appLine: 'Account',
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Deleted a shared app you contributed to', n.detail || 'an app'),
+    };
+  }
+
   if (n.kind === 'app_quota_changed') {
     const [before, after] = String(n.detail || '').split(':');
     const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
@@ -1626,10 +1657,10 @@ function rowView(n) {
       segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
   }
 
-  // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so
-  // the name stays in the headline and `by` stays null. They carry no app —
-  // a company key is an account-level fact — and clicking one opens Admin →
-  // Users, so that is what the meta line names as their source.
+  // Managed OpenRouter review alerts, plus historical successful-issuance
+  // rows created before #2121. `who` is WHOSE KEY it is, not who acted, so
+  // the name stays in the headline and `by` stays null. They carry no app and
+  // click through to Admin → Users, so that is what the meta line names.
   if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
     const review = n.kind === 'openrouter_key_review';
     return {
@@ -1637,7 +1668,7 @@ function rowView(n) {
       appLine: 'Admin',
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      label: review ? 'Company key needs review' : 'Company key issued',
+      label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
       segments: [{ t: 'who', v: who }],
     };
   }

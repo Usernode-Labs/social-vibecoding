@@ -229,20 +229,16 @@ function load() {
     console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
     process.exit(1);
   }
-  const openrouterManagedDailyLimitUsd = Number(
-    process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
-  );
+  // #2119: a company-funded OpenRouter child key carries the user's platform
+  // weekly allowance (services/limits.js), not a per-key amount from env, so
+  // OPENROUTER_MANAGED_DAILY_LIMIT_USD is no longer read here. The deploy
+  // still writes it; the value is inert.
 
   const nativeSessionV2Network = canonicalNativeSessionV2Network(
     process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID
   );
   if (!staging && !nativeSessionV2Network) {
     console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
-    process.exit(1);
-  }
-  if (!Number.isFinite(openrouterManagedDailyLimitUsd)
-      || openrouterManagedDailyLimitUsd <= 0) {
-    console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
     process.exit(1);
   }
   const openrouterManagedRequireVerifiedIdentityValue =
@@ -317,6 +313,22 @@ function load() {
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // Curated badges in the model picker. Exact ids keep the recommendation
+    // deliberate: adding a provider prefix here would label dozens of old,
+    // batch, and specialist variants and make the badge meaningless.
+    openrouterRecommendedModels: (() => {
+      const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
+        ? [
+          'deepseek/deepseek-v4.1-flash',
+          'z-ai/glm-5.3-flash',
+          'openai/gpt-6-astra',
+          'moonshotai/kimi-k3',
+          'anthropic/claude-opus-5',
+        ].join(',')
+        : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
+      if (configured.trim().toLowerCase() === 'none') return [];
+      return configured.split(',').map((s) => s.trim()).filter(Boolean);
+    })(),
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
@@ -324,7 +336,6 @@ function load() {
     // and administer limited child keys; unlike child keys, a management key
     // cannot be used for model inference.
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
-    openrouterManagedDailyLimitUsd,
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
@@ -458,6 +469,38 @@ function load() {
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
+      // Which builder produces app images (see services/kubernetes-buildkit.js
+      // for the trade). `kpack`: every build is a kpack Build (today's
+      // behaviour). `auto`: a source tree that carries one of the Dockerfile
+      // candidates is built by a BuildKit Job, anything else by kpack.
+      // `buildkit`: same, but a tree without a Dockerfile is a build error.
+      buildEngine: process.env.BUILD_ENGINE || 'kpack',
+      buildkitNamespace: process.env.BUILDKIT_NAMESPACE || 'social-buildkit',
+      buildkitServiceAccount: process.env.BUILDKIT_SERVICE_ACCOUNT || 'social-buildkit-builder',
+      // Immutable digest of the rootless BuildKit image the Job runs
+      // (moby/buildkit:<version>-rootless@sha256:...).
+      buildkitImage: process.env.BUILDKIT_IMAGE || '',
+      // `rootless` (default): buildkitd under RootlessKit as uid 1000, no
+      // capabilities, seccomp/AppArmor unconfined; needs the node to allow
+      // unprivileged user namespaces (user.max_user_namespaces > 0).
+      // `privileged`: buildkitd as root in a privileged container, no user
+      // namespaces involved, for clusters that cannot enable them.
+      buildkitMode: process.env.BUILDKIT_MODE || 'rootless',
+      // Name of a kubernetes.io/dockerconfigjson Secret in the BuildKit
+      // namespace with push credentials for the image and cache
+      // repositories. Empty means the registry accepts anonymous pushes
+      // (an in-cluster registry).
+      buildkitRegistrySecret: process.env.BUILDKIT_REGISTRY_SECRET || '',
+      // The image and cache registries speak plain HTTP (in-cluster, no TLS).
+      buildkitInsecureRegistry: process.env.BUILDKIT_INSECURE_REGISTRY === '1',
+      // Dockerfile candidates, in order of preference, relative to the source
+      // root. The platform's own tree has both a compose-era `Dockerfile` and
+      // the `Dockerfile.kubernetes` production recipe; previews should be the
+      // production recipe.
+      buildkitDockerfiles: (process.env.BUILDKIT_DOCKERFILES || 'Dockerfile.kubernetes,Dockerfile')
+        .split(',').map((name) => name.trim()).filter(Boolean),
+      buildkitSuccessRetentionHours: Number(process.env.BUILDKIT_SUCCESS_RETENTION_HOURS
+        || process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -709,9 +752,10 @@ function load() {
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
-  console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
+  console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);

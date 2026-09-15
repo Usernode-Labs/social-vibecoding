@@ -497,11 +497,15 @@ test('landing tiles mirror home cards and gate on requires_login', () => {
   const tsx = read(LANDING_TSX);
   assert.match(tsx, /function LandingTile/);
   // Gated presentation: dimmed + lock + caption.
-  assert.match(tsx, /opacity-50 grayscale/);
+  assert.match(tsx, /grayscale-\[0\.75\]/);
   assert.match(tsx, /Account required/);
-  // Gated tap: remember the app deep link, then the signup flow.
+  // Signed-out tap: remember the app deep link, then the signup flow.
+  assert.match(tsx, /accountRequired && !signedIn/);
   assert.match(tsx, /rememberDeepLink[\s\S]{0,180}'\/app\/' \+ encodeURIComponent\(app\.slug \|\| ''\)/);
   assert.match(tsx, /location\.hash = '#signup'/);
+  // A waiting-room session takes the existing app-scoped token path.
+  assert.match(tsx, /AppView\?\._mintToken\?\.\(slug\)/);
+  assert.match(tsx, /url\.searchParams\.set\('token', token\)/);
   // Icon priority mirrors home.js iconTileFor: image > emoji > letter.
   assert.match(tsx, /data-icon="image"/);
   assert.match(tsx, /data-icon="emoji"/);

@@ -114,6 +114,28 @@ function previewDisplayState(row) {
 }
 
 async function buildAndDeployStaging(config, session, app, commitHash) {
+  const lifecycle = require('./preview-lifecycle');
+  if (lifecycle.enabled(config) && !lifecycle.current()) {
+    return lifecycle.run(config, session, commitHash, 'build', async (operation, fresh) => {
+      // Initial fleet/manual previews may not have a checks pin yet. Persist
+      // the resolved SHA while owning the session, before building or capture.
+      if (!fresh.checks_commit_sha) {
+        await require('./visuals').setChecksPending(operation.pool, session.id, operation.revision, 'building');
+      }
+      return buildAndDeployStaging(config, fresh, app, operation.revision);
+    }, { onError: async (err, pool, operation) => {
+      // Preserve boot-failure backoff/notifications while still owning this
+      // run. Callers must not republish it after a same-SHA retry takes over.
+      try {
+        await require('./staging-recovery').recordStagingBootFailure({
+          config, pool, session, commitHash: operation.revision, err,
+        });
+      } finally { err.previewFailureHandled = true; }
+    }, resolveRevision: async fresh => {
+      const [, owner, repo] = app.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
+    } });
+  }
   const key = session.id;
   const current = _stagingBuilds.get(key);
   if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash) {
@@ -150,6 +172,8 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
 // and visuals requires this module at load.
 function reportBuildStep(config, session, step, timings, startedAt, image = null) {
   try {
+    const operation = require('./preview-lifecycle').current();
+    if (operation?.signal.aborted) return;
     const visuals = require('./visuals');
     const build = {
       step,
@@ -158,8 +182,16 @@ function reportBuildStep(config, session, step, timings, startedAt, image = null
       ...(image ? { image } : {}),
       ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
     };
-    visuals.setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
-    visuals.notifyChecksBuildProgress(session.id, build);
+    const write = visuals.setChecksBuildProgress(getPool(config), session.id, build);
+    if (operation) {
+      write.then(async () => {
+        await operation.check();
+        visuals.notifyChecksBuildProgress(session.id, build);
+      }).catch(() => {});
+    } else {
+      write.catch(() => {});
+      visuals.notifyChecksBuildProgress(session.id, build);
+    }
   } catch { /* status only */ }
 }
 
@@ -500,7 +532,8 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // Best-effort by design, unlike teardownStaging: the runtime name is
     // deterministic and the deploy below reconciles it. But it is no longer
     // SILENT (#851) — a resource that resists removal is still worth surfacing.
-    if (session.staging_runtime_name || session.staging_container_id) {
+    await require('./preview-lifecycle').current()?.check();
+    if (applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
       const runtimeName = session.staging_runtime_name || session.staging_container_id;
       const stopped = await applicationRuntime.remove(config, {
         runtimeKind: session.staging_runtime_kind || 'docker',
@@ -615,6 +648,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       timings,
     };
   } catch (err) {
+    if (require('./preview-lifecycle').isCancelled(err)) throw err;
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this
@@ -670,6 +704,7 @@ async function verifyStagingEdge(session, hostname, stagingUrl) {
   } else {
     log.warn('staging', 'Edge verification did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: probe.error?.message });
   }
+  return probe;
 }
 
 // Deprecated alias (#816). Kept so any caller still on the old name keeps
@@ -703,6 +738,13 @@ const warmStagingCert = verifyStagingEdge;
 //     that window is correct precisely because the container IS still
 //     serving that hostname.
 async function teardownStaging(session, app) {
+  const lifecycle = require('./preview-lifecycle');
+  const config = { appRuntime: session.staging_runtime_kind, databaseUrl: process.env.DATABASE_URL,
+    kubernetes: { workerNamespace: process.env.WORKER_NAMESPACE || 'social-workers' } };
+  return lifecycle.teardown(config, session, fresh => teardownStagingInner(fresh, app));
+}
+
+async function teardownStagingInner(session, app) {
   log.info('staging', 'Tearing down staging', { sessionId: session.id });
 
   // Short grace: the preview is going away for good, so there is nothing
@@ -757,7 +799,7 @@ async function teardownStaging(session, app) {
   // staging_url *before* we null the column below. Only reached once the
   // container is confirmed gone, so there is nothing left connected to it.
   if (app) {
-    const commitHash = session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
+    const commitHash = session.staging_commit_sha || session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     await dbManager.dropDatabase(stagingDbNameStr).catch(() => {});
   }

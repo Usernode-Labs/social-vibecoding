@@ -70,6 +70,9 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
+    // Establish the initial search position before the catalog request;
+    // later refreshes must preserve the position the user chose.
+    Home._searchReveal.sync();
     if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
@@ -162,7 +165,9 @@ const Home = {
       gridStore.set({
         ready: true, view: 'grid', rowTemplate: '', items: [],
         resultsHeading: null, emptyQuery: null,
-        notice: { text: 'Failed to load apps', tone: 'error' },
+        // #1899: the grid draws this as the shared error card
+        // (features/apps/load-error.tsx) with a Retry that re-runs load().
+        notice: { text: "Couldn't load your apps", tone: 'error' },
       });
     }
   },
@@ -295,16 +300,24 @@ const Home = {
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
-  // feature" is what a viewer sees once they have added the featured apps,
-  // and no URL could reach it — so the Discover widget's compact state was
-  // invisible to the before/after screenshots and to every declared check.
-  // Pure UI state: it changes one derived list at render time, writes
-  // nothing, and is not env-gated, so it works in production immediately.
+  // discover" is what a viewer sees once they have added everything on
+  // offer, and no URL could reach it — so the Discover widget's compact
+  // state was invisible to the before/after screenshots and to every
+  // declared check. Pure UI state: it changes the derived lists at render
+  // time, writes nothing, and is not env-gated, so it works in production
+  // immediately.
+  //
+  // It empties BOTH halves. The block draws one lane now, so its note is the
+  // whole category's empty state; emptying only the curated half would put
+  // "nothing to discover" directly above four perfectly good popular cards.
+  _shotDiscoverEmpty() {
+    try {
+      return new URLSearchParams(location.search).get('shot') === 'discover-empty';
+    } catch (err) { return false; }
+  },
 
   featuredApps(apps) {
-    try {
-      if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
-    } catch (err) { /* ignore */ }
+    if (Home._shotDiscoverEmpty()) return [];
     return (apps || [])
       .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
@@ -316,13 +329,13 @@ const Home = {
       .slice(0, Home.FEATURED_LIMIT);
   },
 
-  // How many tiles the Discover widget's "Popular" lane shows. Same number
-  // as FEATURED_LIMIT because both lanes share the same six-track grid —
-  // see .home-discover-lane in app.css.
+  // How many popular apps the Discover rail appends. Same number as
+  // FEATURED_LIMIT: the two halves are the two halves of a twelve-card
+  // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The Popular lane's contents (#949): what everyone else is actually
-  // using, for the desktop widget's second row. Derived from the SAME
+  // The popular half of the rail (#949): what everyone else is actually
+  // using, appended after the curated cards. Derived from the SAME
   // /api/apps payload the grid already holds — `active_users` rides along
   // with every row (see the au join in src/routes/apps.js), so this costs
   // no query.
@@ -336,12 +349,15 @@ const Home = {
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
   // Only currently reviewed working apps with icons qualify. Also exclude:
-  //   * `featured` — the lane above already offers those.
+  //   * `featured` — the curated half of the same lane already offers those.
+  //     The renderer dedupes by slug anyway, since one lane is where a
+  //     double-listing would show as the same card twice.
   //   * isYours — the whole point is apps you don't have yet.
   // And a floor of one active user: an app nobody uses is not "popular",
   // and padding the lane out with zero-user rows would misrepresent it.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
+    if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
       .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
@@ -1117,7 +1133,7 @@ const Home = {
   // ── The home screen's Improve button (#1367) ───────────────────────
   //
   // "Improve" on home means the PLATFORM: the same panel every app gets,
-  // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
+  // scoped to Homeroom's own self-hosted row. Feedback, its dev
   // sessions, its kanban and feed, its repo — all of it already works on that
   // row, which is why this is a target publish and not a second surface.
   //
@@ -1360,6 +1376,7 @@ const Home = {
   // stages compose for free.
   _searchReveal: {
     _pinned: false,
+    _initializedBar: null,
     _scrollWired: false,
     _rafPending: false,
 
@@ -1380,7 +1397,7 @@ const Home = {
     },
 
     // Focused, mid-query, or deep-linked: leave the bar wherever the
-    // user put it. Anything else may be tucked away on the next render.
+    // user put it, including during initial positioning and empty blur.
     isPinned() {
       if (Home._searchReveal._pinned) return true;
       if ((Home._query || '').trim()) return true;
@@ -1390,7 +1407,7 @@ const Home = {
     pin() { Home._searchReveal._pinned = true; },
     unpin() {
       Home._searchReveal._pinned = false;
-      Home._searchReveal.sync();
+      Home._searchReveal.sync({ park: true });
     },
 
     // Stamp the current state on the bar so tests / screenshot checks
@@ -1405,16 +1422,18 @@ const Home = {
       bar.dataset.revealed = revealed ? 'true' : 'false';
     },
 
-    // Called after every render. Tucks the bar away unless it is
-    // pinned — and never yanks a user who has scrolled DOWN past it,
-    // which is what makes WS-driven re-renders safe.
-    sync() {
+    // Park once per mounted, measurable bar. Refreshes only stamp its
+    // current state, preserving even a partially revealed search field.
+    // Empty-field blur can explicitly request parking again.
+    sync({ park = false } = {}) {
       const screen = Home._searchReveal.screenEl();
       const bar = Home._searchReveal.barEl();
       if (!screen || !bar) return;
       Home._searchReveal._wireScroll(screen);
       const h = bar.offsetHeight || 0;
-      if (!Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
+      const initial = Home._searchReveal._initializedBar !== bar;
+      if (h) Home._searchReveal._initializedBar = bar;
+      if ((initial || park) && !Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
         screen.scrollTop = h;
       }
       Home._searchReveal.mark();
@@ -2075,7 +2094,7 @@ const Home = {
   // wording of the locked case, shared by the tooltip and the ⋮ menu's inert
   // note. A tap opens the create dialog, where the exact quota is shown.
 
-  // ── Usernode widget section (iOS in-app only) ──────────────────────
+  // ── Homeroom widget section (iOS in-app only) ──────────────────────
   //
   // A strip above the launcher grid mirroring the pinned grid the iOS
   // homescreen widget renders. Tiles are the device registry, in widget
@@ -2408,7 +2427,7 @@ const Home = {
   // so the management UI only appears where every management call works.
   _widgetItems: null,
   // The section is opt-in per page load: hidden until the user clicks
-  // "Add to Usernode widget" (see _menuAddShortcut), then it stays up
+  // "Add to Homeroom widget" (see _menuAddShortcut), then it stays up
   // for the rest of the session as the management surface.
   _widgetSectionVisible: false,
   // The iOS medium widget renders at most 8 tiles (see
@@ -3119,7 +3138,7 @@ const Home = {
       });
     }
     // Native homescreen shortcut — only when the page runs inside a
-    // Usernode app build whose bridge reports the feature (see
+    // Homeroom app build whose bridge reports the feature (see
     // _probeShortcutSupport; Home._shortcutSupport stays null in plain
     // browsers and on old app builds, so the item never renders there).
     const shortcutSupport = Home._shortcutSupport;
@@ -3140,13 +3159,13 @@ const Home = {
         // by default) management section — reorder or remove from there.
         items.push({
           key: 'add-to-homescreen',
-          label: 'Edit in Usernode widget',
+          label: 'Edit in Homeroom widget',
           run: () => Home._revealWidgetSection(),
         });
       } else {
         items.push({
           key: 'add-to-homescreen',
-          label: isWidget ? 'Add to Usernode widget' : 'Add to phone home screen',
+          label: isWidget ? 'Add to Homeroom widget' : 'Add to phone home screen',
           run: () => Home._menuAddShortcut(app),
         });
       }
@@ -3204,7 +3223,14 @@ const Home = {
           : 'Lock this app. An admin yes vote will also be required to merge changes.',
         run: () => Home._menuToggleLock(app),
       });
-      items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
+    }
+    // The server computes this from the shared contributor definition and
+    // rechecks it on DELETE. Keep the full-admin fallback for older payloads
+    // already in memory while a deployment rolls over. #2161: the creator of
+    // a shared app (delete_block 'shared' is only ever handed to them) keeps
+    // the entry, because the dialog is where the refusal is explained.
+    if (user.canAdminWrite || app.can_delete || app.delete_block === 'shared') {
+      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     return items;
   },
@@ -3320,7 +3346,7 @@ const Home = {
 
   // ── Menu actions ──────────────────────────────────────────────────
 
-  // Ask the Usernode app to pin this app to the device homescreen. The
+  // Ask the Homeroom app to pin this app to the device homescreen. The
   // shortcut URL is the platform's own hash deep link (#app/<slug>), so
   // tapping it reopens the SV shell already navigated to the app — same
   // surface as tapping the card, with the platform session intact. The
@@ -3351,7 +3377,7 @@ const Home = {
   },
 
   // Show the widget management section (idempotent) and bring it into
-  // view. Shared by "Add to Usernode widget" and "Edit in Usernode
+  // view. Shared by "Add to Homeroom widget" and "Edit in Homeroom
   // widget".
   _revealWidgetSection() {
     Home._widgetSectionVisible = true;
@@ -3680,16 +3706,6 @@ const Home = {
     } catch (err) {
       PlatformUI.toast(`Lock toggle failed: ${err.message}`);
     }
-  },
-
-  async _menuDelete(app) {
-    if (!await PlatformUI.confirm({ title: 'Delete this app?', message: 'This removes the app for everyone.', confirmLabel: 'Delete', danger: true })) return;
-    const res = await fetch(`/api/apps/${app.slug}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      PlatformUI.toast(data.error || `Delete failed (HTTP ${res.status})`);
-    }
-    await Home.load();
   },
 
   // ===== "Your apps" drag-and-drop (issue #128) =====

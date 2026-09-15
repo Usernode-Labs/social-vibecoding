@@ -485,7 +485,26 @@ async function readLockOwner(filename) {
         if (err.code === 'ENOENT') return null;
         throw err;
       }
-      throw new Error('lock owner is missing');
+      // A lock directory with no owner file inside is NOT a corrupt lock. By
+      // this module's own invariant a valid lock is never in that state: the
+      // candidate is built complete and renamed into place, so it is non-empty
+      // at the instant it becomes visible. An empty one is therefore either a
+      // momentary artifact of two contenders racing, or the leftovers of a
+      // process that died mid-teardown — never a lock somebody holds.
+      //
+      // Reporting it as malformed threw an error with no `code`, out of a
+      // function whose contract is that contention carries one. Under load
+      // that surfaced roughly once in 200 contended acquisitions as
+      // "Malformed lock file", where the caller expected `<operation>_in_progress`.
+      //
+      // Absence is not corruption, so it reads as "no lock". The caller then
+      // retries, and the retry is also the repair: POSIX rename() moves a
+      // directory onto an EMPTY directory successfully, so the next attempt
+      // takes the abandoned one over. A real lock's directory is non-empty and
+      // still refuses with ENOTEMPTY, which is contention and is handled as
+      // such. A genuinely corrupt owner file is a different case and still
+      // throws, from parseLockOwner below.
+      return null;
     }
     kind = 'directory';
   } else {
@@ -616,8 +635,8 @@ async function acquireLock(filename, {
       let current;
       try {
         current = await readLockOwner(filename);
-      } catch {
-        throw new Error(`Malformed lock file: ${filename}`);
+      } catch (err) {
+        throw new Error(`Malformed lock file: ${filename}`, { cause: err });
       }
       if (!current) {
         // Windows can report EPERM for an existing destination directory. If
@@ -821,7 +840,7 @@ async function setNativeRecord(origin, record) {
   } else if (process.platform === 'linux') {
     const stored = linuxSecretTool([
       'store',
-      '--label=Social Vibecoding CLI',
+      '--label=Homeroom CLI',
       'service', 'social-vibecoding',
       'account', origin,
     ], { input: serialized });

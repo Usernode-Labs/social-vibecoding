@@ -28,6 +28,7 @@ export const browseStore = createStore({
   /** null until the first _renderList; else an array of row descriptors. */
   rows: null,
   curated: true,
+  grouped: true,
   moreExpanded: false,
   /**
    * The #browse-empty line: null hides it, a string shows it. A separate field

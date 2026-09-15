@@ -136,8 +136,15 @@ export function HomeScreen() {
             1024px column, and the px-3 gutter lives here (not on the bar) so
             this column's content edges match #home-body's exactly.
         */}
+        {/*
+            #1951: the field spans the column. It was capped at `max-w-xl`
+            (576px) and sat against the column's LEFT edge, so on anything
+            wider than a phone it read as off-centre and short of the content
+            below it. Uncapped, it lines up edge to edge with #home-body, and
+            the column itself is what centres it.
+        */}
         <div className="home-column px-3 pt-3 pb-2">
-          <div className="relative max-w-xl">
+          <div className="relative w-full">
             <SearchIcon
               className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
@@ -179,7 +186,7 @@ export function HomeScreen() {
         */}
         <WelcomeBanner />
         {/*
-            iOS in-app only: the "Usernode widget" editing strip, mirroring
+            iOS in-app only: the "Homeroom widget" editing strip, mirroring
             the pinned grid the homescreen widget renders. It lives ABOVE the
             launcher grid rather than inside it — a full-width flow item
             cannot coexist with the explicit cell placement #app-list now
