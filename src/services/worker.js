@@ -2041,8 +2041,10 @@ async function ensureWorker(sessionId, {
 
   // Already warm? Confirm with Docker before trusting the registry —
   // an external `docker rm` would otherwise leave stale state.
-  const status = usesKubernetesWorkers()
-    ? await kubernetes.getWorkerStatus(kubernetesWorkerConfig(), containerName)
+  const kubernetesWorkers = usesKubernetesWorkers();
+  const workerConfig = kubernetesWorkers ? kubernetesWorkerConfig() : null;
+  const status = kubernetesWorkers
+    ? await kubernetes.getWorkerStatus(workerConfig, containerName)
     : await docker.getContainerStatus(containerName);
   if (status === 'running') {
     // Runtime-contract migration gate: earlier warm containers may have
@@ -2050,18 +2052,44 @@ async function ensureWorker(sessionId, {
     // that the current host no longer supports. Detect them via the persisted
     // usernode.proxy label and force a re-bootstrap. Cheap — one Docker
     // inspect on the warm-path hot path.
-    const labels = usesKubernetesWorkers()
-      ? { 'usernode.proxy': await kubernetes.getWorkerContractVersion(
-          kubernetesWorkerConfig(), containerName
-        ) }
+    const runtime = kubernetesWorkers
+      ? await kubernetes.getWorkerRuntimeMetadata(workerConfig, containerName)
+      : null;
+    const labels = kubernetesWorkers
+      ? { 'usernode.proxy': runtime.contractVersion }
       : await docker.getContainerLabels(containerName);
-    if (labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION) {
-      log.info('worker', 'Evicting stale-label warm container', { containerName });
-      await evictWorker(sessionId).catch((err) => {
-        log.warn('worker', 'Eviction failed; falling through to bootstrap', {
-          containerName, err: err.message,
+    const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
+      ? 'runtime-contract'
+      : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
+        ? 'worker-image' : null);
+    if (staleReason) {
+      // A recovered/in-flight turn owns this worker until it settles. Normal
+      // dispatch serialization means this is defensive, but keep the image
+      // rollout from ever becoming a reason to interrupt paid work.
+      if (existing?.inFlight) {
+        log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
+          containerName, staleReason,
         });
+        return containerName;
+      }
+      log.info('worker', kubernetesWorkers
+        ? 'Reconciling stale warm worker'
+        : 'Evicting stale warm worker', {
+        containerName,
+        staleReason,
+        currentImage: runtime?.imageRef || null,
+        expectedImage: workerConfig?.kubernetes.workerImage || null,
       });
+      if (!kubernetesWorkers) {
+        await evictWorker(sessionId).catch((err) => {
+          log.warn('worker', 'Eviction failed; falling through to bootstrap', {
+            containerName, err: err.message,
+          });
+        });
+      }
+      // Kubernetes falls through without deleting the Deployment. Its
+      // Recreate strategy updates the immutable image and stops the old Pod
+      // before starting the replacement, while the retained PVC stays put.
       // fall through to the bootstrap branch below
     } else {
       if (!existing) {

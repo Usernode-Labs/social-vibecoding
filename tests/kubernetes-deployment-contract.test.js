@@ -54,8 +54,9 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const workerDockerfile = read('worker/Dockerfile');
   for (const component of ['platform', 'worker', 'capture']) {
-    assert.match(workflow, new RegExp(`component: ${component}`));
+    assert.match(workflow, new RegExp(`"component":"${component}"`));
   }
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /owner="\$\{GITHUB_REPOSITORY_OWNER,,\}"/);
@@ -68,6 +69,24 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(workflow, /pull: true/);
   assert.match(workflow, /needs: build/);
+  assert.match(workflow, /schedule:[\s\S]*cron: '23 5 \* \* \*'/);
+  assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
+  assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
+    'the dependency version is resolved once in the plan, not once per image job');
+  assert.match(workflow, /if: needs\.plan\.outputs\.should_release == 'true'/);
+  assert.match(workflow, /matrix: \$\{\{ fromJSON\(needs\.plan\.outputs\.matrix\) \}\}/);
+  assert.match(workflow,
+    /if \[ -n "\$SCHEDULED_WORKER_DIGEST" \]; then[\s\S]*echo 'should_release=false'/,
+    'an unchanged scheduled dependency must skip every build and release job');
+  assert.match(workflow,
+    /matrix=\{\"include\":\[\{\"component\":\"worker\",\"context\":\"worker\",\"dockerfile\":\"worker\/Dockerfile\"\}\]\}/,
+    'a changed scheduled dependency builds only the worker image');
+  assert.match(workflow, /REUSE_CURRENT_PLATFORM: 'true'/);
+  assert.match(workflow, /name: image-digest-scheduled-bases/);
+  assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
+  assert.match(workflow, /build-args: \$\{\{ steps\.claude\.outputs\.build_arg \}\}/);
+  assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
+  assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
 
 test('migration command validates the target database identifier', () => {

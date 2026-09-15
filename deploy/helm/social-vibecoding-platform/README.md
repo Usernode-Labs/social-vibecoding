@@ -7,19 +7,24 @@ created later by the platform through the scoped runtime service account.
 
 The `Build Kubernetes images` workflow resolves platform, worker, and capture
 images, then packages their exact digests into `values.release.yaml` and
-publishes this chart to `oci://ghcr.io/<repository-owner>/charts`. The chart is
-the atomic release marker: no chart version exists unless all three components
-have resolved successfully, either through a build or reuse of a published image.
+publishes this chart to `oci://ghcr.io/<repository-owner>/charts`. It runs for
+source pushes and once each day so the worker can pick up a new Claude Code
+release even when the repository is unchanged. The chart is the atomic release
+marker: no chart version exists unless all three components have resolved
+successfully, either through a build or reuse of a published image.
 
 The platform image still builds at every release revision. Worker and capture
 images reuse a published digest when their complete tracked build directory and
 the build recipe are unchanged. The reuse key hashes the component's Git tree
 (including Dockerfile, ignore files, file modes, and dependency files), the
 release workflow, the resolver script, the target architecture, and the branch
-ref. An unrelated platform change therefore does not rebuild worker/capture;
-a workflow or resolver change conservatively rebuilds both. Each component's
-Docker build context must remain its own directory; additional inputs or build
-arguments must also be represented in the reuse key if the workflow is extended.
+ref. The worker key also includes the exact Claude Code version resolved from
+npm; a new release rebuilds the worker, while the daily run reuses its digest
+when that version is unchanged. An unrelated platform change therefore does
+not rebuild worker/capture; a workflow or resolver change conservatively
+rebuilds both. Each component's Docker build context must remain its own
+directory; additional inputs or build arguments must also be represented in
+the reuse key if the workflow is extended.
 
 The registry stores these lookup tags as `inputs-<hash>`, separately for each
 component and branch. The release always records the resolved `sha256` digest,
@@ -36,9 +41,12 @@ commit tag is created for them. The chart's release revision identifies the
 platform source and chart, while the three digests identify the actual artifacts.
 Workflow summaries show each component's resolution reason and selected digest.
 
-To refresh dependencies or base images without changing source, manually run
-`Build Kubernetes images` with `force_rebuild` set to `worker`, `capture`, or
-`all` (default: `none`). For example:
+Claude Code is the one automatically refreshed floating dependency: the
+workflow resolves its current npm version, validates it, includes it in the
+worker reuse key, and passes that exact version to the Docker build. Other
+dependencies and base images can be refreshed without changing source by
+manually running `Build Kubernetes images` with `force_rebuild` set to
+`worker`, `capture`, or `all` (default: `none`). For example:
 
 ```bash
 gh workflow run build-kubernetes-images.yml --ref main -f force_rebuild=worker
@@ -49,8 +57,7 @@ images again. This refreshes floating apt/npm/tool dependencies; explicitly
 pinned versions still require source changes. The refreshed digest replaces the
 lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
-referenced by releases for rollback. There is no scheduled refresh: operators
-choose when to update dependencies. A manual run on `main` publishes a normal
+referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
 component refreshes.
 

@@ -7,17 +7,36 @@ Docker daemon or socket. Talos workloads are observed through Kubernetes APIs.
 
 ## Ownership and releases
 
-The `Build Kubernetes images` workflow builds the platform Dockerfile in CI,
-builds or reuses worker/capture images by their tracked build inputs, and
-publishes one OCI Helm chart containing all three image digests. `main`
-produces the stable `0.1.*` releases tracked by Argo CD. The
-platform's own release uses this workflow; generated child apps use kpack and
-Paketo from exact Git revisions. Child-app Dockerfiles are not executed by kpack.
+The `Build Kubernetes images` workflow resolves the current Claude Code
+version once, builds the platform Dockerfile in CI, builds or reuses
+worker/capture images by their tracked build inputs, and publishes one OCI
+Helm chart containing all three image digests. `main` produces the stable
+`0.1.*` releases tracked by Argo CD. The platform's own release uses this
+workflow; generated child apps use kpack and Paketo from exact Git revisions.
+Child-app Dockerfiles are not executed by kpack.
+
+The daily dependency check is intentionally cheaper than a source release. It
+looks up the exact worker input key for the current npm version and exits after
+the planning job when that artifact already exists: no image jobs run and no
+new chart is published. When the version changes, it reuses the platform image
+for the exact current `main` revision and the capture image for its tracked
+inputs, builds only the worker, and packages those three immutable digests into
+a new atomic release. Missing platform or capture artifacts fail closed and
+require the normal `main` workflow; the scheduled path never rebuilds them as
+an incidental side effect.
 
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
+
+When a stable release changes `KUBERNETES_WORKER_IMAGE`, an existing warm
+worker is compared with that immutable digest before its next dispatch. An
+idle worker on the old digest is recreated while its per-session PVC is kept,
+so Claude's on-disk session state survives. An in-flight turn is never
+interrupted for an image refresh; replacement is deferred until a later safe
+dispatch. This makes the new worker image effective without a manual fleet
+restart, while avoiding a rollout that kills paid work already in progress.
 
 See the [platform chart](../deploy/helm/social-vibecoding-platform/README.md)
 for configuration and the `infra/prototype/bare-metal-platform` runbooks for

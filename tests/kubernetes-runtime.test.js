@@ -440,13 +440,23 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, result.pvcName);
 });
 
-test('worker contract version is read from the live Kubernetes Deployment', async () => {
+test('worker contract and immutable image are read from the live Kubernetes Deployment', async () => {
   kubernetes._setClientsForTest({
     apps: {
       async readNamespacedDeployment() {
-        return { metadata: { labels: { 'social.usernode.io/worker-contract': 'v6' } } };
+        return {
+          metadata: { labels: { 'social.usernode.io/worker-contract': 'v6' } },
+          spec: { template: { spec: { containers: [
+            { name: 'sidecar', image: 'example/sidecar@sha256:dead' },
+            { name: 'worker', image: config().kubernetes.workerImage },
+          ] } } },
+        };
       },
     },
+  });
+  assert.deepEqual(await kubernetes.getWorkerRuntimeMetadata(config(), 'sv-worker-s42'), {
+    contractVersion: 'v6',
+    imageRef: config().kubernetes.workerImage,
   });
   assert.equal(await kubernetes.getWorkerContractVersion(config(), 'sv-worker-s42'), 'v6');
 });
