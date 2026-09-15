@@ -424,10 +424,16 @@ function demoChallengesPanel(opts) {
       demo: true,
     };
   }
+  // The labels are the board's categories, WEEKLY and PERSISTENT, so the four
+  // collapsed rows (and the `few` pair) span two groups and the preview draws
+  // the client's group headers. Both DONE rows are PERSISTENT, so Always open
+  // holds them together and they stay side by side under one header (see
+  // below). The finished rows stay in other categories, so an expansion shows
+  // the third, catch-all group as well.
   const rows = [
     {
       id: 900512,
-      label: 'ONCHAIN',
+      label: 'WEEKLY',
       goal: 'Staging demo challenge — test the demo dApps',
       icon: '🧪',
       illustration: 'try-three-apps',
@@ -441,7 +447,7 @@ function demoChallengesPanel(opts) {
     },
     {
       id: 900510,
-      label: 'BUG',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — report a reproducible bug',
       icon: '🐞',
       illustration: 'useful-feedback',
@@ -453,14 +459,14 @@ function demoChallengesPanel(opts) {
       earned_points: 0,
     },
     // The two DONE rows come last (the client's orderRows puts them there
-    // anyway) and deliberately sit next to each other: one binary, one
-    // numeric at full target. Seeing both kinds of "done" side by side —
-    // a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
+    // anyway) and deliberately sit next to each other, in one group: one
+    // binary, one numeric at full target. Seeing both kinds of "done" side
+    // by side — a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
     // reason the numeric one exists here, and the collapsed block only has
     // four slots to spend.
     {
       id: 900511,
-      label: 'SOCIAL',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — share the season announcement',
       icon: '📣',
       // No artwork on purpose: one of the four collapsed rows keeps the
@@ -475,7 +481,7 @@ function demoChallengesPanel(opts) {
     },
     {
       id: 900516,
-      label: 'COMMUNITY',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — vote on five proposals',
       icon: '🗳️',
       illustration: 'make-a-proposal',
@@ -493,7 +499,7 @@ function demoChallengesPanel(opts) {
   const overflow = [
     {
       id: 900513,
-      label: 'COMMUNITY',
+      label: 'WEEKLY',
       goal: 'Staging demo challenge — give kudos to five builders',
       icon: '👏',
       illustration: 'proposal-accepted',

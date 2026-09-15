@@ -24,8 +24,19 @@
  *
  * THE DEADLINE IS ON EVERY OPEN CARD, on the line under its title beside the
  * reward ("5d left · 500 pts"): the challenge's own end, else its event's,
- * else the season's. It stays on the cards until deadline bands group the
- * challenges by when they end; then the band heading says it.
+ * else the season's.
+ *
+ * ── Group headers, without counts ─────────────────────────────────────
+ *
+ * When the cards on screen come from more than one of the board's groups
+ * (Setup, This week, Always open, the season's other challenges), each group
+ * opens with the tab's `GroupHeader`, static here: no toggle, no collapse and
+ * no count, because the four cards Home is sent are not the whole group. The
+ * header then owns the clock ("This week · 3d left", "Always open · no
+ * deadline") and the cards under it drop theirs; Setup's keep their own.
+ * Cards from one group draw no header at all. HomePanels.challengeGroups
+ * decides all of it; the headers sit inside `.home-panel-rows` beside the
+ * cards, which the declared checks select through.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
@@ -38,9 +49,12 @@
  * on the screen's Challenges tab, one tab from the standings.
  */
 
+import { Fragment } from 'react';
+
 import { ChallengeCard } from '../../leaderboard/challenge-card';
+import { GroupHeader } from '../../leaderboard/group-header';
 import { SeasonProgress } from '../../leaderboard/season-progress';
-import type { ChallengesView } from '../panels-store';
+import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
@@ -59,6 +73,9 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       </PanelShell>
     );
   }
+
+  const groups: ChallengeGroupView[] = view.groups
+    ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
 
   return (
     <PanelShell
@@ -85,14 +102,19 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       ) : null}
       <div className="home-panel-body">
         <div className="home-panel-rows flex flex-col gap-2">
-          {view.rows.map((row) => (
-            <ChallengeCard
-              key={row.id}
-              view={row}
-              className="home-challenge-card"
-              data-challenge-id={row.id}
-              onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
-            />
+          {groups.map((g) => (
+            <Fragment key={g.key}>
+              {g.heading ? <GroupHeader heading={g.heading} meta={g.meta} /> : null}
+              {g.rows.map((row) => (
+                <ChallengeCard
+                  key={row.id}
+                  view={row}
+                  className="home-challenge-card"
+                  data-challenge-id={row.id}
+                  onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+                />
+              ))}
+            </Fragment>
           ))}
         </div>
       </div>

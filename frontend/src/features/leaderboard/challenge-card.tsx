@@ -29,10 +29,11 @@
 // Under the title, ONE meta line says when the challenge ends and what it
 // pays: "5d left · 500 pts", or "Earned 900 pts" in emerald on a finished
 // challenge the viewer scored on. It takes the slot a description would —
-// never the task, which the tab's detail overlay carries. The deadline part
-// stays until deadline bands group the cards by when they end (the later
-// grouping slice); then the band heading says it and the line keeps only the
-// reward. A finished card has nothing to count down to.
+// never the task, which the tab's detail overlay carries. Under a group
+// header that carries the clock (This week, Always open, Season challenges;
+// ./group-header.tsx) the card leaves the deadline to that header and the
+// line keeps only the reward; Setup's cards and an ungrouped grid keep it. A
+// finished card has nothing to count down to.
 //
 // The RAIL IS CLEAN: its own full-width row holding the state and nothing
 // else — the ring, the label, and for a counted challenge (a target above

@@ -7,8 +7,8 @@
 // #challenges-root: the grid host, and the challenge detail page and profile
 // overlay that sit on top of it. The descriptors come from ./topochain-challenges-store.js,
 // which that module fills; nothing here decides anything. The completed
-// split, the summary tally, the deep-link resolution, the scheme guard on the
-// CTA — all of it stays in the .js, which is both the island rule's
+// split, the groups and their headers' words, the summary tally, the
+// deep-link resolution, the scheme guard on the CTA — all of it stays in the .js, which is both the island rule's
 // "converted markup is like-for-like" and what keeps
 // tests/challenge-deep-link.test.js able to run the real controller in a vm.
 //
@@ -50,6 +50,7 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { GroupHeader } from './group-header';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
@@ -62,6 +63,7 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
+    _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
@@ -97,11 +99,22 @@ type CardView = {
   fill: number | null;
   counted: boolean;
   earned: string | null;
-  // "5d left" (TopochainChallenges._deadlineOf); null when done.
+  // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
+  // under a group header that carries the clock.
   deadline: string | null;
 };
 
-type GroupView = { key: string; heading: string | null; cards: CardView[] };
+// `meta`, `allDone` and `collapsed` are a grouped grid's header
+// (TopochainChallenges._groupedGridView); an ungrouped grid's groups carry
+// only a heading, or none.
+type GroupView = {
+  key: string;
+  heading: string | null;
+  meta?: string | null;
+  allDone?: boolean;
+  collapsed?: boolean;
+  cards: CardView[];
+};
 
 type GridView =
   | { kind: 'loading' }
@@ -260,15 +273,37 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           between them were siblings in the string this replaces, and a
           container here would take the heading's `mt-6` out of the same
           margin context.
+
+          A group with a `meta` belongs to a grouped grid and gets the board's
+          header, a disclosure over the group's own grid. A collapsed grid
+          keeps its cards, because the header's aria-controls names it, and is
+          hidden twice: the attribute says what it means, and the `hidden`
+          class is what hides it, since `grid` sets a display that outranks
+          the attribute's preflight rule.
       */}
-      {view.groups.map((g) => (
+      {view.groups.map((g) => (g.meta && g.heading ? (
+        <Fragment key={g.key}>
+          <GroupHeader
+            heading={g.heading}
+            meta={g.meta}
+            allDone={!!g.allDone}
+            expanded={!g.collapsed}
+            controlsId={`tc-se-group-${g.key}`}
+            onToggle={() => controller()?._toggleGroup(g.key)}
+            className="mt-3 mb-2 first:mt-0"
+          />
+          <div id={`tc-se-group-${g.key}`} className={g.collapsed ? `hidden ${GRID}` : GRID} hidden={!!g.collapsed}>
+            {g.cards.map((c) => <Card key={c.key} view={c} />)}
+          </div>
+        </Fragment>
+      ) : (
         <Fragment key={g.key}>
           {g.heading ? <div className={GROUP_HEADING}>{g.heading}</div> : null}
           <div className={GRID}>
             {g.cards.map((c) => <Card key={c.key} view={c} />)}
           </div>
         </Fragment>
-      ))}
+      )))}
     </>
   );
 }

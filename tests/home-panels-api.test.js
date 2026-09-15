@@ -852,6 +852,21 @@ test('demoChallengesPanel: registry artwork on the rows, with one fallback in th
   assert.ok(collapsed.some((c) => c.illustration === null), 'and keeps one fallback in view');
 });
 
+// The preview is where Home's group headers are reviewed, and a header only
+// draws when the cards on screen span two groups.
+test('demoChallengesPanel: the collapsed rows and the short list span two groups', () => {
+  const { demoChallengesPanel } = require('../src/routes/home-panels');
+  const labels = (opts) => [...new Set(demoChallengesPanel({ username: 'tester', ...opts })
+    .challenges.map((c) => c.label))].sort();
+  assert.deepEqual(labels({}), ['PERSISTENT', 'WEEKLY']);
+  assert.deepEqual(labels({ variant: 'few' }), ['PERSISTENT', 'WEEKLY']);
+  // The binary and the numeric DONE rows are compared side by side, so a
+  // group header must not fall between them.
+  const rows = demoChallengesPanel({ username: 'tester' }).challenges;
+  const labelOf = (id) => rows.find((c) => c.id === id).label;
+  assert.equal(labelOf(900511), labelOf(900516), 'the two done rows share a group');
+});
+
 test('the demo variants are staging-only, like ?demo=1 itself', async () => {
   // USERNODE_ENV is not 'staging' in the test process, so the query param
   // must be inert: the real builder runs and the season fixture wins.
