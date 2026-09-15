@@ -645,13 +645,14 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
   TOKEN_REQUEST_TIMEOUT_MS: 15000,
 
-  // A newly-created app can finish while its first /api/apps/:slug detail
-  // request is still in flight. `app_status` is newer than that request's
-  // snapshot, but App.handleAppStatusUpdate cannot apply it until appData
-  // exists; dropping it leaves the stale `creating` snapshot on screen until
-  // a full-page refresh. Keep just the latest terminal event per slug across
-  // that narrow gap. A later `creating` phase means a retry started, so it
-  // invalidates any terminal event from the previous attempt.
+  // A newly-created app can finish before it is opened, or while its first
+  // /api/apps/:slug detail request is still in flight. `app_status` is newer
+  // than the service worker's cached detail snapshot, but there may be no
+  // appData to mutate yet; dropping it leaves the stale `creating` snapshot
+  // on screen until a full-page refresh. Keep just the latest terminal event
+  // per slug across that pre-open/in-flight gap. A later `creating` phase
+  // means a retry started, so it invalidates any terminal event from the
+  // previous attempt.
   _pendingAppStatus: Object.create(null),
 
   _rememberPendingAppStatus(data) {
@@ -17019,7 +17020,15 @@ const AppView = {
     let run;
     run = (async () => {
       try {
-        const res = await fetch(`/api/apps/${expected.slug}`);
+        // This is a recovery read, not a first-paint read. The ordinary app
+        // detail URL deliberately sits in the service worker's zero-deadline
+        // boot lane, where a cached `creating` record is allowed to win while
+        // the network corrects it in the background. Re-reading that same URL
+        // cannot be the authority that clears the placeholder. The tagged URL
+        // is hard-bypassed by public/sw.js, and no-store also keeps the browser
+        // HTTP cache out of the recovery path.
+        const slug = encodeURIComponent(expected.slug);
+        const res = await fetch(`/api/apps/${slug}?status_recheck=1`, { cache: 'no-store' });
         if (!res.ok) return;
         const { app: updated } = await res.json();
 

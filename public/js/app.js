@@ -2407,6 +2407,14 @@ const App = {
     // message arriving in that window has no store to publish into yet.
     window.UsernodeReact?.appCreationProgress?.publish?.(data);
 
+    // A creation commonly finishes while its progress dialog is still open,
+    // BEFORE this slug is the current app. The terminal event is newer than
+    // any app-detail snapshot already sitting in the service-worker cache, so
+    // retain it for AppView.open() regardless of which screen is visible.
+    // `_rememberPendingAppStatus` also treats a later `creating` phase as a
+    // retry boundary and clears an older terminal fact for the same slug.
+    AppView._rememberPendingAppStatus?.(data);
+
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
     if (card) {
@@ -2430,11 +2438,10 @@ const App = {
     // Update app view if we're looking at this app
     if (App.currentApp === data.slug && App.currentTab === 'app') {
       // On the first open, the terminal event can beat the detail request.
-      // There is no record to mutate yet, so preserve the event for open() to
-      // reconcile with the fetched snapshot instead of discarding it.
-      if (!AppView.appData || AppView.appData.slug !== data.slug) {
-        AppView._rememberPendingAppStatus?.(data);
-      } else if (data.status === 'running') {
+      // There is no record to mutate yet. The event was preserved above, so
+      // open() will reconcile it with the fetched snapshot when that settles.
+      if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'running') {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
         // Share lives in the Improve panel now, and the panel reads
@@ -2451,14 +2458,16 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
-      } else if (data.status === 'error') {
+      } else if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'error') {
         // #416: a watched spin-up just failed — flip the App tab to the
         // error state immediately, carrying the broadcast one-line
         // reason so the user isn't left with a bare "Error".
         AppView.appData.status = 'error';
         if (data.errorReason) AppView.appData.errorReason = data.errorReason;
         AppView.renderAppTab();
-      } else if (data.status === 'awaiting_secrets') {
+      } else if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'awaiting_secrets') {
         // This is terminal for the initial deploy too. Leaving appData at
         // `creating` would strand the same spinner as a missed running event;
         // render the actionable blocked state immediately.

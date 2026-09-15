@@ -100,6 +100,32 @@ test('#1883: HTTP reconciliation clears a stale creating placeholder without a W
   assert.equal(AppView._statusPollTimer, null, 'no poll survives a terminal record');
 });
 
+test('#1883: HTTP reconciliation bypasses the app-detail boot cache', async () => {
+  const calls = [];
+  const running = {
+    slug: 'recipebot', name: 'Recipebot', status: 'running',
+    url: 'https://recipebot.example.test',
+  };
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return { ok: true, json: async () => ({ app: running }) };
+    },
+  });
+  const creating = { slug: 'recipebot', name: 'Recipebot', status: 'creating', url: null };
+  sandbox.App.currentApp = creating.slug;
+  sandbox.App.currentTab = 'app';
+  AppView.appData = creating;
+  AppView.refreshToken = async () => {};
+  AppView.renderAppTab = () => {};
+
+  await AppView.pollStatus(creating);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/apps/recipebot?status_recheck=1');
+  assert.equal(calls[0][1].cache, 'no-store');
+});
+
 test('#1883: repeated paints keep exactly one status recheck scheduled', () => {
   let seq = 0;
   const active = new Set();

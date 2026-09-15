@@ -569,6 +569,14 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // App creation status rechecks are an explicit freshness request. Ordinary
+  // GET /api/apps/:slug stays in the zero-deadline boot lane so a warm screen
+  // paints immediately, but a recovery loop cannot clear a stale `creating`
+  // placeholder if the worker is allowed to hand that same cached snapshot
+  // straight back. The query tag is scoped to exactly the app-detail route;
+  // the server ignores it and answers the normal representation.
+  if (/^\/api\/apps\/[^/]+$/.test(p)
+      && u.searchParams.get('status_recheck') === '1') return 'bypass';
   // Waitlist social connect (routes/waitlist-connect.js): the start route
   // redirects to the provider and the callback is a standalone status page.
   // As ordinary navigations both fell into the 200ms shell race, so a
