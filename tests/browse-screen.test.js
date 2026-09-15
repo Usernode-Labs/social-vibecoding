@@ -645,13 +645,22 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /divide-/,
     'the phone hairline is .browse-row + .browse-row in app.css');
 
-  // Phone: the rows sit in ONE white card (the max-md classes on the container
-  // above) and the hairline between them is INSET to the text column, so it
-  // stops short of the card's corner radius. It is a pseudo-element rather
-  // than `border-top` — a border cannot be inset — which is also what frees
-  // the md+ block below to own the `border` shorthand outright.
-  assert.match(listTag, /max-md:rounded-2xl/, 'phone: the rows sit in one card');
-  assert.match(listTag, /max-md:bg-white/, 'phone: that card is a white surface');
+  // Phone: the rows sit in ONE PANE with the search bar above them (#1919):
+  // the search bar is the pane's head and this container is its body. The
+  // surface — the frosted sheet fill, the hairline ring, the 22px radius —
+  // is `browse-pane-*` in app.css beside the row rules, NOT utilities on the
+  // tag (it used to be `max-md:rounded-2xl max-md:bg-white`, a plain white
+  // card under a wallpaper-coloured bar). The hairline between rows is INSET
+  // to the text column, so it stops short of the pane's corner radius. It is
+  // a pseudo-element rather than `border-top` — a border cannot be inset —
+  // which is also what frees the md+ block below to own the `border`
+  // shorthand outright.
+  assert.match(listTag, /browse-pane-body/, 'phone: the rows sit in the pane body');
+  assert.doesNotMatch(listTag, /max-md:/, 'phone: the surface is app.css, not utilities');
+  const barTag = INDEX.match(/<div id="browse-search-bar"[^>]*>/)[0];
+  assert.match(barTag, /browse-pane-head/, 'phone: the search bar is the pane head');
+  assert.match(barTag, /md:bg-\[color:var\(--home-ground\)\]/,
+    'md+: the bar keeps the wallpaper fill; the pane is a phone treatment');
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
@@ -664,6 +673,26 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.ok(browseStart > -1 && browseEnd > browseStart,
     'the Browse-owned CSS section must remain identifiable');
   const browseCss = css.slice(browseStart, browseEnd);
+  // The pane (#1919): the Workshop's working-pane recipe — --dc-sheet-fill
+  // over --dc-frost, an --app-sheet-line ring, 22px corners — split across
+  // the two sibling parts, head over body, below md only. Page-scoped
+  // classes, so the Workshop's pane and this one can move independently.
+  const paneBlock = browseCss.slice(browseCss.indexOf('@media (max-width: 767px)'));
+  assert.ok(paneBlock.length > 0, 'phone: the pane block sits in the Browse-owned section');
+  assert.match(paneBlock,
+    /#browse-screen \.browse-pane-head,\s*\n\s*#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?background-color: var\(--dc-sheet-fill\);[\s\S]*?backdrop-filter: var\(--dc-frost\);[\s\S]*?border: 1px solid var\(--app-sheet-line\);/,
+    'phone: head, body and note share one frosted fill and one ring');
+  assert.match(paneBlock,
+    /#browse-screen \.browse-pane-head \{[\s\S]*?border-bottom: 0;[\s\S]*?border-radius: 22px 22px 0 0;/,
+    'phone: the head carries the top of the ring');
+  assert.match(paneBlock,
+    /#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?border-top: 0;[\s\S]*?border-radius: 0 0 22px 22px;/,
+    'phone: the body (or the empty note) closes it');
+  assert.match(paneBlock, /\.browse-pane-body:empty \{ display: none; \}/,
+    'phone: an empty list collapses so the note can be the body');
+  assert.match(paneBlock,
+    /@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\) \{[\s\S]*?\.browse-pane-note \{ background-color: var\(--dc-sheet\); \}/,
+    'phone: without a backdrop filter all three parts go opaque together');
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
