@@ -7660,23 +7660,51 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch IN
 -- nothing is rolled back, and the culprit is whatever landed since the
 -- last green.
 --
---   main_check_state        'running' | 'passing' | 'failing' | 'error' |
---                           'skipped'. NULL: never run. 'error' is a run
---                           that could not happen (no runner, no clone)
---                           and does not pause anything; 'skipped' is a
---                           repo with no runnable test script.
+--   main_check_state        'running' | 'confirming' | 'passing' |
+--                           'failing' | 'error' | 'skipped'. NULL: never
+--                           run. 'confirming' is a first red being re-run
+--                           once on the same commit before it counts —
+--                           flaky tests exist, and one paused the
+--                           platform's merges for an afternoon. 'error' is
+--                           a run that could not happen (no runner, no
+--                           clone) and says nothing about main; 'skipped'
+--                           is a repo with no runnable test script.
 --   main_check_sha          the merge commit the state describes.
 --   main_check_at           when that run finished (or started, while
---                           'running').
+--                           'running' / 'confirming').
 --   main_check_detail       the run's own account: failing tests, the
---                           TAP summary, the PR that landed it.
---   main_check_resumed_sha  an admin's "resume merges" for exactly this
---                           red sha. A later red is a new pause.
+--                           TAP summary, the PR that landed it; for a
+--                           confirmed red, the first run too; for a flake,
+--                           the failure that did not repeat.
+--   main_check_paused_sha   the red commit the app's merge pause is about;
+--                           NULL when merges are not paused. Set by a red
+--                           verdict (provisional or confirmed), cleared by
+--                           exactly two things: a green verdict, or an
+--                           admin's resume. An 'error' run in between
+--                           leaves it alone — a run that says nothing
+--                           about main cannot lift a pause. Before this
+--                           column the pause was DERIVED (state 'failing'
+--                           at a sha not yet resumed), so a merge whose
+--                           run merely could not happen silently lifted
+--                           it; the backfill below carries the derived
+--                           pauses over.
+--   main_check_resumed_sha  the sha an admin's "resume merges" was about,
+--                           so a red verdict still in flight for that same
+--                           sha cannot re-pause. A later red is a new pause.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_state VARCHAR(16);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR(40);
+-- Carry the derived pauses over. Idempotent: only rows that are red, not
+-- resumed for that red, and not yet carrying the pause column.
+UPDATE apps
+   SET main_check_paused_sha = main_check_sha
+ WHERE main_check_state = 'failing'
+   AND main_check_sha IS NOT NULL
+   AND main_check_paused_sha IS NULL
+   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha);
 
 -- The Needs-you deck's ask box (services/workshop-ask.js): one person's
 -- own questions about one card, and the answers they got.

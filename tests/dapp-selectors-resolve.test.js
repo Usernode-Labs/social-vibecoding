@@ -228,9 +228,11 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // Real server-rendered pages and static assets, which pass through untouched.
   // /reports/ is the public report share link (routes/report-snapshots.js,
   // mounted before authMiddleware) — a standalone sandboxed document, not an
-  // SPA route.
+  // SPA route. /api/public/ is the anonymous JSON tier (routes/public-api.js):
+  // a GET there answers with its own payload and never reaches index.html, so
+  // a declared check on one reads the API rather than photographing a screen.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
-    '/status', '/node-status', '/debug', '/gallery', '/reports/'];
+    '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/'];
 
   const unroutable = [];
   for (const t of declared) {

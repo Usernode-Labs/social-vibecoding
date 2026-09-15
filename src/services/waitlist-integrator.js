@@ -8,9 +8,14 @@
 //
 // It cannot avoid that. Express trusts no forwarding header of its own
 // (server.js sets `trust proxy` false) and only the configured Caddy peer
-// may supply one, so a proxy upstream of Caddy is invisible — and the
-// public API sends no CORS headers, so calling it from the visitor's own
-// browser is not an available shape either.
+// may supply one, so a proxy upstream of Caddy is invisible. Calling the
+// join endpoint from the visitor's own browser IS an available shape now
+// that `/api/public/*` answers cross-origin (src/middleware/public-cors.js),
+// but not a KEYED one: that middleware deliberately leaves KEY_HEADER out of
+// Access-Control-Allow-Headers, so a browser cannot send the secret even if
+// a page were careless enough to embed it. A browser signup is therefore
+// always an anonymous, per-IP-budgeted signup — which is the correct budget
+// for it, since each visitor arrives from their own address.
 //
 // So: an optional shared secret re-keys that caller's budget to its own
 // identity instead of to an address. Note what this deliberately is NOT:

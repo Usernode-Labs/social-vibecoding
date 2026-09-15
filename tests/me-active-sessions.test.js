@@ -471,13 +471,25 @@ test('database failure surfaces as a 500, not a hang or leak', async () => {
 // metadata-only /shared-sessions payload must include linked_issues.
 // Issue numbers are group-visible data — the issue list itself is
 // view-level — so this widens nothing sensitive.
+// The shared-sessions list is the only query whose WHERE clause is
+// `cs.app_id = $1 AND cs.shared_at IS NOT NULL`. That is what the predicate
+// below matches — NOT the bare `shared_at IS NOT NULL`, which is also a
+// projected column (`(cs.shared_at IS NOT NULL) AS shared`) in
+// session-state.loadRow and the active-sessions list. Any background query
+// that reaches the shared pool handler while this test runs (a sweeper on a
+// timer, a websocket reconnect from the previous test's server) would take
+// the canned row and this test would then find THAT query first and fail its
+// column assertions. It did, on main, under CI load: a red main-watch verdict
+// paused the platform's merges for an afternoon over it.
+const SHARED_SESSIONS_SQL = /WHERE cs\.app_id = \$1 AND cs\.shared_at IS NOT NULL/;
+
 test('shared-sessions returns linked_issues per row', async () => {
   const appAccess = require('../src/services/app-access');
   const prevGet = appAccess.getAppForUser;
   appAccess.getAppForUser = async () => ({ id: 1, slug: 'demo' });
   capturedQueries = [];
   poolQueryHandler = async (sql) => {
-    if (/shared_at IS NOT NULL/.test(String(sql))) {
+    if (SHARED_SESSIONS_SQL.test(String(sql))) {
       return {
         rows: [{
           id: 9, session_title: 'Shared work', pr_title: null,
@@ -502,7 +514,7 @@ test('shared-sessions returns linked_issues per row', async () => {
     assert.strictEqual(body.sessions.length, 1);
     assert.deepStrictEqual(body.sessions[0].linked_issues, [12, 34]);
 
-    const q = capturedQueries.find((c) => /shared_at IS NOT NULL/.test(c.sql));
+    const q = capturedQueries.find((c) => SHARED_SESSIONS_SQL.test(c.sql));
     assert.ok(q, 'shared-sessions query was issued');
     assert.match(q.sql, /cs\.linked_issues/);
     assert.match(q.sql, /cs\.source/);

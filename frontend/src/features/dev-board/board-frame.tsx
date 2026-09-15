@@ -67,12 +67,15 @@ import {
   PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { Button } from '@/components/ui/button';
+
 import { DevActionsRow } from './actions-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, lockedNoticeText, type LockedNoticeState } from './locked-notice-store';
+import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -208,6 +211,48 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
   );
 }
 
+/**
+ * The "merges are paused" banner (./main-pause-store.ts). Amber, because it
+ * is a condition somebody may need to act on, and above the cards, because
+ * it is the one fact that applies to every card at once: a red main pauses
+ * the app's merges, whatever each proposal's own vote and checks say. The
+ * sentence names the test; for an admin it carries the verb, which calls
+ * the same `AppView.resumeMainMerges` the per-card ledger's button does, so
+ * there is one resume path and one toast.
+ */
+function MainPauseNotice(): ReactNode {
+  const s = useStoreState<MainPauseState>(mainPauseStore);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  if (!s.paused) return null;
+  const resume = () => {
+    if (!s.slug) return;
+    window.AppView?.resumeMainMerges?.(s.slug, btnRef.current);
+  };
+  return (
+    <div
+      className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+      data-main-pause={s.confirming ? 'confirming' : 'paused'}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex-1 min-w-0">{mainPauseText(s)}</span>
+        {s.canResume && !s.confirming ? (
+          <Button
+            ref={btnRef}
+            variant="neutral"
+            ink="neutral"
+            size="xs"
+            className="shrink-0"
+            onClick={resume}
+            title="Resume merges on this app while main’s unit suite is red. The pause returns if a later merge fails the suite again."
+          >
+            Resume merges
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function DevBoardFrame({
   illustrationApp,
   canManageIllustration,
@@ -219,6 +264,7 @@ export function DevBoardFrame({
   cardHoverCls,
 }: DevBoardFrameProps) {
   const { locked, inviteOnly } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
   // The toolbar's home depends on the surface — see the DevActionsRow render
   // below. Subscribing the frame to the mode is safe for the one node this
   // file hands to the module: `#dev-body`'s `dangerouslySetInnerHTML` object
@@ -298,6 +344,15 @@ export function DevBoardFrame({
               {lockedNoticeText(inviteOnly)}
             </div>
           ) : null}
+        </div>
+        {/*
+            The merges-paused banner (services/main-watch.js). Same
+            arrangement as the locked notice: one store field, one writer,
+            one spelling. Absent — not hidden — while merges are not paused,
+            so a board that is fine carries no extra node.
+        */}
+        <div id="dev-main-pause-notice" className={mainPaused ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          <MainPauseNotice />
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
         {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts

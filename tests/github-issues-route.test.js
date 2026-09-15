@@ -1016,3 +1016,40 @@ test('production never synthesizes in_progress state', async () => {
     server.close();
   }
 });
+
+// ── #2261: a refused GitHub read is not an empty board ─────────────────
+// The route hands the client whatever fetchPublicIssues answers. When the
+// refetch behind an expired (or merge-invalidated) entry is refused, that
+// answer is now the last list with `note` and `stale: true` — and the route
+// passes both through, so the board can keep what it has and say why.
+test('#2261 a refused GitHub read serves the last list with note + stale instead of an empty one', async () => {
+  const server = await startServer();
+  const stubbed = global.fetch;
+  try {
+    const port = server.address().port;
+    // Warm the entry through the route (the stub answers five issues), then
+    // expire it the way a platform merge does and make GitHub refuse.
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).issues.length, 5);
+    assert.strictEqual(github.invalidateIssuesCache('o', 'r'), true);
+    global.fetch = async (url, opts) => (String(url).includes('api.github.com')
+      ? { ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) }
+      : realFetch(url, opts));
+
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.length, 5, 'the last list is served, not an empty one');
+    assert.strictEqual(body.issues[0].number, 1);
+    assert.strictEqual(body.note, 'fetch failed');
+    assert.strictEqual(body.stale, true);
+  } finally {
+    global.fetch = stubbed;
+    // Leave the shared entry fresh for whatever runs next: expire it and let
+    // the restored stub re-warm it.
+    github.invalidateIssuesCache('o', 'r');
+    await realFetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/github-issues`);
+    server.close();
+  }
+});
