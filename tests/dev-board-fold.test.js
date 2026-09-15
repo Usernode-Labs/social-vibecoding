@@ -505,7 +505,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // under the light shell (`?shot=app-tone-dark`) and a light app under the
   // dark shell (`?shot=app-tone-light&theme=dark`), each reading the tone
   // the frame's page colour put on <html>.
-  assert.equal(DAPP.tests.length, 629);
+  // 627 → 629: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  // 629 → 631: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 627 → 629 alone, with
+  // the #1945 checks above; main independently took the SAME 627 → 629 with
+  // the #1962 checks. Two +2s against a shared 627 is 631.
+  assert.equal(DAPP.tests.length, 631);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
