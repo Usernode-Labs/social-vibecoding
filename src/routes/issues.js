@@ -66,19 +66,20 @@ const MAX_SECRET_VALUE_LENGTH = 4096;
 // with embedded code snippets are legitimate, so the cap is generous.
 const MAX_CAMPAIGN_INSTRUCTIONS_LENGTH = 20000;
 const MAX_CAMPAIGN_TITLE_LENGTH = 200;
-// "In progress" status windows. Two separate 7-day constants on purpose —
-// they protect different things and may be tuned independently:
-//  - IN_PROGRESS_PAUSED_WINDOW_DAYS: how long a PAUSED (never-promoted,
-//    never-archived) session keeps counting toward an issue's derived
-//    in-progress status. Active/promoted/merging sessions always count;
-//    archived/merged never do; paused ones age out on last_activity_at
-//    because nothing ever archives them automatically.
-//  - ISSUE_CLAIM_TTL_DAYS: how long a manual issue_claims row stays live
-//    without activity. Activity = the claim's own claimed_at (renewed by
-//    re-POSTing) OR any message in the issue's discussion thread, so an
-//    issue under active discussion keeps its claims alive with no writes.
-const IN_PROGRESS_PAUSED_WINDOW_DAYS = 7;
-const ISSUE_CLAIM_TTL_DAYS = 7;
+// "In progress" status windows, and what keeps a claim live.
+//
+// #1903: both constants and the claim-liveness predicates now live in
+// services/issue-progress.js, because the Workshop's lane assignment needs
+// exactly the same rules and a second copy of them is a second copy to
+// drift. The bulk read below stays here: it needs per-issue DETAIL for the
+// chip and already holds the thread timestamps, so calling the Set helper
+// would be a redundant query on a hot path.
+const {
+  IN_PROGRESS_PAUSED_WINDOW_DAYS,
+  ISSUE_CLAIM_TTL_DAYS,
+  claimExpiresAt,
+  claimIsLive,
+} = require('../services/issue-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -1511,15 +1512,13 @@ function issueRoutes(config) {
           ORDER BY ic.claimed_at ASC`,
         [app.id]
       );
-      const claimTtlMs = ISSUE_CLAIM_TTL_DAYS * 24 * 3600 * 1000;
       const claimsByNumber = new Map();
+      const claimNow = Date.now();
       for (const c of claimRows) {
-        const lastAt = Date.parse(chatByNumber.get(c.n)?.last_at || '') || 0;
-        const claimedAt = Date.parse(c.claimed_at) || 0;
-        const freshest = Math.max(claimedAt, lastAt);
-        if (freshest <= Date.now() - claimTtlMs) continue; // expired — inert row
+        const lastAt = chatByNumber.get(c.n)?.last_at;
+        if (!claimIsLive(c.claimed_at, lastAt, claimNow)) continue; // expired — inert row
         const list = claimsByNumber.get(c.n) || [];
-        list.push({ ...c, expires_at: new Date(freshest + claimTtlMs).toISOString() });
+        list.push({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() });
         claimsByNumber.set(c.n, list);
       }
 
