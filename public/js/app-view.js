@@ -3494,7 +3494,7 @@ const AppView = {
       rows.splice(reviewIndex < 0 ? rows.length : reviewIndex, 0, main);
     }
     if (mine && !AppView.readOnly && open && AppView._headHome(item) === 'app_repo' && item.source !== 'imported') {
-      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main'] } }];
+      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
     } else if (AppView._headHome(item) === 'user_fork') {
       main.foot = [...(main.foot || []), ['The author must update this branch in their fork, then push the changes.']];
     }
@@ -3520,17 +3520,22 @@ const AppView = {
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
         title: submission.reason, disabled: !ready || !!busy,
-        act: { fn: 'runChangeAction', args: [item.id, 'promote'] } });
+        act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
   },
 
-  async runChangeAction(id, action) {
+  async runChangeAction(id, action, item) {
     if (!['sync-main', 'promote'].includes(action) || AppView._changeActions.has(Number(id))) return;
-    const session = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
-      ? DevChat.currentSession : AppView._changeItems.get(Number(id));
-    if (action === 'promote' && (!session || AppView.changeSubmissionState(session).kind !== 'ready')) return;
+    const workspace = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+      ? DevChat.currentSession : null;
+    // The detail polls independently of the workspace. Use the snapshot
+    // that rendered this action, including its readiness, so an older copy
+    // cannot silently veto an enabled button (or enable a blocked one).
+    const session = item || workspace || AppView._changeItems.get(Number(id));
+    if (!session || Number(session.id) !== Number(id)) return;
+    if (action === 'promote' && AppView.changeSubmissionState(session).kind !== 'ready') return;
     const slug = AppView.appData?.slug;
-    const fromWorkspace = typeof DevChat !== 'undefined' && DevChat.currentSession === session;
+    const fromWorkspace = !!workspace;
     const stillVisible = () => !fromWorkspace || Number(DevChat.currentSession?.id) === Number(id);
     AppView._changeActions.set(Number(id), action);
     const repaint = () => {
@@ -3547,12 +3552,18 @@ const AppView = {
         : data.message || data.error || 'The action could not be completed.');
       if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
       if (action === 'promote') {
-        session.status = 'promoted';
-        if (data.prNumber) session.pr_number = data.prNumber;
-        if (data.prUrl) session.pr_url = data.prUrl;
-        if (data.prTitle) session.pr_title = session.session_title = data.prTitle;
+        const promoted = { status: 'promoted' };
+        if (data.prNumber) promoted.pr_number = data.prNumber;
+        if (data.prUrl) promoted.pr_url = data.prUrl;
+        if (data.prTitle) promoted.pr_title = promoted.session_title = data.prTitle;
         const listed = typeof DevChat !== 'undefined' && DevChat.sessions?.find((s) => Number(s.id) === Number(id));
-        if (listed) Object.assign(listed, { status: session.status, pr_number: session.pr_number, pr_url: session.pr_url, pr_title: session.pr_title, session_title: session.session_title });
+        const focused = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+          ? DevChat.currentSession : null;
+        // Reconcile only the matching session's public lifecycle fields.
+        // Keep workspace-only data and a newly focused session untouched.
+        for (const target of [session, AppView._changeItems.get(Number(id)), focused, listed]) {
+          if (target) Object.assign(target, promoted);
+        }
       }
       if (typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)) {
         DevChat.renderChatView();
