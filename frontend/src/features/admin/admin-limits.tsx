@@ -76,6 +76,10 @@ function LimitsSection() {
 
   const [user, setUser] = useState('');
   const [weekly, setWeekly] = useState('');
+  // #838: the two higher identity tiers. Blank means "same as the unverified
+  // cap" (nothing stored), and saving a blank clears a stored value.
+  const [weeklySocial, setWeeklySocial] = useState('');
+  const [weeklyZk, setWeeklyZk] = useState('');
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
@@ -95,6 +99,10 @@ function LimitsSection() {
   const fillLimits = useCallback((data: any) => {
     setUser(console_().centsToDollars(data.user_daily_limit_cents));
     setWeekly(console_().centsToDollars(data.user_weekly_limit_cents));
+    setWeeklySocial(data.user_weekly_limit_social_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_social_cents));
+    setWeeklyZk(data.user_weekly_limit_zk_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_zk_cents));
     setGlobal(console_().centsToDollars(data.global_daily_limit_cents));
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
@@ -134,17 +142,22 @@ function LimitsSection() {
 
   const saveLimits = async () => {
     setLimitsStatus(null);
-    const body: Record<string, number> = {};
+    const body: Record<string, number | null> = {};
     try {
       const u = console_().parseDollarsToCents('Default per-user', user.trim());
-      const w = console_().parseDollarsToCents('Default per-user weekly', weekly.trim());
+      const w = console_().parseDollarsToCents('Weekly cap, unverified', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
       const s = console_().parseDollarsToCents('System tokens', system.trim());
+      // #838: a blank tier field is sent as null, which clears the stored
+      // value so that tier inherits the unverified cap again.
+      const ws = console_().parseDollarsToCents('Weekly cap, GitHub and X', weeklySocial.trim());
+      const wz = console_().parseDollarsToCents('Weekly cap, zkPassport', weeklyZk.trim());
       if (u !== null) body.user = u;
       if (w !== null) body.weekly = w;
+      body.weeklySocial = ws;
+      body.weeklyZk = wz;
       if (g !== null) body.global = g;
       if (s !== null) body.system = s;
-      if (!Object.keys(body).length) throw new Error('Provide at least one value.');
     } catch (err: any) {
       setLimitsStatus({ text: err.message, tone: 'err' });
       return;
@@ -206,23 +219,38 @@ function LimitsSection() {
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · daily resets midnight UTC, weekly Monday 00:00 UTC</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MoneyField id="admin-limit-user" label="Default per-user daily cap" placeholder="25.00"
             value={user} onChange={setUser} disabled={dis} />
-          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap" placeholder="175.00"
-            title="Enforced on top of the daily cap. Set either to 0 to switch that window off; with both at 0 the account has no allowance."
-            value={weekly} onChange={setWeekly} disabled={dis} />
           <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
             value={global} onChange={setGlobal} disabled={dis} />
           <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
             title="Funds platform-driven merge-conflict / sync-with-main resolution turns"
             value={system} onChange={setSystem} disabled={dis} />
         </div>
+        {/* #838: the weekly cap by identity tier. The first field keeps the
+            #admin-limit-weekly id: it is the same stored value it always was
+            (the base weekly cap), now read as the unverified tier's, and a
+            declared check selects on it. The two others inherit it while
+            blank. */}
+        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+          <MoneyField id="admin-limit-weekly" label="Weekly cap: no verified identity" placeholder="175.00"
+            title="Enforced on top of the daily cap for accounts with no verified identity, and the value the other two tiers inherit while blank. Set either window to 0 to switch it off; with both at 0 the account has no allowance."
+            value={weekly} onChange={setWeekly} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
+            title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
+            value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-zk" label="Weekly cap: zkPassport verified" placeholder="same as unverified"
+            title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
+            value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Per-user overrides live in the Users section; these are the platform defaults.
-            A cap set to 0 switches that window off. With both the daily and the weekly
-            cap at 0, the account has no AI allowance at all.
+            The weekly cap follows the account's identity tier: no verified identity,
+            GitHub and X both verified, or zkPassport verified. A tier left blank uses
+            the unverified cap. A cap set to 0 switches that window off. With both the
+            daily and the weekly cap at 0, the account has no AI allowance at all.
           </p>
           {canWrite ? (
             <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}

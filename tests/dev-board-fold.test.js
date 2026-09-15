@@ -545,7 +545,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #2201 trio above; main independently took the SAME 638 →
   // 639 with the #1933 check above. One +3 and one +1 against a shared 638 is
   // 642.
-  assert.equal(DAPP.tests.length, 642);
+  // 642 → 643: #838 adds one check on Spend limits, pinning the three
+  // per-tier weekly cap fields (unverified, GitHub and X, zkPassport).
+  assert.equal(DAPP.tests.length, 643);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
