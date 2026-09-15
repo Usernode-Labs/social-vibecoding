@@ -234,7 +234,7 @@ function LimitsSection() {
             declared check selects on it. The two others inherit it while
             blank. */}
         <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-          <MoneyField id="admin-limit-weekly" label="Weekly cap: no verified identity" placeholder="175.00"
+          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="175.00"
             title="Enforced on top of the daily cap for accounts with no verified identity, and the value the other two tiers inherit while blank. Set either window to 0 to switch it off; with both at 0 the account has no allowance."
             value={weekly} onChange={setWeekly} disabled={dis} />
           <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
@@ -247,9 +247,9 @@ function LimitsSection() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Per-user overrides live in the Users section; these are the platform defaults.
-            The weekly cap follows the account's identity tier: no verified identity,
-            GitHub and X both verified, or zkPassport verified. A tier left blank uses
-            the unverified cap. A cap set to 0 switches that window off. With both the
+            The weekly cap follows the account's identity tier: the default applies to
+            accounts with no verified identity, and the GitHub-and-X and zkPassport
+            tiers use the default while left blank. A cap set to 0 switches that window off. With both the
             daily and the weekly cap at 0, the account has no AI allowance at all.
           </p>
           {canWrite ? (
