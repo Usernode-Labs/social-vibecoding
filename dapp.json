@@ -600,13 +600,13 @@
     {
       "name": "The Improve panel shows a change's title, and an idle row wears no status dot (#971, #1946)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel #improve-sessions a[href$=\"/sessions/990101\"]:not(:has(.h-3.w-3.rounded-full))",
+      "expectSelector": "#improve-panel #improve-sessions a[href$=\"/proposals/990101\"]:not(:has(.h-3.w-3.rounded-full))",
       "expectText": "[Mock] Your in-progress session"
     },
     {
       "name": "The Improve panel: a busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
+      "expectSelector": "#improve-panel a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -3829,9 +3829,9 @@
       "expectSelector": "#improve-panel [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
-      "name": "Real sessions still render beside it, each on its own destination (#1417)",
+      "name": "Real sessions still render beside it on the full change destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+      "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
     },
     {
       "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",

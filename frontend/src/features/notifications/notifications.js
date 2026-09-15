@@ -650,16 +650,19 @@ const Notifications = {
       }
       return;
     }
-    // #161/#194: completion notifications deep-link to their dev
-    // sub-tab. session_done opens the dev session itself;
+    // #161/#194: completion notifications deep-link to their change.
+    // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        return App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
+        return App.openAppTab(item.appSlug, 'dev', {
+          subTab: 'topic',
+          ref: { kind: 'proposal', id: parseInt(item.sessionId, 10) },
+        });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/sessions/${item.sessionId}`;
+        window.location.hash = `#app/${item.appSlug}/dev/proposals/${item.sessionId}`;
       }
       return;
     }
@@ -690,21 +693,19 @@ const Notifications = {
     // #1405 path A: your agent submitted or shared work. Both are about ONE
     // change, and both used to fall through to the app's general chat with
     // everything else that had a slug — a screen that says nothing about the
-    // thing the notification is announcing. A submission is a proposal up for
-    // a vote; a share is a session on the Dev board with its own public
-    // discussion. Each lands on its own topic.
+    // thing the notification is announcing. A submission is up for a vote and
+    // a share is still underway, but the lifecycle-aware change page handles
+    // both states around the same full card.
     if (item.kind === 'connector_submitted' && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
-      const kind = item.detail === 'shared' ? 'session' : 'proposal';
       const id = parseInt(item.sessionId, 10);
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind, id },
+          ref: { kind: 'proposal', id },
         });
       } else {
-        const seg = kind === 'session' ? 'shared' : 'proposals';
-        window.location.hash = `#app/${item.appSlug}/dev/${seg}/${id}`;
+        window.location.hash = `#app/${item.appSlug}/dev/proposals/${id}`;
       }
       return;
     }

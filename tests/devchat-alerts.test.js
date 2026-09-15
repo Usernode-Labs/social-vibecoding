@@ -137,7 +137,7 @@ function makeEnv({
   sandbox.Notification.requestPermission = () => { calls.permissionRequests += 1; return Promise.resolve(permission); };
 
   vm.runInNewContext(DEV_ALERTS_SRC, sandbox);
-  return { DevAlerts: sandbox.window.DevAlerts, calls, store };
+  return { DevAlerts: sandbox.window.DevAlerts, calls, store, sandbox };
 }
 
 // ── decision: visible → tone, hidden → systemNotify ──────────────────────
@@ -433,6 +433,20 @@ test('a live background browser still previews the alert without an eligible pho
   calls.timers[0].fn();
   assert.equal(calls.notifications[0].title, 'Homeroom test alert');
   assert.equal(DevAlerts._routeFor({ kind: 'test_alert' }), '#settings/alerts');
+});
+
+test('session completion alerts open the lifecycle-aware change page', () => {
+  const { DevAlerts, sandbox } = makeEnv();
+  assert.equal(
+    DevAlerts._routeFor({ kind: 'session_done', appSlug: 'demo', sessionId: 9 }),
+    '#app/demo/dev/proposals/9',
+  );
+  const calls = [];
+  sandbox.App = { openAppTab: (...args) => calls.push(args) };
+  DevAlerts._navigate({ kind: 'session_done', appSlug: 'demo', sessionId: 9 });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[
+    'demo', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 9 } },
+  ]]);
 });
 
 test('queue errors reject without scheduling a success preview', async () => {

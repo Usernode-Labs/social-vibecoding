@@ -583,7 +583,7 @@ test('handoff validators require a spec-first, bounded, user-visible history con
       message: 'x', authoredAt: 'bad', committedAt: '2026-08-04T00:00:00Z',
       files: [{ path: '../escape', mode: '100644', contentBase64: 'not base64' }],
     }), /authoredAt|path|contentBase64/);
-    assert.equal(subject.publicSessionStatus({
+    const failed = subject.publicSessionStatus({
       id: 5,
       app_slug: 'demo',
       status: 'active',
@@ -594,7 +594,10 @@ test('handoff validators require a spec-first, bounded, user-visible history con
       checks_commit_sha: HEAD,
       check_state: 'error',
       staging_url: null,
-    }).state, 'failed', 'a staging boot failure must not remain stuck as deploying');
+    });
+    assert.equal(failed.state, 'failed', 'a staging boot failure must not remain stuck as deploying');
+    assert.equal(failed.webPath, '/#app/demo/dev/proposals/5',
+      'every handoff lifecycle state opens the full change page');
   } finally { restore(); }
 });
 
@@ -1388,7 +1391,7 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
     assert.equal(startRes.statusCode, 201);
     assert.equal(startRes.body.source, 'cli_handoff');
     assert.equal(startRes.body.state, 'draft');
-    assert.equal(startRes.body.webPath, '/#app/demo/dev/sessions/101');
+    assert.equal(startRes.body.webPath, '/#app/demo/dev/proposals/101');
     assert.equal(state.sessions[0].branch_name, 'dev/cli-u7-feature-0001');
     assert.deepEqual(state.messages.map((m) => [m.role, m.metadata.handoffSummary || false]), [
       ['user', false], ['assistant', true],

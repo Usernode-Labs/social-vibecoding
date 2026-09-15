@@ -346,7 +346,7 @@ test('update_proposal_issues sends bounded deltas through the platform route', a
     });
     assert.deepEqual(result.linkedIssues, [18, 27]);
     assert.equal(result.prBodyStatus, 'updated');
-    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/412`);
+    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/412`);
     assert.match(result.nextStep, /No code or votes changed/);
   } finally { c.restore(); }
 });
@@ -1483,7 +1483,7 @@ test('proposal shaping returns the platform hash route', () => {
     ORIGIN
   );
   assert.equal(proposal.proposalId, 58);
-  assert.equal(proposal.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/58`);
+  assert.equal(proposal.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/58`);
   assert.equal(proposal.yesVotes, 3);
   assert.equal(proposal.votesRequired, 4);
   assert.equal(proposal.externalAgent, 'claude_code_web');
@@ -3304,8 +3304,8 @@ test('#2136 — get_proposal by prNumber answers exactly as by proposalId', asyn
     assert.deepEqual(strip(byPr), strip(byId));
     assert.equal(byPr.structuredContent.proposalId, 4223);
     assert.equal(byPr.structuredContent.prNumber, 2151);
-    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/4223`,
-      'the human-facing route is unchanged');
+    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/4223`,
+      'the human-facing route is the lifecycle-aware change page');
     assert.ok(validateOutput(c.specs.get('get_proposal'), byPr).success);
     // Resolved through the same list list_my_proposals reads — the user's own
     // sessions, under their own token — then read through the session route

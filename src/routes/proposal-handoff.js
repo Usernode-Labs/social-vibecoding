@@ -25,6 +25,7 @@ const connectorLimits = require('../services/connector-limits');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
+const { changeHashPath } = require('../services/change-destination');
 const {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_BYTES,
@@ -650,7 +651,7 @@ function publicSessionStatus(session, options = {}) {
     supersedesSessionId: session.handoff_supersedes_session_id == null
       ? null
       : Number(session.handoff_supersedes_session_id),
-    webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+    webPath: changeHashPath(session.app_slug, session.id),
     nextStep: statusNextStep(state,
       session.status === 'promoted' ? revisionState : null, checks),
   };
@@ -840,7 +841,7 @@ function proposalHandoffRoutes(config) {
       }
       return res.json({
         ...result,
-        webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+        webPath: changeHashPath(session.app_slug, session.id),
       });
     } catch (err) {
       log.error('proposal-handoff', 'Proposal update failed', { sessionId, err: err.message });
@@ -1005,7 +1006,7 @@ function proposalHandoffRoutes(config) {
         ...result,
         sessionId,
         shared: true,
-        webPath: `/#app/${app.slug}/dev/sessions/${sessionId}`,
+        webPath: changeHashPath(app.slug, sessionId),
       });
     } catch (err) {
       log.error('proposal-handoff', 'Share to in-progress failed', { slug: req.params.slug, err: err.message });
@@ -1452,7 +1453,7 @@ function proposalHandoffRoutes(config) {
             treeSha: uploaded.treeSha,
             branch: session.branch_name,
             uploaded: alreadyRecorded ? false : uploaded.created,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
           releaseOperation();
@@ -1506,7 +1507,7 @@ function proposalHandoffRoutes(config) {
             status: publicSessionStatus(session).state,
             sessionId: Number(session.id),
             headSha: input.headSha,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         }
         if (!isSessionBusy(Number(session.id))
@@ -1626,7 +1627,7 @@ function proposalHandoffRoutes(config) {
               revisionState: 'deploying',
               sessionId: Number(session.id),
               headSha: input.headSha,
-              webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+              webPath: changeHashPath(session.app_slug, session.id),
             });
           } finally {
             releaseOperation();
@@ -1738,7 +1739,7 @@ function proposalHandoffRoutes(config) {
             status: 'deploying',
             sessionId: Number(session.id),
             headSha: input.headSha,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
           if (!pipelineDetached) releasePipeline();

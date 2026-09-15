@@ -1152,8 +1152,9 @@ test('opaque id lookup reuses the existing notification click router', async () 
   assert.equal(routes.length, 1);
   assert.equal(routes[0].slug, 'example');
   assert.equal(routes[0].tab, 'dev');
-  assert.equal(routes[0].options.subTab, 'sessions');
-  assert.equal(routes[0].options.sessionId, 9);
+  assert.equal(routes[0].options.subTab, 'topic');
+  assert.equal(routes[0].options.ref.kind, 'proposal');
+  assert.equal(routes[0].options.ref.id, 9);
   assert.equal(requests[0].url, '/api/notifications/42');
   assert.equal(requests[0].options.cache, 'no-store');
   assert.equal(requests[1].url, '/api/notifications/read');
