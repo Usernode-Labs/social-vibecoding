@@ -501,7 +501,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // is 626.
   // 626 → 627: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
-  assert.equal(DAPP.tests.length, 627);
+  // 627 → 629: the invite link now points at the marketing site's /waitlist
+  // page instead of the in-app #waitlist route, so two checks read the
+  // link's own field on the more-to-do screen — one that its value is the
+  // marketing URL and carries no hash route, one that the copy affordance
+  // is still beside it.
+  assert.equal(DAPP.tests.length, 629);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
