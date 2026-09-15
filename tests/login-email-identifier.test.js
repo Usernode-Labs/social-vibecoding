@@ -29,6 +29,7 @@ bcrypt.compare = (...args) => { compareCalls++; return realCompare(...args); };
 // ── Pool stub: a tiny in-memory users table ────────────────────────
 const poolMod = require('../src/db/pool');
 let users = []; // { id, username, password (bcrypt hash), email, is_admin, admin_readonly }
+let history = []; // username_history rows: { user_id, username } (#1861)
 let liveSessions = new Set();
 let capturedQueries = [];
 const USER_COLS = (u) => ({
@@ -44,6 +45,11 @@ poolMod.getPool = () => ({
     if (sql.includes('FROM users WHERE lower(email) = lower($1)')) {
       const needle = String(params[0]).toLowerCase();
       return { rows: users.filter((u) => u.email && u.email.toLowerCase() === needle).map(USER_COLS) };
+    }
+    if (sql.includes('FROM username_history h') && sql.includes('WHERE h.username = $1')) {
+      const h = history.find((r) => r.username === params[0]);
+      const u = h && users.find((x) => x.id === h.user_id);
+      return { rows: u ? [USER_COLS(u)] : [] };
     }
     if (sql.includes('FROM users WHERE username = $1')) {
       return { rows: users.filter((u) => u.username === params[0]).map(USER_COLS) };
@@ -94,6 +100,7 @@ function login(
 
 function reset() {
   users = [];
+  history = [];
   liveSessions = new Set();
   capturedQueries = [];
   logCalls = [];
@@ -259,5 +266,47 @@ test('non-@ identifier: exact username match only, and no email query is issued'
     // Usernames stay case-SENSITIVE (unchanged semantics).
     r = await login(server, 'PlainUser', 'plain-pw');
     assert.strictEqual(r.res.status, 401);
+  } finally { server.close(); }
+});
+
+// ─── #1861: a rename does not lock anyone out ─────────────────────────────
+
+test('#1861: the handle you renamed away from still signs you in, with your password', async () => {
+  reset();
+  const hash = await bcrypt.hash('renamed-pw', COST);
+  users.push({ id: 50, username: 'scraido_test', password: hash, email: null });
+  history.push({ user_id: 50, username: 'scraido' });
+  const server = await startApp();
+  try {
+    let r = await login(server, 'scraido', 'renamed-pw');
+    assert.strictEqual(r.res.status, 200, 'the retired handle signs its owner in');
+    assert.strictEqual(r.body.user.id, 50);
+    assert.strictEqual(r.body.user.username, 'scraido_test', 'and the session is the account under its CURRENT name');
+
+    r = await login(server, 'scraido_test', 'renamed-pw');
+    assert.strictEqual(r.res.status, 200, 'the new handle works too');
+
+    compareCalls = 0;
+    r = await login(server, 'scraido', 'wrong-pw');
+    assert.strictEqual(r.res.status, 401, 'the password still decides');
+    assert.strictEqual(compareCalls, 1, 'one candidate, one compare');
+  } finally { server.close(); }
+});
+
+test('#1861: a live account wearing the name wins, and the retired ledger is not consulted', async () => {
+  reset();
+  const liveHash = await bcrypt.hash('live-pw', COST);
+  const oldHash = await bcrypt.hash('old-owner-pw', COST);
+  // Cannot happen through the product (retired handles are never re-issued),
+  // but the lookup order must not depend on that.
+  users.push({ id: 60, username: 'taken', password: liveHash, email: null });
+  users.push({ id: 61, username: 'moved_on', password: oldHash, email: null });
+  history.push({ user_id: 61, username: 'taken' });
+  const server = await startApp();
+  try {
+    const r = await login(server, 'taken', 'old-owner-pw');
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => q.sql.includes('FROM username_history')),
+      'an exact live match never falls through to retired handles');
   } finally { server.close(); }
 });
