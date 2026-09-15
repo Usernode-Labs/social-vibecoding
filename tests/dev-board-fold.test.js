@@ -535,15 +535,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // this merge de-duplicated them. The number that matters is what the
   // merged manifest actually holds, so this entry counts it directly rather
   // than re-deriving it: 639.
-  // 639 → 643: #2219's four, counted the same way (639 was main's directly
-  // counted total and this branch adds four on top of it). Two photograph
-  // the app-permission prompt through `?shot=app-permission` — the dialog an
-  // embedded app opens by calling usernode.requestPermission(), which no
-  // plain route can reach because it needs a running app that asks; two read
-  // the new Settings pane behind `?demo=1#settings/app-permissions`, one for
-  // the rows and one for the copy that must NOT promise a revoke lands while
-  // the app is still open.
-  assert.equal(DAPP.tests.length, 643);
+  // 639 → 642: #2201's three checks on a confirmed address re-joining the
+  // waitlist, landed independently on main — it lands on the settled panel,
+  // the copy reads back rather than congratulating, and it is never asked
+  // for a code.
+  // 642 → 646: #2219's four, counted the same way (642 was main's directly
+  // counted total after #2201, and this branch adds four on top of it). Two
+  // photograph the app-permission prompt through `?shot=app-permission` — the
+  // dialog an embedded app opens by calling usernode.requestPermission(),
+  // which no plain route can reach because it needs a running app that asks;
+  // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
+  // one for the rows and one for the copy that must NOT promise a revoke
+  // lands while the app is still open.
+  assert.equal(DAPP.tests.length, 646);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
