@@ -182,6 +182,7 @@ test('onboarding progress uses personal completion and explains the later unlock
   assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Setup' },
     'setup is its own scope while it gates the rest');
   assert.match(grid.notice, /unlock persistent and weekly/);
+  assert.equal(grid.lockedCount, 0, 'no hidden_count in this payload, so no placeholder');
   assert.equal(grid.groups.length, 1);
   assert.equal(grid.groups[0].heading, 'Setup', 'the ITERATION 03 board’s group name');
   assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');

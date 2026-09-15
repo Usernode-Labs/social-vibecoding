@@ -582,6 +582,11 @@ const TopochainChallenges = {
         : 'Finish these to unlock persistent and weekly challenges.',
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
+      // While the gate is closed, how many of this event's challenges it
+      // hides: the server's additive `hidden_count`, which the pane draws as
+      // one locked placeholder after the groups. A payload without the field
+      // (an older server) is 0, which draws nothing. Unlocked, nothing hides.
+      ...(onboarding.unlocked ? {} : { lockedCount: Number(onboarding.hidden_count) || 0 }),
       groups,
     };
   },

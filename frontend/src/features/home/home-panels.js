@@ -435,6 +435,13 @@ const HomePanels = {
           ? 'Persistent and weekly challenges are unlocked.'
           : 'Finish these to unlock persistent and weekly challenges.')
         : null,
+      // How many challenges setup still hides, for the dashed "6 challenges
+      // locked" placeholder under the setup cards. Only while the gate is
+      // closed; a payload without the count (an older server) draws none, and
+      // the block keeps the unlock note under its cards instead.
+      lockedCount: panel.onboarding && !panel.onboarding.unlocked
+        ? (Number(panel.onboarding.hidden_count) || 0)
+        : 0,
       total,
       allTotal,
       expandable,

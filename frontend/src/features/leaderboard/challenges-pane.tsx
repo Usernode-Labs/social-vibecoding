@@ -51,6 +51,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { GroupHeader } from './group-header';
+import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
@@ -120,7 +121,16 @@ type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; progress: SeasonProgressView; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
+  | {
+    kind: 'cards';
+    progress: SeasonProgressView;
+    notice?: string;
+    onboardingEventId?: number | null;
+    // While setup gates the event: how many challenges it hides (0 = none
+    // to show, and on an older server without the count).
+    lockedCount?: number;
+    groups: GroupView[];
+  };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -249,6 +259,8 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   if (view.kind === 'empty') {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
   }
+  // The card's own threshold, so a count it would not draw never hides the note.
+  const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;
   return (
     <>
       {/*
@@ -257,9 +269,6 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           declared dapp.json check anchors.
       */}
       <SeasonProgress id="tc-se-challenge-summary" view={view.progress} className="mb-4" />
-      {view.notice ? (
-        <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
-      ) : null}
       {view.onboardingEventId != null ? (
         <button
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
@@ -304,6 +313,23 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           </div>
         </Fragment>
       )))}
+      {/*
+          After the challenges, what setup still hides and what opens it: the
+          locked placeholder, whose second line IS the unlock note, so the
+          note paragraph draws only when there is no placeholder (a locked
+          event on a server without the count, or the unlocked notice). Both
+          sit under the last card at the grid's own 12px gap. The placeholder's
+          wrapper is a GRID too, so on a wide pane it takes one column like a
+          card instead of stretching into a banner across all of them.
+      */}
+      {locked ? (
+        <div className={`mt-3 ${GRID}`}>
+          <LockedChallengesCard count={view.lockedCount!} />
+        </div>
+      ) : null}
+      {view.notice && !locked ? (
+        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
+      ) : null}
     </>
   );
 }

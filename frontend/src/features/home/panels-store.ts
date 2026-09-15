@@ -151,6 +151,13 @@ export interface ChallengesView {
    */
   summary: string | null;
   onboardingNote?: string | null;
+  /**
+   * How many challenges setup still hides (the server's
+   * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
+   * count. Above 0 the block draws the dashed placeholder, whose second line
+   * replaces the unlock note.
+   */
+  lockedCount?: number;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */

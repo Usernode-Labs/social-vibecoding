@@ -800,8 +800,10 @@ test("Home draws the Challenges tab's card, not a card of its own", () => {
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
   assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card"/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
-  assert.match(card, /^home-challenge-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl/);
-  assert.match(card, /h-20 w-20 rounded-2xl/, "the tab's 80px tile");
+  // S8: the card's corners are 24px and the tile's 11px, concentric inside
+  // the card's 12px padding and 1px border.
+  assert.match(card, /^home-challenge-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
+  assert.match(card, /h-20 w-20 [^"]*rounded-\[0\.6875rem\]"/, "the tab's 80px tile");
   assert.match(card, /data-challenge-id="1"/);
 });
 
@@ -1062,6 +1064,63 @@ test('the season progress: nothing filled at zero, and setup is its own scope', 
   assert.match(gated, />1\/3<\/span><span[^>]*>done in Setup</);
   assert.match(gated, />Finish these to unlock persistent and weekly challenges\.</);
   assert.doesNotMatch(gated, /onboarding challenges completed/, 'the count is not said twice');
+});
+
+// S8 (owner decision, 2026-09-15): while setup gates the season the server
+// sends how many challenges it holds back (`onboarding.hidden_count`), and the
+// block draws them as ONE dashed placeholder after the last setup card. The
+// placeholder's second line is the unlock note, so the note is not drawn too;
+// without a count the note still shows, now UNDER the challenges.
+test('locked setup: one dashed placeholder after the cards, and no second unlock note', () => {
+  const onboarding = (over) => ({ total: 3, completed: 1, unlocked: false, event_id: 1, ...over });
+  const locked = panel({
+    total: 2, done: 0,
+    onboarding: onboarding({ hidden_count: 6 }),
+    challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'ONBOARDING' })],
+  });
+  const { HP } = makeHomePanels({ slots: [] });
+  assert.equal(HP.challengesView(locked).lockedCount, 6);
+
+  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] });
+  const rows = html.slice(html.indexOf('home-panel-rows'), html.indexOf('home-panel-footer'));
+  assert.equal((html.match(/home-challenge-locked/g) || []).length, 1, 'one placeholder');
+  assert.ok(rows.indexOf('home-challenge-locked') > rows.lastIndexOf('home-challenge-card'),
+    'the placeholder follows the last card, inside the rows list');
+  assert.match(html, /home-challenge-locked [^"]*rounded-3xl[^"]*border-dashed/);
+  assert.match(html, />6 challenges locked</);
+  assert.match(html, />Finish setup to unlock</);
+  assert.equal((html.match(/home-challenge-card/g) || []).length, 2,
+    'the placeholder is not counted as a challenge card');
+  assert.doesNotMatch(html, /Finish these to unlock persistent and weekly challenges/,
+    'the placeholder already says what unlocks them');
+  assert.match(html, /home-panel-season[\s\S]*?<\/div><div class="home-panel-body/,
+    'the season progress and the body stay adjacent');
+
+  const one = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ onboarding: onboarding({ hidden_count: 1 }) })],
+  }).html;
+  assert.match(one, />1 challenge locked</);
+
+  // Locked, but a payload with no count (an older server) or a zero count:
+  // no placeholder, and the note sits under the challenges, before the footer.
+  for (const hidden of [undefined, 0, 'wat']) {
+    const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
+    assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
+    const out = renderWith({ registry: [], hidden: [], panels: [p] }).html;
+    assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
+    const note = out.indexOf('Finish these to unlock persistent and weekly challenges.');
+    assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
+    assert.ok(note < out.indexOf('home-panel-footer'), `hidden_count ${hidden}: and precedes the footer`);
+    assert.match(out, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Finish these/);
+  }
+
+  // Unlocked: a stray count draws nothing, and the unlocked note still shows.
+  const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
+  assert.equal(HP.challengesView(open).lockedCount, 0);
+  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }).html;
+  assert.doesNotMatch(unlocked, /home-challenge-locked|challenges locked/);
+  assert.match(unlocked, />Persistent and weekly challenges are unlocked\.</);
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in

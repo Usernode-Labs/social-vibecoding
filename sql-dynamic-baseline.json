@@ -369,9 +369,9 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "6342aec040e022e3a331",
+      "fingerprint": "7674fd3d848f4fdabba1",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) ):"
     },
     {
       "source": "src/routes/kudos.js",

@@ -18,7 +18,8 @@ import type { ReactNode } from 'react';
 
 import { ChevronDownIcon, ChevronUpIcon } from '@/components/ui/icons';
 
-const ROW = 'flex min-h-[3.25rem] w-full min-w-0 items-center justify-between gap-3 rounded-2xl '
+// 24px corners, the same `rounded-3xl` as the cards the header sits over.
+const ROW = 'flex min-h-[3.25rem] w-full min-w-0 items-center justify-between gap-3 rounded-3xl '
   + 'bg-white/60 px-3.5 text-left dark:bg-white/[0.06]';
 const TOGGLE = ' cursor-pointer transition-colors hover:bg-white/80 dark:hover:bg-white/10 '
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';

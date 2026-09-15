@@ -17,10 +17,11 @@
  * translucent plate behind them was a second frame, and its 0.625rem padding
  * pulled the whole block in from the heading's left edge.
  *
- * ONE RHYTHM: every item in the column is a 14px step from the one above it.
+ * ONE RHYTHM: every band in the column is a 14px step from the one above it.
  * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
- * on `pb-1.5` (6px + 8px), and the cards and headers inside the rows list sit
- * `gap-3.5` apart. Nothing is inset: the season line, the headers, the cards
+ * on `pb-1.5` (6px + 8px). Inside the rows list the cards, the headers and the
+ * locked placeholder sit `gap-2.5` (10px) apart, the same step as the featured
+ * apps rail (`.home-discover-rail` in app.css). Nothing is inset: the season line, the headers, the cards
  * and the footer all start where the heading's label starts.
  *
  * THE CARD IS SHARED. It is `ChallengeCard` from
@@ -48,6 +49,20 @@
  * decides all of it; the headers sit inside `.home-panel-rows` beside the
  * cards, which the declared checks select through.
  *
+ * ── While setup gates the season ──────────────────────────────────────
+ *
+ * The server sends only setup's challenges until setup is finished, plus how
+ * many it holds back (`lockedCount`). Those draw as ONE dashed placeholder
+ * after the last card, inside `.home-panel-rows` so it keeps the cards' 10px
+ * step, but it is not a `.home-challenge-card`: the declared checks and the
+ * tests count and select real cards. Its second line ("Finish setup to
+ * unlock") is the unlock note, so the note is not drawn beside it.
+ *
+ * The note itself sits UNDER the challenges, after `.home-panel-body`: the
+ * season progress leads, then the cards, then what they unlock. That keeps
+ * `.home-panel-season + .home-panel-body` adjacent in every state. It shows
+ * when no placeholder does: once unlocked, or locked with no count to draw.
+ *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
  * A block of leaderboard rows used to sit under the challenges. It is
@@ -63,6 +78,7 @@ import { Fragment } from 'react';
 
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import { GroupHeader } from '../../leaderboard/group-header';
+import { LockedChallengesCard } from '../../leaderboard/locked-challenges-card';
 import { SeasonProgress } from '../../leaderboard/season-progress';
 import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
@@ -90,6 +106,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
 
   const groups: ChallengeGroupView[] = view.groups
     ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
+  const lockedCount = view.lockedCount ?? 0;
 
   return (
     <PanelShell
@@ -107,16 +124,8 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       )}
     >
       {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
-      {/* #1915 kept this line off its neighbours. It still is, by the column's
-          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
-          of its own against a hairline that is gone. */}
-      {view.onboardingNote ? (
-        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
-          {view.onboardingNote}
-        </p>
-      ) : null}
       <div className="home-panel-body pt-2 pb-1.5">
-        <div className="home-panel-rows flex flex-col gap-3.5">
+        <div className="home-panel-rows flex flex-col gap-2.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
               {g.heading ? <GroupHeader heading={g.heading} meta={g.meta} /> : null}
@@ -131,8 +140,18 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
               ))}
             </Fragment>
           ))}
+          <LockedChallengesCard count={lockedCount} className="home-challenge-locked" />
         </div>
       </div>
+      {/* #1915 kept this line off its neighbours. It still is, by the column's
+          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
+          of its own against a hairline that is gone. It follows the cards,
+          and the placeholder's own second line stands in for it. */}
+      {view.onboardingNote && !(lockedCount > 0) ? (
+        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+          {view.onboardingNote}
+        </p>
+      ) : null}
     </PanelShell>
   );
 }

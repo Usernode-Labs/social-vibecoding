@@ -327,6 +327,16 @@ test('while setup gates the rest the progress is Setup’s own; unlocked it is t
   assert.deepEqual(headers(grid), { setup: { meta: '1/2', allDone: false, collapsed: false } });
   assert.match(grid.notice, /unlock persistent and weekly/);
   assert.equal(grid.onboardingEventId, null, 'the setup cards are here');
+  assert.equal(grid.lockedCount, 0, 'a payload without hidden_count locks nothing it can count');
+
+  pane._onboarding = { total: 2, completed: 1, unlocked: false, event_id: 10, hidden_count: 6 };
+  pane._renderGrid();
+  assert.equal(gridOf(store).lockedCount, 6, 'the server’s hidden count, while the gate is closed');
+  for (const hidden_count of [null, 'x', undefined]) {
+    pane._onboarding = { total: 2, completed: 1, unlocked: false, event_id: 10, hidden_count };
+    pane._renderGrid();
+    assert.equal(gridOf(store).lockedCount, 0, `${String(hidden_count)}: guarded to 0`);
+  }
 
   pane._onboarding = { total: 2, completed: 2, unlocked: true, event_id: 10 };
   pane._challenges = [ch(3, 'WEEKLY'), ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING', DONE)];
@@ -335,6 +345,7 @@ test('while setup gates the rest the progress is Setup’s own; unlocked it is t
   assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Season 2' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
   assert.match(grid.notice, /are unlocked/);
+  assert.equal('lockedCount' in grid, false, 'unlocked, nothing is hidden and there is no count');
 
   pane._onboarding = { total: 3, completed: 0, unlocked: false, event_id: 9 };
   pane._challenges = [ch(4, 'WEEKLY')];
@@ -409,6 +420,67 @@ test('the pane renders each header as a disclosure over the grid it names, with 
     assert.match(meta[2], /\btruncate\b/, `${key}: the meta truncates`);
     assert.doesNotMatch(meta[1], /\bshrink-0\b/, `${key}: and its end of the row can shrink`);
   }
+});
+
+// The locked placeholder and the unlock note, AFTER the challenges (owner
+// decision 2026-09-15). The placeholder's second line is the unlock note, so
+// a pane that draws the placeholder draws no separate note; a locked event
+// without a count (an older server) still gets the note, now below the cards.
+test('while locked the pane draws the placeholder after the last grid instead of the note; without a count, the note', () => {
+  const api = loadTsx(PANE_API);
+  const render = (onboarding) => {
+    const { pane, store } = loadPane({ challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING')], onboarding });
+    pane._renderGrid();
+    api.topochainChallengesStore.set({ mounted: true, grid: JSON.parse(JSON.stringify(gridOf(store))), detail: null, profile: null });
+    return renderToHtml(createElement(api.ChallengesPane));
+  };
+  const afterLastCard = (html, at) => {
+    const lastCard = html.lastIndexOf('tc-se-card');
+    return at > lastCard && at > html.indexOf('id="tc-se-group-setup"');
+  };
+
+  const locked = render({ total: 2, completed: 1, unlocked: false, event_id: 10, hidden_count: 6 });
+  // The wrapper carries GRID as well as the gap: outside a grid the card
+  // stretched across every column of a wide pane and read as a banner.
+  const gridClass = PANE.match(/const GRID = '([^']+)';/)[1];
+  const wrapper = `<div class="mt-3 ${gridClass}"><div class="`;
+  const placeholder = locked.indexOf(wrapper);
+  assert.ok(placeholder !== -1, 'the dashed placeholder, in a wrapper at the grid’s gap that is itself a GRID');
+  assert.match(locked.slice(placeholder + wrapper.length).split('"')[0], /\bborder-dashed\b/,
+    'the wrapper’s child is the dashed card, one column wide');
+  assert.match(PANE, /<div className=\{`mt-3 \$\{GRID\}`\}>\s*<LockedChallengesCard /,
+    'the source names the shared GRID constant, not a copy of its classes');
+  assert.ok(afterLastCard(locked, placeholder), 'after the Setup grid and its cards');
+  assert.match(locked, />6 challenges locked</);
+  assert.match(locked, />Finish setup to unlock</);
+  assert.doesNotMatch(locked, /role="status"/, 'its second line is the note, so the note is not repeated');
+  assert.doesNotMatch(locked, /unlock persistent and weekly/);
+  assert.ok(locked.indexOf('id="tc-se-challenge-summary"') < locked.indexOf('tc-se-card'), 'the progress still leads');
+
+  const one = render({ total: 2, completed: 1, unlocked: false, event_id: 10, hidden_count: 1 });
+  assert.match(one, />1 challenge locked</);
+
+  const uncounted = render({ total: 2, completed: 1, unlocked: false, event_id: 10 });
+  assert.doesNotMatch(uncounted, /border-dashed/, 'no count, no placeholder');
+  const note = uncounted.search(/<p class="mt-3 [^"]*" role="status">Finish these to unlock persistent and weekly challenges\.<\/p>/);
+  assert.ok(note !== -1, 'the note, with its text and role');
+  assert.ok(afterLastCard(uncounted, note), 'below the challenges, not above them');
+
+  const unlocked = render({ total: 2, completed: 2, unlocked: true, event_id: 10, hidden_count: 6 });
+  assert.doesNotMatch(unlocked, /border-dashed/, 'unlocked, nothing is hidden');
+  const done = unlocked.search(/role="status">Persistent and weekly challenges are unlocked\.<\/p>/);
+  assert.ok(done !== -1 && afterLastCard(unlocked, done), 'the unlocked notice sits below the challenges too');
+});
+
+test('the group header row has the cards’ 24px corners', () => {
+  const api = loadTsx(PANE_API);
+  const { pane, store } = loadPane({ challenges: [ch(1, 'ONBOARDING')], onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 } });
+  pane._renderGrid();
+  api.topochainChallengesStore.set({ mounted: true, grid: JSON.parse(JSON.stringify(gridOf(store))), detail: null, profile: null });
+  const row = renderToHtml(createElement(api.ChallengesPane)).match(/<h3 class="[^"]*"><button type="button" class="([^"]*)"/);
+  assert.ok(row, 'the header renders');
+  const cls = row[1].split(' ');
+  assert.ok(cls.includes('rounded-3xl') && !cls.includes('rounded-2xl'));
 });
 
 // ─── Screenshot state ───────────────────────────────────────────────────

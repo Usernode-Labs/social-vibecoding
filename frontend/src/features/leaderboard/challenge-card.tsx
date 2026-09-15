@@ -73,9 +73,11 @@ export type ChallengeState = 'new' | 'progress' | 'done';
 export type PartSize = 'md' | 'lg';
 
 // `md` is the card's 36px rail; `lg` the detail page's 40px rail with 15px copy.
+// The card's rail has the tile's 11px corners (see CARD below); the page's
+// rail sits on no card, so it keeps its own 12px.
 const RAIL = 'relative flex w-full min-w-0 items-center gap-1.5 overflow-hidden font-medium';
 const RAIL_SIZE: Record<PartSize, string> = {
-  md: 'h-9 rounded-lg px-2.5 text-[0.8125rem]',
+  md: 'h-9 rounded-[0.6875rem] px-2.5 text-[0.8125rem]',
   lg: 'h-10 rounded-[0.75rem] px-3 text-[0.9375rem]',
 };
 const RAIL_TONE: Record<ChallengeState, string> = {
@@ -106,6 +108,10 @@ const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-eme
 // `dark:bg-zinc-800`, because tailwind-merge replaces a class only within its
 // variant.
 const TILE_ART = 'bg-[var(--tint-art)] dark:bg-[var(--tint-art)]';
+// The tile's 11px corners, concentric inside the card's 24px (CARD below).
+// Passed through `className` on both faces, where tailwind-merge displaces the
+// xl size's own `rounded-2xl` rather than layering a second radius on it.
+const TILE_RADIUS = 'rounded-[0.6875rem]';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -216,13 +222,13 @@ export function ChallengeTile({ icon = null, illustration = null, illustrationTo
   const [failed, setFailed] = useState<string | null>(null);
   if (art && failed !== art.src) {
     return (
-      <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART}`}>
+      <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART} ${TILE_RADIUS}`}>
         <img src={art.src} alt="" draggable={false} className="object-contain" onError={() => setFailed(art.src)} />
       </IconTile>
     );
   }
   return (
-    <IconTile size="xl" aria-hidden="true">
+    <IconTile size="xl" aria-hidden="true" className={TILE_RADIUS}>
       {icon ? <span className="text-[2.5rem] leading-none">{icon}</span> : null}
     </IconTile>
   );
@@ -246,7 +252,11 @@ export type ChallengeCardView = {
   earned: string | null;
 };
 
-const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 '
+// The corners are concentric: the card's 24px (`rounded-3xl`, 1.5rem in
+// tailwind.config.js) less its 12px padding and 1px border is the 11px the
+// tile and the rail take (TILE_RADIUS, RAIL_SIZE.md), so the inner shapes
+// follow the outer one instead of looking pinched inside it.
+const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 '
   + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
   + 'transition-colors';
 
