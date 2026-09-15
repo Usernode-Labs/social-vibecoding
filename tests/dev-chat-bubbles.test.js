@@ -151,7 +151,7 @@ test('the three GROUNDS ascend in both themes; the card only has to differ', () 
   const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
   const dark = APP_CSS.slice(APP_CSS.indexOf('\n.dark {'));
   for (const [theme, block, ground] of [
-    ['light', light, '#f4f2e4'],
+    ['light', light, '#eee8d5'],
     ['dark', dark, '#0b0d1b'],
   ]) {
     const grounds = [ground, val(block, '--dc-strip'), val(block, '--dc-sheet')];

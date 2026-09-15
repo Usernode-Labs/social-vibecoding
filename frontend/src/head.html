@@ -20,7 +20,7 @@
        value is a starting point only — a dark-mode viewer's first paint is
        corrected by Theme.apply() below, in the same head-blocking pass that
        adds `.dark`, so nothing flashes either way. -->
-  <meta name="theme-color" content="#f4f2e4">
+  <meta name="theme-color" content="#eee8d5">
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
        utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
@@ -52,7 +52,7 @@
        #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
        and Theme.apply() below adds that class in the same head-blocking pass
        that fixes the background. */
-    html { background-color: #f4f2e4; color-scheme: light; }
+    html { background-color: #eee8d5; color-scheme: light; }
     html.dark { background-color: #0b0d1b; color-scheme: dark; }
   </style>
   <script>
@@ -112,7 +112,7 @@
       // BEFORE any stylesheet has loaded, which is the whole point.
       // public/manifest.webmanifest carries the light one too, for the
       // standalone install's splash.
-      const GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
+      const GROUND = { light: '#eee8d5', dark: '#0b0d1b' };
 
       function apply() {
         const mode = get();

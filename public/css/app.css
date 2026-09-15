@@ -92,7 +92,7 @@
      `saturate` compensates for the fact that averaging a wash with white
      drains it — the deck's own frosted surfaces are more saturated than
      their backdrop, not less. */
-  --dc-strip-fill: rgba(244, 242, 228, 0.38);
+  --dc-strip-fill: rgba(238, 232, 213, 0.38);
   --dc-sheet-fill: rgba(255, 255, 255, 0.50);
   --dc-frost: blur(24px) saturate(1.6);
 
@@ -1968,7 +1968,20 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
-  --home-ground: #f4f2e4;
+  /* SOLARIZED-LIGHT base2, and base2 RATHER THAN base3 on purpose (#1878).
+     The palette offers two light grounds: base3 #fdf6e3 ("background") and
+     base2 #eee8d5 ("background highlights"). base3 is the obvious literal
+     read of "true solarized-light" and it is the one that does not work
+     here, because this ground is the BACKMOST surface and the shell's
+     three grounds have to ascend toward the reader — see the
+     ladder assertion in tests/dev-chat-bubbles.test.js. Relative luminance:
+     base3 246.1, --dc-strip #f5f5f7 245.1. base3 out-shines the strip by a
+     point and inverts the ladder; base2 sits at 231.9 and restores it with
+     13 points of margin, where the retired #f4f2e4 had only 3.6.
+     So the wallpaper takes solarized's tinted ground and the surfaces
+     floating on it stay the lighter steps, which is the relationship
+     solarized-light actually describes. */
+  --home-ground: #eee8d5;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
      the body's descendants, so this is where it has to follow the ground:
@@ -1989,9 +2002,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   --home-wallpaper:
     var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
-    radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
-    radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
-    radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(226, 224, 242, 0.55) 138px, rgba(226, 224, 242, 0.275) 198px, rgba(226, 224, 242, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(214, 235, 231, 0.65) 50px, rgba(214, 235, 231, 0.325) 120px, rgba(214, 235, 231, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(245, 235, 205, 0.75) 90px, rgba(245, 235, 205, 0.375) 170px, rgba(245, 235, 205, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
 .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
@@ -2036,13 +2049,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
-      radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(229, 216, 239, 0.65), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(226, 224, 242, 0.55) 138px, rgba(226, 224, 242, 0.275) 198px, rgba(226, 224, 242, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(214, 235, 231, 0.65) 50px, rgba(214, 235, 231, 0.325) 120px, rgba(214, 235, 231, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(245, 235, 205, 0.75) 90px, rgba(245, 235, 205, 0.375) 170px, rgba(245, 235, 205, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(226, 224, 242, 0.65), rgba(226, 224, 242, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(214, 235, 231, 0.65), rgba(214, 235, 231, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(245, 235, 205, 0.7), rgba(245, 235, 205, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(226, 224, 242, 0.55), rgba(226, 224, 242, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
   .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
@@ -7707,9 +7720,13 @@ span.gc-vote-btn-icon { cursor: default; }
    the pane sat above it at `z-50`. `backdrop-filter` samples everything
    painted behind the element, so the thing this glass was frosting was a page
    already dimmed 40% — and half of a dimmed page, blurred flat, is grey.
-   Measured on the home ground: #f4f2e4 goes to #929189 under the backdrop and
-   the pane composited to #cac7c3, a fifth of the way to black on the surface
+   Measured on the home ground: #eee8d5 goes to #8f8b80 under the backdrop and
+   the pane composited to #c8c5bc, a fifth of the way to black on the surface
    meant to be the brightest thing on screen.
+   (Re-measured for #1878's ground swap. The same rig reproduces the PREVIOUS
+   ground's pair — #f4f2e4 -> #929189 -> #c9c8c2 — and #929189 is exactly what
+   this comment recorded before the swap, which is what says the new numbers
+   are comparable rather than merely recomputed.)
 
    Making the pane opaque fixed the dullness and cost the glass — three flat
    white slabs. Both halves are wanted: the page dimmed, the pane frosted over
@@ -7719,12 +7736,21 @@ span.gc-vote-btn-icon { cursor: default; }
    to outside the border box, so it is never part of the element's own
    backdrop: the pane frosts the UNDIMMED page while the same declaration
    darkens everything around it. Measured, all three at (200,700) and
-   (1100,650) in a 1280x860 light viewport:
+   (1100,650) in a 1280x860 light viewport, ON THE PRE-#1878 GROUND
+   (#f4f2e4) and THROUGH the wallpaper's washes — which is why the undimmed
+   page reads #f7e7dc rather than the flat ground:
 
      opaque + backdrop dim   page #948a84   pane #ffffff   (flat)
      glass  + no dim         page #f7e7dc   pane #fcf6ee   (not modal)
      glass  + backdrop dim   page #948a84   pane #cac7c3   (the dull one)
      glass  + THIS           page #948a84   pane #fcf6ee   (both)
+
+   #1878 swapped the ground for solarized base2 and retuned the washes, so
+   every absolute value above has moved. The ORDERING has not, and that is
+   what the table is for: the change is to WHAT gets composited, not to how.
+   The one-liner further up carries the new ground's pair, measured on flat
+   #eee8d5 — a different sample basis from this table, so read the two as
+   separate experiments rather than row-for-row.
 
    `100vmax` covers the viewport from wherever the pane is docked, at any
    aspect ratio, which is what makes this work for a right rail, a bottom

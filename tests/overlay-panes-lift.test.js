@@ -12,8 +12,10 @@
 // Each pane raised a sibling backdrop at z-40 carrying `bg-black/40` and sat
 // above it at z-50. `backdrop-filter` samples everything painted behind the
 // element, so the thing the glass was frosting was a page already dimmed 40%.
-// On the home ground: #f4f2e4 → #929189 under the backdrop → #cac7c3 under the
-// pane. Grey, on the surface meant to be the brightest thing on screen.
+// On the home ground (solarized base2 #eee8d5 since #1878): #eee8d5 → #8f8b80
+// under the backdrop → #c8c5bc under the pane. Grey, on the surface meant to
+// be the brightest thing on screen. The rows below predate that swap and were
+// sampled through the wallpaper's washes; the verdict they record is unchanged.
 //
 // Making the pane opaque fixed that and cost the glass — three flat white
 // slabs. Both halves are wanted, so the dim moved ONTO the pane as an outer
