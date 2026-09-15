@@ -46,9 +46,14 @@ COPY --chown=node:node --from=shell /build/public/index.html ./public/index.html
 COPY --chown=node:node --from=shell /build/public/shell/assets/ ./public/shell/assets/
 COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 
-# The node:22-alpine `node` account is UID/GID 1000. Keep that identity
-# numeric in the image metadata so a generic Kubernetes `runAsNonRoot` pod
-# can verify it before the container starts.
+# Numeric on purpose: the app's preview and production pods run with
+# runAsNonRoot (services/kubernetes.js podSecurityContext) and no runAsUser,
+# so Kubernetes verifies non-root from the image's own user, and it can only
+# do that for a numeric one. kpack images carry a numeric CNB user; this
+# image, built by the rootless BuildKit lane, has to say 1000:1000 itself
+# (the node:22-alpine `node` account's UID/GID). `USER node` fails to
+# schedule with "image has non-numeric user (node), cannot verify user is
+# non-root".
 USER 1000:1000
 EXPOSE 3000
 CMD ["node", "server.js"]
