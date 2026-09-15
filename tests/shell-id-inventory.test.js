@@ -274,6 +274,17 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1911: the create-app dialog is three steps ───────────────────
+  'create-step-indicator': 'The "Step N of 3" line under the create dialog\'s title. The dialog used to show every choice on one page; it is a start step (from scratch or from a repo), a details step and an access step now, unfolding in the same card, and this names how far it has unfolded.',
+  'create-next': 'The create dialog\'s Next pill, which unfolds the access step under the details. It runs the guards the old single page ran at submit, one step earlier. Hidden once the last step is showing (app.css keys it off #create-card[data-step]), when Create takes its place.',
+  // ── #2219: App device permissions ────────────────────────────────
+  // The Settings sibling of the App AI permissions section. It exists
+  // because a permission the platform asks for has to be one a person can
+  // take back somewhere other than the app that asked, and because a
+  // capability an app stops declaring should be visible as gone.
+  'app-permissions-section': '#2219: the App device permissions pane — every app the viewer has let reach their location, microphone, camera, screen or a connected device, with Revoke and Re-enable per capability.',
+  'app-permissions-list': '#2219: the rows host, React-owned end to end (features/settings/app-permissions-list.tsx). Ships EMPTY, like #llm-grants-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
+  'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',

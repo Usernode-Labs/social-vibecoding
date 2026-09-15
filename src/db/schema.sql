@@ -2843,6 +2843,35 @@ CREATE INDEX IF NOT EXISTS idx_app_llm_grants_user ON app_llm_grants(user_id);
 -- (A private table may FK public tables; only the reverse is barred.)
 COMMENT ON TABLE app_llm_grants IS 'staging:private';
 
+-- Per-user, per-app grants for the gated browser capabilities (#2219):
+-- geolocation, microphone, camera, display-capture, usb, serial, hid,
+-- bluetooth and midi. The catalogue is services/app-permissions.js.
+--
+-- One row per capability rather than a column each, so adding the tenth
+-- capability is a catalogue edit and not a migration. `capability` holds a
+-- Permissions Policy token and is validated against the catalogue on the
+-- way in AND on the way out, which is what lets a capability be retired
+-- from the catalogue without orphan rows re-delegating it.
+--
+-- Revoking keeps the row, exactly as app_llm_grants does: it preserves
+-- "this was asked for once" and makes re-granting an upsert. status is the
+-- only thing the delegation reads.
+CREATE TABLE IF NOT EXISTS app_permission_grants (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  capability  VARCHAR(32) NOT NULL,
+  status      VARCHAR(16) NOT NULL DEFAULT 'active',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at  TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id, capability)
+);
+CREATE INDEX IF NOT EXISTS idx_app_permission_grants_user ON app_permission_grants(user_id);
+-- Consent records naming what a person let an app watch, hear or reach.
+-- Never cloned into staging: a preview must start with nothing granted,
+-- which is also what makes the prompt itself exercisable there.
+COMMENT ON TABLE app_permission_grants IS 'staging:private';
+
 -- Per-app daily spend ledger, mirroring llm_usage's split: total goes
 -- against the platform daily caps, byok is the display-only bucket for
 -- spend billed to the user's own key. The proxy writes BOTH this table

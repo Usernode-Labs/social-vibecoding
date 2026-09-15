@@ -1246,20 +1246,49 @@ html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
   animation-name: un-vt-fade-in;
 }
 
+/* THE TWO HALVES ARE SEQUENCED, AND THAT IS WHAT MAKES IT A FADE-THROUGH
+   RATHER THAN A CROSS-FADE (#1920).
+
+   Both keyframe pairs used to run opacity across the WHOLE duration — old
+   1 -> 0 and new 0 -> 1, simultaneously. The iOS lane gets away with the
+   equivalent because its outgoing screen is opaque, z-index 2 and slides
+   off over the incoming one. Here nothing is stacked and nothing is
+   opaque, so at the midpoint both snapshots sat at ~0.5 and painted on top
+   of each other. Measured with a red outgoing screen over a blue incoming
+   one, sampled mid-animation: t=40ms #f8232a, t=120ms #bf3f7f, t=200ms
+   #4d22d4 — a continuous blend, i.e. both screens visible the whole way.
+   On the app directory that reads as two grids of app chips ghosting
+   through one another, which is what #1920 reports on the back
+   navigation.
+
+   Material's shared-axis fade-through — which the block above already
+   names — does NOT cross-fade. The outgoing surface leaves over roughly
+   the first third, and only then does the incoming one arrive, so the
+   handoff passes through the container's own ground instead of through a
+   mixture of the two surfaces. Same measurement after sequencing:
+   t=40ms #ff7979, t=80ms #fff3f3, t=120ms #c4c4ff — red, then the ground,
+   then blue, and never a red/blue mix.
+
+   35% is the crossover for both directions. The translateY halves keep
+   their full duration: motion may overlap, only OPACITY may not, and
+   moving a surface that is already transparent costs nothing. */
+
 @keyframes un-vt-fade-out {
   from { opacity: 1; }
-  to { opacity: 0; }
+  35%, to { opacity: 0; }
 }
 @keyframes un-vt-fade-in {
-  from { opacity: 0; }
+  from, 35% { opacity: 0; }
   to { opacity: 1; }
 }
 @keyframes un-vt-fade-up-in {
   from { opacity: 0; transform: translateY(10px); }
+  35% { opacity: 0; }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes un-vt-fade-down-out {
   from { opacity: 1; transform: translateY(0); }
+  35% { opacity: 0; }
   to { opacity: 0; transform: translateY(10px); }
 }
 

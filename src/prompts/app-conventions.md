@@ -1928,21 +1928,103 @@ are gated by **Permissions Policy**, which is delegated **downward** by the
 embedding page. An app cannot grant itself one: the grant is the shell's to
 make, through the `allow` attribute on the frame.
 
-The shell delegates these to every app frame (the App tab, the landing
-page's in-page viewer, and the staging preview alike):
+Two capabilities are delegated to every app frame, with nothing to ask for:
+
+| Capability | Use it through |
+|---|---|
+| `clipboard-write` | `navigator.clipboard.writeText()` |
+| `pointer-lock` | `element.requestPointerLock()` |
+
+**Everything else worth having is GATED** (#2219). Nine capabilities are
+delegated to your app only when the person using it has granted that
+capability **to your app**, after the platform asked them in its own dialog:
 
 | Capability | Use it through |
 |---|---|
 | `geolocation` | `navigator.geolocation.getCurrentPosition()` |
-| `clipboard-write` | `navigator.clipboard.writeText()` |
-| `pointer-lock` | `element.requestPointerLock()` |
+| `microphone` | `navigator.mediaDevices.getUserMedia({ audio: true })` |
+| `camera` | `navigator.mediaDevices.getUserMedia({ video: true })` |
+| `display-capture` | `navigator.mediaDevices.getDisplayMedia()` |
+| `usb` | `navigator.usb.requestDevice()` |
+| `serial` | `navigator.serial.requestPort()` |
+| `hid` | `navigator.hid.requestDevice()` |
+| `bluetooth` | `navigator.bluetooth.requestDevice()` |
+| `midi` | `navigator.requestMIDIAccess()` |
 
-Delegation is not a grant. The browser still prompts the user the first
-time your app asks, per origin, and they can refuse. Always handle the
-error path.
+`geolocation` used to be in the first table, delegated to every app
+unconditionally. It moved because of how browsers attribute a nested
+frame's request: under permission delegation the prompt names the
+**top-level** origin, so it said "my.onhomeroom.com wants to know your
+location" and never named the app, and the answer was then remembered for
+the platform origin, so every other app inherited it silently. The
+platform's own prompt is the one that can name the app that is asking.
 
-**Everything else is not delegated**, `camera`, `microphone`,
-`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+### Declare, then ask
+
+**Declare in `dapp.json` what your app may ask for.** An undeclared
+capability is refused before any dialog is shown, so the set of things your
+app can ever reach is visible in your own diff, where the group reviewing a
+proposal can see it:
+
+```json
+"permissions": [
+  { "capability": "microphone", "reason": "Records your voice notes" },
+  "geolocation"
+]
+```
+
+The object form and the bare string mean the same thing. `reason` is one
+short line shown in the prompt, the same way `llm.purpose` is.
+
+**Ask when you need it, not at startup.** Call `requestPermission()` on the
+tap that needs the capability, then use the ordinary web API:
+
+```js
+recordBtn.onclick = async () => {
+  const r = await usernode.requestPermission('microphone');
+  if (r.state !== 'granted') return showWhyWeNeedIt(r.reason);
+  if (!r.active) return;  // granted; the app is about to reopen (see below)
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  startRecording(stream);
+};
+```
+
+The answer is `{ capability, state, active, reason }`. `state` is
+`"granted"` or `"denied"`; on a denial `reason` is `"declined"` (the person
+said no), `"not_declared"` (missing from your `dapp.json`) or
+`"unknown_capability"`.
+
+`usernode.getPermission(name)` reads the same answer without ever
+prompting, so you can render an "enable" button from it.
+`usernode.getPermissions()` returns the whole picture for your app:
+`{ declared, granted, active }`.
+
+### `active` is the field to read twice
+
+A frame's Permissions Policy is computed when it **navigates**, so a
+capability granted just now cannot apply to the document that asked for it.
+On that first grant the platform tells the person the app will reopen, and
+reloads the frame. `active: false` therefore means "granted, and you are
+about to be reloaded": stop, do not call the web API, and let the reload
+land. Save anything you need to keep first.
+
+Every later launch delegates it up front and `requestPermission()` resolves
+`active: true` with no dialog and no reload at all.
+
+For the same reason, a revoke in Settings takes effect the next time the
+app opens rather than instantly. A running document's policy cannot be
+narrowed.
+
+### Where it does and does not apply
+
+Gated capabilities are delegated on the **App tab** only. The landing
+page's in-page viewer serves signed-out visitors, who hold no grants, and
+the staging preview shows a build the group has not voted in yet. Both
+still relay the prompt, so your app gets a truthful answer there rather
+than silence, but neither can turn a capability on.
+
+### Telling "blocked" from "never asked"
+
 The failure mode is worth knowing because it is so easy to misread: an
 undelegated capability is not refused with a distinct error and it does not
 prompt. `getCurrentPosition` and friends reject in a couple of
@@ -1950,16 +2032,20 @@ milliseconds with `PERMISSION_DENIED`, the *same* code the browser uses
 when a person taps "block". So an app that treats code 1 as "the user said
 no" will tell people to check a permission they were never asked for.
 
-Ask the frame before offering the control, and tell the two cases apart:
+`usernode.hasCapability(name)` answers synchronously for the CURRENT
+document, and is the one call here that also works standalone:
 
 ```js
-const policy = document.permissionsPolicy || document.featurePolicy;
-const allowed = !policy || policy.allowsFeature('geolocation');
-// `allowed` is true where the browser does not expose the API to ask,
-// so treat it as "try it and see" rather than a guarantee.
+if (!usernode.hasCapability('geolocation')) {
+  // Not delegated to this document. Either ask for it, or hide the control.
+}
 ```
 
-If your app needs a capability that is not on the list, that is a missing
+It reads the document's own Permissions Policy, and returns `true` where
+the browser exposes no way to ask, so treat that as "try it and see" rather
+than a guarantee.
+
+If your app needs a capability that is on neither list, that is a missing
 platform capability, not something to work around in the app: see
 "Platform-level problems & missing capabilities" below.
 

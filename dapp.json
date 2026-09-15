@@ -1167,16 +1167,28 @@
       "expectText": "1 of 2 app slots used"
     },
     {
-      "name": "Create-app dialog wears the pane styling: a rounded white name card and a pill rail whose segments are full-width (#1910)",
-      "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-mode=\"new\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
-      "expectText": "Who can build it"
+      "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
+      "path": "/?shot=create-details#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-step=\"details\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
+      "expectText": "App name"
     },
     {
       "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
       "path": "/?shot=create-import#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"import\"][data-import-state=\"idle\"] #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
       "expectText": "GitHub repo URL"
+    },
+    {
+      "name": "Create-app dialog opens on a start step with two choices and a step count, not every field at once (#1911)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"start\"] [data-create-step=\"start\"] .create-mode-pill[data-mode-pill=\"new\"] + .create-mode-pill[data-mode-pill=\"import\"]",
+      "expectText": "Step 1 of 3"
+    },
+    {
+      "name": "Create-app dialog's last step holds the two visibility rails and the Create pill, reached through ?shot=create-access (#1911)",
+      "path": "/?shot=create-access#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"access\"] [data-create-step=\"access\"] #create-visibility-block .create-vis-pill[data-view-vis=\"private\"]",
+      "expectText": "Who can build it"
     },
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
@@ -1188,6 +1200,12 @@
       "name": "Session/proposal cards render reverse #N issue chips",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "[data-issue-chip]"
+    },
+    {
+      "name": "Board cards name the auto-drafted category they were placed in (#1933)",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-issue-row=\"900001\"] [data-theme-chip=\"demo-appearance\"]",
+      "expectText": "[Mock] Appearance & theming"
     },
     {
       "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
@@ -1672,6 +1690,25 @@
       "name": "Admitted status drops the move-up offer (#1538)",
       "path": "/?shot=waitlist-admitted",
       "expectSelector": "#waitlist-more-offer.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A confirmed address re-joining lands on the settled panel (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-pill:not(.hidden)",
+      "expectText": "On the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A confirmed re-join reads back instead of congratulating (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A confirmed re-join is never asked for a code (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirm.hidden",
       "allowConsoleErrors": true
     },
     {
@@ -3246,6 +3283,11 @@
       "expectText": "Default per-user weekly cap"
     },
     {
+      "name": "Spend limits: the weekly cap is set per identity tier, with GitHub-and-X and zkPassport fields beside the unverified one (#838)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
+    },
+    {
       "name": "A user row states week-to-date spend, not just today's (#1788)",
       "path": "/?demo=1#admin/users",
       "expectText": "this week"
@@ -4071,6 +4113,30 @@
       "name": "#2061: the checklist lists the steps after the one it is stuck on",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
+    },
+    {
+      "name": "#2219: the app-permission prompt names the app and what it is asking for",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden)",
+      "expectText": "record audio from your microphone"
+    },
+    {
+      "name": "#2219: the first grant says the app will reopen, because the policy only applies on navigation",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden) #permission-consent-allow",
+      "expectText": "Allow and reopen"
+    },
+    {
+      "name": "#2219: granted device permissions are listed per app in Settings, with a way back",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-list",
+      "expectText": "Staging demo app A"
+    },
+    {
+      "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
+      "expectText": "the next time it opens"
     }
   ],
   "governance": {

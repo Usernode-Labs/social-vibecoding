@@ -157,13 +157,17 @@ test('the payload carries no global spend or global cap', async () => {
   // figures describe, plus the per-window breakdown behind them. All of it
   // is about THIS user's own allowance, so the admin-only rule above is
   // untouched.
+  //
+  // #838 added identityTier (which tier this user's weekly cap follows)
+  // and weeklySource (override, tier value, or the base default): both
+  // describe this user's own allowance, nothing platform-wide.
   assert.deepEqual(Object.keys(r).sort(), [
     'byokCents', 'capWindow', 'creditPolicy', 'dailyApplies',
     'dailyLimitCents', 'dailySpentCents', 'entitlementAvailable',
-    'hasByokKey', 'limitCents', 'limitSource', 'lowBalancePct',
+    'hasByokKey', 'identityTier', 'limitCents', 'limitSource', 'lowBalancePct',
     'remainingCents', 'resetLabel', 'resetsAt', 'spentCents', 'tier',
     'tierLimitCents', 'verificationRequired', 'weeklyApplies',
-    'weeklyLimitCents', 'weeklySpentCents', 'windowLabel',
+    'weeklyLimitCents', 'weeklySource', 'weeklySpentCents', 'windowLabel',
   ]);
 });
 

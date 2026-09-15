@@ -1137,7 +1137,7 @@ test('every path that owned #app-content goes through the frame seam', () => {
     'AppView._appFrame()',            // the adopt-or-fall-back resolver
     'frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true })', // #931 launch
     'frame.mount({ slug: appData.slug, faded: false })',                        // plain render
-    'frame.setSrc(iframeSrc)',        // imperative navigation
+    'frame.setSrc(iframeSrc, { granted: AppView._grantedNow() })', // imperative navigation
     'frame.setOnLoad(',               // one slot, not a stacking listener
     'AppView._parkAppFrame()',        // Dev tab
     'AppView._unmountAppFrame()',     // leaving the app

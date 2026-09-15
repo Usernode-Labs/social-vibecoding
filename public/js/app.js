@@ -678,6 +678,13 @@ const App = {
     // so and the control that turns the dead end into a join, and like the
     // two above it needs the anonymous boot. Nothing is sent to paint it —
     // waitlist.tsx sets the note from a literal.
+    // `waitlist-rejoined` (#2201) is that same settled panel reached a
+    // fourth way: an address already on the list AND already confirmed
+    // submits the join form again, and the server answers with its status
+    // instead of a code, so the client skips the code step entirely. No URL
+    // reaches it without the POST behind it, so a capture cannot get there
+    // on its own — and it is the state this change exists to produce, so a
+    // before/after that photographed the home screen would show none of it.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -689,6 +696,7 @@ const App = {
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
+        shot !== 'waitlist-rejoined' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
@@ -699,7 +707,8 @@ const App = {
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
          || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
-         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status'
+         || shot === 'waitlist-rejoined') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
@@ -864,11 +873,12 @@ const App = {
     // once-per-document: _applyMenuNavShot clicks a drawer row and
     // _applySettingsBackShot assigns a hash and traverses back out of it, so
     // re-running either on the hashchange it just caused would loop, and
-    // _applyNotifPermissionsShot / _applyTermsConsentShot present overlays
-    // that would stack.
+    // _applyNotifPermissionsShot / _applyTermsConsentShot /
+    // _applyAppPermissionShot present overlays that would stack.
     App._applySettingsBackShot();
     App._applyNotifPermissionsShot();
     App._applyTermsConsentShot();
+    App._applyAppPermissionShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -1250,6 +1260,48 @@ const App = {
       if (!backdrop) return;
       backdrop.click();
       if (sheet.el) sheet.el.setAttribute('data-un-ghost-click', 'dispatched');
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep link `?shot=app-permission` (#2219): present the
+  // platform's app-permission prompt — the dialog an embedded app opens by
+  // calling usernode.requestPermission().
+  //
+  // It needs a link because there is no other way to reach it. The real
+  // prompt appears only when a running app in the frame asks for a gated
+  // capability it has declared and this user has not answered for yet: three
+  // conditions no URL can arrange, and the first of them needs a deployed app
+  // that actually calls the bridge. So the before/after captures would show
+  // the app screen instead of the thing the change is about.
+  //
+  // Renders from a fixed snapshot, calls no bridge method and writes nothing
+  // (the POST that stores a grant happens on Allow, which nothing here
+  // presses), so it is pure UI state — ungated for the same reason as
+  // ?shot=notif-permissions above, and on the same retry budget, because
+  // `AppView._reactDevBoard()` may not have wired up on the first tick.
+  _applyAppPermissionShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-permission') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      if (!window.AppView || typeof AppView.showPermissionConsentModal !== 'function'
+          || !AppView._reactDevBoard()) {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
+      // Not awaited: the shot leaves the dialog standing for the camera. It
+      // resolves if somebody dismisses it, and its answer goes nowhere.
+      AppView.showPermissionConsentModal({
+        appName: 'Staging demo app',
+        capability: 'microphone',
+        label: 'Microphone',
+        blurb: 'record audio from your microphone',
+        reason: 'Records your voice notes',
+        needsReload: true,
+        surfaced: false,
+      });
     };
     setTimeout(attempt, 50);
   },

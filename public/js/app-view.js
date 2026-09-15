@@ -21,6 +21,12 @@ const AppView = {
   iframeToken: null,
   // Slug the held iframeToken was minted for (app-scoped RS256 audience).
   iframeTokenSlug: null,
+  // #2219: the permission answer that rode the same mint — { declared,
+  // granted, effective }. Held beside the token and slug-checked the same
+  // way, because it is consumed at the same instant: the line before the
+  // frame navigates.
+  iframePermissions: null,
+  iframePermissionsSlug: null,
   // #743: validated inner app path (path+query) from a chromeless deep link
   // (/app/<slug>/full?path=%2Ft%2F123). Written by App.restoreFromHash on
   // every pass (null when the route carries none),
@@ -1239,9 +1245,11 @@ const AppView = {
       try {
         const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`, { signal: controller.signal });
         if (!res.ok) return null;
-        const { token } = await res.json();
+        const { token, permissions } = await res.json();
         if (!token) return null;
-        AppView._tokenFresh = { slug, token, at: Date.now() };
+        // #2219: the grant set rides the mint, so the launch path stays at
+        // one round trip. Cached with the token and expiring with it.
+        AppView._tokenFresh = { slug, token, permissions: permissions || null, at: Date.now() };
         return token;
       } catch {
         return null;
@@ -1274,11 +1282,16 @@ const AppView = {
     if (token) {
       AppView.iframeToken = token;
       AppView.iframeTokenSlug = target;
+      const fresh = AppView._tokenFresh;
+      AppView.iframePermissions = (fresh && fresh.slug === target && fresh.permissions) || null;
+      AppView.iframePermissionsSlug = target;
     } else {
       // 404 (unknown app / no view access) or 400 — drop any stale token
       // rather than keeping one that no longer matches the open app.
       AppView.iframeToken = null;
       AppView.iframeTokenSlug = null;
+      AppView.iframePermissions = null;
+      AppView.iframePermissionsSlug = null;
     }
   },
 
@@ -1465,7 +1478,7 @@ const AppView = {
       const frame = AppView._appFrame();
       if (frame.hasFrame() && AppView.appData?.url
           && AppView.tokenForSlug(AppView.appData.slug)) {
-        frame.setSrc(AppView.buildAppIframeSrc());
+        frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });
       }
     }, AppView.TOKEN_REFRESH_MS);
   },
@@ -1637,6 +1650,48 @@ const AppView = {
   // have no escapable allow-scripts + allow-same-origin pair to warn about.
   _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
 
+  // ── The permission policy (#2219) ──────────────────────────────────
+  //
+  // The DOM adapter's copy of frontend/src/features/app-frame/
+  // app-frame-policy.js, the same arrangement `allow` has always had here
+  // (the React island holds one copy, this adapter the other, and exactly
+  // one of the two is live in any context). tests/app-permissions.test.js
+  // pins both against src/services/app-permissions.js.
+  //
+  // `allow` was the flat constant 'clipboard-write; pointer-lock;
+  // geolocation' until #2219: every app, unconditionally, including a
+  // location grant the browser would attribute to the PLATFORM's origin
+  // rather than the app's and then remember for every other app. The base
+  // below is what every frame still gets; the nine gated capabilities are
+  // delegated only where this user has granted them to this app.
+  _appIframeUngated: ['clipboard-write', 'pointer-lock'],
+  _appIframeGated: [
+    'geolocation', 'microphone', 'camera', 'display-capture',
+    'usb', 'serial', 'hid', 'bluetooth', 'midi',
+  ],
+
+  // The `allow` attribute for a granted set. `granted` came over the
+  // network, so it is filtered rather than trusted: this is the last line
+  // before a capability name reaches a live DOM attribute.
+  _allowAttribute(granted) {
+    const wanted = new Set(Array.isArray(granted) ? granted : []);
+    return AppView._appIframeUngated
+      .concat(AppView._appIframeGated.filter((c) => wanted.has(c)))
+      .join('; ');
+  },
+
+  // What the OPEN app is allowed to be delegated, intersected server-side
+  // with what it still declares in its dapp.json. Empty whenever the held
+  // permissions belong to a different app, mirroring `tokenForSlug` — a
+  // stale grant set must never ride another app's navigation.
+  grantedForSlug(slug) {
+    if (!slug || AppView.iframePermissionsSlug !== slug) return [];
+    return (AppView.iframePermissions && AppView.iframePermissions.effective) || [];
+  },
+  _grantedNow() {
+    return AppView.grantedForSlug((AppView.appData && AppView.appData.slug) || null);
+  },
+
   // Absolute HTTP(S), and never the platform's own origin. App URLs are built
   // server-side, but this is the last boundary before untrusted app code enters
   // the shell; a proxy or deployment regression must fail closed here.
@@ -1664,7 +1719,7 @@ const AppView = {
         id="app-iframe"${styleAttr}
         class="w-full h-full border-0"
         sandbox=""
-        allow="clipboard-write; pointer-lock; geolocation"
+        allow="${AppView._allowAttribute([])}"
       ></iframe>`;
   },
 
@@ -1756,12 +1811,19 @@ const AppView = {
       const el = AppView._appFrameDom._el('app-iframe');
       if (el) el.style.backgroundColor = background || '';
     },
-    setSrc(src) {
+    setSrc(src, { granted = [] } = {}) {
       const el = AppView._appFrameDom._el('app-iframe');
       if (!el || !AppView._isSafeAppIframeSrc(src)) return false;
       el.setAttribute('sandbox', AppView._appIframeSandbox);
+      // Both attributes are read at NAVIGATION and never again, so both are
+      // written on the line above the src assignment. See _allowAttribute.
+      el.setAttribute('allow', AppView._allowAttribute(granted));
       el.src = src;
       return true;
+    },
+    allow() {
+      const el = AppView._appFrameDom._el('app-iframe');
+      return (el && el.getAttribute('allow')) || '';
     },
     setOnLoad(fn) {
       const el = AppView._appFrameDom._el('app-iframe');
@@ -1872,7 +1934,9 @@ const AppView = {
       // refresh, different app) rebuilds instead of adopting.
       AppView._launchAdopt = { launchId, slug, src };
       AppView._watchLaunchLoad(iframe, launchId);
-      frame.setSrc(src);
+      // `slug`, not appData: on the launch path the detail fetch may not
+      // have landed yet, and grantedForSlug answers [] for the wrong app.
+      frame.setSrc(src, { granted: AppView.grantedForSlug(slug) });
     };
 
     if (AppView.hasFreshToken(slug)) {
@@ -1880,6 +1944,11 @@ const AppView = {
       // same tick as the tap.
       AppView.iframeToken = AppView._tokenFresh.token;
       AppView.iframeTokenSlug = slug;
+      // #2219: the grant set was cached by the same mint. Publish it on the
+      // same two lines, or this frame navigates with the ungated base while
+      // the token says the app is fully launched.
+      AppView.iframePermissions = AppView._tokenFresh.permissions || null;
+      AppView.iframePermissionsSlug = slug;
       proceed(AppView.buildAppIframeSrc());
     } else {
       // Wait for the mint to SETTLE (not just resolve successfully) before
@@ -2419,7 +2488,7 @@ const AppView = {
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
     });
-    frame.setSrc(iframeSrc);
+    frame.setSrc(iframeSrc, { granted: AppView._grantedNow() });
   },
 
   // Single source of truth for the per-app version pill on home cards.
@@ -6221,6 +6290,38 @@ const AppView = {
     return theme ? theme.name : 'Category';
   },
 
+  // #1933: the auto-drafted category a card is in, as a chip for its meta
+  // line. The themes are the Workshop's grouping (the "By category" pane
+  // draws a heading per theme), but the Board's columns and the stage pane
+  // sort by state, and on those a card said nothing about which category
+  // the model had placed it in: the reader had to switch panes to find out.
+  // The chip is the same name the heading carries, looked up by the key the
+  // server placed the card under (_workshopItemKey), and it is a plain meta
+  // chip rather than an `attr` chip on purpose: the priority / assignee /
+  // category tags are VOTED values with a popover behind them, and a name
+  // the model wrote is neither. Nothing is drawn until the themes arrive
+  // (null), for a card they do not name (null), or for a card the placer
+  // declined, which is simply not in any list. Tinted through the same
+  // deterministic hash the custom category chips use, so one category is one
+  // colour across every card, and every class in the pair is a literal in
+  // CATEGORY_CUSTOM_TINTS.
+  _workshopThemeChipSpec(kind, item) {
+    const t = AppView._workshopThemeData();
+    if (!t) return null;
+    const key = AppView._workshopItemKey(kind, item);
+    if (!key) return null;
+    const theme = (t.themes || []).find((x) => Array.isArray(x.items) && x.items.indexOf(key) !== -1);
+    if (!theme || !theme.name) return null;
+    const name = String(theme.name);
+    return {
+      t: 'chip', key: 'theme', meta: true,
+      cls: `dev-badge ${AppView._categoryTint(theme.id).cls}`,
+      label: name,
+      title: `Category: ${name}. Placed automatically, so it can move on the next re-draft.`,
+      data: { 'data-theme-chip': String(theme.id) },
+    };
+  },
+
   // While a regeneration is pending server-side, the re-fetch schedule in
   // ms: a model drafting a full board takes tens of seconds, and the first
   // version of this gave up after four polls six seconds apart — which left
@@ -6425,7 +6526,11 @@ const AppView = {
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
     AppView._workshopThemes = next;
-    if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
+    // Every surface, not only the Workshop pane: the Board's cards carry the
+    // category chip (#1933, _workshopThemeChipSpec), so the columns have to
+    // repaint when the themes land too. _repaintBoardSurface is mode-aware
+    // and the kanban repaint no-ops with no board mounted.
+    AppView._repaintBoardSurface();
     if (next.pending && n < AppView.WORKSHOP_POLL_MS.length) {
       AppView._workshopPollTimer = setTimeout(() => {
         AppView._workshopPollTimer = null;
@@ -6611,10 +6716,19 @@ const AppView = {
       return ts(it.shared_at || it.created_at);
     };
     const entries = [];
+    // #1933: under the "By category" pane every row sits beneath the heading
+    // that names its category, so the card's own category chip would repeat
+    // the heading on every line. It is dropped from the rows this pane draws
+    // and kept everywhere else: the stage pane's columns, the Board, and the
+    // vote and own-work strips, which are not grouped by category.
+    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
     const add = (kind, item, lane, build) => {
       if (!match(kind, item)) return;
-      const card = build();
+      let card = build();
       if (!card) return;
+      if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'theme')) {
+        card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'theme')) };
+      }
       const row = { t: 'card', key: card.key, card };
       const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
       if (th) row.thread = th;
@@ -8704,6 +8818,7 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: true })
           : []),
+        AppView._workshopThemeChipSpec('my-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         AppView._sessionVenueChipSpec(s),
@@ -8766,6 +8881,7 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: !noNav })
           : []),
+        AppView._workshopThemeChipSpec('shared-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         ...AppView.issueChipSpecs(s.linked_issues),
@@ -9548,7 +9664,8 @@ const AppView = {
     const badges = [
       ...AppView.statusTagSpecs(pr, {}),
       ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
-    ];
+      AppView._workshopThemeChipSpec('proposal', pr),
+    ].filter(Boolean);
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
@@ -11995,7 +12112,10 @@ const AppView = {
       meta,
       pill,
       linked: [],
-      badges: [AppView._govApplyBadgeSpec(applyState)].filter(Boolean),
+      badges: [
+        AppView._govApplyBadgeSpec(applyState),
+        AppView._workshopThemeChipSpec('gov', issue),
+      ].filter(Boolean),
       chatCount: parseInt(issue.chat_count) || 0,
       actions,
       actionPreview: null,
@@ -13261,6 +13381,7 @@ const AppView = {
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
+      AppView._workshopThemeChipSpec('issue', issue),
     ].filter(Boolean);
 
     // ── Actions: the state-driven primary + the claim toggle ──
@@ -13825,7 +13946,10 @@ const AppView = {
       meta,
       pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
       linked: AppView.closesPillSpecs(pr),
-      badges: AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
+      badges: [
+        ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
+        AppView._workshopThemeChipSpec('merged', pr),
+      ].filter(Boolean),
       chatCount: parseInt(pr.chat_count) || 0,
       actions: hasKudos ? [{ key: 'kudos', label: '', kudos: pr.id }] : [],
       actionPreview: null,
@@ -17982,6 +18106,207 @@ const AppView = {
     }
   },
 
+
+  // ── App permission relay (#2219) ────────────────────────────────────
+  //
+  // The bridge's usernode.requestPermission()/getPermission()/
+  // getPermissions() post a `__usernode_permission` message to
+  // window.parent; the shell answers. The prompt is platform-owned: it
+  // renders over the app, from our origin, so an app cannot approve
+  // itself. Wired via the top-level message listener at the bottom of
+  // this file, exactly like the LLM consent family above.
+  //
+  // WHY THE PLATFORM PROMPTS AT ALL. Under Permissions Policy delegation
+  // the browser attributes a cross-origin child's request to the TOP-LEVEL
+  // origin, so its own prompt names the platform rather than the app, and
+  // its answer is remembered for the platform origin — which would mean
+  // every app silently inheriting the first "allow" any app got. Only the
+  // platform can name the app that is actually asking.
+
+  // Does the document CURRENTLY in `frameId` hold this delegation?
+  //
+  // Read off the live attribute rather than any stored grant, because the
+  // two can legitimately disagree: `allow` is what the container policy was
+  // computed from at the last navigation, and a grant made since then is
+  // real but not yet in force. That gap is the whole reason a first grant
+  // reopens the app.
+  _frameAllowsCapability(frameId, capability) {
+    const el = document.getElementById(frameId);
+    const attr = (el && el.getAttribute('allow')) || '';
+    return attr.split(';').some((token) => {
+      const name = token.trim().split(/\s+/)[0];
+      return name === capability;
+    });
+  },
+
+  // Re-navigate the App tab's frame so a just-made grant takes effect.
+  //
+  // Deliberately re-MINTS first. A same-URL `src` assignment is a weaker
+  // navigation guarantee than a genuinely different one, and the fresh
+  // token both guarantees the difference and re-reads the grant set from
+  // the server, so the `allow` this writes is the server's answer and not
+  // a locally patched guess.
+  async _renavigateForPermissions(slug) {
+    const frame = AppView._appFrame();
+    if (!frame.hasFrame() || !slug) return false;
+    if (AppView._tokenFresh && AppView._tokenFresh.slug === slug) AppView._tokenFresh = null;
+    await AppView.refreshToken(slug);
+    // A failed re-mint leaves no token and no permissions. Navigating then
+    // would drop a running app to a tokenless frame with nothing delegated,
+    // which is worse than leaving its document alone; the app was told the
+    // grant needs a reload and the next launch will apply it.
+    if (!AppView.tokenForSlug(slug)) return false;
+    if (!AppView.appData || AppView.appData.slug !== slug) return false;
+    frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView.grantedForSlug(slug) });
+    return true;
+  },
+
+  async handlePermissionBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_permission;
+    if (type !== 'request' && type !== 'get' && type !== 'get-all') return;
+
+    // Only the app frames this shell owns may ask — all three, same gate as
+    // the LLM family. The landing viewer and the staging preview delegate
+    // no gated capability at all (see app-frame-policy.js), but they still
+    // get a truthful answer rather than silence, so an app can tell "you
+    // said no" from "not available on this surface".
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!frameId) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    // Ack before anything that can decline to answer: the shell has
+    // RECOGNISED this request, so every path from here owes the app a reply
+    // rather than the silence that leaves it waiting out the bridge's 15s
+    // "there is no shell" timeout. The user may sit on the dialog for
+    // minutes.
+    try { e.source.postMessage({ __usernode_permission: 'ack', id: data.id }, '*'); } catch {}
+
+    const slug = AppView.appSlugForFrame(frameId);
+    if (!slug) {
+      reply(null, 'This app could not be identified. Reopen it and try again.');
+      return;
+    }
+
+    const capability = typeof data.capability === 'string' ? data.capability : null;
+    if (type !== 'get-all' && AppView._appIframeUngated.includes(capability)) {
+      // `clipboard-write` and `pointer-lock` are delegated to every app
+      // frame. Answering "granted" is the truth, and it is also the useful
+      // answer: an app can ask about any capability uniformly instead of
+      // having to know which of them the platform happens to gate.
+      reply({ capability, state: 'granted', active: true, reason: 'ungated' });
+      return;
+    }
+    if (type !== 'get-all' && !AppView._appIframeGated.includes(capability)) {
+      // Not an error: an app asking for something the platform neither
+      // delegates nor gates gets a denial it can branch on, the same shape
+      // as every other answer.
+      reply({ capability, state: 'denied', active: false, reason: 'unknown_capability' });
+      return;
+    }
+
+    let info;
+    try {
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/permissions`, { credentials: 'same-origin' });
+      // The bootstrap is session-authenticated, and the landing viewer is
+      // the one owned frame a SIGNED-OUT visitor can reach. Say which it is.
+      if (r.status === 401) throw new Error('signed-out');
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      info = await r.json();
+    } catch (err) {
+      reply(null, err && err.message === 'signed-out'
+        ? 'Sign in to Homeroom to give an app access to this.'
+        : 'Failed to load permission state.');
+      return;
+    }
+
+    const declared = (info.declared || []).map((d) => d.capability);
+    const effective = info.effective || [];
+
+    if (type === 'get-all') {
+      reply({
+        declared: info.declared || [],
+        granted: effective,
+        active: AppView._appIframeGated.filter(
+          (c) => AppView._frameAllowsCapability(frameId, c)
+        ),
+      });
+      return;
+    }
+
+    const isActive = AppView._frameAllowsCapability(frameId, capability);
+    if (effective.includes(capability)) {
+      // Already granted. `active` false is the rare case of a grant made in
+      // another tab since this document loaded, and it means the same thing
+      // as a fresh grant: this document cannot use it until it reloads.
+      reply({ capability, state: 'granted', active: isActive, reloadRequired: !isActive });
+      return;
+    }
+    if (!declared.includes(capability)) {
+      // Refused before any dialog. An app cannot ask for a capability it
+      // did not put in its own dapp.json, which is what keeps the set of
+      // things it can ever reach visible in its diff.
+      reply({ capability, state: 'denied', active: false, reason: 'not_declared' });
+      return;
+    }
+    if (type === 'get') {
+      reply({ capability, state: 'denied', active: false, reason: 'not_granted' });
+      return;
+    }
+
+    const entry = (info.catalogue || []).find((c) => c.name === capability) || null;
+    const declaration = (info.declared || []).find((d) => d.capability === capability) || null;
+    const decision = await AppView.showPermissionConsentModal({
+      appName: info.app?.name || info.app?.slug || 'This app',
+      capability,
+      label: entry?.label || capability,
+      blurb: entry?.blurb || `use ${capability}`,
+      reason: declaration?.reason || null,
+      // The App tab is the only surface that can put a gated capability
+      // into force, and only by re-navigating. Anywhere else the grant is
+      // still worth storing, it just does not light up here.
+      needsReload: frameId === 'app-iframe' && !isActive,
+      surfaced: frameId !== 'app-iframe',
+    });
+    if (!decision) {
+      reply({ capability, state: 'denied', active: false, reason: 'declined' });
+      return;
+    }
+
+    try {
+      const r = await fetch('/api/me/permission-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ appSlug: slug, capability }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || 'Failed to save permission.');
+        return;
+      }
+    } catch (err) {
+      reply(null, 'Network error saving permission.');
+      return;
+    }
+
+    // Answer BEFORE re-navigating. The reload below destroys the document
+    // that asked, so a reply sent after it would land nowhere; sent first,
+    // an app that checks `active` gets its chance to stop cleanly.
+    reply({ capability, state: 'granted', active: false, reloadRequired: true });
+    if (frameId === 'app-iframe') {
+      try { await AppView._renavigateForPermissions(slug); } catch {}
+    }
+  },
+
   // ── App file storage relay (#752) ───────────────────────────────────
   //
   // The bridge's usernode.uploadFile()/deleteFile()/getStorageUsage()
@@ -18341,6 +18666,75 @@ const AppView = {
   _llmConsentAllow() {
     if (AppView._llmConsentSettle) AppView._llmConsentSettle(true);
   },
+  // Singleton permission prompt, same scrim/card pattern as the LLM consent
+  // dialog above. Resolves true on Allow, null on "Not now" / backdrop /
+  // Esc. There is no validation branch here: the decision IS the answer, so
+  // unlike `_llmConsentSettle` there is nothing for the controller to check.
+  _permissionModalEl: null,
+  /** The open dialog's resolver, so its card's buttons can dispatch by name. */
+  _permissionConsentSettle: null,
+  showPermissionConsentModal(view) {
+    return new Promise((resolve) => {
+      // Recreate the element on every open so listeners from a prior dialog
+      // don't accumulate on the reused node.
+      if (AppView._permissionModalEl) {
+        AppView._permissionModalEl.remove();
+        AppView._permissionModalEl = null;
+      }
+      const react = AppView._reactDevBoard();
+      if (!react) { resolve(null); return; }
+      const root = document.createElement('div');
+      root.id = 'permission-consent-modal';
+      root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+      document.body.appendChild(root);
+      AppView._permissionModalEl = root;
+
+      react.mountPermissionConsentModal(root, {
+        capability: view.capability,
+        label: view.label,
+        title: `Allow ${view.appName} to ${view.blurb}?`,
+        reason: view.reason,
+        note: view.surfaced
+          ? 'This preview cannot turn the permission on, but your answer is saved for the app itself.'
+          : (view.needsReload
+            ? `Only ${view.appName} gets this, and you can take it back anytime in Settings. The app will reopen so the change takes effect.`
+            : `Only ${view.appName} gets this, and you can take it back anytime in Settings.`),
+        confirmLabel: view.needsReload ? 'Allow and reopen' : 'Allow',
+      });
+
+      const done = (result) => {
+        AppView._permissionConsentSettle = null;
+        root.classList.add('hidden');
+        document.removeEventListener('keydown', onKey);
+        react.unmount(root);
+        root.remove();
+        if (AppView._permissionModalEl === root) AppView._permissionModalEl = null;
+        resolve(result);
+      };
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') done(null);
+      };
+      document.addEventListener('keydown', onKey);
+
+      root.addEventListener('click', (ev) => {
+        if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
+      }, { once: false });
+
+      // Backdrop, Esc and "Not now" are all the SAME answer, and it is the
+      // deny answer. A permission dialog must never read a dismissal as
+      // consent.
+      AppView._permissionConsentSettle = (allow) => done(allow ? true : null);
+
+      root.classList.remove('hidden');
+    });
+  },
+
+  _permissionConsentDecline() {
+    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle(false);
+  },
+  _permissionConsentAllow() {
+    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle(true);
+  },
 };
 
 // Bridge → shell consent relay for app LLM access (issue #34). One
@@ -18349,6 +18743,9 @@ const AppView = {
 if (typeof window !== 'undefined') {
   window.addEventListener('message', (e) => {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
+    // #2219: the gated browser capabilities (geolocation, microphone,
+    // camera, display-capture, usb, serial, hid, bluetooth, midi).
+    try { AppView.handlePermissionBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
     // #487 follow-up: "my own service worker is serving this document".
