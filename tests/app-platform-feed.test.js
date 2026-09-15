@@ -140,14 +140,14 @@ test.before(async () => {
 });
 test.after(() => server?.close());
 
-function feedUrl(qs = '') {
-  return `http://127.0.0.1:${server.address().port}/api/app-platform/governance/feed${qs}`;
+function feedUrl(qs = '', apiRoot = '/api/app-platform') {
+  return `http://127.0.0.1:${server.address().port}${apiRoot}/governance/feed${qs}`;
 }
 
-async function getFeed({ token = APP_A_TOKEN, qs = '', headers = {} } = {}) {
+async function getFeed({ token = APP_A_TOKEN, qs = '', headers = {}, apiRoot } = {}) {
   const h = { ...headers };
   if (token != null) h['x-usernode-app-token'] = token;
-  const res = await fetch(feedUrl(qs), { headers: h });
+  const res = await fetch(feedUrl(qs, apiRoot), { headers: h });
   return { status: res.status, body: await res.json() };
 }
 
@@ -204,6 +204,17 @@ test('each token only ever sees its own app rows', async () => {
   assert.deepEqual(a.body.items.map((i) => i.id), [10]);
   const b = await getFeed({ token: APP_B_TOKEN });
   assert.deepEqual(b.body.items.map((i) => i.id), [20]);
+});
+
+test('the v1 feed and permanent unversioned alias return the same contract', async () => {
+  state.sessions = [
+    { app_id: 1, id: 10, status: 'merged', pr_number: 1, pr_title: 'A change',
+      created_at: hoursAgo(3), promoted_at: hoursAgo(2), merged_at: hoursAgo(1) },
+  ];
+  const versioned = await getFeed({ apiRoot: '/api/app-platform/v1' });
+  const legacy = await getFeed();
+  assert.equal(versioned.status, 200);
+  assert.deepEqual(versioned.body, legacy.body);
 });
 
 // ── Row filtering ────────────────────────────────────────────────────
