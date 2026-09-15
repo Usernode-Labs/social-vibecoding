@@ -295,8 +295,7 @@ const TopochainLeaderboard = {
     // exists on THIS endpoint's event object.
     const disclaimer = event.disclaimer ? str(event.disclaimer) : null;
 
-    // The challenge tally + cross-link (#981) — the mirror of the challenges
-    // pane's "See where the season stands →". Omitted entirely when the event
+    // The challenge tally + cross-link (#981) to the Challenges tab. Omitted entirely when the event
     // has no challenges or the count hasn't (or couldn't) load, so an empty
     // or failed tally is invisible rather than a "0 of 0" line.
     const counts = TopochainLeaderboard._challengeCounts || { total: 0, completed: 0 };
@@ -394,8 +393,7 @@ const TopochainLeaderboard = {
   },
 
   // Real hash navigation, so the section switch goes through the router and
-  // the shared event selection survives it — same reasoning as the challenges
-  // pane's `#tc-se-to-standings` link in the opposite direction.
+  // the shared event selection survives it — the section switch goes through the router.
   _goToChallenges() {
     window.location.hash = '#leaderboard/challenges';
   },

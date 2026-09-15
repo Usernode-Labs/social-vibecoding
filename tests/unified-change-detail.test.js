@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -228,6 +229,13 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.match(html, />Edit issues</, 'the owner can manage associations after creation');
   assert.match(html, /rounded-full bg-violet-500\/10/, 'the issue number is a compact identity chip');
   assert.match(html, /rounded-xl bg-zinc-100\/80/, 'the linked issue is a full navigable row');
+  // #2193: the heading names what is addressed, and the row keeps its own
+  // flex layout so a long title truncates instead of scrolling the card.
+  assert.match(html, /class="dev-topic-h">Addresses issues?</);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rowRule = css.match(/\.dev-change-issues a \{[^}]*\}/);
+  assert.ok(rowRule, 'the linked-issue row rule exists');
+  assert.doesNotMatch(rowRule[0], /display\s*:/, 'no display override outranks the row\u2019s flex');
   assert.match(html, /role="tablist" aria-label="Conversation"/);
   assert.match(html, /role="tab"[^>]+aria-selected="true"[^>]*>Build/);
   assert.ok(html.includes('Build'));

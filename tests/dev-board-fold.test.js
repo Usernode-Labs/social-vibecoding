@@ -485,7 +485,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 621 → 622: #2172 adds one check on the Needs-you feed's end card, the
   // summary one swipe past the last item, on the ?shot=needs-end route that
   // opens on it.
-  assert.equal(DAPP.tests.length, 622);
+  // 621 → 622: the #1941 check on the session screen, pinning the compact
+  // session strip — py-1, wrapping only below sm — with the venue still a
+  // direct child beside the name.
+  // 621 → 622: #2183 adds one check on the since-list's Clear and its
+  // always-drawn Show older, reached through `?shot=since-visit`.
+  // 621 → 622: #2182 independently adds the check that the viewer's strip
+  // stays on screen when it is empty, reached through `?shot=mine-empty`.
+  // Four branches each took 621 to 622 on their own, so together they land
+  // on 625.
+  assert.equal(DAPP.tests.length, 625);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

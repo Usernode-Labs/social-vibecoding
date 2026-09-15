@@ -11,7 +11,7 @@
 //     on each challenge — became a decoration on these (richer) cards, see
 //     "personalization" below;
 //   - its season-scope leaderboard block is gone: it was a thinner copy of the
-//     standings tab, which the "See where the season stands" link now points at.
+//     standings tab, one tab over (#1917 retired the link that pointed there).
 //
 // Hosted in #challenges-root inside #leaderboard-screen (public/index.html);
 // mounted/unmounted by the Leaderboard module (./leaderboard.js) when
@@ -78,9 +78,9 @@
 //     retire with it, because it guards a real `href` attribute and React
 //     does not validate schemes.
 //   * The four `addEventListener` sweeps that were re-bound after every
-//     render (the cards, the see-the-standings link, the two overlay
+//     render (the cards, the two overlay
 //     backdrops, the close buttons, the breakdown's Load more and its
-//     participant rows) are named methods now — `_openIdx`, `_toStandings`,
+//     participant rows) are named methods now — `_openIdx` and
 //     `_moreBreakdown` — and the component calls them. The behaviour stayed
 //     here; only the wiring moved.
 //   * The overlays' `hidden` class retired into their descriptors: `detail`
@@ -696,12 +696,6 @@ const TopochainChallenges = {
     const challenge = TopochainChallenges._ordered()[idx];
     TopochainChallenges.openChallengeDetail(challenge);
     TopochainChallenges._pushDetailHash(challenge);
-  },
-
-  // Real hash navigation so the section switch goes through the router
-  // (and the shared event selection is untouched).
-  _toStandings() {
-    window.location.hash = '#leaderboard/topochain';
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
