@@ -484,6 +484,12 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
     'a state link that stops rendering must fail checks, not regress silently');
   const mine = live.filter((t) => t.name.includes('#982'));
   assert.equal(mine.length, 2, 'two slots, deliberately — see above');
+  const verifiedSocials = mine.find((t) => t.name.includes('#1939'));
+  assert.ok(verifiedSocials, 'the edit-profile check must cover proof-backed social accounts');
+  assert.match(verifiedSocials.expectSelector, /#profile-edit-github:not\(:has\(input\)\)/);
+  assert.match(verifiedSocials.expectSelector, /#profile-edit-x:not\(:has\(input\)\)/);
+  assert.match(verifiedSocials.expectSelector, /a\[href='#settings\/connectors'\]/);
+  assert.equal(verifiedSocials.expectText, 'Manage social accounts');
 });
 
 test('the profile checks assert on the changed screen, not on "/"', () => {
