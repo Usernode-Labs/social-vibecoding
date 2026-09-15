@@ -113,9 +113,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
    image bytes in Postgres. Both are absent in staging — detect and
-   degrade. Handle checks go through the platform's user directory
-   (`usernode.lookupUser()` / `searchUsers()`, or `/users/lookup` on the
-   platform API) — never a guess from users your app has already seen.
+   degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
+   never a hardcoded host. Handle checks use `usernode.lookupUser()` /
+   `searchUsers()` — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    standalone Docker, use exec-form `CMD ["node", "server.js"]`.
@@ -1505,6 +1505,76 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
   (smaller quota, deleted after 7 days) — fine for testing, never for
   durable content.
 
+## App-facing platform API — use the pinned v1 base
+
+Server-side app features that read Homeroom data use the private,
+read-only app-platform API. Never hard-code a public platform hostname:
+domains can move, and a redirect can turn an expected JSON response into
+HTML. The platform injects both of these reserved locators in production
+and staging containers:
+
+- `USERNODE_PLATFORM_API_V1_URL` — the preferred, version-pinned base
+  (`http://usernode:3000/api/app-platform/v1` in-network).
+- `USERNODE_PLATFORM_API_URL` — the original unversioned base, retained
+  as a v1 compatibility alias for existing app source and deployments.
+
+Use one fallback while older deployments age out:
+
+```js
+const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL
+  || process.env.USERNODE_PLATFORM_API_URL;
+```
+
+Both names and the whole `USERNODE_PLATFORM_API_*` family are reserved
+manifest keys: do not declare them in `dapp.json`. Production also gets
+`USERNODE_LLM_PROXY_TOKEN`, the opaque app credential used by token-gated
+routes. Staging gets the URL locators but deliberately no app token;
+unreviewed code must use the endpoint's documented user-token fallback or
+an obvious staging fixture.
+
+### Compatibility guarantee
+
+Within v1, existing route paths, response field names, field types, and
+field meanings stay compatible. The platform may add endpoints or response
+fields, tighten a security check, correct a bug, or change a rate limit;
+clients must ignore fields they do not recognise. A planned breaking shape
+requires a new `/v2` path and `USERNODE_PLATFORM_API_V2_URL` — v1 is never
+silently repointed. The unversioned paths and
+`USERNODE_PLATFORM_API_URL` remain aliases of v1 for legacy apps.
+
+## App directory — apps and contributors
+
+`GET /apps` on `PLATFORM_API_BASE` returns the public Homeroom app
+directory for server-side pickers, rankings, and cross-app discovery. It
+uses `x-usernode-app-token`; no user token or LLM consent grant is needed
+because every returned field is already public:
+
+```js
+const DIRECTORY_ENABLED = !!PLATFORM_API_BASE
+  && !!process.env.USERNODE_LLM_PROXY_TOKEN;
+
+const resp = await fetch(`${PLATFORM_API_BASE}/apps?include_wallets=0`, {
+  headers: {
+    'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+  },
+});
+if (!resp.ok) throw new Error(`app directory returned ${resp.status}`);
+const { apps } = await resp.json();
+```
+
+Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
+`icon_emoji`, `icon_url`, `active_users`, `requires_login`, its canonical
+`url`, and `contributors`. A contributor is
+`{ user_id, username, wallet_address }`; `?include_wallets=0` omits the
+wallet field. Only view-public, non-platform apps with a usable deployment
+appear. Use the returned `url`, never rebuild a hostname from `slug`.
+`icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+
+Cache the response for 30–60 seconds; the route allows 60 requests/minute
+per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
+token. Serve a short, obviously fake directory fixture so the screen stays
+reviewable without giving unreviewed code platform-wide access.
+
 ## App governance feed — the app's own proposal/vote/merge activity
 
 The platform tracks every proposal, vote, and merge for every app.
@@ -1513,21 +1583,11 @@ render live governance surfaces — a "what's changing" strip, a
 changelog screen — instead of hand-maintaining a shadow table of the
 same data.
 
-Production containers receive one extra env var (platform-injected;
-`USERNODE_PLATFORM_API_URL` and the whole `USERNODE_PLATFORM_API_*`
-family are reserved manifest keys you must not declare):
-
-- `USERNODE_PLATFORM_API_URL` — base URL of the app-facing platform
-  API (`http://usernode:3000/api/app-platform` in-network).
-
-Auth reuses the app's existing credential,
-`USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). **Staging
-containers receive neither**, and standalone deploys have no platform
-to call — always detect absence and degrade gracefully, exactly like
-the LLM pattern:
+Auth reuses `USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). Always
+detect the missing staging/standalone credential and degrade gracefully:
 
 ```js
-const FEED_ENABLED = !!process.env.USERNODE_PLATFORM_API_URL
+const FEED_ENABLED = !!PLATFORM_API_BASE
   && !!process.env.USERNODE_LLM_PROXY_TOKEN;
 // When false: hide the strip, or serve your staging mock feed (below).
 ```
@@ -1545,7 +1605,7 @@ feed.
 
 ```js
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/governance/feed?limit=10`,
+  `${PLATFORM_API_BASE}/governance/feed?limit=10`,
   { headers: { 'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN } }
 );
 const { items, has_more, next_cursor } = await resp.json();
@@ -1633,9 +1693,10 @@ here.
 
 ### From your server (production AND staging previews)
 
-`USERNODE_PLATFORM_API_URL` is injected into **both** production and
-staging containers (unlike every other platform credential pair), so
-one server-side code path covers both environments. The header rule:
+`USERNODE_PLATFORM_API_V1_URL` and its legacy fallback are injected into
+**both** production and staging containers (unlike every platform
+credential), so one server-side code path covers both environments. The
+header rule:
 
 - **Production** — send `x-usernode-app-token`
   (`USERNODE_LLM_PROXY_TOKEN`) **and** `x-usernode-user-token` (the
@@ -1655,7 +1716,7 @@ if (process.env.USERNODE_LLM_PROXY_TOKEN) {
   headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
 }
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/users/lookup` +
+  `${PLATFORM_API_BASE}/users/lookup` +
   `?username=${encodeURIComponent(handle)}`,
   { headers }
 );
@@ -1664,8 +1725,8 @@ const { found, user, ambiguous } = await resp.json();
 
 This user-token-only fallback exists **only** on the two `/users/*`
 endpoints. The governance feed still requires the app token, so its
-`FEED_ENABLED` check above (which ANDs `USERNODE_PLATFORM_API_URL`
-**and** `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
+`FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
+`USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
 
 Responses:
