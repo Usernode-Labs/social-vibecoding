@@ -302,6 +302,29 @@ async function identityStatus(pool, userId) {
   return statuses;
 }
 
+// The public-profile boundary deliberately has its own, narrower reader.
+// identityStatus also reports a legacy GitHub attribution as "linked" so the
+// settings screen can ask its owner to reconnect. That legacy row has no
+// immutable provider subject and is therefore NOT an ownership proof. Public
+// profile links come only from user_social_identities, which is written by the
+// provider OAuth callbacks above.
+async function verifiedProfileLinks(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT provider, handle
+       FROM user_social_identities
+      WHERE user_id = $1
+      ORDER BY provider`,
+    [Number(userId)]
+  );
+  const links = { github: null, x: null };
+  for (const row of rows) {
+    if (PROVIDER_SET.has(row.provider) && HANDLE_RE[row.provider].test(String(row.handle || ''))) {
+      links[row.provider] = row.handle;
+    }
+  }
+  return links;
+}
+
 module.exports = {
   PROVIDERS,
   STATE_TTL_MS,
@@ -318,4 +341,5 @@ module.exports = {
   saveIdentity,
   clearIdentity,
   identityStatus,
+  verifiedProfileLinks,
 };

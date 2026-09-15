@@ -103,8 +103,6 @@ const CARD_CLASS = 'flex flex-col px-4 pb-5';
 
 /** A group row's shared geometry. `px-4` is load-bearing — see the note above. */
 const ROW_CLASS = 'un-group-row px-4 py-2 focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
-/** The same row, for a label-beside-field line. */
-const ROW_INLINE_CLASS = 'un-group-row flex items-center gap-3 px-4 min-h-[44px] focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
 /** A row that is itself the tappable control. */
 const ROW_ACTION_CLASS = 'un-group-row flex items-center w-full px-4 min-h-[44px] text-sm font-medium';
 
@@ -174,8 +172,6 @@ export function ProfileEditSheet({
 
   const [name, setName] = useState(String(user.displayName || ''));
   const [bio, setBio] = useState(String(user.bio || ''));
-  const [github, setGithub] = useState(String(links.github || ''));
-  const [x, setX] = useState(String(links.x || ''));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -234,7 +230,7 @@ export function ProfileEditSheet({
     setFormError(null);
     setFieldErrors({});
     const result = await Profile._save({
-      displayName: name, bio, github, x,
+      displayName: name, bio,
     });
     if (result.ok) return;
     if (result.fieldErrors) setFieldErrors(result.fieldErrors);
@@ -358,44 +354,48 @@ export function ProfileEditSheet({
         </section>
 
         <section className="mb-4">
-          <Group title="Links">
-            <div className={ROW_INLINE_CLASS}>
-              <Label htmlFor="profile-edit-github" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                GitHub
-              </Label>
-              <Input
-                id="profile-edit-github"
-                type="text"
-                box="groupRow"
-                ring={false}
-                width="flex"
-                className="text-right"
-                value={github}
-                maxLength={39}
-                placeholder="handle, without the @"
-                onChange={(e) => setGithub(e.target.value)}
-              />
+          <Group title="Verified social accounts">
+            <div id="profile-edit-github" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>GitHub</span>
+              {links.github ? (
+                <span className="text-right min-w-0">
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
+                    Verified
+                  </span>
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                    {String(links.github)}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not connected</span>
+              )}
             </div>
-            <div className={ROW_INLINE_CLASS}>
-              <Label htmlFor="profile-edit-x" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                X
-              </Label>
-              <Input
-                id="profile-edit-x"
-                type="text"
-                box="groupRow"
-                ring={false}
-                width="flex"
-                className="text-right"
-                value={x}
-                maxLength={39}
-                placeholder="handle, without the @"
-                onChange={(e) => setX(e.target.value)}
-              />
+            <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>X</span>
+              {links.x ? (
+                <span className="text-right min-w-0">
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
+                    Verified
+                  </span>
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                    {`@${String(links.x)}`}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not connected</span>
+              )}
             </div>
+            <a
+              href="#settings/connectors"
+              className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+              onClick={() => Profile._dismissSheet()}
+            >
+              Manage social accounts
+            </a>
           </Group>
-          <FieldError message={fieldErrors.github} />
-          <FieldError message={fieldErrors.x} />
+          <p className={FOOTNOTE_CLASS}>
+            Only accounts connected through provider verification can appear on your public profile.
+          </p>
         </section>
 
         {/*

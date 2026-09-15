@@ -184,6 +184,28 @@ test('legacy GitHub attribution is honest: linked for attribution, not eligible 
   assert.equal('subject' in status.github, false, 'private provider id is never serialized');
 });
 
+test('public profile links come only from validated provider proof rows', async () => {
+  const pool = {
+    query: async (sql, params) => {
+      assert.match(sql, /SELECT provider, handle/);
+      assert.match(sql, /FROM user_social_identities/);
+      assert.deepEqual(params, [7]);
+      return {
+        rows: [
+          { provider: 'github', handle: 'octo-user' },
+          { provider: 'x', handle: 'valid_handle' },
+          { provider: 'x', handle: 'not-valid-because-too-long' },
+          { provider: 'linkedin', handle: 'not-supported' },
+        ],
+      };
+    },
+  };
+  assert.deepEqual(await identity.verifiedProfileLinks(pool, 7), {
+    github: 'octo-user',
+    x: 'valid_handle',
+  });
+});
+
 test('schema and route mounting enforce privacy, uniqueness, replay safety, and MCP independence', () => {
   assert.match(SCHEMA, /UNIQUE \(user_id, provider\)/);
   assert.match(SCHEMA, /UNIQUE \(provider, provider_subject\)/);

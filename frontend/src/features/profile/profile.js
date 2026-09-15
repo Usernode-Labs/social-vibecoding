@@ -1,7 +1,7 @@
 // Profile screen — the mobile app's native Profile screen absorbed into SV
 // (profile-and-settings-to-web migration, NATIVE-BRIDGE.md), extended into
 // an EDITABLE profile by issue #982. Renders the user's identity card
-// (picture / display name / bio / links), rank + points, token allocation
+// (picture / display name / bio / verified links), rank + points, token allocation
 // (with reveal), points breakdown, and the challenges THEY completed.
 //
 // It deliberately does NOT list completed challenges (#981). It used to,
@@ -491,7 +491,7 @@ const Profile = {
   // which keep the sheet open with the user's other edits intact) or
   // `{ error }`. The sheet component owns the disabled state and the messages;
   // this owns the order and the truth-refresh.
-  async _save({ displayName, bio, github, x }) {
+  async _save({ displayName, bio }) {
     try {
       if (Profile._pendingAvatar === 'remove') {
         const res = await fetch('/api/me/avatar', {
@@ -516,7 +516,7 @@ const Profile = {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName, bio, github, x }),
+        body: JSON.stringify({ displayName, bio }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -525,7 +525,7 @@ const Profile = {
           const fieldErrors = {};
           let pinned = false;
           for (const [key, msgs] of Object.entries(details)) {
-            if (!['displayName', 'bio', 'github', 'x'].includes(key)) continue;
+            if (!['displayName', 'bio'].includes(key)) continue;
             fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : String(msgs);
             pinned = true;
           }

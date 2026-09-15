@@ -26,6 +26,8 @@ function initialUsers() {
       username: 'bob',
       display_name: 'Bob Builder',
       bio: 'Ships useful things.',
+      github: 'unverified-bob',
+      x: 'unverified_bob',
       avatar_id: BOB_AVATAR,
       profile_published: true,
       profile_disabled_at: null,
@@ -61,7 +63,16 @@ function initialRetired() {
 }
 
 function makePool() {
-  const state = { users: initialUsers(), retired: initialRetired(), reports: [], calls: [] };
+  const state = {
+    users: initialUsers(),
+    retired: initialRetired(),
+    identities: [
+      { user_id: 1, provider: 'x', handle: 'verified_alice' },
+      { user_id: 2, provider: 'github', handle: 'verified-bob' },
+    ],
+    reports: [],
+    calls: [],
+  };
 
   const query = async (sql, params = []) => {
     const s = String(sql);
@@ -79,10 +90,17 @@ function makePool() {
       const user = state.users.find((c) => c.id === row.user_id);
       return { rows: user ? [{ user_id: user.id, username: user.username }] : [] };
     }
+    if (/SELECT provider, handle/.test(s) && /FROM user_social_identities/.test(s)) {
+      return {
+        rows: state.identities
+          .filter((identity) => identity.user_id === params[0])
+          .map(({ provider, handle }) => ({ provider, handle })),
+      };
+    }
     // The PUBLIC read. Keyed on id since  (the name was resolved a
     // query earlier), so it is told apart from the owner read below by its
     // publish/disable filters rather than by its WHERE column.
-    if (/SELECT u\.username, u\.display_name/.test(s)
+    if (/SELECT u\.id, u\.username, u\.display_name/.test(s)
         && /WHERE u\.id = \$1/.test(s)
         && /profile_published = TRUE/.test(s)) {
       const user = state.users.find((candidate) => (
@@ -92,7 +110,7 @@ function makePool() {
       ));
       return { rows: user ? [{ ...user }] : [] };
     }
-    if (/SELECT u\.username, u\.display_name/.test(s) && /WHERE u\.id = \$1/.test(s)) {
+    if (/SELECT u\.id, u\.username, u\.display_name/.test(s) && /WHERE u\.id = \$1/.test(s)) {
       const user = state.users.find((candidate) => candidate.id === params[0]);
       return { rows: user ? [{ ...user }] : [] };
     }
@@ -250,9 +268,15 @@ test('public exact lookup is opt-in, no-store, and returns only shared profile f
     assert.match(found.headers.get('cache-control'), /no-store/);
     assert.deepEqual(
       Object.keys(found.body.profile).sort(),
-      ['avatarUrl', 'bio', 'displayName', 'url', 'username']
+      ['avatarUrl', 'bio', 'displayName', 'links', 'url', 'username']
     );
     assert.equal(found.body.profile.avatarUrl, `/avatars/${BOB_AVATAR}`);
+    assert.deepEqual(found.body.profile.links, {
+      github: 'verified-bob',
+      x: null,
+    });
+    assert.equal(JSON.stringify(found.body).includes('unverified-bob'), false);
+    assert.equal(JSON.stringify(found.body).includes('unverified_bob'), false);
     assert.equal(JSON.stringify(found.body).includes('ut1private'), false);
     assert.equal(JSON.stringify(found.body).includes('bob@example.test'), false);
 
@@ -281,6 +305,7 @@ test('owner publication state reuses the existing display name, bio and stored a
     assert.equal(owner.status, 200);
     assert.equal(owner.body.published, false);
     assert.equal(owner.body.profile.displayName, 'Alice');
+    assert.deepEqual(owner.body.profile.links, { github: null, x: 'verified_alice' });
 
     const unknown = await request(
       server,
@@ -299,6 +324,27 @@ test('owner publication state reuses the existing display name, bio and stored a
     const publicRead = await request(server, '/api/public/profiles/alice');
     assert.equal(publicRead.status, 200);
     assert.equal(publicRead.body.profile.displayName, 'Alice');
+    assert.deepEqual(publicRead.body.profile.links, { github: null, x: 'verified_alice' });
+  } finally {
+    await server.close();
+  }
+});
+
+test('disconnecting a provider proof removes its public link without unpublishing', async () => {
+  const pool = makePool();
+  const server = await start(pool);
+  try {
+    const before = await request(server, '/api/public/profiles/bob');
+    assert.equal(before.status, 200);
+    assert.equal(before.body.profile.links.github, 'verified-bob');
+
+    pool.state.identities = pool.state.identities.filter((identity) => (
+      identity.user_id !== 2 || identity.provider !== 'github'
+    ));
+
+    const after = await request(server, '/api/public/profiles/bob');
+    assert.equal(after.status, 200, 'publication state is independent of provider connection');
+    assert.deepEqual(after.body.profile.links, { github: null, x: null });
   } finally {
     await server.close();
   }
@@ -420,6 +466,10 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
     path.join(root, 'frontend/src/features/profile/public-profile-card.tsx'),
     'utf8'
   );
+  const profileSheet = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/profile-edit-sheet.tsx'),
+    'utf8'
+  );
   const app = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 
@@ -428,6 +478,7 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(schema, /COMMENT ON TABLE profile_reports IS 'staging:private'/);
   assert.doesNotMatch(schema, /ADD COLUMN IF NOT EXISTS profile_(display_name|bio|avatar_url)/);
   assert.match(route, /LEFT JOIN user_avatars/);
+  assert.match(route, /verifiedProfileLinks/);
   assert.doesNotMatch(route, /profile_(display_name|bio|avatar_url)/);
   // A stranger's display name and bio are attacker-controlled, so they have to
   // reach the page as text. JSX children are text nodes by construction, which
@@ -435,6 +486,12 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(publicCard, /\{profile\.displayName \|\| profile\.username\}/);
   assert.match(publicCard, /\{profile\.bio\}/);
   assert.match(publicCard, /referrerPolicy="no-referrer"/);
+  assert.match(publicCard, /verifiedSocialLinksView/);
+  assert.match(publicCard, /target="_blank"/);
+  assert.match(publicCard, /rel="noopener noreferrer"/);
+  assert.match(profileSheet, /#settings\/connectors/);
+  assert.match(profileSheet, /Only accounts connected through provider verification/);
+  assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
   assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
   assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);
   assert.doesNotMatch(profile, /innerHTML\s*=/);

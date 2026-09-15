@@ -4,6 +4,8 @@
 //
 // Profile content itself is owned by the existing customization routes in
 // src/routes/profile.js: users.display_name, users.bio and user_avatars.
+// Verified social handles are read from user_social_identities; the legacy
+// users.github/users.x free-text columns never cross this public boundary.
 // This router adds only publication state, an anonymous allowlisted read,
 // reports and moderation. Keeping one content record prevents the private
 // editor and public page from drifting apart.
@@ -18,6 +20,7 @@ const {
 } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const usernames = require('../services/usernames');
+const socialIdentity = require('../services/social-identity');
 
 const REPORT_REASONS = new Set([
   'impersonation',
@@ -55,19 +58,23 @@ function profileUsername(value) {
   return username;
 }
 
-function publicShape(row) {
+function publicShape(row, verifiedLinks = {}) {
   return {
     username: row.username,
     displayName: row.display_name || null,
     bio: row.bio || null,
     avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    links: {
+      github: verifiedLinks.github ?? null,
+      x: verifiedLinks.x ?? null,
+    },
     url: `/#profile/${encodeURIComponent(row.username)}`,
   };
 }
 
 async function readOwnerProfile(db, userId) {
   const { rows } = await db.query(
-    `SELECT u.username, u.display_name, u.bio, u.profile_published,
+    `SELECT u.id, u.username, u.display_name, u.bio, u.profile_published,
             u.profile_disabled_at, av.id AS avatar_id
        FROM users u
        LEFT JOIN user_avatars av ON av.user_id = u.id
@@ -77,9 +84,9 @@ async function readOwnerProfile(db, userId) {
   return rows[0] || null;
 }
 
-function ownerShape(row) {
+function ownerShape(row, verifiedLinks = {}) {
   return {
-    profile: publicShape(row),
+    profile: publicShape(row, verifiedLinks),
     published: !!row.profile_published,
     moderationDisabled: !!row.profile_disabled_at,
   };
@@ -121,7 +128,7 @@ function publicProfileRoutes(config) {
           return res.status(404).json({ error: 'Profile not found' });
         }
         const { rows } = await pool.query(
-          `SELECT u.username, u.display_name, u.bio, av.id AS avatar_id
+          `SELECT u.id, u.username, u.display_name, u.bio, av.id AS avatar_id
              FROM users u
              LEFT JOIN user_avatars av ON av.user_id = u.id
             WHERE u.id = $1
@@ -132,8 +139,9 @@ function publicProfileRoutes(config) {
         if (!rows.length) {
           return res.status(404).json({ error: 'Profile not found' });
         }
+        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);
         return res.json({
-          profile: publicShape(rows[0]),
+          profile: publicShape(rows[0], verifiedLinks),
           ...(resolved.retired ? { moved: { from: username, to: resolved.username } } : {}),
         });
       } catch (err) {
@@ -151,7 +159,8 @@ function publicProfileRoutes(config) {
     try {
       const row = await readOwnerProfile(pool, req.user.id);
       if (!row) return res.status(404).json({ error: 'User not found' });
-      return res.json(ownerShape(row));
+      const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, row.id);
+      return res.json(ownerShape(row, verifiedLinks));
     } catch (err) {
       log.error('profiles', 'Owner public-profile read failed', {
         userId: req.user.id,
@@ -184,11 +193,12 @@ function publicProfileRoutes(config) {
         );
         if (!rowCount) return res.status(404).json({ error: 'User not found' });
         const row = await readOwnerProfile(pool, req.user.id);
+        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, row.id);
         log.info('profiles', 'Public profile publication changed', {
           userId: req.user.id,
           published: body.published,
         });
-        return res.json(ownerShape(row));
+        return res.json(ownerShape(row, verifiedLinks));
       } catch (err) {
         log.error('profiles', 'Public profile publication failed', {
           userId: req.user.id,

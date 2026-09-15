@@ -27,6 +27,7 @@ const { validatePassword } = require('../services/password-policy');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
+const socialIdentity = require('../services/social-identity');
 const {
   accountRecovery,
   withTransaction,
@@ -518,7 +519,7 @@ function authRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
-                u.display_name, u.bio, u.github, u.x, u.dev_flow_preference,
+                u.display_name, u.bio, u.dev_flow_preference,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -545,7 +546,8 @@ function authRoutes(config) {
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
         : null;
-      profile = shapeProfile(rows[0]);
+      const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
+      profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
     // #1055 staging fixture: report a saved BYOK key so the composer's
     // session-options menu renders its "Change your API key (…7f2c)" branch

@@ -1,6 +1,6 @@
 // Profile customization (issue #982) — the write half.
 //
-//   PATCH  /api/me/profile   display name / bio / github / x
+//   PATCH  /api/me/profile   display name / bio
 //   POST   /api/me/avatar    raw image bytes
 //   DELETE /api/me/avatar
 //   GET    /avatars/:id      the public, unauthenticated read
@@ -60,13 +60,18 @@ function makeMockPool(state) {
         const row = state.avatar && state.avatar.id === params[0] ? state.avatar : null;
         return { rows: row ? [row] : [] };
       }
+      if (sql.startsWith('SELECT provider, handle FROM user_social_identities')) {
+        return {
+          rows: (state.identities || [])
+            .filter((identity) => identity.user_id === params[0])
+            .map(({ provider, handle }) => ({ provider, handle })),
+        };
+      }
       if (sql.includes('LEFT JOIN user_avatars av') && sql.includes('WHERE u.id')) {
         return {
           rows: [{
             display_name: state.profile.display_name ?? null,
             bio: state.profile.bio ?? null,
-            github: state.profile.github ?? null,
-            x: state.profile.x ?? null,
             avatar_id: state.avatar ? state.avatar.id : null,
           }],
         };
@@ -127,7 +132,7 @@ function makeApp(state, { user } = {}) {
 const USER = { id: 7, username: 'viewer', isAdmin: false };
 
 function freshState(over = {}) {
-  return { profile: {}, avatar: null, ...over };
+  return { profile: {}, avatar: null, identities: [], ...over };
 }
 
 async function request(app, method, url, { body, contentType } = {}) {
@@ -188,15 +193,15 @@ const {
 test('parseProfileFields: only keys PRESENT in the body are written', () => {
   const { fields, details } = parseProfileFields({ displayName: 'Ada' });
   assert.deepEqual(details, {});
-  // bio/github/x absent from the body must not appear — a partial update
-  // must never blank a field the client didn't send.
+  // bio absent from the body must not appear — a partial update must never
+  // blank a field the client didn't send. Social handles are not fields here.
   assert.deepEqual(fields, { display_name: 'Ada' });
 });
 
-test('parseProfileFields: an empty string is an explicit clear (NULL)', () => {
+test('parseProfileFields: an empty editable field is an explicit clear (NULL)', () => {
   const { fields } = parseProfileFields({ displayName: '', bio: '  ', github: '', x: '' });
   assert.deepEqual(fields, {
-    display_name: null, bio: null, github: null, x: null,
+    display_name: null, bio: null,
   });
 });
 
@@ -227,22 +232,12 @@ test('parseProfileFields: a display name cannot carry line breaks', () => {
   assert.deepEqual(parseProfileFields({ bio: 'line one\nline two' }).details, {});
 });
 
-test('parseProfileFields: one leading @ is stripped from handles', () => {
-  const { fields, details } = parseProfileFields({ github: '@octocat', x: '@jack' });
-  assert.deepEqual(details, {});
-  assert.equal(fields.github, 'octocat');
-  assert.equal(fields.x, 'jack');
-});
-
-test('parseProfileFields: malformed handles are rejected per field', () => {
+test('parseProfileFields: social handles are not writable profile fields', () => {
   const { fields, details } = parseProfileFields({
-    github: 'has spaces', x: 'fine_handle',
+    github: '@octocat', x: '@jack', displayName: 'Ada',
   });
-  assert.ok(details.github, 'a handle with a space is not a handle');
-  assert.equal(details.x, undefined);
-  assert.equal(fields.github, undefined, 'the bad field is not written');
-  // A second @ is not stripped — only ONE leading one is.
-  assert.ok(parseProfileFields({ github: '@@octocat' }).details.github);
+  assert.deepEqual(details, {});
+  assert.deepEqual(fields, { display_name: 'Ada' });
 });
 
 test('parseProfileFields: unknown keys are ignored, not errors', () => {
@@ -295,6 +290,13 @@ test('shapeProfile: the avatar id becomes a /avatars/ path', () => {
   assert.equal(shaped.avatarUrl, `/avatars/${'ab'.repeat(16)}`);
 });
 
+test('shapeProfile: only separately supplied verified handles become links', () => {
+  const legacy = shapeProfile({ github: 'self-claimed', x: 'also-claimed' });
+  assert.deepEqual(legacy.links, { github: null, x: null });
+  const verified = shapeProfile({}, { github: 'octocat', x: 'jack' });
+  assert.deepEqual(verified.links, { github: 'octocat', x: 'jack' });
+});
+
 // ─── HTTP: me-scoping ─────────────────────────────────────────────────
 
 test('every write is me-scoped: no session -> 401, and the DB is untouched', async () => {
@@ -328,10 +330,14 @@ test('PATCH writes only the keys sent, and stamps updated_at', async () => {
 });
 
 test('PATCH echoes the post-write profile in the /api/auth/me shape', async () => {
-  const state = freshState();
+  const state = freshState({
+    profile: { github: 'self-claimed' },
+    identities: [{ user_id: USER.id, provider: 'github', handle: 'octocat' }],
+  });
   const { app } = makeApp(state, { user: USER });
-  const res = await patch(app, { displayName: 'Ada', github: '@octocat' });
+  const res = await patch(app, { displayName: 'Ada', github: '@different-account' });
   assert.equal(res.status, 200);
+  assert.equal(state.profile.github, 'self-claimed', 'free text cannot replace the verified account');
   assert.deepEqual(res.body.profile, {
     displayName: 'Ada',
     bio: null,
@@ -343,9 +349,9 @@ test('PATCH echoes the post-write profile in the /api/auth/me shape', async () =
 test('PATCH rejects the WHOLE request when any field is invalid', async () => {
   const state = freshState({ profile: { display_name: 'Old' } });
   const { app } = makeApp(state, { user: USER });
-  const res = await patch(app, { displayName: 'Ada', x: 'not a handle' });
+  const res = await patch(app, { displayName: 'Ada\nLovelace', bio: 'new bio' });
   assert.equal(res.status, 400);
-  assert.ok(res.body.details.x, 'the message is keyed to the offending field');
+  assert.ok(res.body.details.displayName, 'the message is keyed to the offending field');
   assert.equal(state.profile.display_name, 'Old',
     'nothing is saved partially — the valid field must not land either');
 });
