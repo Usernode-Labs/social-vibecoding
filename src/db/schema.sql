@@ -4431,7 +4431,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_kind_categories (
   category        VARCHAR(32) NOT NULL CHECK (category IN (
                     'direct_interactions', 'invitations', 'shared_work',
                     'developer_sessions', 'proposal_alerts', 'lightweight_activity',
-                    'messages'
+                    'messages', 'app_alerts'
                   )),
   default_enabled BOOLEAN NOT NULL
 );
@@ -4457,6 +4457,28 @@ BEGIN
       ));
   END IF;
 END $$;
+-- #1374 adds the eighth category. A SECOND block rather than an edit to the
+-- one above, because a database that already ran that migration would never
+-- re-enter it: each block tests for the absence of its OWN newest category.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'mobile_push_kind_categories'::regclass
+       AND conname = 'mobile_push_kind_categories_category_check'
+       AND pg_get_constraintdef(oid) NOT LIKE '%app_alerts%'
+  ) THEN
+    ALTER TABLE mobile_push_kind_categories
+      DROP CONSTRAINT mobile_push_kind_categories_category_check;
+    ALTER TABLE mobile_push_kind_categories
+      ADD CONSTRAINT mobile_push_kind_categories_category_check
+      CHECK (category IN (
+        'direct_interactions', 'invitations', 'shared_work',
+        'developer_sessions', 'proposal_alerts', 'lightweight_activity',
+        'messages', 'app_alerts'
+      ));
+  END IF;
+END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
@@ -4473,6 +4495,16 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('stale_pr', 'proposal_alerts', TRUE),
   ('check_failed', 'proposal_alerts', TRUE),
   ('pr_proposed', 'proposal_alerts', TRUE),
+  -- #1374's five. The three proposal-lifecycle ones join proposal_alerts;
+  -- the two app ones get app_alerts. All are push-enabled by default here,
+  -- which is only the SECOND gate: services/notification-preferences.js
+  -- decides whether the notification is created at all, and two of these
+  -- (issue_opened, pr_proposed) default off there.
+  ('proposal_vote', 'proposal_alerts', TRUE),
+  ('pr_merged', 'proposal_alerts', TRUE),
+  ('vote_digest', 'proposal_alerts', TRUE),
+  ('issue_opened', 'app_alerts', TRUE),
+  ('app_health', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
   ('kudos', 'lightweight_activity', FALSE),
   ('conversation_invite', 'messages', TRUE),
@@ -4489,6 +4521,15 @@ DELETE FROM mobile_push_kind_categories
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
+   -- These two are INSERTed above but were missing from this list, so every
+   -- boot seeded them and then deleted them again: push-disabled in the
+   -- database while services/mobile-push-preferences.js said otherwise.
+   -- Restored here rather than left for a separate change, because the list
+   -- had to be edited anyway and leaving two silently-broken kinds beside
+   -- five new ones is how the next person concludes the pattern is fine.
+   'connector_submitted', 'agent_awaiting_input',
+   -- #1374's five.
+   'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
  );
@@ -4501,7 +4542,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_preferences (
   category   VARCHAR(32) NOT NULL CHECK (category IN (
                'direct_interactions', 'invitations', 'shared_work',
                'developer_sessions', 'proposal_alerts', 'lightweight_activity',
-               'messages'
+               'messages', 'app_alerts'
              )),
   enabled    BOOLEAN NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4527,6 +4568,67 @@ BEGIN
       ));
   END IF;
 END $$;
+-- #1374's eighth category, same two-block reason as the one above.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'mobile_push_preferences'::regclass
+       AND conname = 'mobile_push_preferences_category_check'
+       AND pg_get_constraintdef(oid) NOT LIKE '%app_alerts%'
+  ) THEN
+    ALTER TABLE mobile_push_preferences
+      DROP CONSTRAINT mobile_push_preferences_category_check;
+    ALTER TABLE mobile_push_preferences
+      ADD CONSTRAINT mobile_push_preferences_category_check
+      CHECK (category IN (
+        'direct_interactions', 'invitations', 'shared_work',
+        'developer_sessions', 'proposal_alerts', 'lightweight_activity',
+        'messages', 'app_alerts'
+      ));
+  END IF;
+END $$;
+
+-- Per-app notification preferences (#1374). The sibling of the table above,
+-- and deliberately a separate one: mobile_push_preferences answers "may this
+-- ping my phone" and runs AFTER a notification exists, while this answers
+-- "do I get this at all, for this app" and gates whether the notification is
+-- created. Because mobile_push_deliveries below references notifications(id),
+-- suppressing the row suppresses the push with it, which is the one-switch
+-- behaviour the request asked for and is why the two cannot drift apart.
+--
+-- `app_id` is NULLABLE and that is the point: a row with app_id IS NULL is
+-- the account-wide default for every app, and a row with an app_id overrides
+-- it for that app alone. Resolution is per-app, then account, then the
+-- category's own default (services/notification-preferences.js).
+--
+-- NO CHECK constraint on `category`, unlike the table above. That one needed
+-- a hand-written DO block to migrate its constraint the first time a category
+-- was added, and this list is expected to grow with each new notification
+-- kind. The catalogue in services/notification-preferences.js is the
+-- authority and validatePreferencePatch refuses an unknown key before any
+-- write, so the constraint would buy a migration chore rather than a
+-- guarantee.
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id     INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  category   VARCHAR(32) NOT NULL,
+  enabled    BOOLEAN NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The natural key, expressed through COALESCE because a NULLABLE column
+-- cannot carry it: NULLs are not equal to each other, so a plain UNIQUE
+-- (user_id, app_id, category) would happily admit two account-wide rows for
+-- the same category. 0 is safe as the sentinel — apps.id is a SERIAL and
+-- never takes it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_preferences_key
+  ON notification_preferences (user_id, COALESCE(app_id, 0), category);
+CREATE INDEX IF NOT EXISTS idx_notification_preferences_lookup
+  ON notification_preferences (category, user_id);
+-- A person's own notification choices, and the apps they care enough about
+-- to mute. Never cloned into staging.
+COMMENT ON TABLE notification_preferences IS 'staging:private';
 
 -- Durable notification outbox. No provider token is copied here. `attempts`
 -- tracks retry backoff within the single Social sender.

@@ -277,6 +277,15 @@ const ADDED_IDS = {
   // ── #1911: the create-app dialog is three steps ───────────────────
   'create-step-indicator': 'The "Step N of 3" line under the create dialog\'s title. The dialog used to show every choice on one page; it is a start step (from scratch or from a repo), a details step and an access step now, unfolding in the same card, and this names how far it has unfolded.',
   'create-next': 'The create dialog\'s Next pill, which unfolds the access step under the details. It runs the guards the old single page ran at submit, one step earlier. Hidden once the last step is showing (app.css keys it off #create-card[data-step]), when Create takes its place.',
+  // ── #1374: per-app notification settings ─────────────────────────
+  // One switch per category governs the bell here AND the phone push,
+  // because the preference gates whether the notification is CREATED and
+  // mobile_push_deliveries references notifications(id).
+  'app-notifications-modal': '#1374: the per-app Notifications dialog, opened from the app tile\'s "..." menu. Its own root rather than a section of #app-settings-modal, because that dialog is offered only to admins and the creator while these switches belong to everybody who uses the app.',
+  'app-notifications-done': '#1374: that dialog\'s only footer control. Each switch saves on change, so there is nothing to confirm and no Cancel that could mean anything.',
+  'settings-notification-prefs': '#1374: the Settings roll-up under Notifications & alerts — your account-wide defaults plus every app you have set differently. Without it a muted app can only be found by opening its tile menu and looking.',
+  'notification-prefs-list': '#1374: the roll-up\'s rows host, React-owned end to end (features/settings/notification-prefs-list.tsx). Ships EMPTY, like #llm-grants-list and #app-permissions-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
+  'notification-prefs-status': '#1374: that section\'s status line, written by Settings._setNotificationPrefsStatus after a default change or an app reset. Same controller-host contract as #llm-grants-status.',
   // ── #2219: App device permissions ────────────────────────────────
   // The Settings sibling of the App AI permissions section. It exists
   // because a permission the platform asks for has to be one a person can
@@ -318,6 +327,10 @@ const ADDED_IDS = {
   'waitlist-request-note': 'That step\u2019s own status line. Separate from #waitlist-resend-note so the two cannot overwrite each other: a request that failed says why here and stays put, and one the server accepted advances and says so on the next step, beside the field it is about.',
   'waitlist-have-code': 'For the reader who arrived from the status mail with a code already in hand. It sends NOTHING on purpose: issueVerificationCode deletes every unconsumed code for an address before minting the next one, so making this button send would invalidate the code in the inbox of the very person who followed that mail here.',
   'waitlist-change-email': 'The way back from the code step to the address step, for the address that was a typo. It assigns the fragment rather than only setting state, so the browser\u2019s own Back does the same thing and the URL and the screen cannot disagree.',
+  // ── #2201: the address step's third answer ───────────────────────
+  // POST /api/public/waitlist/status made "that address is not on the list"
+  // something the step can actually say, and saying it needs somewhere to go.
+  'waitlist-join-instead': 'The way out of the one dead end step 1 had. An address that is not on the waitlist used to be told a code was coming and left waiting for a mail nobody sent; it is told the truth now, and the truth is half an answer unless the next move is beside it. Carries the typed address back into #waitlist-email so nobody retypes it. Always in the markup and hidden until the status read says not-found, which is why the class rides on the button itself: the declared checks assert presence, so `:not(.hidden)` on this id is the only way one can tell the offered state from the withheld one.',
   'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
   'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
   'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',

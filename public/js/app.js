@@ -673,8 +673,13 @@ const App = {
     // between them is the whole point of the panel — the celebration is the
     // join's and the state pill is the status read's — and one shot cannot
     // photograph both.
-    // `waitlist-rejoined` (#2201) is that same settled panel reached the
-    // third way: an address already on the list AND already confirmed
+    // `waitlist-not-found` (#2201) is the third answer that address step can
+    // get: the address is not on the list at all. It carries the note saying
+    // so and the control that turns the dead end into a join, and like the
+    // two above it needs the anonymous boot. Nothing is sent to paint it —
+    // waitlist.tsx sets the note from a literal.
+    // `waitlist-rejoined` (#2201) is that same settled panel reached a
+    // fourth way: an address already on the list AND already confirmed
     // submits the join form again, and the server answers with its status
     // instead of a code, so the client skips the code step entirely. No URL
     // reaches it without the POST behind it, so a capture cannot get there
@@ -689,7 +694,7 @@ const App = {
     // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
-        shot !== 'waitlist-code-step' &&
+        shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
         shot !== 'waitlist-rejoined' &&
         shot !== 'waitlist-more' &&
@@ -701,7 +706,7 @@ const App = {
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
-         || shot === 'waitlist-code-step'
+         || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
          || shot === 'waitlist-admitted' || shot === 'waitlist-status'
          || shot === 'waitlist-rejoined') &&
         (!location.hash || location.hash === '#')) {

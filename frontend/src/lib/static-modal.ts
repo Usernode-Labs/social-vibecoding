@@ -114,6 +114,39 @@ function present(
     gate: 'kit',
     hugDesignWidth: true,
     stillOwns,
+    // THE ROOT GOES HIDDEN BEFORE THE CARD COMES HOME (#2223).
+    //
+    // On a KIT-initiated dismissal — a backdrop tap, Escape, the kit's own
+    // control — React does not know the dialog is closing. Its close branch,
+    // which is what writes `hidden` here, has not run: `open` is still true.
+    // The kit finishes its exit, calls onDismiss, and adoptKitSurface's
+    // `undo()` re-homes the card into a root that is still VISIBLE. The card
+    // lands back in place at full opacity and paints, until React catches up
+    // a frame or two later and hides it.
+    //
+    // Measured in Chromium against the real kit, tracking the card's painted
+    // visibility through a backdrop-tap close of the feedback dialog:
+    //
+    //   t=  5ms  visible   in the kit shell, root not hidden
+    //   t=154ms  gone      the kit's fade has finished
+    //   t=195ms  VISIBLE   undo() re-homed it into the un-hidden root
+    //   t=212ms  gone      React's state finally caught up
+    //
+    // Seventeen milliseconds of the whole dialog, at full opacity, AFTER the
+    // animation has played — which is the reported flash. Closing through
+    // `controller.close()` never shows it, because that path hides the root
+    // on the way in; only the kit's own dismissal does, and that is the one
+    // a person actually uses.
+    //
+    // adoptKitSurface calls this immediately before `undo()`, so hiding here
+    // means the restore lands in an already-hidden root and paints nothing.
+    // On the React-initiated path the root is hidden already and this is a
+    // no-op. The class write is also what `onExternalToggle` watches, so it
+    // pulls React's own state to closed a beat sooner rather than fighting
+    // it — the two converge on the same end state.
+    onDismissStart: () => {
+      if (!root.classList.contains('hidden')) root.classList.add('hidden');
+    },
     onDismiss,
   });
 }

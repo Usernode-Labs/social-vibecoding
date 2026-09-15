@@ -62,7 +62,8 @@ test('authenticated settings API returns defaults and persists partial account u
     const initial = await initialResponse.json();
     assert.equal(initialResponse.status, 200);
     assert.match(initialResponse.headers.get('cache-control'), /no-store/);
-    assert.equal(initial.preferences.length, 7);
+    // 7 → 8 with #1374's app_alerts category.
+    assert.equal(initial.preferences.length, 8);
     assert.equal(initial.preferences.find((row) => row.key === 'messages').enabled, true);
     assert.equal(initial.preferences.find((row) => row.key === 'direct_interactions').enabled, true);
     assert.equal(initial.preferences.find((row) => row.key === 'lightweight_activity').enabled, false);

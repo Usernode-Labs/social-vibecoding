@@ -49,6 +49,28 @@ function fakePool(state = {}) {
       if (/^SELECT collab_visibility FROM apps/i.test(sql)) {
         return { rows: [{ collab_visibility: state.visibility || 'public' }] };
       }
+      // #1374: the per-app preference gate. Rows are shaped the way
+      // notification-preferences.js reads them back — app_id null is the
+      // account-wide layer, non-null is the per-app override.
+      if (/^SELECT user_id, app_id, enabled FROM notification_preferences/i.test(sql)) {
+        const prefs = state.preferences || {};
+        const rows = [];
+        for (const userId of params[1]) {
+          const value = (prefs[userId] || {})[params[0]];
+          if (typeof value === 'boolean') {
+            rows.push({ user_id: userId, app_id: params[2], enabled: value });
+          }
+        }
+        return { rows };
+      }
+      if (/^SELECT app_id, category, enabled FROM notification_preferences/i.test(sql)) {
+        const prefs = (state.preferences || {})[params[0]] || {};
+        return {
+          rows: Object.entries(prefs).map(([category, enabled]) => (
+            { app_id: params[1], category, enabled }
+          )),
+        };
+      }
       if (/^SELECT user_id FROM app_collaborators/i.test(sql)) {
         const members = state.members || [];
         return {
@@ -201,11 +223,22 @@ test('check_failed dedups atomically on an unread row for the same user and sess
 
 // ── pr_proposed fan-out targeting ───────────────────────────────────────
 
+// #1374 turned `new_proposals` OFF by default, so these targeting tests opt
+// their recipients in explicitly. The RULES they exist for — proposer
+// dropped, stakeholders deduped against the active list, self-app excluded —
+// are unchanged; what changed is that an opt-in now precedes them. The
+// default itself is pinned by its own test below.
+const optIn = (...userIds) => Object.fromEntries(
+  userIds.map((id) => [id, { new_proposals: true }])
+);
+
 test('pr_proposed targets active users plus creator and favoriters, never the proposer', async () => {
   assert.ok(ALLOWED_KINDS.has('pr_proposed'));
   activeUsers.ids = [2, 3];
   activeUsers.calls = [];
-  const pool = fakePool({ selfHosted: false, stakeholders: [4, 5, 3] });
+  const pool = fakePool({
+    selfHosted: false, stakeholders: [4, 5, 3], preferences: optIn(2, 3, 4, 5),
+  });
   const rows = await notifications.createPrProposedNotifications(pool, {
     appId: 10, sessionId: 55, proposerId: 2,
   });
@@ -223,7 +256,9 @@ test('pr_proposed targets active users plus creator and favoriters, never the pr
 test('the platform self-app never fans out to the global active-user base', async () => {
   activeUsers.ids = [991, 992, 993];
   activeUsers.calls = [];
-  const pool = fakePool({ selfHosted: true, stakeholders: [4, 5] });
+  const pool = fakePool({
+    selfHosted: true, stakeholders: [4, 5], preferences: optIn(4, 5),
+  });
   await notifications.createPrProposedNotifications(pool, {
     appId: 1, sessionId: 55, proposerId: 4,
   });
@@ -237,12 +272,51 @@ test('pr_proposed on a collab-private app only nudges members who can vote', asy
   activeUsers.calls = [];
   const pool = fakePool({
     selfHosted: false, stakeholders: [4], visibility: 'private', members: [3],
+    preferences: optIn(2, 3, 4),
   });
   await notifications.createPrProposedNotifications(pool, {
     appId: 10, sessionId: 55, proposerId: 2,
   });
   assert.deepEqual(pool.state.inserts[0].params[0], [3],
     'the favoriter who cannot vote is not asked to');
+});
+
+test('#1374: pr_proposed notifies nobody until somebody opts the app in', async () => {
+  // THE behaviour change. Before this, a promoted proposal pinged everyone
+  // with the app in "Your apps", everyone active in it and the creator, with
+  // no way to turn it off — which was the complaint the request was filed
+  // about. It is opt-in per app now, and the daily digest
+  // (services/vote-digest.js) is what keeps the group's turnout from going
+  // with it.
+  activeUsers.ids = [2, 3];
+  activeUsers.calls = [];
+  const pool = fakePool({ selfHosted: false, stakeholders: [4, 5] });
+  const rows = await notifications.createPrProposedNotifications(pool, {
+    appId: 10, sessionId: 55, proposerId: 2,
+  });
+  assert.deepEqual(rows, [], 'no recipient has opted in, so nothing is created');
+  assert.equal(pool.state.inserts.length, 0,
+    'and no notification row is written, which is what also suppresses the push');
+});
+
+test('#1374: an account-wide default opts every app in without a per-app row', async () => {
+  // The middle layer. `app_id IS NULL` is "my default for all apps", so
+  // somebody who wants the old behaviour back sets it once rather than
+  // per app.
+  activeUsers.ids = [];
+  activeUsers.calls = [];
+  const pool = fakePool({
+    selfHosted: false,
+    stakeholders: [4, 5],
+    // Recorded against the ACCOUNT layer: the fake pool echoes params[2]
+    // back as app_id, and the service reads a null app_id as account-wide.
+    preferences: { 4: { new_proposals: true } },
+  });
+  await notifications.createPrProposedNotifications(pool, {
+    appId: 10, sessionId: 55, proposerId: 2,
+  });
+  assert.deepEqual(pool.state.inserts[0].params[0], [4],
+    'only the opted-in stakeholder is notified');
 });
 
 test('pr_proposed with nobody left to notify inserts nothing', async () => {

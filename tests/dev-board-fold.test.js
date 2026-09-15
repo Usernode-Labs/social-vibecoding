@@ -559,12 +559,38 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  // 649 → 651: #2241's two checks on the unsent-change screen, which has a
+  // 649 → 650: #2240 adds one check on the since-list's Clear in the state
+  // it was dead in — a reader with nothing new who walked `Show older` down
+  // past the baseline — reached through `?shot=since-seen`, which seeds the
+  // line at now and then presses the walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
+  // 649 → 651: on yet another side of this merge, #2201 also gives the
+  // check-my-status address step an answer for a mistyped address, and
+  // declares the two things that state must show at
+  // `?shot=waitlist-not-found` — the note that says the address is not on
+  // the list, and the control that offers to join with it. Two and not
+  // three: the manifest is on the 20-slot floor under MAX_DECLARED_TESTS,
+  // so the third property (the code half still down) is asserted from
+  // source in tests/waitlist-two-step.test.js instead of spending a slot
+  // the next proposal needs.
+  // 650 → 655, 652 → 655, 651 → 655: the tallies above were computed on
+  // three different sides of this merge and cannot be read as one sequence.
+  // This branch took 649 → 650 alone, with the #2240 check above; main
+  // independently took the SAME 649 to both 652 (the #1374 checks above) and
+  // 651 (the #2201 not-found pair above). #2240 (+1), #1374 (+3) and the
+  // #2201 pair (+2) are three independent additions against the shared 649,
+  // which is 649 + 1 + 3 + 2 = 655.
+  // 655 → 657: #2241's two checks on the unsent-change screen, which has a
   // route of its own (/dev/sessions/new) and no session behind it — one on
   // the empty state's sentence, one on the live composer beside a header
   // that offers no venue dropdown and no ⋯ menu, because there is nothing
-  // yet for either to act on.
-  assert.equal(DAPP.tests.length, 651);
+  // yet for either to act on. This one IS a plain sequence: the pair landed
+  // on a branch cut before #2240 / #1374 / #2201 and was merged after all
+  // three, so it adds to whatever the manifest holds, which is 655.
+  assert.equal(DAPP.tests.length, 657);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

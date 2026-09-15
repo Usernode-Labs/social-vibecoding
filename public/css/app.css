@@ -245,8 +245,13 @@
     0 6px 12px -6px var(--app-sheet-shadow-near),
     0 8px 24px -4px var(--app-sheet-shadow-far);
   /* The modal dim, cast BY the pane rather than painted behind it. Same 40%
-     black the overlays used to carry as `bg-black/40`; see `.dc-lift-panel`. */
-  --pane-scrim: rgba(0, 0, 0, 0.4);
+     black the overlays used to carry as `bg-black/40`; see `.dc-lift-panel`.
+     Ink and alpha are split out so the kit's sheet and side panel can scale
+     the alpha by `--un-presence` and ride the slide (see "THE KIT'S SURFACES
+     TAKE THE PANE GLASS"); the composed token is what everything else reads. */
+  --pane-scrim-ink: 0 0 0;
+  --pane-scrim-alpha: 0.4;
+  --pane-scrim: rgb(var(--pane-scrim-ink) / var(--pane-scrim-alpha));
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -1300,7 +1305,9 @@ html.un-kb .platform-safe-sheet {
   --dc-lift-shadow:
     0 6px 12px -6px var(--app-sheet-shadow-near),
     0 8px 24px -4px var(--app-sheet-shadow-far);
-  --pane-scrim: rgba(0, 0, 0, 0.4);
+  --pane-scrim-ink: 0 0 0;
+  --pane-scrim-alpha: 0.4;
+  --pane-scrim: rgb(var(--pane-scrim-ink) / var(--pane-scrim-alpha));
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -7942,6 +7949,99 @@ span.gc-vote-btn-icon { cursor: default; }
   .dc-lift-panel { background-color: var(--dc-sheet); }
 }
 
+/* ── THE KIT'S SURFACES TAKE THE PANE GLASS (#1839) ──────────────────────
+   The three panes above are frosted only where they present THEMSELVES: the
+   desktop rails and the desktop dropdown. On touch the kit takes over
+   (`.platform-sheet-adopted`, `lib/kit-surface.ts`): the same element rides
+   inside `.un-sheet`, which paints an opaque `--un-sheet-bg` and owns the
+   surface, so a phone never saw the glass at all. The nine dialogs, Members &
+   visibility among them, never saw it on ANY width: with the kit loaded their
+   card is lifted into `.un-modal`, opaque for the same reason, and
+   `.un-modal .platform-modal-card` above strips the card's own chrome so
+   the kit's is the only one. The header drawer rides `.un-panel` on touch.
+
+   So the frost goes on the KIT'S surfaces, and it goes on them HERE. This
+   stylesheet is loaded by the shell document alone, after native.css, so a
+   plain `.un-modal` rule in it restyles the kit's modal in the shell and
+   nowhere else: every app keeps the kit exactly as native.css ships it.
+   (Restyling native.css itself would be the fleet-wide change this is not.)
+
+   Three things carry over from `.dc-lift-panel`, for the reasons written
+   there: the translucent fill over `--dc-frost`; the dim cast FROM the
+   surface as a 100vmax outer shadow, so the glass never samples a dimmed
+   page (glass over the kit's `.un-backdrop` came out the same dull grey the
+   rails did over `bg-black/40`); and the opaque fallback where there is no
+   backdrop-filter. The kit's backdrop element stays, transparent, because
+   it is the kit's tap-to-dismiss target and its `style.opacity` is what
+   `body:has(.un-backdrop[style*="opacity: 1"])` in dapp.json reads.
+   `:has(+ …)` scopes the transparency to a backdrop that is immediately
+   followed by one of these three surfaces, which is how presentModal /
+   presentSheet / presentPanel build them; the alert's and action sheet's
+   backdrops keep the kit's dim.
+
+   HOW THE DIM RIDES THE MOTION differs per surface, and that is the whole
+   subtlety. The modal fades: `.un-modal` goes opacity 0 → 1 (`.un-in`) and
+   back, and an element's opacity applies to its box-shadow too, so the
+   cast scrim fades with the card and nothing more is needed. The sheet and
+   the panel SLIDE, with the kit fading the backdrop 1:1 with the finger; a
+   constant scrim would hold the page dark all the way through the exit
+   spring and then vanish in a frame. So the kit publishes that same 0..1 as
+   `--un-presence` on the surface (native.js render()), and the scrim's
+   alpha is `--pane-scrim-alpha` times it: the dim follows the drag, springs
+   in with the entrance and out with the exit, exactly as the backdrop's did. */
+.un-backdrop:has(+ .un-modal),
+.un-backdrop:has(+ .un-sheet),
+.un-backdrop:has(+ .un-panel) {
+  background: transparent;
+}
+.un-modal {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax var(--pane-scrim);
+}
+.un-sheet {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22),
+    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+}
+/* The overscroll extension below the sheet (issue #789 in native.css) is
+   more sheet, so it is the same glass. */
+.un-sheet::after {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+.un-panel {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+.un-panel[data-un-side="right"] {
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22),
+    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+}
+.un-panel[data-un-side="left"] {
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22),
+    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+}
+/* The panel's overshoot extension (the `.un-sheet::after` story on the x
+   axis) is more panel. */
+.un-panel::after {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+/* NO BLUR, NO GLASS: the kit's opaque surface comes back, in the shell's
+   own sheet colour. The scrim is a shadow, not a filter, so it survives. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {
+    background-color: var(--dc-sheet);
+  }
+}
+
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
    directly above the sheet.
 
@@ -9752,9 +9852,20 @@ a.drawer-ver--fork:hover {
    sanctioned way to restyle the kit is its variables, never its rules.
    `:has()` scopes the override to the one shell that holds this card;
    the other dialogs keep the kit's white. The token is `--dc-strip`, the
-   ground every `.dc-lift` sheet and the settings screen sit on. */
+   ground every `.dc-lift` sheet and the settings screen sit on.
+
+   Since #1839 the shell's kit modal is glass (`--dc-sheet-fill` over
+   `--dc-frost`, see "THE KIT'S SURFACES TAKE THE PANE GLASS"), so this
+   card's ground is the strip's frosted tint, `--dc-strip-fill`, the same
+   plane the dev screen's strip is drawn on; the opaque `--dc-strip` is the
+   no-backdrop-filter fallback, and stays on `--un-sheet-bg` for whatever
+   inside the kit still reads that. */
 .un-modal:has(> #create-card) {
   --un-sheet-bg: var(--dc-strip);
+  background-color: var(--dc-strip-fill);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
 }
 
 /* Create-app modal: segmented "Create new | Import existing" toggle.

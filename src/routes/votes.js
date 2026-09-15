@@ -2866,6 +2866,28 @@ function voteRoutes(config) {
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+
+      // #1374: tell the author somebody voted. Reached only on a real vote,
+      // because the `unchanged` branch above already returned — and the
+      // producer additionally de-dupes per (voter, session), so flipping a
+      // vote back and forth is not a way to ping somebody repeatedly.
+      //
+      // Best-effort: a vote is recorded whether or not its notification is.
+      try {
+        notifications.createProposalVoteNotification?.(pool, {
+          userId: session.user_id,
+          appId: session.app_id,
+          sessionId: session.id,
+          voterId: req.user.id,
+          vote,
+        })?.then((created) => Promise.all(
+          created.map((row) => notifications.hydrateAndPush(pool, row))
+        ))?.catch((err) => log.error('votes',
+          'Vote notification failed', { sessionId: session.id, err: err.message }));
+      } catch (err) {
+        log.error('votes', 'Vote notification threw', { sessionId: session.id, err: err.message });
+      }
+
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} voted ${vote} on ${voteLabel}`,
         'vote',
@@ -4295,6 +4317,28 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
       },
     });
+
+    // #1374: the author's change landed, and before this nothing told them.
+    // Beside the funnel event on purpose — the two mark the same moment, so
+    // a future edit that moves one should have to look at the other.
+    // Wrapped, and optional-called, because a notification must never be
+    // able to fail a MERGE. A `.catch()` alone would not do it: a
+    // synchronous throw (the module stubbed, the export renamed) escapes a
+    // promise chain entirely, and the first thing that noticed was a merge
+    // test going red.
+    try {
+      notifications.createPrMergedNotification?.(pool, {
+        userId: session.user_id,
+        appId: session.app_id,
+        sessionId: session.id,
+        forced: !!force,
+      })?.then((created) => Promise.all(
+        created.map((row) => notifications.hydrateAndPush(pool, row))
+      ))?.catch((err) => log.error('votes',
+        'Merged notification failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
+    }
 
     // Resolve any open issue bounties for the issues this PR closes (declared
     // through the session's linked_issues → `Closes #N` in the PR body).
