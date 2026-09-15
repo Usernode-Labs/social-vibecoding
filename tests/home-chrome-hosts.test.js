@@ -41,6 +41,7 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const STRIP = 'frontend/src/features/home/widget-strip.tsx';
 const MORE = 'frontend/src/features/home/apps-more.tsx';
+const REPIN = 'frontend/src/features/home/repin-notice.tsx';
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -175,10 +176,21 @@ test('the initial chrome renders exactly what the prerendered shell ships', () =
     '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',
     'the expander ships hidden and empty',
   );
+  // The Android re-pin notice (#1489) ships the same way: an empty hidden
+  // section, and NOTHING inside it. Its state is read from localStorage in an
+  // effect, so an initial render that drew the card would be a hydration
+  // mismatch — a console error on #home, which fails proposal checks.
+  const { RePinNotice } = loadTsx(REPIN);
+  assert.equal(
+    renderToHtml(createElement(RePinNotice, {})),
+    '<section id="home-repin-notice-section" class="hidden px-3 pt-2"></section>',
+    'the notice ships hidden and empty',
+  );
   // The document the prerender wrote agrees, both ways round.
   const index = read('public/index.html');
   assert.match(index, /<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"><\/div>/);
   assert.match(index, /<section id="home-widget-strip-section" class="hidden px-3 pt-2"><\/section>/);
+  assert.match(index, /<section id="home-repin-notice-section" class="hidden px-3 pt-2"><\/section>/);
 });
 
 // ── 4. the retired listeners, as props ────────────────────────────────
@@ -301,6 +313,85 @@ test('"Show all N apps" expands the grid and repaints', () => {
 });
 
 
+// ── 5. the Android re-pin notice (#1489) ──────────────────────────────
+//
+// Two kinds of the same card, because the launcher tells the platform
+// nothing: 'stale' when the shadow pin log names apps pinned on the old
+// chromed address, 'unknown' when the log predates the log itself and the
+// only honest thing to say is "if you added icons before an update…".
+//
+// Both handlers are props, so they are executed the same way §4 executes the
+// strip's: call the body as the plain function it is, find the button in the
+// returned tree, invoke its onClick.
+
+const repinBody = (notice) => loadTsx(REPIN).RePinNoticeBody({ notice });
+
+const STALE = {
+  active: true,
+  kind: 'stale',
+  helpVisible: false,
+  busy: false,
+  apps: [{ slug: 'weather', name: 'Weather' }, { slug: 'ledger', name: 'Ledger' }],
+};
+const UNKNOWN = { active: true, kind: 'unknown', helpVisible: false, busy: false, apps: [] };
+
+function withRePinHome(fn) {
+  const home = {
+    calls: [],
+    _rePinStaleShortcuts() { home.calls.push('repin'); },
+    _toggleRePinHelp() { home.calls.push('help'); },
+    _dismissRePinNotice() { home.calls.push('dismiss'); },
+  };
+  const prev = global.window;
+  global.window = { Home: home };
+  try { fn(home); } finally {
+    if (prev === undefined) delete global.window; else global.window = prev;
+  }
+}
+
+test('the stale notice names the apps and offers to re-add them', () => {
+  const html = renderToHtml(createElement(() => repinBody(STALE)));
+  assert.match(html, /Weather and Ledger/, 'both apps, joined for reading');
+  assert.match(html, /Re-add now/);
+  // The one thing the copy must not hide: a re-add cannot replace the old
+  // icon, so it says the old one stays behind.
+  assert.match(html, /drag it to Remove/);
+  assert.doesNotMatch(html, /\u2014/, 'no em dashes in user-facing copy');
+});
+
+test('the unknown notice asks nothing it cannot answer', () => {
+  const html = renderToHtml(createElement(() => repinBody(UNKNOWN)));
+  assert.doesNotMatch(html, /Re-add now/, 'there is no list to loop over');
+  assert.match(html, /Show me how/, 'so it points at the per-app menu instead');
+  assert.doesNotMatch(html, /id="home-repin-notice-help"/, 'the how-to starts collapsed');
+  const shown = renderToHtml(createElement(() => repinBody({ ...UNKNOWN, helpVisible: true })));
+  assert.match(shown, /id="home-repin-notice-help"/);
+  assert.match(shown, /Re-pin to phone home screen/, 'it names the menu item verbatim');
+});
+
+test('"Re-add now" runs the migration, and only on the stale kind', () => {
+  withRePinHome((home) => {
+    find(repinBody(STALE), byId('home-repin-notice-action')).props.onClick();
+    assert.deepEqual(home.calls, ['repin']);
+    find(repinBody(UNKNOWN), byId('home-repin-notice-action')).props.onClick();
+    assert.deepEqual(home.calls, ['repin', 'help'],
+      'the unknown kind opens the how-to rather than pretending to act');
+  });
+});
+
+test('"Not now" answers the prompt, and a busy card takes no clicks', () => {
+  withRePinHome((home) => {
+    find(repinBody(STALE), byId('home-repin-notice-dismiss')).props.onClick();
+    assert.deepEqual(home.calls, ['dismiss']);
+  });
+  const busy = repinBody({ ...STALE, busy: true });
+  for (const id of ['home-repin-notice-action', 'home-repin-notice-dismiss']) {
+    assert.equal(find(busy, byId(id)).props.disabled, true, `${id} is disabled while re-adding`);
+  }
+  assert.match(renderToHtml(createElement(() => busy)), /Re-adding/);
+});
+
+
 // ── The three panel sections ──────────────────────────────────────────
 //
 // tests/home-panels-render.test.js covers what they DRAW, end to end. What
@@ -342,7 +433,7 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // …and the island mounts a component for every one of them, so there is no
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
-  for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
+  for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />', '<RePinNotice />',
     '<DiscoverSection />', '<ChallengesSection />', '<CreateSection />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
