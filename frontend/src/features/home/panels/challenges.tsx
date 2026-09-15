@@ -33,21 +33,25 @@
  * root class `home-challenge-card` and `data-challenge-id` are this block's,
  * because the declared checks and the tests select on them.
  *
- * THE DEADLINE IS ON EVERY OPEN CARD, on the line under its title beside the
- * reward ("5d left · 500 pts"): the challenge's own end, else its event's,
- * else the season's.
+ * A CARD'S DEADLINE sits on the line under its title beside the reward ("5d
+ * left · 500 pts"): the challenge's own end, else its event's, else the
+ * season's. Only Get started's open cards draw it; every other group's header
+ * carries the clock instead (below).
  *
  * ── Group headers, without counts ─────────────────────────────────────
  *
- * When the cards on screen come from more than one of the board's groups
- * (Setup, This week, Always open, the season's other challenges), each group
- * opens with the tab's `GroupHeader`, static here: no toggle, no collapse and
- * no count, because the four cards Home is sent are not the whole group. The
- * header then owns the clock ("This week · 3d left", "Always open · no
- * deadline") and the cards under it drop theirs; Setup's keep their own.
- * Cards from one group draw no header at all. HomePanels.challengeGroups
- * decides all of it; the headers sit inside `.home-panel-rows` beside the
- * cards, which the declared checks select through.
+ * The cards are the Challenges tab's list in the tab's order: grouped by the
+ * board's categories (Get started, This week, Always open, the season's other
+ * challenges, and a finished Get started last), and collapsed to the first
+ * four cards of that list, so the cap takes the first groups and may cut the
+ * last one short. EVERY group opens with the tab's `GroupHeader`, one group on
+ * screen included, static here: no toggle, no collapse and no count, because a
+ * collapsed block does not draw the whole group. The header owns the clock
+ * ("This week · 3d left", "Always open · no deadline") and the cards under it
+ * drop theirs; Get started's keep their own. HomePanels.orderRows and
+ * HomePanels.challengeGroups decide all of it; the headers sit inside
+ * `.home-panel-rows` beside the cards, which the declared checks select
+ * through, so nothing comes between the season progress and the body.
  *
  * ── While setup gates the season ──────────────────────────────────────
  *
@@ -61,7 +65,9 @@
  * The note itself sits UNDER the challenges, after `.home-panel-body`: the
  * season progress leads, then the cards, then what they unlock. That keeps
  * `.home-panel-season + .home-panel-body` adjacent in every state. It shows
- * when no placeholder does: once unlocked, or locked with no count to draw.
+ * only while setup is locked and no placeholder draws (no count to draw):
+ * "Finish these to unlock the rest of the season." Once unlocked there is no
+ * note.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *

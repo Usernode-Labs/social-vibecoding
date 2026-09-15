@@ -393,14 +393,21 @@ test('GET /api/home-panels: the open-challenge filter is in the SQL, both querie
   assert.match(rowQuery.sql, /\(\s*c\.completed = FALSE[\s\S]*?\) AS is_open/, 'and whether it is open now');
 });
 
-test('GET /api/home-panels: rows are capped and totals report the real count', async () => {
-  const rows = Array.from({ length: 8 }, (_, i) => row({ id: i + 1, display_order: i + 1 }));
+// S10: THE ROW CAP IS THE CLIENT'S. A challenge's group is only settled after
+// the query, so the server cannot pick the four the block draws: it sends the
+// collapsed scope whole (up to CHALLENGE_EXPANDED_LIMIT) and HomePanels orders,
+// groups and slices it the Challenges tab's way.
+test('GET /api/home-panels: the collapsed rows come back whole, and totals report the real count', async () => {
+  const rows = Array.from({ length: 8 }, (_, i) => row({ id: i + 1, display_order: i + 1, featured: i === 5 }));
   const { app } = makeApp({ season: SEASON, rows }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const panel = body.panels[0];
-  assert.equal(panel.challenges.length, 4,
-    'four 44px rows is what fits under the two-app-row height cap');
+  assert.equal(panel.challenges.length, 8, 'every row: the client draws four of them');
   assert.equal(panel.total, 8, 'so the client can say "See all 8 challenges"');
+  // The tab's in-group sort keys after done-ness, additive on the row.
+  assert.deepEqual(panel.challenges.map((c) => c.display_order), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(panel.challenges.map((c) => c.featured),
+    [false, false, false, false, false, true, false, false]);
 });
 
 test('GET /api/home-panels: done/earned come from the viewer\'s own ledger rows', async () => {
@@ -420,6 +427,8 @@ test('GET /api/home-panels: done/earned come from the viewer\'s own ledger rows'
 });
 
 test('GET /api/home-panels: ordering is not-done-first, then featured, then display order', async () => {
+  // The client re-sorts the rows the Challenges tab's way (HomePanels.orderRows,
+  // S10); this ORDER BY only decides which rows survive the 40-row ceiling.
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
   const rowQuery = calls.find((c) => c.sql.includes('FROM challenges c')
@@ -467,6 +476,24 @@ test('GET /api/home-panels: the query\'s done verdict wins over recomputation', 
   const ch = body.panels[0].challenges[0];
   assert.equal(ch.progress.done, false, 'a 3-of-8 row is not done');
   assert.deepEqual(ch.progress, { done: false, current: 3, target: 8 });
+});
+
+test('GET /api/home-panels: a row carries the organiser completed flag beside the viewer done', async () => {
+  // HomePanels.orderDone sorts cards outside Get started on `completed`, as
+  // the tab does; the check mark stays the viewer's `progress.done`.
+  const rows = [
+    row({ id: 1, completed: true, my_done: false }),
+    row({ id: 2, completed: false, my_activity_count: 1, my_done: true }),
+    row({ id: 3, completed: null }),
+  ];
+  const { app } = makeApp({ season: SEASON, rows }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const byId = new Map(body.panels[0].challenges.map((c) => [c.id, c]));
+  assert.equal(byId.get(1).completed, true);
+  assert.equal(byId.get(1).progress.done, false);
+  assert.equal(byId.get(2).completed, false);
+  assert.equal(byId.get(2).progress.done, true);
+  assert.equal(byId.get(3).completed, false, 'only a real true');
 });
 
 test('GET /api/home-panels: a challenge whose template vanished is skipped, not fatal', async () => {
@@ -532,7 +559,7 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
   assert.equal(body.panels[0].points_remaining, null);
 });
 
-test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
+test('the totals query asks for the open rewards, and the row query asks for up to 40 rows', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
   const totals = calls.find((c) => c.sql.includes('AS all_total'));
@@ -546,14 +573,15 @@ test('the totals query asks for the open rewards, and the row query is capped at
   assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
     'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
-  // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
-  // the footer reads "See all N" when total exceeds it. The phone shape draws
-  // only two of them (#968) but the server still sends four: it has no idea
-  // what viewport is asking, and sending the desktop budget is what lets a
-  // window dragged across 640px repaint from cache with no refetch.
-  assert.equal(rowQuery.params[2], 4);
+  // The block still draws four rows (HomePanels.ROW_SLOTS), but WHICH four is
+  // the Challenges tab's order, which the client settles after the query
+  // (S10). So the collapsed query asks for the expanded list's ceiling, and
+  // the four-row CHALLENGE_ROW_LIMIT is gone.
+  assert.equal(rowQuery.params[2], 40);
   const route = read('src/routes/home-panels.js');
-  assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
+  assert.match(route, /const CHALLENGE_EXPANDED_LIMIT = 40;/);
+  assert.match(route, /const rowLimit = CHALLENGE_EXPANDED_LIMIT;/);
+  assert.doesNotMatch(route, /const CHALLENGE_ROW_LIMIT\b/);
 });
 
 test('GET /api/home-panels: legacy hidden preferences never suppress fixed sections', async () => {
@@ -583,10 +611,42 @@ test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
   assert.equal(body.panels[0].demo, undefined);
 });
 
+// HomePanels as the browser runs it, for the demo payload's drawn rows: the
+// four-row cap and the tab's order are the client's (S10), so what the demo
+// route shows is only readable through it.
+function loadHomePanels() {
+  const vm = require('node:vm');
+  const { PANELS_SRC } = require('./helpers/home-modules');
+  const { installPanelsStore } = require('./helpers/home-grid-store');
+  const sandbox = {
+    console,
+    App: { user: { id: 1, isAdmin: false } },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+    },
+    fetch: async () => ({ ok: false, json: async () => ({}) }),
+    setTimeout, clearTimeout,
+    URLSearchParams,
+    location: { search: '', hash: '' },
+    Date,
+    addEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  installPanelsStore(sandbox);
+  vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
+  return sandbox.__HP;
+}
+
 // The demo payload is what the before/after screenshots and the dapp.json
 // check actually render (/?demo=1), so the states a reviewer is meant to
 // compare have to survive the four-slot budget — not merely exist in the
-// fixture and fall off the bottom.
+// fixture and fall off the bottom. The budget is the client's (S10), so the
+// payload goes through HomePanels to see the four it draws.
 test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async () => {
   const prev = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'staging';
@@ -599,14 +659,16 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
   }
   const p = body.panels[0];
   assert.equal(p.demo, true);
-  assert.equal(p.challenges.length, 4, 'the collapsed block draws four rows');
+  assert.equal(p.challenges.length, 5, 'every open row, as the real builder sends them');
+  const drawn = [...loadHomePanels().visibleSlots({ key: 'challenges', ...p }).rows];
+  assert.equal(drawn.length, 4, 'the collapsed block draws four rows');
 
-  // Not-done first (the client mirrors this order), then the two finished
-  // ones ADJACENT: a ✓ with no bar, and a ✓ over a bar filled end to end.
-  // Seeing the two kinds of "done" side by side is the point.
-  const done = p.challenges.filter((c) => c.progress.done);
+  // This week, then Always open with its unfinished card first and the two
+  // finished ones ADJACENT under it: a ✓ with no bar, and a ✓ over a bar
+  // filled end to end. Seeing the two kinds of "done" side by side is the point.
+  const done = drawn.filter((c) => c.progress.done);
   assert.equal(done.length, 2);
-  assert.deepEqual(p.challenges.map((c) => !!c.progress.done),
+  assert.deepEqual(drawn.map((c) => !!c.progress.done),
     [false, false, true, true], 'the done pair sits at the bottom, together');
   const binaryDone = done.find((c) => !c.metric);
   const numericDone = done.find((c) => c.metric);
@@ -617,9 +679,10 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
 
   // And a part-filled numeric is still up top, so "in progress" and
   // "finished" are both readable in one shot.
-  const partial = p.challenges.find((c) => c.metric && !c.progress.done
+  const partial = drawn.find((c) => c.metric && !c.progress.done
     && c.progress.current > 0);
   assert.ok(partial, 'the part-filled bar keeps its slot');
+  assert.ok(!drawn.some((c) => c.id === 900513), 'the empty 0-of-5 track is the row past the cap');
   assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
 });
 
@@ -654,7 +717,7 @@ const onboardingRows = (activityCount) => [1, 2, 3].map((id) => ({
 
 test('GET /api/home-panels: while setup gates the season, onboarding carries hidden_count', async () => {
   // Ten open challenges, three of them the setup steps: seven are hidden,
-  // more than the four-row page, so a count taken from the rows would lie.
+  // more than the setup rows the page carries, so a count taken from the rows would lie.
   const allRows = Array.from({ length: 10 }, (_, i) => row({ id: i + 1, display_order: i + 1 }));
   for (const url of ['/api/home-panels', '/api/home-panels?expand=challenges']) {
     const { app, calls } = makeApp(
@@ -748,11 +811,11 @@ const openNarrowing = (calls) => {
   ];
 };
 
-test('GET without expand keeps the strict open filter and the 4-row cap', async () => {
+test('GET without expand keeps the strict open filter, and leaves the four-row cap to the client', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   for (const sql of openNarrowing(calls)) assert.match(sql, /c\.completed = FALSE/);
-  assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 4);
+  assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 40);
   assert.equal(body.panels[0].expanded, false);
 });
 
@@ -894,18 +957,25 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   assert.equal(none.season, null);
   assert.equal(none.leaderboard, undefined);
 
-  // No variant → the four-row default.
+  // No variant → the default: every open row (five), of which the client
+  // draws four.
   const base = demoChallengesPanel({ username: 'tester' });
-  assert.equal(base.challenges.length, 4);
+  assert.equal(base.challenges.length, 5);
+  const HP = loadHomePanels();
+  assert.equal(HP.challengesView({ key: 'challenges', ...base }).rows.length, 4);
   assert.equal(base.total, 7);
   // Four drawn of seven, so the default demo route KEEPS the toggle — the
   // other half of the #1824 pair the checks navigate to.
   assert.equal(base.all_total, 7);
   assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
   assert.equal(base.leaderboard, undefined);
+  // The two #1824 checks, as the client decides them: the default route draws
+  // the toggle, the `few` route does not.
+  assert.equal(HP.challengesView({ key: 'challenges', ...base }).expandable, true);
+  assert.equal(HP.challengesView({ key: 'challenges', ...few }).expandable, false);
 
   // An unknown value falls through to that default rather than erroring.
-  assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 4);
+  assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 5);
 });
 
 // /?demo=1 is where the card artwork is reviewed (and dapp.json's check looks
@@ -925,19 +995,32 @@ test('demoChallengesPanel: registry artwork on the rows, with one fallback in th
       assert.ok(members.has(c.illustration), `demo row ${c.id}: ${c.illustration} is a registry slug`);
     }
   }
-  const collapsed = demoChallengesPanel({ username: 'tester' }).challenges;
-  assert.ok(collapsed.some((c) => c.illustration), 'the collapsed route draws artwork');
-  assert.ok(collapsed.some((c) => c.illustration === null), 'and keeps one fallback in view');
+  // The four the client DRAWS, not the payload: the collapsed payload also
+  // carries the overflow row, which has artwork of its own and is cut.
+  const drawn = [...loadHomePanels().visibleSlots({
+    key: 'challenges', ...demoChallengesPanel({ username: 'tester' }),
+  }).rows];
+  assert.equal(drawn.length, 4, 'the collapsed block draws four');
+  assert.ok(drawn.some((c) => c.illustration), 'the collapsed route draws artwork');
+  assert.ok(drawn.some((c) => c.illustration === null), 'and keeps one fallback in view');
 });
 
-// The preview is where Home's group headers are reviewed, and a header only
-// draws when the cards on screen span two groups.
-test('demoChallengesPanel: the collapsed rows and the short list span two groups', () => {
+// The preview is where Home's group headers are reviewed. Every group is
+// headed (S10), and the four the collapsed block draws span two of them, This
+// week and Always open. The open row past the cap is in a third, Season
+// challenges, which ranks after both, so the cap cuts exactly that row.
+test('demoChallengesPanel: the drawn four and the short list sit under two group headers', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
+  const HP = loadHomePanels();
   const labels = (opts) => [...new Set(demoChallengesPanel({ username: 'tester', ...opts })
     .challenges.map((c) => c.label))].sort();
-  assert.deepEqual(labels({}), ['PERSISTENT', 'WEEKLY']);
+  assert.deepEqual(labels({}), ['COMMUNITY', 'PERSISTENT', 'WEEKLY'], 'what the server sends');
   assert.deepEqual(labels({ variant: 'few' }), ['PERSISTENT', 'WEEKLY']);
+  const headings = (opts) => [...HP.challengesView({
+    key: 'challenges', ...demoChallengesPanel({ username: 'tester', ...opts }),
+  }).groups].map((g) => g.heading);
+  assert.deepEqual(headings({}), ['This week', 'Always open'], 'what the collapsed block draws');
+  assert.deepEqual(headings({ variant: 'few' }), ['This week', 'Always open']);
   // The binary and the numeric DONE rows are compared side by side, so a
   // group header must not fall between them.
   const rows = demoChallengesPanel({ username: 'tester' }).challenges;

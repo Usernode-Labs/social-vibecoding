@@ -96,8 +96,11 @@ const HomePanels = {
   // ── The row budget ─────────────────────────────────────────────────
   //
   // How many challenge rows the block draws before the footer takes over
-  // with "See all N". The server returns at most this many challenges
-  // (CHALLENGE_ROW_LIMIT, kept in step with it).
+  // with "See all N". The server sends the whole collapsed scope (up to its
+  // 40-row ceiling, CHALLENGE_EXPANDED_LIMIT in src/routes/home-panels.js);
+  // this module orders and groups it the Challenges tab's way, then draws the
+  // first ROW_SLOTS rows of that list: the first groups in the tab's order,
+  // with a group cut mid-way when the cap falls inside it.
   //
   // It used to be a per-breakpoint pair — four here, and a PHONE_ROW_SLOTS of
   // two for the single grid cell the block owned below 640px (#968). A fixed
@@ -134,21 +137,54 @@ const HomePanels = {
     return Math.max(0, Math.min(100, Math.round((c / t) * 100)));
   },
 
-  // Client mirror of the server's ORDER BY, so a cached or demo payload
-  // renders in exactly the order a fresh query would produce: not-done
-  // first (lead with something actionable), then the server's own order.
-  // Stable — Array#sort is stable, so equal rows keep the server sequence.
-  orderRows(rows) {
-    return (rows || []).slice().sort((a, b) => {
-      const ad = a?.progress?.done ? 1 : 0;
-      const bd = b?.progress?.done ? 1 : 0;
-      if (ad !== bd) return ad - bd;
-      return 0;
-    });
+  // The block's rows in the Challenges tab's order
+  // (TopochainChallenges._ordered), so the same challenges come out in the
+  // same sequence on both surfaces. THE CLIENT IS THE SOURCE OF TRUTH: the
+  // server's ORDER BY only decides which rows survive its row ceiling.
+  //
+  // The keys, in order: the group (groupRankOf: Get started while unfinished,
+  // This week, Always open, Season challenges, then a finished Get started),
+  // then unfinished challenges first (orderDone, the tab's _isDone: the
+  // viewer's progress inside Get started, the organiser's `completed` flag
+  // everywhere else), then organiser-featured (`featured`, the
+  // flag the tab's personalization row carries), then the tab's public list
+  // order: `display_order`, then `id`. A payload whose rows do not all carry a
+  // `display_order` (the staging demo, or a cache written before the field)
+  // keeps the server's sequence for that last key instead. Stable, and the
+  // input is not mutated. `onboarding` is the payload's gate summary, which
+  // decides whether Get started is finished (setupFinished).
+  orderRows(rows, onboarding) {
+    const list = (rows || []).slice();
+    const finished = HomePanels.setupFinished(list, onboarding);
+    const byOrder = list.length > 0 && list.every((c) => c && c.display_order != null
+      && c.display_order !== '' && Number.isFinite(Number(c.display_order)));
+    return list
+      .map((c, i) => ({ c, i, g: HomePanels.groupRankOf(HomePanels.groupOf(c), finished) }))
+      .sort((a, b) => {
+        if (a.g !== b.g) return a.g - b.g;
+        const ad = HomePanels.orderDone(a.c) ? 1 : 0;
+        const bd = HomePanels.orderDone(b.c) ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        const af = a.c?.featured === true ? 1 : 0;
+        const bf = b.c?.featured === true ? 1 : 0;
+        if (af !== bf) return bf - af;
+        if (byOrder) {
+          const ao = Number(a.c.display_order);
+          const bo = Number(b.c.display_order);
+          if (ao !== bo) return ao - bo;
+          const ai = Number(a.c.id);
+          const bi = Number(b.c.id);
+          if (Number.isFinite(ai) && Number.isFinite(bi) && ai !== bi) return ai - bi;
+        }
+        return a.i - b.i;
+      })
+      .map((x) => x.c);
   },
 
-  // How many rows to draw. Collapsed spends the budget on at most `slots`
-  // rows (ROW_SLOTS unless a caller says otherwise); the overflow affordance
+  // How many rows to draw, in orderRows' sequence. Collapsed draws the first
+  // `slots` rows of it (ROW_SLOTS unless a caller says otherwise), so the cap
+  // takes whole groups in the tab's order and may cut the last one short; the
+  // overflow affordance
   // is the footer's expand toggle, so it costs no row slot of its own (it
   // used to take the fourth).
   // Expanded draws everything the server sent and the CSS cap lifts.
@@ -161,7 +197,7 @@ const HomePanels = {
   // `link` stays in the return shape as a compatibility flag for anything
   // still reading it, but it is always false: the footer owns overflow.
   visibleSlots(panel, opts) {
-    const rows = HomePanels.orderRows(panel && panel.challenges);
+    const rows = HomePanels.orderRows(panel && panel.challenges, panel && panel.onboarding);
     const total = Number(panel && panel.total) || 0;
     const key = panel && panel.key;
     const slots = Number(opts && opts.slots) > 0
@@ -430,10 +466,12 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season,
-      onboardingNote: panel.onboarding
-        ? (panel.onboarding.unlocked
-          ? 'Persistent and weekly challenges are unlocked.'
-          : 'Finish these to unlock persistent and weekly challenges.')
+      // The unlock note, only while setup gates the season, in the Challenges
+      // tab's words (its grid `notice`). The dashed placeholder carries the
+      // same line whenever it draws, so the block shows the note only without
+      // one. Once unlocked there is nothing to say: no note.
+      onboardingNote: panel.onboarding && !panel.onboarding.unlocked
+        ? 'Finish these to unlock the rest of the season.'
         : null,
       // How many challenges setup still hides, for the dashed "6 challenges
       // locked" placeholder under the setup cards. Only while the gate is
@@ -446,10 +484,10 @@ const HomePanels = {
       allTotal,
       expandable,
       expanded,
-      // The rows in orderRows' sequence, as they always were: `data-rows`
-      // counts them and the tests read them. `groups` holds the SAME row
-      // objects under their headers, so a deadline a header took off a card
-      // is gone from both.
+      // The drawn rows in orderRows' sequence, which is the groups' sequence
+      // too (it sorts by group first): `data-rows` counts them and the tests
+      // read them. `groups` holds the SAME row objects under their headers, so
+      // a deadline a header took off a card is gone from both.
       rows: views,
       groups,
     };
@@ -457,12 +495,17 @@ const HomePanels = {
 
   // ── The groups ─────────────────────────────────────────────────────
   //
-  // The ITERATION 03 board sorts challenges into groups by category: Setup,
-  // This week, Always open, and the season's other challenges last. The
-  // Challenges tab's controller (TopochainChallenges) holds the same table;
-  // two classic scripts cannot import one another, so both spell it out.
+  // The ITERATION 03 board sorts challenges into groups by category: Get
+  // started, This week, Always open, and the season's other challenges. The
+  // Challenges tab's controller (TopochainChallenges) holds the same table
+  // and the same rank rule; two classic scripts cannot import one another, so
+  // both spell them out, and tests/challenge-group-parity.test.js holds the
+  // two copies to the same answers. The keys are not the headings: the tab's
+  // ids (`tc-se-group-<key>`) and the tests name the keys. `order` is each
+  // group's rank while setup is unfinished; groupRankOf moves a finished Get
+  // started to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'Setup', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   },
@@ -475,53 +518,87 @@ const HomePanels = {
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
   },
 
-  // The block's rows under the board's group headers: contiguous, in group
-  // order, and in orderRows' sequence inside a group.
+  // Whether setup is behind the viewer, which decides where Get started sits.
+  // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
+  // summary the server's gate says so (`unlocked === true`); without one, the
+  // rows must hold at least one setup card and every one of them must be done.
+  setupFinished(rows, onboarding) {
+    if (onboarding) return onboarding.unlocked === true;
+    const setup = (Array.isArray(rows) ? rows : [])
+      .filter((c) => c && HomePanels.groupOf(c).key === 'setup');
+    return setup.length > 0 && setup.every((c) => HomePanels.orderDone(c));
+  },
+
+  // The not-done key the ordering sorts on, the tab's _isDone for the payload
+  // each surface really gets. The tab's public list attaches per-user
+  // `progress` only to setup cards; every other card falls back to the
+  // organiser's `completed` flag. So a Get started card is done when the viewer
+  // finished it, and any other card only when the organiser closed it: a card
+  // the viewer finished but the organiser left open keeps its place, as on the
+  // tab. The card's check mark still reads `progress.done`.
+  orderDone(c) {
+    if (!c) return false;
+    return HomePanels.groupOf(c).key === 'setup'
+      ? !!(c.progress && c.progress.done)
+      : c.completed === true;
+  },
+
+  // A group's rank in the board's order, the tab's _groupRankOf: Get started
+  // while unfinished (0), This week (1), Always open (2), Season challenges
+  // (3), then Get started once finished (4, last), so the block leads with
+  // what is left to do. Pure: a group from CHALLENGE_GROUPS/OTHER_GROUP and
+  // the setupFinished answer.
+  groupRankOf(group, setupFinished) {
+    const g = group || HomePanels.OTHER_GROUP;
+    return g.key === 'setup' && setupFinished === true ? 4 : g.order;
+  },
+
+  // The drawn rows under the board's group headers: contiguous and in rank
+  // order, because orderRows sorts by group first.
   //
-  // Home's headers carry NO counts and do not collapse. The server sends at
-  // most four open cards chosen across categories, so "1/2" over two of them
-  // would be a guess at the group's size; the Challenges tab, which has every
-  // card, counts and collapses.
+  // EVERY GROUP IS HEADED, a block whose cards are all from one group
+  // included: the Challenges tab heads each of its groups, so a card sits
+  // under the same words on both surfaces. When the cap cuts a group mid-way,
+  // its header still draws over the cards that made it in.
   //
-  // Cards from ONE group draw no header: a heading over the whole list says
-  // nothing, so the rows stay exactly as they were, each with its deadline.
-  // From two or more, every group is headed and the header owns the clock:
+  // Home's headers carry NO counts and do not collapse; the tab, which draws
+  // every card of a group, counts and collapses. The header owns the clock:
   // This week and the season's other challenges say when their soonest open,
-  // unfinished card ends (the card's own `ends_at`, else the season's, as
-  // challengeRowView reads it), Always open says it has no deadline, and
-  // their cards drop theirs. Setup has no clock, so its cards keep their own.
-  // `views` are changed in place, which is what keeps `rows` in agreement.
+  // unfinished challenge ends (its own `ends_at`, else the season's, as
+  // challengeRowView reads it), taken over the whole group the payload holds,
+  // as the tab takes it over its group, not only over the cards the cap left
+  // on screen. Always open says it has no deadline. Their cards drop theirs.
+  // Get started has no clock, so its cards keep their own. `views` are changed
+  // in place, which is what keeps `rows` in agreement.
   challengeGroups(rows, views, panel) {
-    const buckets = [];
+    const seasonEnd = panel && panel.season && panel.season.ends_at;
+    const payload = Array.isArray(panel && panel.challenges) ? panel.challenges : rows;
+    const clockOf = (key) => {
+      let soonest = null;
+      for (const c of payload) {
+        if (!c || HomePanels.groupOf(c).key !== key) continue;
+        if (c.open === false || (c.progress && c.progress.done)) continue;
+        const ends = c.ends_at || seasonEnd;
+        if (!HomePanels.timeLeft(ends)) continue;
+        if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
+      }
+      return HomePanels.timeLeft(soonest);
+    };
+    const runs = [];
     rows.forEach((c, i) => {
       const group = HomePanels.groupOf(c);
-      let bucket = buckets.find((b) => b.group === group);
-      if (!bucket) buckets.push(bucket = { group, members: [] });
-      bucket.members.push({ c, view: views[i] });
+      let run = runs[runs.length - 1];
+      if (!run || run.group !== group) runs.push(run = { group, views: [] });
+      run.views.push(views[i]);
     });
-    buckets.sort((a, b) => a.group.order - b.group.order);
-    if (buckets.length < 2) {
-      return buckets.map(({ group }) => ({ key: group.key, heading: null, meta: null, rows: views }));
-    }
-    const seasonEnd = panel && panel.season && panel.season.ends_at;
-    return buckets.map(({ group, members }) => {
+    return runs.map(({ group, views: members }) => {
       let meta = null;
-      if (group.key === 'always') {
-        meta = 'no deadline';
-      } else if (group.key !== 'setup') {
-        let soonest = null;
-        for (const { c } of members) {
-          if (c.open === false || (c.progress && c.progress.done)) continue;
-          const ends = c.ends_at || seasonEnd;
-          if (!HomePanels.timeLeft(ends)) continue;
-          if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
-        }
-        meta = HomePanels.timeLeft(soonest);
-      }
+      if (group.key === 'always') meta = 'no deadline';
+      else if (group.key !== 'setup') meta = clockOf(group.key);
       if (group.key !== 'setup') {
-        for (const { view } of members) view.deadline = null;
+        for (const view of members) view.deadline = null;
       }
-      return { key: group.key, heading: group.heading, meta, rows: members.map((m) => m.view) };
+      return { key: group.key, heading: group.heading, meta, rows: members };
     });
   },
 
@@ -693,9 +770,8 @@ const HomePanels = {
   // The DEADLINE is the row's `ends_at` — its own schedule_end, else its
   // event's end, the same date the Challenges tab uses — else the season's
   // end; none on a finished or not-open challenge. `group` is the card's key in
-  // the board's group table (groupOf). When the block's cards span more than
-  // one group, challengeGroups hands the clock to the group headers and takes
-  // it off every card but Setup's.
+  // the board's group table (groupOf). challengeGroups heads every group, hands
+  // the clock to the headers and takes it off every card but Get started's.
   challengeRowView(c, panel) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
@@ -764,7 +840,8 @@ const HomePanels = {
   //
   // The scope is the season (the payload's own `done` of `total`), except
   // while setup gates the rest: the block then holds only the setup
-  // challenges, so the progress is setup's ("done in Setup", the tab's word), the
+  // challenges, so the progress is setup's ("done in Get started", the tab's
+  // words and its group heading), the
   // board's "progress has a scope" rule. Deadlines stay on the cards or their
   // group headers, and points on the cards.
   seasonView(panel) {
@@ -776,7 +853,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in Setup',
+        caption: 'done in Get started',
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'

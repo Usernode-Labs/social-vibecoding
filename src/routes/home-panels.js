@@ -13,14 +13,15 @@ const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-// How many challenge rows the block can show. This is a LAYOUT constant:
-// the block is capped at two app-grid rows tall (--home-panel-max-h in
-// public/css/app.css) and that budget buys a ~28px title bar plus four
-// 44px rows. `total` is reported separately, so when more are open the
-// client spends its LAST slot on "See all N challenges" instead of a
-// fourth challenge — overflow is fewer rows, never an inner scroller.
-// Keep in step with HomePanels.ROW_SLOTS in frontend/src/features/home/home-panels.js.
-const CHALLENGE_ROW_LIMIT = 4;
+// THE ROW CAP IS THE CLIENT'S. The block draws four challenges
+// (HomePanels.ROW_SLOTS in frontend/src/features/home/home-panels.js), and
+// WHICH four is the Challenges tab's order: the group first (a finished Get
+// started last), then unfinished, then featured, then display order. A
+// challenge's group is only settled after the query (challengeCategory,
+// below), so SQL cannot pick those four. The row query returns the collapsed
+// scope up to the same ceiling as the expanded list (CHALLENGE_EXPANDED_LIMIT)
+// and the client orders, groups and slices it. The four-row
+// CHALLENGE_ROW_LIMIT that used to cap the query went with that.
 
 // ─── Reward parsing ──────────────────────────────────────────────────
 //
@@ -138,6 +139,17 @@ function buildChallengeRow(r) {
     // The event the challenge belongs to. With `id` it is the Challenges tab's
     // deep link (#leaderboard/challenges/<event>/<challenge>) a Home card opens.
     season_event_id: r.season_event_id == null ? null : Number(r.season_event_id),
+    // The Challenges tab's in-group order keys after done-ness, which the
+    // client sorts on (HomePanels.orderRows): the organiser's featured flag,
+    // then the display order its public list is sorted by (then `id`).
+    // Additive.
+    featured: r.featured === true,
+    display_order: r.display_order == null ? null : Number(r.display_order),
+    // The organiser's "this challenge is over" flag, which is the tab's
+    // not-done key for every card outside Get started (its public list carries
+    // per-user progress only for setup cards). HomePanels.orderDone sorts on it;
+    // the card's check mark stays `progress.done`, the viewer's own. Additive.
+    completed: r.completed === true,
     label: String(r.t_category || 'OTHER').toUpperCase(),
     icon: r.kind_icon || null,
     // The template's artwork slug (t_illustration), passed through as stored.
@@ -208,10 +220,12 @@ const OPEN_ONLY_WHERE = `
 const OPEN_CHALLENGE_WHERE = `${ALL_CHALLENGE_WHERE}
     AND ${OPEN_ONLY_WHERE}`;
 
-// Hard ceiling on the expanded list. A season can accumulate dozens of
-// challenges (production's Season 1 has 58 rows across its events), and
-// the expanded block is still a home-screen widget, not the Challenges
-// screen — the footer's own button goes there for the full list.
+// Hard ceiling on the rows the query returns, collapsed and expanded alike. A
+// season can accumulate dozens of challenges (production's Season 1 has 58
+// rows across its events), and the expanded block is still a home-screen
+// widget, not the Challenges screen — the section heading's "Open challenges"
+// goes there for the full list. Collapsed, it is how many rows the client
+// chooses its four from.
 const CHALLENGE_EXPANDED_LIMIT = 40;
 
 // THE STANDINGS PREVIEW IS GONE, and so are the two board queries that fed
@@ -254,12 +268,15 @@ function demoSeasonEndsAt() {
 
 async function buildChallengesPanel(pool, user, opts) {
   // `expanded` is the in-place "See all" state: same scope, but finished
-  // and out-of-window challenges come too, and the row cap lifts. The
+  // and out-of-window challenges come too, and the client's four-row cap
+  // lifts. The
   // client grows the block past its height cap for this and the same
   // control collapses it back — nothing is persisted.
   const expanded = !!(opts && opts.expanded);
   let scopeWhere = expanded ? ALL_CHALLENGE_WHERE : OPEN_CHALLENGE_WHERE;
-  const rowLimit = expanded ? CHALLENGE_EXPANDED_LIMIT : CHALLENGE_ROW_LIMIT;
+  // Both scopes come back whole, up to one ceiling: the client picks the
+  // collapsed block's four rows (see THE ROW CAP IS THE CLIENT'S, above).
+  const rowLimit = CHALLENGE_EXPANDED_LIMIT;
 
   const season = await fetchCurrentSeason(pool);
   if (!season) {
@@ -290,9 +307,12 @@ async function buildChallengesPanel(pool, user, opts) {
   const totalSql = (sql) => sql.replace(/\$([45])/g, (_, n) => `$${Number(n) - 1}`);
 
   // Rows: one statement, per-user aggregates as correlated subqueries so
-  // there is no second round trip and no N+1. Ordering is done in SQL —
-  // not-done first (the card must lead with something actionable), then
-  // organiser-featured, then the organiser's display order.
+  // there is no second round trip and no N+1. The ORDER BY does not decide
+  // what the block draws, or in what order: HomePanels.orderRows sorts the
+  // rows the Challenges tab's way. It decides which rows survive the LIMIT
+  // when a season holds more than CHALLENGE_EXPANDED_LIMIT of them, so it
+  // keeps the actionable ones: not-done first, then organiser-featured, then
+  // the organiser's display order.
   const { rows } = await pool.query(
     `SELECT c.id, c.season_event_id, c.goal, c.task, c.reward,
             c.schedule_start, c.schedule_end,
@@ -327,9 +347,9 @@ async function buildChallengesPanel(pool, user, opts) {
 
   // Totals over the WHOLE open set, not the page above: `total` drives the
   // client's "See all N" slot, and `open_rewards` is what makes
-  // points_remaining honest. With the row cap at four, summing only the
-  // returned rows would understate "pts left" the moment a fifth challenge
-  // opens — so collect every open not-done row's effective reward here (a
+  // points_remaining honest. Summing only the returned rows would understate
+  // "pts left" the moment a season passes the row ceiling, so collect every
+  // open not-done row's effective reward here (a
   // handful of short strings) and parse them below.
   //
   // `all_total` is the size of the EXPANDED set — the same season and
@@ -430,7 +450,8 @@ async function buildChallengesPanel(pool, user, opts) {
 // URL-reachable for the checks and the screenshots:
 //   'few'  → two open rows, which is the shrink a full list never shows.
 //   'none' → nothing open: the compact one-line block.
-// Absent/unknown → the four-row payload exactly as before.
+// Absent/unknown → the default payload: five open rows, of which the client
+// draws four.
 function demoChallengesPanel(opts) {
   const expanded = !!(opts && opts.expanded);
   const variant = opts && opts.variant;
@@ -443,11 +464,13 @@ function demoChallengesPanel(opts) {
     };
   }
   // The labels are the board's categories, WEEKLY and PERSISTENT, so the four
-  // collapsed rows (and the `few` pair) span two groups and the preview draws
-  // the client's group headers. Both DONE rows are PERSISTENT, so Always open
-  // holds them together and they stay side by side under one header (see
-  // below). The finished rows stay in other categories, so an expansion shows
-  // the third, catch-all group as well.
+  // rows the collapsed block draws (and the `few` pair) sit under two of the
+  // client's group headers, This week and Always open. Both DONE rows are
+  // PERSISTENT, so Always open holds them together and they stay side by side
+  // under one header (see below). The open overflow row and the finished rows
+  // are in other categories: the client ranks Season challenges after Always
+  // open, so the collapsed cap cuts exactly that group off, and an expansion
+  // shows it as the third group.
   const rows = [
     {
       id: 900512,
@@ -476,8 +499,9 @@ function demoChallengesPanel(opts) {
       progress: { done: false, current: null, target: null },
       earned_points: 0,
     },
-    // The two DONE rows come last (the client's orderRows puts them there
-    // anyway) and deliberately sit next to each other, in one group: one
+    // The two DONE rows come last in Always open (the client's orderRows puts
+    // them after its unfinished row anyway) and deliberately sit next to each
+    // other, in one group: one
     // binary, one numeric at full target. Seeing both kinds of "done" side
     // by side — a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
     // reason the numeric one exists here, and the collapsed block only has
@@ -511,13 +535,16 @@ function demoChallengesPanel(opts) {
       earned_points: 900,
     },
   ];
-  // Open, but past the four collapsed slots — the empty 0-of-5 track, which
-  // is the least informative of the numeric states and so the one that
-  // gives up its slot to the finished numeric above. Expanding shows it.
+  // Open, and sent with the collapsed rows as the real builder sends every
+  // open row, but past the four slots the client draws — the empty 0-of-5
+  // track, the least informative of the numeric states and so the one that
+  // gives up its slot to the finished numeric above. Its category is outside
+  // the board's three, so it ranks in Season challenges, the group after
+  // Always open, which is what puts it past the cap. Expanding shows it.
   const overflow = [
     {
       id: 900513,
-      label: 'WEEKLY',
+      label: 'COMMUNITY',
       goal: 'Staging demo challenge — give kudos to five builders',
       icon: '👏',
       illustration: 'proposal-accepted',
@@ -546,6 +573,7 @@ function demoChallengesPanel(opts) {
       metric: null,
       progress: { done: true, current: null, target: null },
       earned_points: 500,
+      completed: true,
       open: false,
     },
     {
@@ -562,6 +590,7 @@ function demoChallengesPanel(opts) {
       earned_points: 0,
       // Organiser-closed, as the real builder's `is_open` would say: the card
       // shows no countdown for it.
+      completed: true,
       open: false,
     },
   ];
@@ -588,13 +617,13 @@ function demoChallengesPanel(opts) {
     };
   }
 
-  // Collapsed `total` deliberately exceeds the four-slot budget so the
-  // footer reads "See all 7 challenges" and the expand toggle has
-  // something to reveal. Expanded returns the open rows PLUS the finished
-  // ones, which is exactly what the real builder does when it drops the
-  // not-completed filter.
-  //
-  const all = expanded ? [...rows, ...overflow, ...finished] : rows;
+  // Collapsed returns every open row, the four the client draws and the
+  // overflow, as the real builder does now that the client picks the four.
+  // `total` deliberately exceeds them so the footer reads "See all 7
+  // challenges" and the expand toggle has something to reveal. Expanded
+  // returns the open rows PLUS the finished ones, which is exactly what the
+  // real builder does when it drops the not-completed filter.
+  const all = expanded ? [...rows, ...overflow, ...finished] : [...rows, ...overflow];
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
     total: expanded ? all.length : 7,

@@ -6,8 +6,8 @@
  * setup is finished; it sends only the count. The second line is the unlock
  * note, so a surface that draws this card does not repeat the note beneath.
  *
- * SHARED like ./challenge-card.tsx: the Challenges tab draws it after the
- * Setup group and Home's block after its setup cards. It draws nothing for a
+ * SHARED like ./challenge-card.tsx: the Challenges tab draws it after its
+ * last group and Home's block after its cards. It draws nothing for a
  * count below one, so a payload without the count simply has no placeholder.
  *
  * The corners follow the card's: the outer 24px of `rounded-3xl`, and the tile
