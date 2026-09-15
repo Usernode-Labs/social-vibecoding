@@ -1178,6 +1178,7 @@ async function becomeLeader() {
   // The Job reads themselves run detached (`done`); boot never waits on a
   // Job. No-op outside the Kubernetes capture runtime.
   const checkHarvest = require('./src/services/check-harvest');
+  const mainWatch = require('./src/services/main-watch');
   checkHarvest.sweep(config, { reason: 'boot' })
     .catch((err) => {
       log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
@@ -1190,6 +1191,15 @@ async function becomeLeader() {
     // re-checked PRs become merge-eligible and the next vote (or the eligible-
     // merge reconcile on a later boot) merges them.
     .then(() => reconcileStuckChecks(config))
+    // The whole-tree check under direct merges (services/main-watch.js) is
+    // fire-and-forget from the process that merged — which, for the
+    // platform's own app, is the process the deploy of that merge replaces.
+    // A row left at 'running' or 'confirming' by that has no run behind it;
+    // re-drive it, or the app reads "checking the last merge" forever (or
+    // stays paused with no verdict coming and no Resume verb, since a
+    // provisional red hides it). Rows younger than a run's deadline are a
+    // live run's and are left alone.
+    .then(() => mainWatch.resumeInterrupted(config))
     .catch((err) => {
       log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
         err: err.message,
@@ -1200,6 +1210,7 @@ async function becomeLeader() {
   // the election) is picked up within the orphan window instead of waiting
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
+  mainWatch.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten

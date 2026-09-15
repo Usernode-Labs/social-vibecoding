@@ -233,6 +233,93 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.ok(starting.spinner);
 });
 
+test('a deferred run is not "running": the tag says deferred and does not spin (#2247)', () => {
+  // check_state 'pending' with check_phase 'deferred' is a run that stopped
+  // on purpose after the build: the head conflicts with main and the tests
+  // wait for one that merges. merge-status.js and the checks panel said so;
+  // the card's tag kept a spinner and "Checks running…" beside a body that
+  // read "Checks deferred until this merges cleanly".
+  const AppView = makeAppView();
+  const deferred = PR({ check_state: 'pending', check_phase: 'deferred' });
+  const tags = AppView.statusTagSpecs(deferred, {});
+  assert.equal(tags.find((t) => t.key === 'tag-checks-running'), undefined, 'no spinner over nothing');
+  const tag = tags.find((t) => t.key === 'tag-checks-deferred');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Checks deferred', 'the same words as the panel (CHECKS_PHASE_COPY)');
+  assert.ok(!tag.spinner);
+  assert.match(tag.cls, /amber/, 'worth knowing, nobody has to act: soft');
+  assert.match(tag.title, /conflicts with main/);
+  assert.equal(tag.data['data-status-tag'], 'checks-deferred');
+  // And the pill agrees.
+  const ms = AppView.__sandbox.MergeStatus.lifecycle(deferred);
+  assert.equal(ms.key, 'checks_deferred');
+});
+
+// services/main-watch.js pauses an app's merges when main's unit suite is
+// red; the per-row main_healthy gate in mergeRequirements says so.
+const PAUSED_GATE = (over) => ({
+  key: 'main_healthy', label: 'Main is healthy', actor: 'admin', state: 'blocked',
+  detail: {
+    paused: true, confirming: false,
+    note: "main's unit suite is failing since fffffff (shared-sessions returns linked_issues per row); merges are paused until a fix lands or an admin resumes them",
+    ...over,
+  },
+});
+const PASSED = { status: 'promoted', check_state: 'passing', yes_count: 3, votes_required: 3 };
+
+test('votes passed, checks green, main paused: the card says so instead of "merging shortly"', () => {
+  // The afternoon a flaky test paused the platform's merges, every card read
+  // "Passed, merging shortly" while nothing merged. The pause is the app's
+  // state, and it is the one thing that decides whether "shortly" is true.
+  // Two surfaces read it: the board card's TAG (blockReasons → statusTagSpecs)
+  // and the one-slot pill of the dev-chat header and home strip
+  // (MergeStatus.lifecycle).
+  const AppView = makeAppView();
+  const MergeStatus = AppView.__sandbox.MergeStatus;
+  const paused = PR({ ...PASSED, mergeRequirements: { gates: [PAUSED_GATE()] } });
+
+  const s = MergeStatus.lifecycle(paused);
+  assert.equal(s.key, 'main_paused');
+  assert.equal(s.label, 'Passed, merges paused', 'the same shape as "Passed, merging shortly", which it replaces');
+  assert.equal(s.tone, 'amber', 'a condition somebody may need to act on');
+  assert.match(s.title, /shared-sessions returns linked_issues per row/, 'the tooltip names the test');
+  assert.match(s.title, /Nothing about this proposal is wrong/);
+
+  // The board card: the bar is the vote, the tag is the pause, and the pill
+  // carries the reason for the detail view.
+  const tag = AppView.statusTagSpecs(paused, {}).find((t) => t.key === 'tag-main_paused');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Merges paused');
+  assert.match(tag.title, /^Main's unit suite is failing since fffffff/);
+  assert.match(tag.title, /Nothing about this proposal is wrong/);
+  assert.ok(!tag.spinner);
+  assert.match(tag.cls, /red/, 'it stops the merge, so blocking tone');
+  assert.ok(AppView.statusPillState(paused).reasons.some((r) => r.key === 'main_paused'));
+
+  // A provisional pause says the re-run is on.
+  const confirming = PR({ ...PASSED, mergeRequirements: { gates: [PAUSED_GATE({ confirming: true })] } });
+  assert.equal(AppView.statusTagSpecs(confirming, {}).find((t) => t.key === 'tag-main_paused').label,
+    'Merges paused · re-checking main');
+  assert.equal(MergeStatus.lifecycle(confirming).key, 'main_paused');
+
+  // Not paused: the pill it always was.
+  const fine = PR({ ...PASSED, mergeRequirements: { gates: [{ ...PAUSED_GATE(), state: 'done', detail: null }] } });
+  assert.equal(MergeStatus.lifecycle(fine).key, 'ready');
+  assert.equal(AppView.statusTagSpecs(fine, {}).find((t) => t.key === 'tag-main_paused'), undefined);
+  // A level-and-green head under the pause is going to merge: its step is
+  // 'done' with the pass-through named, and it keeps the green pill.
+  const through = PR({
+    ...PASSED,
+    mergeRequirements: { gates: [{ ...PAUSED_GATE(), state: 'done', detail: { passThrough: 'level_and_green', note: 'x' } }] },
+  });
+  assert.equal(MergeStatus.lifecycle(through).key, 'ready');
+  assert.equal(AppView.statusTagSpecs(through, {}).find((t) => t.key === 'tag-main_paused'), undefined);
+  // No requirements block at all (an older row): nothing invented.
+  assert.equal(MergeStatus.lifecycle(PR(PASSED)).key, 'ready');
+  // Merged rows are settled; the pause is about what has not merged yet.
+  assert.equal(MergeStatus.lifecycle(PR({ ...paused, status: 'merged' })).key, 'merged');
+});
+
 test('tier 3 — contested turns the timed path off and says so', () => {
   const AppView = makeAppView();
   const s = AppView.statusPillState(PR({

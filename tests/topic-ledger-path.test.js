@@ -69,9 +69,14 @@ const CONFLICTED = {
   },
 };
 
+// The same proposal after the conflict lane tried to resolve it and could
+// not (services/merge-queue.js records 'unresolvable'): the one conflict
+// that IS the author's to sync.
+const GAVE_UP = { ...CONFLICTED, integration: { blockReasons: ['unresolvable'] } };
+
 test('a conflicted proposal reads as one ordered path, not four verdicts', () => {
   const AppView = makeAppView();
-  const rows = rowsOf(AppView, CONFLICTED);
+  const rows = rowsOf(AppView, GAVE_UP);
 
   // Sync, checks, vote — numbered, in that order, and nothing else numbered.
   const steps = rows.filter((r) => r.step).map((r) => [r.step, r.key, r.label]);
@@ -87,12 +92,45 @@ test('a conflicted proposal reads as one ordered path, not four verdicts', () =>
   assert.match(sync.text.join(''), /Main has moved 118 commits ahead/, 'the commit count survives the fold');
   assert.match(sync.text.join(''), /automatic sync cannot finish this one/);
   assert.equal(sync.sub, 'Sumarno, now', 'the step names who acts and when');
+  assert.equal(sync.tone, 'bad');
 
   // The remedy still names the person and the exact action.
   const footText = sync.foot.filter(Array.isArray)
     .map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
   assert.match(footText, /Sync with main/);
   assert.match(footText, /Sumarno/);
+});
+
+test('a conflict the lane owns is an automatic step, not the author’s (#2247)', () => {
+  // Who resolves a conflict is the conflict lane's decision, and the card's
+  // tag has read it off _conflictRemedy since #2221/#2222. The ledger's sync
+  // step kept its own answer — every conflict was "so the automatic sync
+  // cannot finish this one", in red, under the author's name — and on #2247
+  // said so over a proposal the platform resolved by itself ten minutes
+  // later. Same source now, so the two cannot disagree.
+  const AppView = makeAppView();
+  const sync = find(rowsOf(AppView, CONFLICTED), 'mergeability');
+  assert.equal(sync.step, 1, 'still the first step of the path');
+  assert.match(sync.text.join(''), /Main has moved 118 commits ahead, and 3 files changed on both sides/,
+    'the size of the job is still said');
+  assert.doesNotMatch(sync.text.join(''), /cannot finish this one/);
+  assert.match(sync.text.join(''), /The platform resolves it automatically, then retries the merge/);
+  assert.equal(sync.sub, 'automatic, now', 'nobody is being asked to do anything');
+  assert.equal(sync.tone, 'warn', 'a job the platform owns is not drawn as an emergency');
+  const footText = sync.foot.filter(Array.isArray)
+    .map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
+  assert.match(footText, /can also bring it up to date sooner/, 'the author is told how to hurry it, not that they must');
+  assert.equal(find(rowsOf(AppView, CONFLICTED), 'behind'), undefined,
+    'behind-main still folds into the sync step whoever does the sync');
+
+  // While the lane is on it, the step says so in the present tense.
+  const working = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['integrating'] } }), 'mergeability');
+  assert.match(working.text.join(''), /The platform is resolving it now, then it retries the merge/);
+  assert.equal(working.sub, 'automatic, now');
+
+  // A conflict the lane resolves once the vote passes says when.
+  const later = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['awaiting_approval'] } }), 'mergeability');
+  assert.equal(later.sub, 'automatic, after the vote');
 });
 
 test('the sync step says how many files overlap and does not list them', () => {
@@ -138,6 +176,9 @@ test('a verdict measured against a base main has left behind is not reported as 
   const checks = find(rowsOf(AppView, CONFLICTED), 'checks');
   assert.equal(checks.sub, 'automatic, after 1');
   assert.equal(checks.tone, 'mute', 'it is not the blocker while step 1 stands');
+  // Whoever resolves the conflict pushes a new head, and that head gets its
+  // own run: the verdict on this one is stale either way.
+  assert.equal(find(rowsOf(AppView, GAVE_UP), 'checks').tone, 'mute');
   assert.doesNotMatch(checks.text.join(''), /Merge is blocked until they pass/,
     'the present tense described code that would no longer merge');
   assert.match(checks.text.join(''), /once the branch is up to date/);
