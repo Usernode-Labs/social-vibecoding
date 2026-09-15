@@ -509,7 +509,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 629 → 631: #1962's two checks that sending a saved draft leaves the
   // composer empty, one on the send and one on the screen the drafts list
   // is actually painted on.
-  assert.equal(DAPP.tests.length, 631);
+  // 629 → 631: this branch independently added #1944's two checks on the
+  // coding-run card opened through `?shot=cc-log-open` — the chevron still
+  // in the head row of an OPEN card (the flip rule has to reach it there),
+  // and the log panel under it. Computed against the SAME shared 629, on
+  // the other side of a merge from #1962's pair above: two independent +2s
+  // against one base land on 633, not 631.
+  assert.equal(DAPP.tests.length, 633);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

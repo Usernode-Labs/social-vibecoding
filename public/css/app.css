@@ -5341,7 +5341,12 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   text-align: center;
 }
 .dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
-.dc-cc-attached[open] > .dc-cc-attached-summary > .dc-cc-attached-chevron::before {
+/* #1944: a descendant, not a child. The dev chat's card puts the chevron
+   inside its head row (`.dc-cc-head`, since the chips), while the shared
+   transcript page still draws it as the summary's own child. The
+   direct-child form matched only the second, so the dev chat's glyph sat
+   on ▸ whether the card was open or closed and the toggle looked dead. */
+.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-attached-chevron::before {
   content: '\25BE'; /* ▾ */
 }
 .dc-cc-attached-summary:hover .dc-cc-attached-chevron {
