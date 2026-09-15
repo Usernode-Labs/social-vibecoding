@@ -278,9 +278,11 @@ export interface TranscriptState {
    * chat is idle again. See `DevChatTranscript`.
    */
   busy: boolean;
+  /** #1942: an open, idle session with no messages yet shows its empty state. */
+  empty?: boolean;
 }
 
-export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false };
+export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false, empty: false };
 
 export const transcriptStore = createStore<TranscriptState>(EMPTY_TRANSCRIPT);
 

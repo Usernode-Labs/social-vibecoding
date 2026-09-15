@@ -6966,12 +6966,21 @@ const DevChat = {
       });
     });
 
+    const devFlowHtml = DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml();
     return {
       rows,
       // #1281: in a hand-off venue the walkthrough IS the launchpad and
       // renders in the composer's place instead — rendering it here as well
       // would show it twice.
-      devFlowHtml: DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml(),
+      devFlowHtml,
+      // #1942: an open session with nothing in it yet. The pane used to be
+      // blank above the composer, so a new session looked like a page that
+      // had not loaded. Only for a session that is actually open (its
+      // messages have arrived), idle, and not already showing a walkthrough
+      // or a hand-off launchpad, which answer "what now?" themselves. It
+      // stays until the first message lands, so it is persistent rather than
+      // a toast.
+      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and

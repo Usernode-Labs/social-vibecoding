@@ -79,6 +79,19 @@ test('the touch action sheet reads the title by name, not by position', () => {
   assert.match(sheet.slice(0, 400), /\|\|\s*node\.querySelector\('span'\)/);
 });
 
+test('the touch action sheet carries each row\u2019s glyph, as the desktop menu does (#1930)', () => {
+  const fn = APP_VIEW.slice(APP_VIEW.indexOf('  _wirePlusMenu(content) {'));
+  const touch = fn.slice(0, fn.indexOf('PlatformUI.actionSheet(') + 3000);
+  // Every action row in the frame leads with an icon; the sheet takes it.
+  assert.match(FRAME, /icon=\{<[A-Za-z]+Icon className=\{PLUS_ICON_CLS\}/);
+  // A clone, because the kit adopts iconEl into the sheet and the original
+  // lives in the hidden desktop menu — stripped of its Tailwind sizing, which
+  // would otherwise outrank the kit's own row-icon size.
+  assert.match(touch, /const glyph = node\.querySelector\('svg'\)\?\.cloneNode\(true\);/);
+  assert.match(touch, /if \(glyph\) glyph\.removeAttribute\('class'\);/);
+  assert.match(touch, /iconEl: glyph \|\| undefined,/);
+});
+
 test('the secrets row keeps its legacy-owned state leaf inside the title', () => {
   // AppView.refreshDevChatSecretsState writes #dc-secrets-state, so it must
   // stay a node React renders empty and never writes again — and it must stay

@@ -4595,8 +4595,19 @@ const AppView = {
             // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
             const titleEl = node.querySelector('[data-plus-title]')
               || node.querySelector('span');
+            // #1930: the row's own glyph too, so the sheet is the desktop
+            // menu's list rather than a column of bare words. A CLONE — the
+            // kit adopts `iconEl` into the sheet, and the original belongs to
+            // the hidden desktop menu, which must keep its icon for the next
+            // open on either idiom. Its Tailwind classes go with the copy:
+            // `w-5 h-5 mt-0.5` would outrank the kit's `.un-item-icon` size
+            // (tailwind.css loads last) and drop the glyph off the label's
+            // centre line, and the kit inks and sizes its own row icons.
+            const glyph = node.querySelector('svg')?.cloneNode(true);
+            if (glyph) glyph.removeAttribute('class');
             return {
               label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              iconEl: glyph || undefined,
               handler: () => node.click(),
             };
           }),

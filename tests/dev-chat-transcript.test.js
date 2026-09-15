@@ -448,3 +448,33 @@ test('the live bubble falls back to the model when no frame has landed', () => {
   assert.match(rowHtml(row), /from the model/, 'a frame for another row is ignored');
   setStream('', '');
 });
+
+// ── #1942: a new session's empty state ────────────────────────────────
+
+test('an open, idle session with no messages shows its empty state', () => {
+  const h = makeDevChat();
+  const html = h.render([]);
+  assert.equal(h.t.state().empty, true);
+  assert.match(html, /id="dc-empty-state"/);
+  assert.match(html, /What should this session change\?/);
+});
+
+test('the empty state goes the moment there is a message, a run, or no session', () => {
+  let h = makeDevChat();
+  assert.doesNotMatch(h.render([user('hello')]), /dc-empty-state/, 'a message replaces it');
+  h = makeDevChat({ isStreaming: true });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'a turn in flight is not empty');
+  h = makeDevChat();
+  h.render([], null);
+  assert.equal(h.t.state().empty, false, 'no open session, nothing to describe');
+});
+
+test('a walkthrough or a hand-off launchpad answers "what now?" instead (#1942)', () => {
+  let h = makeDevChat({ _devFlowHtml: () => '<div data-flow-wizard="1"></div>' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the walkthrough is already in the pane');
+  h = makeDevChat({ _launchpadVenue: () => 'web-claude-code' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the launchpad is already in the pane');
+});
