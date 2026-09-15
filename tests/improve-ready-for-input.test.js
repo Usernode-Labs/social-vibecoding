@@ -16,7 +16,8 @@
 //   1. THE PILL. Rendered, not grepped: "Ready for your input" when the row
 //      is waiting, plain "Ready" when it is not, "Working" while a turn is
 //      in flight whatever the payload said, "Handed off" for a work order.
-//      Same tone, same badge — the words carry the qualification.
+//      Same tone — the words carry the qualification. (The tile badge this
+//      line also named is retired: #1946, #1947.)
 //   2. THE CAPTION AGREES. "Needs you" and "Ready for your input" read ONE
 //      predicate (awaitsInput), so the row cannot say two different things.
 //   3. BUSY WINS LIVE. A push that starts a turn takes "Needs you" down in
@@ -89,14 +90,17 @@ test('a handed-off work order keeps its own word', () => {
 });
 
 test('the qualification is words, not a fourth state', () => {
-  // One Ready branch, one tone, one badge — the same table
+  // One Ready branch, one tone — the same table
   // tests/improve-session-spinner.test.js counts three branches of.
   const start = ROW_TSX.indexOf('function stateOf(');
   const body = ROW_TSX.slice(start, ROW_TSX.indexOf('\n}\n', start));
   assert.match(body, /label: session\.awaitingInput \? 'Ready for your input' : 'Ready',/);
   assert.equal((body.match(/bg-emerald-500\/15 text-emerald-700 dark:text-emerald-400/g) || []).length, 1,
     'both labels share the emerald pill');
-  assert.equal((body.match(/badge: 'bg-emerald-500'/g) || []).length, 1, 'and the emerald badge');
+  // The emerald tile badge that stood beside it was the row's static green
+  // dot, and it is retired (#1946) — the tint above is the only emerald the
+  // Ready state has left, and it comes with the word that explains it.
+  assert.doesNotMatch(body, /badge:/, 'no second renderer for the same state');
   assert.doesNotMatch(body, /Ready for your input[\s\S]*?spinner: true/,
     'a waiting row never spins');
 });
