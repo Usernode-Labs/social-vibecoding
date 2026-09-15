@@ -827,6 +827,16 @@ const AppView = {
           }
         }, 300);
       }
+      // #2161: `?shot=app-settings` opens the App settings dialog (the
+      // danger zone) on this app, so the declared check can photograph the
+      // blocked state on the platform's own app. Same guard as above.
+      if (shot === 'app-settings') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appSettings?.open({ slug });
+          }
+        }, 300);
+      }
       // #816: the preview loader is the screen this change is about, and it
       // only exists mid-click on a Preview button — no URL reaches it, so
       // the before/after captures would show the dev board instead. These

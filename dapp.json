@@ -2835,6 +2835,12 @@
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
+      "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
+      "path": "/?shot=app-settings#app/usernode-2d5619",
+      "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked",
+      "expectText": "core platform app"
+    },
+    {
       "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"

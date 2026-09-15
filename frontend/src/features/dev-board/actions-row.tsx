@@ -303,7 +303,8 @@ export function DevActionsRow({
               groupKey="settings"
               divider={true}
             />
-            {typeof window !== 'undefined' && window.AppView?.appData?.can_delete ? <PlusRow
+            {typeof window !== 'undefined' && (window.AppView?.appData?.can_delete
+              || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
               data-plus="app-settings"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title="App settings"
