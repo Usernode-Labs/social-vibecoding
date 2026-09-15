@@ -318,19 +318,21 @@ test('chip is a button when a target exists, a plain span otherwise', () => {
   assert.match(headlessOnly, /auto-solve/i);
 });
 
-test('openInProgressTarget dispatches to the existing navigation handlers', () => {
+test('openInProgressTarget always opens the lifecycle-aware change page', () => {
   const AppView = makeAppView();
   const calls = [];
   AppView.openTopic = (kind, id) => calls.push(['topic', kind, id]);
   AppView.openInProgressTarget('proposal', 5);
   AppView.openInProgressTarget('session-shared', 6);
-  assert.deepEqual(calls, [['topic', 'proposal', 5], ['topic', 'session', 6]]);
-  // A session-own target goes through App.switchTab, not openTopic.
   AppView.openInProgressTarget('session-own', 7);
-  assert.equal(calls.length, 2, 'own sessions never open a topic');
+  assert.deepEqual(calls, [
+    ['topic', 'proposal', 5],
+    ['topic', 'proposal', 6],
+    ['topic', 'proposal', 7],
+  ]);
   // Bad input is a no-op.
   AppView.openInProgressTarget('proposal', 'junk');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 // ── 3. the issue row: chip + claim button + admin list ──────────────────

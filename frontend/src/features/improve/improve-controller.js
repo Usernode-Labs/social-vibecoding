@@ -172,7 +172,9 @@ function toRow(session, appNameFallback) {
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
       || `Session #${session.id}`,
-    href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
+    // A row represents the change, not just its chat. The lifecycle-aware
+    // page keeps the context around the workspace and still embeds it.
+    href: `#app/${session.app_slug}/dev/proposals/${session.id}`,
     status: statusLabel(session),
     busy: liveBusy(session),
     awaitingInput: awaitsInput(session),

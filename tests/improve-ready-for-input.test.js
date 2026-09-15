@@ -48,7 +48,7 @@ const { SessionRow } = loadTsx('frontend/src/features/improve/session-row.tsx');
 const VIEW = {
   key: 's5', kind: 'session', id: 5, appSlug: 'demo', appName: 'Demo app',
   icon: { kind: 'letter', letter: 'D' }, title: 'Draft the spec',
-  href: '#app/demo/dev/sessions/5', status: null, busy: false, awaitingInput: false,
+  href: '#app/demo/dev/proposals/5', status: null, busy: false, awaitingInput: false,
   lastActivityAt: '2026-09-10T10:05:00.000Z',
 };
 

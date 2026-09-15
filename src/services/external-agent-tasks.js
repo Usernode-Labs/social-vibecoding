@@ -66,6 +66,7 @@ const externalAgentPatch = require('./external-agent-patch');
 // itself lives behind the loopback route, not in this file.
 const proposalUpdate = require('./proposal-update');
 const { EXTERNAL_TASK_SUBMIT_LOCK } = require('./advisory-locks');
+const { changeWebPath } = require('./change-destination');
 
 const GITHUB_API = 'https://api.github.com';
 const BRANCH_PREFIX = 'usernode';
@@ -1395,7 +1396,7 @@ function describeTargetProposal(session, user, app, origin) {
     // so its own title is the honest fallback. Advisory either way: the work
     // order prints it only when there is one.
     title: proposalTitle(session),
-    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${id}` : '',
+    webPath: origin ? changeWebPath(origin, app.slug, id) : '',
     branchHome,
     branchName,
     trackedHead,
@@ -1859,7 +1860,7 @@ function renderPreparedTask({
   // `webPath` is, so a caller can open one without composing a URL.
   const duplicates = (Array.isArray(openProposals) ? openProposals : []).map((p) => ({
     ...p,
-    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${p.proposalId}` : null,
+    webPath: origin ? changeWebPath(origin, app.slug, p.proposalId) : null,
   }));
   const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely

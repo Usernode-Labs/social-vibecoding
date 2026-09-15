@@ -140,7 +140,7 @@
           : `#app/${info.appSlug}/dev/issues`;
       }
       return info.sessionId
-        ? `#app/${info.appSlug}/dev/sessions/${info.sessionId}`
+        ? `#app/${info.appSlug}/dev/proposals/${info.sessionId}`
         : null;
     },
 
@@ -158,7 +158,10 @@
           return;
         }
         if (info.sessionId) {
-          App.openAppTab(info.appSlug, 'dev', { subTab: 'sessions', sessionId: info.sessionId });
+          App.openAppTab(info.appSlug, 'dev', {
+            subTab: 'topic',
+            ref: { kind: 'proposal', id: parseInt(info.sessionId, 10) },
+          });
           return;
         }
       }

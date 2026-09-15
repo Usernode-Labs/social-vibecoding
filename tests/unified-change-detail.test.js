@@ -297,6 +297,18 @@ test('Open card links use one detail route regardless of ownership or origin', (
   }
 });
 
+test('server-side change link producers use the same detail route', () => {
+  for (const file of [
+    'src/services/mcp-tools.js',
+    'src/services/external-agent-tasks.js',
+    'src/routes/proposal-handoff.js',
+  ]) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /\/dev\/sessions\/\$\{/,
+      `${file} must not turn a proposal or underway-card link into a workspace link`);
+  }
+});
+
 test('the same detail URL resolves native/imported underway work and changes lifecycle after promotion', () => {
   const av = context();
   av._mySessions = [{ ...failing }];

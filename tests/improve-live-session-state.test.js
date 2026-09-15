@@ -200,4 +200,6 @@ test('the row reads the shared accessor rather than the payload alone', () => {
   assert.match(CONTROLLER, /seed\(sessions, issuedAt\)/);
   assert.match(CONTROLLER, /const issuedAt = Date\.now\(\);[\s\S]{0,400}?fetch\(`\/api\/me\/active-sessions/,
     'stamped before the request goes out, as DevChat.loadActiveSessions does');
+  assert.match(body, /href: `#app\/\$\{session\.app_slug\}\/dev\/proposals\/\$\{session\.id\}`/,
+    'the row opens the full change page rather than dropping directly into chat');
 });

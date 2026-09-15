@@ -155,7 +155,7 @@ test('the pill lays its two children out like the platform\'s other one', () => 
 
 test('the Improve busy-row check selects the arc, and no check was added', () => {
   const busy = MANIFEST.tests.filter((t) =>
-    /improve-panel a\[href\$="\/sessions\/990102"\]/.test(t.expectSelector || ''));
+    /improve-panel a\[href\$="\/proposals\/990102"\]/.test(t.expectSelector || ''));
   assert.equal(busy.length, 1, 'one check owns the busy mock row');
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'retargeted with the markup — .animate-pulse now matches nothing there');

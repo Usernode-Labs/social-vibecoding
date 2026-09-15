@@ -44,7 +44,7 @@ const { SessionRow } = loadTsx('frontend/src/features/improve/session-row.tsx');
 const VIEW = {
   key: 's5', kind: 'session', id: 5, appSlug: 'demo', appName: 'Demo app',
   icon: { kind: 'letter', letter: 'D' }, title: 'Draft the spec',
-  href: '#app/demo/dev/sessions/5', status: null, busy: false, awaitingInput: false,
+  href: '#app/demo/dev/proposals/5', status: null, busy: false, awaitingInput: false,
   lastActivityAt: '2026-09-10T10:05:00.000Z',
 };
 
@@ -130,7 +130,7 @@ test('the tile still shows the app, and is no longer a positioning context', () 
 
 test('the two mock rows are the rendered evidence, with one check per row', () => {
   const at = (href) => MANIFEST.tests.filter((t) =>
-    (t.expectSelector || '').includes(`/sessions/${href}"]`));
+    (t.expectSelector || '').includes(`/proposals/${href}"]`));
 
   const idle = at('990101');
   assert.equal(idle.length, 1, 'one check owns the idle mock row');
