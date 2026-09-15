@@ -53,7 +53,10 @@ export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatPr
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
       <div className="gc-tab-body flex-1 flex min-h-0">
-        <div className="gc-chat-pane flex-1 flex flex-col min-h-0">
+        {/* `platform-kb-column` (app.css): same shape as the topic thread —
+            #gc-messages scrolls and the composer bar is a shrink-0 sibling
+            below it — so the keyboard inset is reserved here, on the column. */}
+        <div className="gc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
           {/*
               #3: name what group chat is for, once per browser. It is rarely
               empty — system messages land here — so a permanent banner would
