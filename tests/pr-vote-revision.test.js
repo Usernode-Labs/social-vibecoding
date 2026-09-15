@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 
 const {
   reviewedHeadForSession,
+  visualHeadForSession,
   reviewedHeadSql,
   currentVotePredicateSql,
   sameSha,
@@ -34,6 +35,22 @@ test('imported proposals keep their import head; native ones use the reviewed he
   );
   assert.equal(reviewedHeadForSession({ source: null, reviewed_head_sha: 'b' }), 'b');
   assert.equal(reviewedHeadForSession(null), null);
+});
+
+test('visual provenance uses the strongest current head available at each lifecycle stage', () => {
+  assert.equal(visualHeadForSession({
+    source: 'imported', imported_pr_head_sha: 'imported',
+    reviewed_head_sha: 'native', checks_commit_sha: 'checked',
+  }), 'imported');
+  assert.equal(visualHeadForSession({
+    source: 'cli_handoff', reviewed_head_sha: 'reviewed',
+    checks_commit_sha: 'checked', handoff_head_sha: 'handoff',
+  }), 'reviewed');
+  assert.equal(visualHeadForSession({
+    source: 'cli_handoff', checks_commit_sha: 'checked', handoff_head_sha: 'handoff',
+  }), 'checked');
+  assert.equal(visualHeadForSession({ handoff_head_sha: 'handoff' }), 'handoff');
+  assert.equal(visualHeadForSession({}), null);
 });
 
 test('a vote counts while its epoch matches the proposal it was cast on', () => {

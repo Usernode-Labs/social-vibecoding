@@ -892,9 +892,11 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_checked_at TI
 --                    'failed'       — media run produced no usable "after",
 --                                     or the capture run itself broke
 --                    (NULL until the first outcome-aware run)
---   capture_detail : jsonb diagnostics — { media, pathDefaulted (the agent
---                    emitted no testing path so capture defaulted to '/'),
---                    prodRunning, paths, failures:[{kind,media,index,
+--   capture_detail : jsonb diagnostics — { media, pathDefaulted (capture
+--                    used '/'), routeSource ('submitted' | 'scenario' |
+--                    'default'), scenarios:[{id,path,
+--                    fingerprint,...}], prodRunning, paths,
+--                    failures:[{kind,media,index,
 --                    reason}], droppedOverCap:[{kind,media,index,bytes}],
 --                    beforeFellBack:[capture indexes], reason? }
 --   captured_at    : when the outcome was recorded.
@@ -2823,6 +2825,13 @@ ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS captured_viewport VARCHAR(1
 --                      confused by a mismatched comparison.
 ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS shot_status SMALLINT;
 ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS before_fell_back BOOLEAN NOT NULL DEFAULT FALSE;
+-- Named executable scenario provenance (#1906). NULL means the capture came
+-- from an explicit submission route or predates visual scenarios. The stable
+-- id says which dapp.json flow was selected; the fingerprint pins the route +
+-- readiness assertions at capture time, so a later edit cannot silently make
+-- an old image look like evidence for a different scenario definition.
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS scenario_id VARCHAR(96);
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS scenario_fingerprint VARCHAR(64);
 CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
 
 -- Private like its parent chat_sessions (public-FK-to-private is the

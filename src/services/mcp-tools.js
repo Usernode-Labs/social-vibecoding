@@ -846,6 +846,9 @@ const MAX_CAPTURE_PATHS_REPORTED = 10;
 function shapeProposal(session, origin) {
   const detail = (session.capture_detail && typeof session.capture_detail === 'object')
     ? session.capture_detail : {};
+  const capturedPaths = Array.isArray(detail.paths)
+    ? detail.paths.filter((p) => typeof p === 'string').slice(0, MAX_CAPTURE_PATHS_REPORTED)
+    : [];
   const checks = shapeChecks(session);
   return {
     proposalId: session.id,
@@ -871,19 +874,22 @@ function shapeProposal(session, origin) {
     // revise this proposal without guessing.
     branch: shapeBranch(session),
     nextStep: shapeNextStep(session, checks),
-    // The before/after capture ran against the app's home page because the
-    // submission carried no testing route — so the people voting are looking
-    // at screenshots of a screen this change never touched. Worth saying out
-    // loud: it is fixable by resubmitting the routes, and invisible otherwise.
-    captureDefaultedToRoot: detail.pathDefaulted === true,
+    // A true value says capture used the app root because neither an explicit
+    // route nor a matching named scenario supplied something more specific.
+    captureDefaultedToRoot: detail.media !== false
+      && detail.pathDefaulted === true && capturedPaths.includes('/'),
+    captureRouteSource: ['submitted', 'scenario', 'default'].includes(detail.routeSource)
+      ? detail.routeSource : null,
+    visualScenarios: Array.isArray(detail.scenarios) && detail.scenarios.length
+      ? detail.scenarios.map((s) => s && typeof s.id === 'string' ? s.id : null)
+        .filter(Boolean).slice(0, MAX_CAPTURE_PATHS_REPORTED)
+      : null,
     // And the routes it DID shoot (#1214). The boolean alone cannot be read
     // when the change's own first route is '/': "defaulted to the home page"
     // and "shot exactly what you asked for" look identical, and an agent
     // checking its work has no way to tell which happened. Null until the
     // first capture has run.
-    capturePaths: Array.isArray(detail.paths) && detail.paths.length
-      ? detail.paths.filter((p) => typeof p === 'string').slice(0, MAX_CAPTURE_PATHS_REPORTED)
-      : null,
+    capturePaths: capturedPaths.length ? capturedPaths : null,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
@@ -980,18 +986,17 @@ async function buildRequestDiscussion({ pool, baseUrl, accessToken, appId, slug,
 // ── Testing metadata on a submission ───────────────────────────────────
 //
 // An in-platform build turn ends with a "==== TESTING ====" block, and that
-// block is why the people voting get before/after screenshots of the screen
-// that changed rather than of the app's home page. A connector submission had
-// no equivalent: every imported proposal arrived with testing_md and
-// testing_path NULL, so services/visuals.js fell back to ['/'].
+// block is one way the people voting get before/after screenshots of the
+// screen that changed. Named dapp.json visual scenarios are the durable
+// fallback; explicit connector routes override them for one-off precision.
 //
 // So submit_work takes the same two things as ordinary arguments. The parsing
 // rules are NOT restated here — services/testing-notes.js owns them, and this
 // reuses its validator, its viewport labels and its caps so a connector
 // submission and a build turn cannot disagree about what a valid route is.
 //
-// Both are optional and absent means exactly what it meant before: no testing
-// metadata, capture defaults to the root.
+// Both are optional. With no explicit route, capture uses a matching named
+// scenario and otherwise retains the app-root default.
 //
 // What it will NOT do is drop a route without saying so (#1214). `parseSubmitted`
 // reports every entry it could not use, and `rejectedPaths` carries that list up
@@ -1051,17 +1056,18 @@ function testingRouteNote(shaped, updating) {
     // Nothing rejected, nothing kept, nothing said on an update: an update that
     // omits the routes deliberately keeps the ones the proposal already has.
     if (kept || updating) return '';
-    return ' No testingPaths were supplied, so the before/after screenshots the group votes on are of the app\'s '
-      + 'home page. If this change has a visible screen, submit again with proposalId and testingPaths pointing at '
-      + 'it — a resubmit of the same commit only re-shoots the screenshots and clears no votes.';
+    return ' No testingPaths were supplied. Homeroom will use a matching named visual scenario from dapp.json; '
+      + 'if none matches, its screenshots default to the app home page. '
+      + 'You can submit again with proposalId and testingPaths pointing at the changed screen — a resubmit of the '
+      + 'same commit only re-shoots the screenshots and clears no votes.';
   }
   const list = rejected.join('; ');
   return kept
     ? ` Homeroom could not use ${rejected.length} of the testingPaths you sent — ${list}. The screenshots are shot `
       + `on ${kept.join(', ')} only.`
-    : ` Homeroom could not use any of the testingPaths you sent — ${list} — so the before/after screenshots fall `
-      + 'back to the app\'s home page. Submit again with corrected routes; a resubmit of the same commit only '
-      + 're-shoots the screenshots and clears no votes.';
+    : ` Homeroom could not use any of the testingPaths you sent — ${list}. It will try a matching named visual `
+      + 'scenario and otherwise default to the app home page. Submit again with corrected routes; a resubmit of the '
+      + 'same commit only re-shoots the screenshots and clears no votes.';
 }
 
 // ── Server instructions ────────────────────────────────────────────────
@@ -2151,7 +2157,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or by `prNumber` — its pull request number, the one a person sees on GitHub and the one to quote to them; the answer carries both, name it \"PR #2151 (proposal 4223)\". Its checks verdict — including the NAMES of any failing tests — the staging preview URL, the vote tally and the votes it still needs to merge. Checks gate merge: a proposal whose checks are failing cannot land however the vote goes, so if you are the agent that wrote the code, fix the named tests and submit the fix as an UPDATE to this same proposal — never as a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. A proposal you opened with submit_work is usually 'app_repo' — Homeroom copies the fork branch into the app repository — so revising it goes back through submit_work. `captureDefaultedToRoot` true means the submission carried no testing route AT ALL, so the before/after screenshots the voters see are of the app's home page; `capturePaths` names the routes the last capture actually shot, which tells that apart from a change whose own first route is '/'. Fix either with submit_work, this proposalId and corrected testingPaths — resubmitting the same commit only re-shoots the screenshots and clears no votes. `checks.state` 'pending' is NOT a verdict and not a reason to push again — read `checks.phase`, `checks.checkedAt` and `checks.stale`, and `baseSha` before writing any code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. A proposal you opened with submit_work is usually 'app_repo' — Homeroom copies the fork branch into the app repository — so revising it goes back through submit_work. `captureRouteSource` identifies submitted routes, named dapp.json scenarios, or the app-root default; `visualScenarios` names matched flows. `captureDefaultedToRoot` flags a screenshot that may not show the changed UI. Fix it by resubmitting the same proposal and commit with corrected `testingPaths`; that only re-shoots screenshots and clears no votes. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -2256,6 +2262,10 @@ function registerTools(server, ctx) {
       }),
       nextStep: z.string(),
       captureDefaultedToRoot: z.boolean(),
+      captureRouteSource: z.enum(['submitted', 'scenario', 'default']).nullable()
+        .describe('How the last capture chose its routes. Null on historical captures that predate provenance tracking.'),
+      visualScenarios: z.array(z.string()).nullable()
+        .describe('Stable dapp.json scenario ids used by the last capture, or null for submitted/historical routes.'),
       capturePaths: z.array(z.string()).nullable(),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
@@ -2932,7 +2942,7 @@ function registerTools(server, ctx) {
       summary: z.string().optional()
         .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Homeroom shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
+        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. They explicitly override automatic visual-scenario selection. Homeroom shoots a before/after pair of each one; point them at the SCREEN YOU CHANGED, never the home page. Up to 3 are used and every route also gets a phone still. If omitted, Homeroom selects named dapp.json checks whose visual impact globs match the changed files, then defaults to the app home page when none match. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing submitted routes. The answer reports what was accepted.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       expectedHeadSha: z.string().optional()
@@ -3415,8 +3425,8 @@ function registerTools(server, ctx) {
       submittedVia: null,
       // A FIRST submission reports its capture routes too (#1214). It used to
       // report null here whatever it was given, so the only way to learn that a
-      // route had been lost was get_proposal's `captureDefaultedToRoot`, minutes
-      // later, once the group was already looking at the wrong screenshots.
+      // route had been lost was a later get_proposal call, after the capture
+      // had already run without the intended target.
       testingPaths: require('./testing-notes').displayPaths(testing.testingPaths),
       testingPathsRejected: testing.rejectedPaths || null,
       testingUpdated: null,

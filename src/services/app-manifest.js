@@ -65,7 +65,10 @@ const MANIFEST_FILENAME = 'dapp.json';
 
 // #47: per-app automated tests (the "CI for proposals" framework). Each
 // test navigates one staging route and asserts load + no-console-errors
-// (+ optional selector/text).
+// (+ optional selector/text). A representative flow can also declare
+// `{ id, visual: true, impact: [...] }`; services/visuals.js then uses that
+// executable check as an automatic screenshot scenario when its file globs
+// overlap the proposal diff.
 //
 // THE READER NO LONGER CAPS AT 12. It used to keep only the first
 // MAX_TESTS entries, which meant this repo's own 240-odd declared checks
@@ -202,17 +205,62 @@ const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
+const MAX_VISUAL_SCENARIO_ID_LEN = 96;
+const MAX_VISUAL_IMPACT_PATTERNS = 20;
+const MAX_VISUAL_IMPACT_PATTERN_LEN = 256;
+const VISUAL_SCENARIO_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,94}[a-z0-9])?$/;
+
+// A visual scenario is a declared check with enough repository-level
+// provenance to answer both questions the screenshot runner needs:
+//
+//   * which deterministic UI state should be photographed? (`id` + the
+//     check's existing path/assertions)
+//   * which code changes make that state relevant? (`impact` file globs)
+//
+// Keep this metadata on dapp.json checks, not beside individual source
+// functions. The check remains executable documentation of the flow, while
+// source files stay free of capture-pipeline annotations. Malformed visual
+// metadata never drops the underlying check; it only prevents that check
+// from being auto-selected as a screenshot scenario. At least one presence
+// assertion is required: a route alone says where to navigate, not whether
+// the feature state is ready to photograph.
+function normalizeVisualScenario(test) {
+  if (!test || test.visual !== true) return null;
+  const id = typeof test.id === 'string' ? test.id.trim() : '';
+  if (!id || id.length > MAX_VISUAL_SCENARIO_ID_LEN || !VISUAL_SCENARIO_ID_RE.test(id)) {
+    return null;
+  }
+  const hasReadinessAssertion = (typeof test.expectSelector === 'string' && test.expectSelector.trim())
+    || (typeof test.expectText === 'string' && test.expectText.trim());
+  if (!hasReadinessAssertion) return null;
+  if (!Array.isArray(test.impact)) return null;
+  const impact = [];
+  const seen = new Set();
+  for (const raw of test.impact) {
+    if (typeof raw !== 'string') continue;
+    const pattern = raw.trim().replace(/\\/g, '/');
+    if (!pattern || pattern.length > MAX_VISUAL_IMPACT_PATTERN_LEN
+      || pattern.startsWith('/') || pattern.startsWith('!')
+      || pattern.split('/').includes('..') || seen.has(pattern)) continue;
+    seen.add(pattern);
+    impact.push(pattern);
+    if (impact.length >= MAX_VISUAL_IMPACT_PATTERNS) break;
+  }
+  return impact.length ? { id, visual: true, impact } : null;
+}
 
 // Normalize the optional top-level `tests` array. Each entry must carry a
 // valid `path` (same rules as a testing-block path: relative, single
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). Invalid entries are
-// dropped, duplicate (name+path) pairs collapse, the list is bounded by
-// MAX_DECLARED_TESTS. A non-array / absent block resolves to [] — exactly
-// the legacy behaviour (no declared tests → the orchestrator synthesizes
-// the baseline). Never throws.
+// rule (for a route that legitimately logs errors). `visual: true` requires
+// a stable `id`, a presence assertion, and at least one repository-relative
+// `impact` glob; malformed visual metadata is ignored without dropping the
+// underlying check. Invalid entries are dropped, duplicate (name+path) pairs
+// collapse, and the list is bounded by MAX_DECLARED_TESTS. A non-array /
+// absent block resolves to [] — exactly the legacy behaviour (no declared
+// tests → the orchestrator synthesizes the baseline). Never throws.
 //
 // readTestsWithMeta is the same pass with its bookkeeping exposed, because
 // the over-ceiling guard has to compare LIKE WITH LIKE: the ceiling applies
@@ -226,6 +274,8 @@ function readTestsWithMeta(parsed) {
   const seen = new Set();
   let invalidDropped = 0;
   let ceilingDropped = 0;
+  let invalidVisualDropped = 0;
+  const visualIds = new Set();
   for (const t of raw) {
     if (!t || typeof t !== 'object') { invalidDropped++; continue; }
     const p = validatePath(t.path);
@@ -237,6 +287,13 @@ function readTestsWithMeta(parsed) {
     if (seen.has(dedupeKey)) continue;
     if (out.length >= MAX_DECLARED_TESTS) { ceilingDropped++; continue; }
     seen.add(dedupeKey);
+    let visual = normalizeVisualScenario(t);
+    if (t.visual === true && !visual) invalidVisualDropped++;
+    if (visual && visualIds.has(visual.id)) {
+      invalidVisualDropped++;
+      visual = null;
+    }
+    if (visual) visualIds.add(visual.id);
     out.push({
       name,
       path: p,
@@ -245,15 +302,17 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      ...(visual || {}),
     });
   }
   const dropped = invalidDropped + ceilingDropped;
-  if (dropped > 0) {
+  if (dropped > 0 || invalidVisualDropped > 0) {
     log.warn('app-manifest', 'Dropped invalid/over-ceiling test entries', {
-      dropped, invalidDropped, ceilingDropped, kept: out.length, ceiling: MAX_DECLARED_TESTS,
+      dropped, invalidDropped, ceilingDropped, invalidVisualDropped,
+      kept: out.length, ceiling: MAX_DECLARED_TESTS,
     });
   }
-  return { tests: out, rawCount: raw.length, ceilingDropped };
+  return { tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped };
 }
 
 function readTests(parsed) {

@@ -11,7 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
-const { resolveTargets } = require('../capture/capture');
+const { resolveTargets, waitForScenarioReady } = require('../capture/capture');
 const { buildVisualsBlock } = require('../src/services/pr-metadata');
 
 const ID_A = 'a'.repeat(32);
@@ -62,6 +62,62 @@ test('expandCapturePaths tolerates a non-array', () => {
   assert.deepEqual(visuals.expandCapturePaths(null), []);
 });
 
+// ── named visual-scenario route selection ─────────────────────────────
+
+const SCENARIOS = [
+  {
+    id: 'settings.profile', visual: true,
+    name: 'Profile editor', path: '/settings?demo=profile',
+    expectSelector: '#profile-editor', expectText: 'Profile',
+    impact: ['frontend/src/features/settings/**'],
+  },
+  {
+    id: 'board.main', visual: true,
+    name: 'Board', path: '/board?demo=1',
+    expectSelector: '.board', expectText: null,
+    impact: ['public/js/board-?.js', 'frontend/src/features/board/**'],
+  },
+];
+
+test('deriveCapturePlan prefers submitted routes over matching scenarios', () => {
+  const plan = visuals.deriveCapturePlan(
+    { testing_paths: [{ path: '/exact', viewport: 'mobile' }] },
+    SCENARIOS,
+    ['frontend/src/features/settings/profile.tsx']
+  );
+  assert.deepEqual(plan, {
+    paths: ['/exact'], pathDefaulted: false, routeSource: 'submitted', scenarios: [],
+  });
+});
+
+test('deriveCapturePlan selects named executable flows by repository impact', () => {
+  const plan = visuals.deriveCapturePlan(
+    {}, SCENARIOS,
+    ['docs/readme.md', 'frontend/src/features/settings/profile.tsx']
+  );
+  assert.equal(plan.routeSource, 'scenario');
+  assert.deepEqual(plan.paths, ['/settings?demo=profile']);
+  assert.equal(plan.scenarios[0].id, 'settings.profile');
+  assert.equal(plan.scenarios[0].expectSelector, '#profile-editor');
+  assert.match(plan.scenarios[0].fingerprint, /^[0-9a-f]{64}$/);
+});
+
+test('deriveCapturePlan retains the labelled root default when no scenario matches', () => {
+  assert.deepEqual(
+    visuals.deriveCapturePlan({}, SCENARIOS, ['src/services/email.js']),
+    { paths: ['/'], pathDefaulted: true, routeSource: 'default', scenarios: [] }
+  );
+  assert.equal(visuals.visualImpactMatches('frontend/**/profile-?.tsx', 'frontend/a/profile-x.tsx'), true);
+  assert.equal(visuals.visualImpactMatches('frontend/*/profile.tsx', 'frontend/a/b/profile.tsx'), false);
+});
+
+test('the root default preserves UI screenshots without adding media to backend-only changes', () => {
+  assert.equal(visuals.shouldCaptureMedia(true, 'default'), true);
+  assert.equal(visuals.shouldCaptureMedia(false, 'default'), false);
+  assert.equal(visuals.shouldCaptureMedia(false, 'submitted'), true);
+  assert.equal(visuals.shouldCaptureMedia(false, 'scenario'), true);
+});
+
 // ── capture.js resolveTargets: the still-only flag ─────────────────────
 
 test('resolveTargets carries still through, defaulting to false', () => {
@@ -96,6 +152,25 @@ test('resolveTargets parses a companion frame with its own capture index', () =>
   // The target itself stays the full-media desktop frame.
   assert.equal(t[0].still, false);
   assert.equal(t[0].viewport, null);
+});
+
+test('resolveTargets carries a bounded visual-scenario readiness assertion', () => {
+  const [target] = resolveTargets({
+    TARGETS: JSON.stringify([{
+      index: 0,
+      afterUrl: 'http://a/settings',
+      ready: { expectSelector: '  #profile-editor ', expectText: ' Profile ' },
+    }]),
+  });
+  assert.deepEqual(target.ready, { expectSelector: '#profile-editor', expectText: 'Profile' });
+});
+
+test('a missing readiness assertion fails closed instead of taking an early screenshot', async () => {
+  await assert.rejects(
+    waitForScenarioReady({ $: async () => null }, { expectSelector: '#not-ready' }, { maxMs: 0 }),
+    /Visual scenario was not ready: Expected element "#not-ready" was not found/
+  );
+  await waitForScenarioReady({ $: async () => ({}) }, { expectSelector: '#ready' }, { maxMs: 0 });
 });
 
 test('a malformed companion degrades to none rather than costing the target its shots', () => {
@@ -209,6 +284,54 @@ test('storeArtifacts stores a null shot_status when the frame carried none', asy
   assert.equal(pool.inserted[0][10], null);
 });
 
+test('storeArtifacts attributes a companion still to its parent route, mobile frame, and scenario', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const scenario = { id: 'board.main', fingerprint: 'f'.repeat(64) };
+  const stored = await visuals.storeArtifacts(
+    pool, 7, 'a'.repeat(40),
+    [{ index: 0, path: '/board?demo=1', scenario, companion: { index: 1 } }],
+    [{ kind: 'after', media: 'png', status: 200, index: 1, buf }]
+  );
+  const params = pool.inserted[0];
+  assert.equal(params[7], '/board?demo=1');
+  assert.equal(params[8], 1);
+  assert.equal(params[9], 'mobile');
+  assert.equal(params[12], 'board.main');
+  assert.equal(params[13], 'f'.repeat(64));
+  assert.equal(stored.captures[0].path, '/board?demo=1');
+  assert.equal(stored.captures[0].viewport, 'mobile');
+  assert.equal(stored.captures[0].scenarioId, 'board.main');
+});
+
+test('a fresh run removes cached evidence and tells open clients to clear their tiles', async () => {
+  const queries = [];
+  const events = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rowCount: 1, rows: [] };
+    },
+  };
+  await visuals.resetVisualEvidence(
+    pool, { id: 7, pr_number: null }, null, null,
+    (type, data) => events.push({ type, data })
+  );
+  assert.match(queries[0].sql, /^DELETE FROM session_visuals/);
+  assert.deepEqual(queries[0].params, [7]);
+  assert.deepEqual(events, [{ type: 'visuals_ready', data: { sessionId: 7, visuals: null } }]);
+});
+
+test('every live session-event reader accepts the null payload that clears stale tiles', () => {
+  const fs = require('node:fs');
+  for (const file of ['../public/js/app.js', '../frontend/src/features/dev-chat/dev-chat.js']) {
+    const source = fs.readFileSync(require.resolve(file), 'utf8');
+    assert.match(source, /hasOwnProperty\.call\(data, 'visuals'\)/, file);
+    assert.match(source, /currentSession\.visuals = data\.visuals \|\| null/, file);
+    assert.doesNotMatch(source, /currentSession && data\.visuals/, file);
+  }
+});
+
 // ── shapeAgg: object values (id + path + viewport + fellBack) ──────────
 
 test('shapeAgg reads the object value form into labelled groups', () => {
@@ -237,6 +360,25 @@ test('shapeAgg carries the mobile viewport label through the object form', () =>
     after_1_png: { id: ID_B, path: '/board', viewport: 'mobile', fellBack: false },
   });
   assert.equal(shaped.captures[0].viewport, 'mobile');
+});
+
+test('shapeAgg hides a commit-tagged artifact set from a newer proposal head', () => {
+  const old = 'a'.repeat(40);
+  const current = 'b'.repeat(40);
+  const agg = {
+    after_0_png: { id: ID_B, path: '/board', commit: old },
+  };
+  assert.equal(visuals.shapeAgg(agg, current), null);
+  assert.equal(visuals.shapeAgg(agg, old).captures[0].path, '/board');
+});
+
+test('an exact-head read hides legacy captures whose revision cannot be proven', () => {
+  const rows = [
+    { kind: 'after', media: 'png', id: ID_B, capture_index: 0, commit_hash: null },
+  ];
+  assert.equal(visuals.groupRows(rows, 'b'.repeat(40)), null);
+  assert.equal(visuals.groupRows(rows).captures[0].after.png, ID_B,
+    'a legacy surface with no head still renders its legacy row');
 });
 
 // ── buildVisualsBlock: before-fell-back caption ────────────────────────

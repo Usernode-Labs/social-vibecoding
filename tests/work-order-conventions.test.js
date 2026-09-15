@@ -298,8 +298,11 @@ test('the work order says the checks gate merge and how to clear them', () => {
   const step7 = order.slice(order.indexOf('7. THEN CHECK THE CHECKS'));
   assert.match(step7, /Do not call\s+`submit_work` again/);
   assert.match(step7, /do not call `prepare_work`/);
-  // The one signal that says the testing routes were dropped on the way in.
+  // A default remains visible, and the work order names both the actionable
+  // signal and the provenance needed to correct a bad one.
   assert.match(step7, /captureDefaultedToRoot/);
+  assert.match(step7, /captureRouteSource/);
+  assert.match(step7, /visualScenarios/);
 });
 
 test('a task with nothing to submit gets none of the submission guidance', () => {

@@ -2194,7 +2194,7 @@ test('a proposal reports its checks and whether its capture route was lost', () 
   const shaped = tools.shapeProposal({
     id: 7, app_slug: 'recipe-box', check_state: 'failing',
     test_results: [{ name: 'Board shows the snap toggle', status: 'fail' }],
-    capture_detail: { pathDefaulted: true },
+    capture_detail: { media: true, pathDefaulted: true, paths: ['/'] },
   }, ORIGIN);
   assert.equal(shaped.checks.state, 'failing');
   assert.equal(shaped.checks.total, 1);
@@ -2212,6 +2212,28 @@ test('a proposal reports its checks and whether its capture route was lost', () 
     tools.shapeProposal({ id: 9, capture_detail: 'x' }, ORIGIN).captureDefaultedToRoot,
     false
   );
+});
+
+test('a proposal reports named visual provenance or a labelled root default', () => {
+  const scenario = tools.shapeProposal({
+    id: 9,
+    capture_state: 'captured',
+    capture_detail: {
+      routeSource: 'scenario',
+      paths: ['/board?demo=1'],
+      scenarios: [{ id: 'board.main', fingerprint: 'a'.repeat(64) }],
+    },
+  }, ORIGIN);
+  assert.equal(scenario.captureRouteSource, 'scenario');
+  assert.deepEqual(scenario.visualScenarios, ['board.main']);
+
+  const fallback = tools.shapeProposal({
+    id: 10, capture_state: 'captured',
+    capture_detail: { media: true, pathDefaulted: true, routeSource: 'default', paths: ['/'] },
+  }, ORIGIN);
+  assert.equal(fallback.captureDefaultedToRoot, true);
+  assert.equal(fallback.captureRouteSource, 'default');
+  assert.deepEqual(fallback.capturePaths, ['/']);
 });
 
 test('a proposal names the routes its screenshots were actually shot on (#1214)', () => {
@@ -2357,14 +2379,13 @@ test('every route the connector could not use is named back to the caller', () =
 
 test('a submission whose every route is rejected is told so in its own answer', () => {
   // This is the case that used to be invisible: nothing is sent to the import,
-  // the capture falls back to '/', and the only signal was
-  // `captureDefaultedToRoot` on a different endpoint minutes later.
+  // there was no useful signal until the capture ran minutes later.
   const shaped = tools.shapeTestingNotes({ testingPaths: ['nope', '//evil.example'] });
   assert.equal('testingPaths' in shaped, false, 'nothing usable is sent on');
   assert.equal(shaped.rejectedPaths.length, 2);
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use any of the testingPaths/);
-  assert.match(note, /fall back to the app's home page/);
+  assert.match(note, /default to the app home page/);
   assert.match(note, /clears no votes/, 'and the cheap repair is named');
 });
 

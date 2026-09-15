@@ -2695,8 +2695,8 @@ const App = {
         // staging_ready, often after the turn's POST SSE is gone) —
         // stash the artifact ids and re-render so the staging card
         // upgrades in place with the media tiles.
-        if (DevChat.currentSession && data.visuals) {
-          DevChat.currentSession.visuals = data.visuals;
+        if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+          DevChat.currentSession.visuals = data.visuals || null;
           DevChat.renderMessages();
         }
         break;

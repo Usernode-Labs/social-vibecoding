@@ -314,8 +314,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runStartedAt: Number(manifest.startedAt) || Date.parse(row.started_at) || startedAt,
       shotsOnly: !!manifest.shotsOnly, admissionReason: manifest.admissionReason || null,
       media: !!manifest.media,
-      capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length ? manifest.capturePaths : ['/'],
+      capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length
+        ? manifest.capturePaths : ['/'],
       pathDefaulted: !!manifest.pathDefaulted,
+      captureRouteSource: manifest.captureRouteSource || null,
+      visualScenarios: Array.isArray(manifest.visualScenarios) ? manifest.visualScenarios : [],
       prodRunning: !!manifest.prodRunning,
       stagingOrigin: manifest.stagingOrigin || '',
       targets: Array.isArray(manifest.targets) ? manifest.targets : [],

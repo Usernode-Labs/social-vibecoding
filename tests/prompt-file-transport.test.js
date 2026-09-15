@@ -68,7 +68,7 @@ test('hosted Claude receives conventions once as system context, while unchanged
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
 });
 
-test('hosted Claude references system build guidance while local and Codex prompts stay byte-identical', () => {
+test('hosted Claude references system build guidance while local and Codex share the reviewed inline contract', () => {
   const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true });
   const local = buildCodingAgentBuildGuidance();
   const codex = buildCodingAgentBuildGuidance();
@@ -79,9 +79,10 @@ test('hosted Claude references system build guidance while local and Codex promp
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    '3782d7e71930a9ab074e624f99a1ccfc6b13fb7148aaaeed0e8a0da902851655',
-    'the unchanged backends retain their exact pre-optimization guidance',
+    '8de7e32ac2790ff0522036cf962319799561359576cb95815abb01c88781cbcb',
+    'the non-system-prompt backends retain their exact reviewed guidance',
   );
+  assert.match(localText, /falls back to the home page and records that\n\s+default/);
 
   assert.match(hostedText, /authoritative system instructions/);
   assert.match(hostedText, /usernode-run-checks --changed/);
