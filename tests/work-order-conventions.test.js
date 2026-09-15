@@ -75,6 +75,8 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /RS256/);
   assert.match(essentials, /USERNODE_JWT_PUBLIC_KEY/);
   assert.match(essentials, /LLM proxy|USERNODE_LLM_PROXY_URL/);
+  assert.match(essentials, /USERNODE_PLATFORM_API_V1_URL/);
+  assert.match(essentials, /never a hardcoded host/);
   assert.match(essentials, /SIGTERM/);
 });
 

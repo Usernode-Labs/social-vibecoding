@@ -102,7 +102,7 @@ async function resolveApp(pool, token) {
 // `{ allowUserTokenOnly: true }` (issue #1213, requires requireUser) lets
 // a caller with NO app token authenticate with the user token alone —
 // the staging-preview path for the user-directory endpoints: preview
-// containers hold USERNODE_PLATFORM_API_URL but deliberately no app
+// containers hold the USERNODE_PLATFORM_API_* base URLs but deliberately no app
 // token, and the person reviewing a proposal already has an iframe
 // token minted for that exact app. The app identity comes from the
 // token's own `aud` claim (`usernode:app:<id>`), which is only TRUSTED
