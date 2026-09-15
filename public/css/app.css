@@ -11244,7 +11244,12 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-radius: 16px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-.dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+/* #2193: the linked-issue rows are flex (chip + one truncating title line),
+   laid out by their own utilities. A `display: block` here outranked the
+   rows' `flex`, so the title's nowrap ran past the card on a phone and
+   scrolled it sideways. Only the wrap for stray long tokens stays. */
+.dev-change-issues { min-width: 0; }
+.dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
 .dev-conversation-tabs {
