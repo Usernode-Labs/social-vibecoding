@@ -568,6 +568,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // row with GitHub comments, and on a production-cloned staging database
   // that thread already has a genuine transcript, which always wins over the
   // mock. The feed bubble's chip is pinned by tests/agent-posted-via.test.js.
+  // 649 → 650: independently on main, #2240 adds one check on the
+  // since-list's Clear in the state it was dead in — a reader with nothing
+  // new who walked `Show older` down past the baseline — reached through
+  // `?shot=since-seen`, which seeds the line at now and then presses the
+  // walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
   // 649 → 651: on yet another side of this merge, #2201 also gives the
   // check-my-status address step an answer for a mistyped address, and
   // declares the two things that state must show at
@@ -577,12 +586,35 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  // 650 → 652: the tallies above were computed on either side of this merge
-  // and cannot be read as one sequence. This branch took 649 → 650 alone,
-  // with the one #2236 "via agent" check above; main independently took the
-  // SAME 649 to 651 with the #2201 waitlist-not-found checks above. One +1
-  // and one +2 against a shared 649 is 652.
-  assert.equal(DAPP.tests.length, 652);
+  // 651 → 653: #2086 makes a featured-illustration change a governance
+  // proposal, and adds two checks on its card via the ?demo=1 mock row
+  // 9100008: the proposed-beside-current preview on the open board card,
+  // and the same preview on the proposal's own discussion page. (This
+  // branch took 649 → 651 alone; main independently took the same step
+  // with the #2201 pair above, so the merged manifest holds 653.)
+  // 650 → 655, 652 → 655, 651 → 655: on another side of this merge, the
+  // tallies above were computed on three different sides and cannot be read
+  // as one sequence either. Main took 649 → 650 alone, with the #2240 check
+  // above, and independently took the SAME 649 to both 652 (the #1374
+  // checks above) and 651 (the #2201 not-found pair above). #2240 (+1),
+  // #1374 (+3) and the #2201 pair (+2) are three independent additions
+  // against the shared 649, which is 649 + 1 + 3 + 2 = 655.
+  // 653 → 657, 655 → 657: this branch's #2086 pair and main's #2240/#1374
+  // trio share the #2201 pair in their common ancestry (this branch merged
+  // main's #2201 addition on the way to 651 before adding #2086; main's own
+  // 655 already counts that same #2201 pair once). The union does not add
+  // 653 + 655 against a doubled base: it is the shared 649, plus #2201 (+2,
+  // counted once), plus this branch's #2086 (+2), plus main's #2240 (+1) and
+  // #1374 (+3) — 649 + 2 + 2 + 1 + 3 = 657, which is what main's manifest
+  // held independently of this merge.
+  // 652 → 658, 657 → 658: the tallies above were computed on either side of
+  // THIS merge and cannot be read as one sequence. This branch's own total
+  // before this merge was 652 — the shared 651 (the #2201 pair, counted
+  // once) plus this branch's #2236 "via agent" check above; main's own total
+  // was 657 — the same shared 651 plus main's #2086, #2240 and #1374
+  // additions above. One +1 and one +6 against a shared 651 is 658, which is
+  // what the merged manifest holds.
+  assert.equal(DAPP.tests.length, 658);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

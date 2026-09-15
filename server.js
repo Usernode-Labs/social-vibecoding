@@ -1073,6 +1073,10 @@ async function becomeLeader() {
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
   // comparison can't afford. See services/estimate-backfill.js.
   require('./src/services/estimate-backfill').start(config);
+  // #1374: the once-a-day "what needs your vote" digest. Hourly sweep,
+  // advisory-locked so only one instance sends, and the counterweight to
+  // new-proposal notifications now defaulting off.
+  require('./src/services/vote-digest').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
@@ -4832,7 +4836,8 @@ function startGovernanceApplyTicker(config) {
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
+                                                  'featured_illustration')
           LIMIT 100`
       );
       for (const issue of rows) {
@@ -4852,6 +4857,8 @@ function startGovernanceApplyTicker(config) {
             result = await issuesModule.maybeApplyRenameProposal(pool, issue);
           } else if (issue.kind === 'maintenance_campaign') {
             result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else if (issue.kind === 'featured_illustration') {
+            result = await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
           } else {
             result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
           }
@@ -5027,7 +5034,8 @@ function startStalePrSweeper(config) {
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
+                                                  'featured_illustration')
           LIMIT 100`
       );
       for (const issue of rows) {
@@ -5045,6 +5053,8 @@ function startStalePrSweeper(config) {
             await issuesModule.maybeApplyRenameProposal(pool, issue);
           } else if (issue.kind === 'maintenance_campaign') {
             await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else if (issue.kind === 'featured_illustration') {
+            await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
           } else {
             await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
           }

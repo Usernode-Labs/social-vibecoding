@@ -2220,6 +2220,11 @@ export function DevWorkshop(): ReactNode {
   // the baseline. `Clear` moves the baseline to now — AppView owns the stamp
   // and its storage, and republishes — and folds the walk back to its start,
   // so what the reader dismissed is under `Show older` rather than gone.
+  //
+  // #2240 widened WHEN it is offered, not what it does. With nothing new the
+  // baseline move is inert — the line is already past every row — so folding
+  // the walk is the whole of the press, and it stays one handler with one
+  // meaning: the list back as you found it.
   const sinceMore = !!v.since
     && (v.since.rows.length > sinceShown || v.since.seen.rows.length > seenShown);
   const showOlder = () => {
@@ -2515,7 +2520,14 @@ export function DevWorkshop(): ReactNode {
               end of the same row, as "Mark all read" rides the notifications
               sheet's title row: an action on the list, drawn small, and
               disabled rather than absent when there is nothing to clear so
-              the row does not reflow. */}
+              the row does not reflow.
+
+              #2240: "nothing to clear" IS NOT "no new rows". `Show older` is
+              live on a quiet day by design, and it walks straight across the
+              baseline into what the reader has already seen — so the one
+              state with the most on screen to fold was the one state where
+              Clear was dead, because new rows were the only thing it gated
+              on. It is live while there is a walk below the line too. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
             <span className="dev-ws-since-label">Since your last visit</span>
             <span className="dev-ws-since-n">{v.since.rows.length}</span>
@@ -2523,7 +2535,7 @@ export function DevWorkshop(): ReactNode {
               type="button"
               className="dev-ws-since-clear"
               data-ws-since-clear=""
-              disabled={!v.since.rows.length}
+              disabled={!v.since.rows.length && !seenShown}
               onClick={clearSince}
             >
               Clear
