@@ -76,6 +76,9 @@ test('unverified tier is exactly $0 and returns an actionable refusal', async ()
     // here: the tier's zero is IDENTITY-derived, not an admin switching a
     // cap off, so it keeps applying and the refusal below is unchanged.
     weeklyLimitCents: 20000, weeklySource: 'default',
+    // #838: the identity tier the weekly cap follows. This stub answers no
+    // proofs at all, so the base cap applies and the tier is unverified.
+    identityTier: 'unverified',
   });
   const budget = await limits.checkBudget(pool, 7);
   assert.equal(budget.reason, 'verification_required');

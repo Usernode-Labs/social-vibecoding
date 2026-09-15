@@ -499,9 +499,105 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the #2161 check above; main independently took the SAME 621 to 625 with
   // the four entries listed above it. One +1 and one +4 against a shared 621
   // is 626.
-  // 626 → 627: challenge illustrations, one check that a Home challenge card
+  // 626 → 627: the #1919 check on the all-apps directory, pinning the phone
+  // pane's two parts — the search head and the list body — as siblings with
+  // the rows inside the body.
+  // 627 → 628: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
-  assert.equal(DAPP.tests.length, 627);
+  // 627 → 628: #1933 adds one board check that an issue card names the
+  // auto-drafted category the demo themes placed it in.
+  // 627 → 629: the two #1945 checks on the bar inside an app — a dark app
+  // under the light shell (`?shot=app-tone-dark`) and a light app under the
+  // dark shell (`?shot=app-tone-light&theme=dark`), each reading the tone
+  // the frame's page colour put on <html>.
+  // 627 → 629: #1910 adds two checks on the restyled create-app dialog: the
+  // form view on `/#create` (the name card and the segmented rail) and the
+  // import view reached through `?shot=create-import` — landed independently
+  // on both sides of this merge.
+  // 627 → 629: on another side of these merges, the invite link now points
+  // at the marketing site's /waitlist page instead of the in-app #waitlist
+  // route, so two checks read the link's own field on the more-to-do screen
+  // — one that its value is the marketing URL and carries no hash route, one
+  // that the copy affordance is still beside it — also landed independently
+  // on both sides.
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  // 629 → 631: independently, #1944 adds two checks on the coding-run card
+  // opened through `?shot=cc-log-open` — the chevron still in the head row
+  // of an OPEN card (the flip rule has to reach it there), and the log panel
+  // under it.
+  // 631 → 639: the tallies above were computed across several independent
+  // merges and do not compose into one arithmetic sequence: this branch's
+  // #1933 check, main's #1945 pair, and the #1910, invite-link and #1962
+  // pairs each landed against a slightly different shared base than the
+  // others, and some of those pairs already landed once on both sides before
+  // this merge de-duplicated them. The number that matters is what the
+  // merged manifest actually holds, so this entry counts it directly rather
+  // than re-deriving it: 639.
+  // 639 → 642: #2201's three checks on a confirmed address re-joining the
+  // waitlist, landed independently on main — it lands on the settled panel,
+  // the copy reads back rather than congratulating, and it is never asked
+  // for a code.
+  // 642 → 646: #2219's four, counted the same way (642 was main's directly
+  // counted total after #2201, and this branch adds four on top of it). Two
+  // photograph the app-permission prompt through `?shot=app-permission` — the
+  // dialog an embedded app opens by calling usernode.requestPermission(),
+  // which no plain route can reach because it needs a running app that asks;
+  // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
+  // one for the rows and one for the copy that must NOT promise a revoke
+  // lands while the app is still open.
+  // 646 → 648: #1911 adds two checks on the create-app dialog's steps, the
+  // start step's two choices on /#create and the access step through
+  // `?shot=create-access`; the #1910 name-card check moved to
+  // `?shot=create-details`, where that field is on screen.
+  // 646 → 647: independently on main, #838 adds one check on Spend limits,
+  // pinning the three per-tier weekly cap fields (unverified, GitHub and X,
+  // zkPassport).
+  // 648 → 649, 647 → 649: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 646 → 648
+  // alone, with the #1911 checks above; main independently took the SAME
+  // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
+  // 646 is 649.
+  // 649 → 650: #2240 adds one check on the since-list's Clear in the state
+  // it was dead in — a reader with nothing new who walked `Show older` down
+  // past the baseline — reached through `?shot=since-seen`, which seeds the
+  // line at now and then presses the walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
+  // 649 → 651: on yet another side of this merge, #2201 also gives the
+  // check-my-status address step an answer for a mistyped address, and
+  // declares the two things that state must show at
+  // `?shot=waitlist-not-found` — the note that says the address is not on
+  // the list, and the control that offers to join with it. Two and not
+  // three: the manifest is on the 20-slot floor under MAX_DECLARED_TESTS,
+  // so the third property (the code half still down) is asserted from
+  // source in tests/waitlist-two-step.test.js instead of spending a slot
+  // the next proposal needs.
+  // 651 → 653: #2086 makes a featured-illustration change a governance
+  // proposal, and adds two checks on its card via the ?demo=1 mock row
+  // 9100008: the proposed-beside-current preview on the open board card,
+  // and the same preview on the proposal's own discussion page. (This
+  // branch took 649 → 651 alone; main independently took the same step
+  // with the #2201 pair above, so the merged manifest holds 653.)
+  // 650 → 655, 652 → 655, 651 → 655: on another side of this merge, the
+  // tallies above were computed on three different sides and cannot be read
+  // as one sequence either. Main took 649 → 650 alone, with the #2240 check
+  // above, and independently took the SAME 649 to both 652 (the #1374
+  // checks above) and 651 (the #2201 not-found pair above). #2240 (+1),
+  // #1374 (+3) and the #2201 pair (+2) are three independent additions
+  // against the shared 649, which is 649 + 1 + 3 + 2 = 655.
+  // 653 → 657, 655 → 657: this branch's #2086 pair and main's #2240/#1374
+  // trio share the #2201 pair in their common ancestry (this branch merged
+  // main's #2201 addition on the way to 651 before adding #2086; main's own
+  // 655 already counts that same #2201 pair once). The union does not add
+  // 653 + 655 against a doubled base: it is the shared 649, plus #2201 (+2,
+  // counted once), plus this branch's #2086 (+2), plus main's #2240 (+1) and
+  // #1374 (+3) — 649 + 2 + 2 + 1 + 3 = 657, which is what the merged
+  // manifest holds.
+  assert.equal(DAPP.tests.length, 657);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

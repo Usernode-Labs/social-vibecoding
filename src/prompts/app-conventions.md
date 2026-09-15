@@ -113,9 +113,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
    image bytes in Postgres. Both are absent in staging — detect and
-   degrade. Handle checks go through the platform's user directory
-   (`usernode.lookupUser()` / `searchUsers()`, or `/users/lookup` on the
-   platform API) — never a guess from users your app has already seen.
+   degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
+   never a hardcoded host. Handle checks use `usernode.lookupUser()` /
+   `searchUsers()` — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    standalone Docker, use exec-form `CMD ["node", "server.js"]`.
@@ -1505,6 +1505,76 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
   (smaller quota, deleted after 7 days) — fine for testing, never for
   durable content.
 
+## App-facing platform API — use the pinned v1 base
+
+Server-side app features that read Homeroom data use the private,
+read-only app-platform API. Never hard-code a public platform hostname:
+domains can move, and a redirect can turn an expected JSON response into
+HTML. The platform injects both of these reserved locators in production
+and staging containers:
+
+- `USERNODE_PLATFORM_API_V1_URL` — the preferred, version-pinned base
+  (`http://usernode:3000/api/app-platform/v1` in-network).
+- `USERNODE_PLATFORM_API_URL` — the original unversioned base, retained
+  as a v1 compatibility alias for existing app source and deployments.
+
+Use one fallback while older deployments age out:
+
+```js
+const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL
+  || process.env.USERNODE_PLATFORM_API_URL;
+```
+
+Both names and the whole `USERNODE_PLATFORM_API_*` family are reserved
+manifest keys: do not declare them in `dapp.json`. Production also gets
+`USERNODE_LLM_PROXY_TOKEN`, the opaque app credential used by token-gated
+routes. Staging gets the URL locators but deliberately no app token;
+unreviewed code must use the endpoint's documented user-token fallback or
+an obvious staging fixture.
+
+### Compatibility guarantee
+
+Within v1, existing route paths, response field names, field types, and
+field meanings stay compatible. The platform may add endpoints or response
+fields, tighten a security check, correct a bug, or change a rate limit;
+clients must ignore fields they do not recognise. A planned breaking shape
+requires a new `/v2` path and `USERNODE_PLATFORM_API_V2_URL` — v1 is never
+silently repointed. The unversioned paths and
+`USERNODE_PLATFORM_API_URL` remain aliases of v1 for legacy apps.
+
+## App directory — apps and contributors
+
+`GET /apps` on `PLATFORM_API_BASE` returns the public Homeroom app
+directory for server-side pickers, rankings, and cross-app discovery. It
+uses `x-usernode-app-token`; no user token or LLM consent grant is needed
+because every returned field is already public:
+
+```js
+const DIRECTORY_ENABLED = !!PLATFORM_API_BASE
+  && !!process.env.USERNODE_LLM_PROXY_TOKEN;
+
+const resp = await fetch(`${PLATFORM_API_BASE}/apps?include_wallets=0`, {
+  headers: {
+    'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+  },
+});
+if (!resp.ok) throw new Error(`app directory returned ${resp.status}`);
+const { apps } = await resp.json();
+```
+
+Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
+`icon_emoji`, `icon_url`, `active_users`, `requires_login`, its canonical
+`url`, and `contributors`. A contributor is
+`{ user_id, username, wallet_address }`; `?include_wallets=0` omits the
+wallet field. Only view-public, non-platform apps with a usable deployment
+appear. Use the returned `url`, never rebuild a hostname from `slug`.
+`icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+
+Cache the response for 30–60 seconds; the route allows 60 requests/minute
+per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
+token. Serve a short, obviously fake directory fixture so the screen stays
+reviewable without giving unreviewed code platform-wide access.
+
 ## App governance feed — the app's own proposal/vote/merge activity
 
 The platform tracks every proposal, vote, and merge for every app.
@@ -1513,21 +1583,11 @@ render live governance surfaces — a "what's changing" strip, a
 changelog screen — instead of hand-maintaining a shadow table of the
 same data.
 
-Production containers receive one extra env var (platform-injected;
-`USERNODE_PLATFORM_API_URL` and the whole `USERNODE_PLATFORM_API_*`
-family are reserved manifest keys you must not declare):
-
-- `USERNODE_PLATFORM_API_URL` — base URL of the app-facing platform
-  API (`http://usernode:3000/api/app-platform` in-network).
-
-Auth reuses the app's existing credential,
-`USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). **Staging
-containers receive neither**, and standalone deploys have no platform
-to call — always detect absence and degrade gracefully, exactly like
-the LLM pattern:
+Auth reuses `USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). Always
+detect the missing staging/standalone credential and degrade gracefully:
 
 ```js
-const FEED_ENABLED = !!process.env.USERNODE_PLATFORM_API_URL
+const FEED_ENABLED = !!PLATFORM_API_BASE
   && !!process.env.USERNODE_LLM_PROXY_TOKEN;
 // When false: hide the strip, or serve your staging mock feed (below).
 ```
@@ -1545,7 +1605,7 @@ feed.
 
 ```js
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/governance/feed?limit=10`,
+  `${PLATFORM_API_BASE}/governance/feed?limit=10`,
   { headers: { 'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN } }
 );
 const { items, has_more, next_cursor } = await resp.json();
@@ -1633,9 +1693,10 @@ here.
 
 ### From your server (production AND staging previews)
 
-`USERNODE_PLATFORM_API_URL` is injected into **both** production and
-staging containers (unlike every other platform credential pair), so
-one server-side code path covers both environments. The header rule:
+`USERNODE_PLATFORM_API_V1_URL` and its legacy fallback are injected into
+**both** production and staging containers (unlike every platform
+credential), so one server-side code path covers both environments. The
+header rule:
 
 - **Production** — send `x-usernode-app-token`
   (`USERNODE_LLM_PROXY_TOKEN`) **and** `x-usernode-user-token` (the
@@ -1655,7 +1716,7 @@ if (process.env.USERNODE_LLM_PROXY_TOKEN) {
   headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
 }
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/users/lookup` +
+  `${PLATFORM_API_BASE}/users/lookup` +
   `?username=${encodeURIComponent(handle)}`,
   { headers }
 );
@@ -1664,8 +1725,8 @@ const { found, user, ambiguous } = await resp.json();
 
 This user-token-only fallback exists **only** on the two `/users/*`
 endpoints. The governance feed still requires the app token, so its
-`FEED_ENABLED` check above (which ANDs `USERNODE_PLATFORM_API_URL`
-**and** `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
+`FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
+`USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
 
 Responses:
@@ -1928,21 +1989,103 @@ are gated by **Permissions Policy**, which is delegated **downward** by the
 embedding page. An app cannot grant itself one: the grant is the shell's to
 make, through the `allow` attribute on the frame.
 
-The shell delegates these to every app frame (the App tab, the landing
-page's in-page viewer, and the staging preview alike):
+Two capabilities are delegated to every app frame, with nothing to ask for:
+
+| Capability | Use it through |
+|---|---|
+| `clipboard-write` | `navigator.clipboard.writeText()` |
+| `pointer-lock` | `element.requestPointerLock()` |
+
+**Everything else worth having is GATED** (#2219). Nine capabilities are
+delegated to your app only when the person using it has granted that
+capability **to your app**, after the platform asked them in its own dialog:
 
 | Capability | Use it through |
 |---|---|
 | `geolocation` | `navigator.geolocation.getCurrentPosition()` |
-| `clipboard-write` | `navigator.clipboard.writeText()` |
-| `pointer-lock` | `element.requestPointerLock()` |
+| `microphone` | `navigator.mediaDevices.getUserMedia({ audio: true })` |
+| `camera` | `navigator.mediaDevices.getUserMedia({ video: true })` |
+| `display-capture` | `navigator.mediaDevices.getDisplayMedia()` |
+| `usb` | `navigator.usb.requestDevice()` |
+| `serial` | `navigator.serial.requestPort()` |
+| `hid` | `navigator.hid.requestDevice()` |
+| `bluetooth` | `navigator.bluetooth.requestDevice()` |
+| `midi` | `navigator.requestMIDIAccess()` |
 
-Delegation is not a grant. The browser still prompts the user the first
-time your app asks, per origin, and they can refuse. Always handle the
-error path.
+`geolocation` used to be in the first table, delegated to every app
+unconditionally. It moved because of how browsers attribute a nested
+frame's request: under permission delegation the prompt names the
+**top-level** origin, so it said "my.onhomeroom.com wants to know your
+location" and never named the app, and the answer was then remembered for
+the platform origin, so every other app inherited it silently. The
+platform's own prompt is the one that can name the app that is asking.
 
-**Everything else is not delegated**, `camera`, `microphone`,
-`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+### Declare, then ask
+
+**Declare in `dapp.json` what your app may ask for.** An undeclared
+capability is refused before any dialog is shown, so the set of things your
+app can ever reach is visible in your own diff, where the group reviewing a
+proposal can see it:
+
+```json
+"permissions": [
+  { "capability": "microphone", "reason": "Records your voice notes" },
+  "geolocation"
+]
+```
+
+The object form and the bare string mean the same thing. `reason` is one
+short line shown in the prompt, the same way `llm.purpose` is.
+
+**Ask when you need it, not at startup.** Call `requestPermission()` on the
+tap that needs the capability, then use the ordinary web API:
+
+```js
+recordBtn.onclick = async () => {
+  const r = await usernode.requestPermission('microphone');
+  if (r.state !== 'granted') return showWhyWeNeedIt(r.reason);
+  if (!r.active) return;  // granted; the app is about to reopen (see below)
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  startRecording(stream);
+};
+```
+
+The answer is `{ capability, state, active, reason }`. `state` is
+`"granted"` or `"denied"`; on a denial `reason` is `"declined"` (the person
+said no), `"not_declared"` (missing from your `dapp.json`) or
+`"unknown_capability"`.
+
+`usernode.getPermission(name)` reads the same answer without ever
+prompting, so you can render an "enable" button from it.
+`usernode.getPermissions()` returns the whole picture for your app:
+`{ declared, granted, active }`.
+
+### `active` is the field to read twice
+
+A frame's Permissions Policy is computed when it **navigates**, so a
+capability granted just now cannot apply to the document that asked for it.
+On that first grant the platform tells the person the app will reopen, and
+reloads the frame. `active: false` therefore means "granted, and you are
+about to be reloaded": stop, do not call the web API, and let the reload
+land. Save anything you need to keep first.
+
+Every later launch delegates it up front and `requestPermission()` resolves
+`active: true` with no dialog and no reload at all.
+
+For the same reason, a revoke in Settings takes effect the next time the
+app opens rather than instantly. A running document's policy cannot be
+narrowed.
+
+### Where it does and does not apply
+
+Gated capabilities are delegated on the **App tab** only. The landing
+page's in-page viewer serves signed-out visitors, who hold no grants, and
+the staging preview shows a build the group has not voted in yet. Both
+still relay the prompt, so your app gets a truthful answer there rather
+than silence, but neither can turn a capability on.
+
+### Telling "blocked" from "never asked"
+
 The failure mode is worth knowing because it is so easy to misread: an
 undelegated capability is not refused with a distinct error and it does not
 prompt. `getCurrentPosition` and friends reject in a couple of
@@ -1950,16 +2093,20 @@ milliseconds with `PERMISSION_DENIED`, the *same* code the browser uses
 when a person taps "block". So an app that treats code 1 as "the user said
 no" will tell people to check a permission they were never asked for.
 
-Ask the frame before offering the control, and tell the two cases apart:
+`usernode.hasCapability(name)` answers synchronously for the CURRENT
+document, and is the one call here that also works standalone:
 
 ```js
-const policy = document.permissionsPolicy || document.featurePolicy;
-const allowed = !policy || policy.allowsFeature('geolocation');
-// `allowed` is true where the browser does not expose the API to ask,
-// so treat it as "try it and see" rather than a guarantee.
+if (!usernode.hasCapability('geolocation')) {
+  // Not delegated to this document. Either ask for it, or hide the control.
+}
 ```
 
-If your app needs a capability that is not on the list, that is a missing
+It reads the document's own Permissions Policy, and returns `true` where
+the browser exposes no way to ask, so treat that as "try it and see" rather
+than a guarantee.
+
+If your app needs a capability that is on neither list, that is a missing
 platform capability, not something to work around in the app: see
 "Platform-level problems & missing capabilities" below.
 

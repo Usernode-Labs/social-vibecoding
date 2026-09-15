@@ -38,25 +38,23 @@ const {
   waitlistCodeConfirmLimiter,
   waitlistResendLimiter,
   waitlistResendIpLimiter,
+  waitlistStatusLimiter,
+  waitlistStatusIpLimiter,
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
-const { productionHostname } = require('../services/caddy');
+const { inviteUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-
-// Apps surfaced publicly: not the self-app, view-public, and in a status
-// that means the app actually exists/runs (creating / awaiting_secrets /
-// error rows aren't usable, so they're hidden — `status` is still returned
-// for the rows that do appear).
-const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
+const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
 // drift apart by accident — a field that differed by branch, even a
-// timestamp, would turn the endpoint into a membership oracle.
+// timestamp, would turn the endpoint into a membership oracle. This
+// freeze SURVIVED #2201: the join endpoint now discloses by decision,
+// this one still does not.
 //
 // `cooldown_seconds` is a constant the client counts down locally. It
 // matches the minute gap in services/mail/rate-limit.js's waitlist_code
@@ -118,69 +116,7 @@ function publicApiRoutes(config) {
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      // The active-users join mirrors the authed home list's sticky
-      // 10-day rule (routes/apps.js): a user counts iff they ever spent
-      // >= 60s on the app on a single day AND visited within 10 days.
-      // Batched to one row per app — same shape, no per-app round trips.
-      const { rows: apps } = await pool.query(
-        `SELECT a.id, a.name, a.slug, a.status, a.collab_visibility,
-                a.view_visibility, a.created_at, a.last_deploy_at,
-                a.icon_emoji, a.icon_image_id, a.anon_shell,
-                COALESCE(au.cnt, 0) AS active_users
-           FROM apps a
-           LEFT JOIN (
-             SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
-             FROM app_activity a1
-             WHERE a1.date >= CURRENT_DATE - 10
-               AND EXISTS (
-                 SELECT 1 FROM app_activity a2
-                 WHERE a2.app_id = a1.app_id
-                   AND a2.user_id = a1.user_id
-                   AND a2.seconds_spent >= 60
-               )
-             GROUP BY a1.app_id
-           ) au ON au.app_id = a.id
-          WHERE NOT a.self_hosted
-            AND a.view_visibility = 'public'
-            AND a.status <> ALL($1::text[])
-          ORDER BY COALESCE(au.cnt, 0) DESC,
-                   a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
-        [HIDDEN_APP_STATUSES]
-      );
-
-      const byApp = await loadContributors(pool, apps.map((a) => a.id));
-
-      res.json({
-        apps: apps.map((a) => ({
-          id: a.id,
-          name: a.name,
-          slug: a.slug,
-          status: a.status,
-          collab_visibility: a.collab_visibility,
-          view_visibility: a.view_visibility,
-          created_at: a.created_at,
-          last_deploy_at: a.last_deploy_at,
-          // Home-card presentation fields (landing-page app directory).
-          // icon_url is server-built like the authed list so clients never
-          // assemble ids into paths; /app-icons/:id is a public route.
-          icon_emoji: a.icon_emoji || null,
-          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
-          active_users: parseInt(a.active_users, 10) || 0,
-          // From the anonymous shell + API-gate probe (services/shell-probe.js):
-          // anything not positively classified 'public' is presented as
-          // account-required — 'unknown' fails safe to gated, matching
-          // the scaffold's default behavior.
-          requires_login: a.anon_shell !== 'public',
-          // Direct subdomain URL — what the public landing page links to.
-          // View-public apps pass the Caddy edge gate without a session;
-          // apps that JWT-gate their own HTML shell will show their
-          // "Open in Homeroom" page to anonymous visitors.
-          url: `https://${productionHostname(a.slug)}`,
-          contributors: (byApp.get(a.id) || []).map((r) =>
-            shapeContributor(r, includeWallets)
-          ),
-        })),
-      });
+      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -229,10 +165,44 @@ function publicApiRoutes(config) {
   // POST /api/public/waitlist — platform waitlist join (onboarding flow
   // alignment), now carrying the stage-1 survey (mirrors the original
   // topochain waitlist: made_url + discovery required, location
-  // optional). No account required. Idempotent and non-enumerating: an
-  // email that's already on the list gets the same 200 as a fresh one —
-  // but only the FIRST join gets a stage-2 `more` link back (re-joins
-  // must not hand a stranger the capability to edit someone's answers).
+  // optional). No account required.
+  //
+  // THREE CASES, THREE ANSWERS (#2201). This endpoint used to be
+  // non-enumerating: every join, fresh or repeat, got one frozen 200 that
+  // the client could not branch on. The cost was a returning reader being
+  // told "we sent a six-digit code to you@..." and then sitting in front
+  // of a code field with nothing coming, because their address was
+  // already confirmed and there was nothing left to send.
+  //
+  //   1. New address       -> joined, code mailed, on to step 2.
+  //   2. On the list, not  -> "already on the waitlist", fresh code
+  //      confirmed            mailed, on to step 2.
+  //   3. On the list, and  -> "already on the waitlist, and confirmed":
+  //      confirmed            the settled panel. NOTHING is minted,
+  //                           deleted or mailed.
+  //
+  // That makes this endpoint an oracle for "is this address on the
+  // waitlist, and is it confirmed". THE APP OWNER DECIDED THAT TRADE,
+  // deliberately and with the alternative in front of them: the silence
+  // was costing every returning person their way back in. So do not
+  // "fix" the branch below back into one frozen body — that is the
+  // reverted change, not a bug. What still holds:
+  //
+  //   - only the FIRST join gets a stage-2 `more` link back. That token
+  //     dereferences to an address, its survey answers and its invite
+  //     list, so a re-join handing one over would be a capability leak,
+  //     which is a different thing from the membership disclosure above
+  //     and is NOT part of the decision.
+  //   - an INTEGRATOR-keyed request gets the old frozen body with no
+  //     status block at all. An integrator proxies other people's
+  //     addresses through a 200-per-window bucket; first-party joins come
+  //     from a browser through a 5-per-15-minutes-per-IP one, which is
+  //     what bounds the oracle to a rate a person can reach and a
+  //     harvester cannot.
+  //   - the malformed-address 422 is unchanged, and discloses nothing.
+  //   - POST /resend is untouched: it still answers all four of its
+  //     branches with one frozen body (see RESEND_RESPONSE).
+  //
   // Confirmation mail is best-effort (the mailer degrades silently when
   // no transport is configured).
   router.post('/api/public/waitlist', waitlistIntegratorAuth(config), waitlistJoinLimiter, async (req, res) => {
@@ -244,8 +214,11 @@ function publicApiRoutes(config) {
     if (!stage1.ok) {
       return res.status(422).json({ error: stage1.error });
     }
+    // An integrator-keyed request never learns which branch ran (see the
+    // doc comment above): it gets the pre-#2201 body, byte for byte.
+    const disclose = !req.waitlistIntegrator;
     try {
-      const { created, moreToken } = await waitlist.joinWaitlist(pool, {
+      const { created, moreToken, submittedAt } = await waitlist.joinWaitlist(pool, {
         email,
         // A trusted integrator proxies real people, so its own server
         // address is not the signup's address. Recording the proxy for
@@ -253,40 +226,79 @@ function publicApiRoutes(config) {
         // unkeyed request has no forwarded address and is unchanged.
         ip: req.waitlistEndUserIp || clientIp(req),
         answers: stage1.value,
-        // From /#waitlist?ref=<code>. An unresolvable code is ignored
-        // rather than refused — a stale link must never block a join.
+        // From an invite link's ?ref=<code> — the marketing site's
+        // /waitlist page forwards it here, and the in-app /#waitlist route
+        // still reads it from the hash for links minted before the move.
+        // An unresolvable code is ignored rather than refused: a stale
+        // link must never block a join.
         inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
       });
+      // CASE 1 — a brand new address. Joined, code mailed, step 2 next.
       if (created) {
         log.info('public-api', 'Waitlist join', {});
         // Best-effort like the mail itself: a code that cannot be minted
         // must not fail the join, and the one-click link still confirms.
         const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
         sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
-      } else {
-        // A RE-JOIN. The row already existed, so nothing above ran — and
-        // the screen still says "we sent a six-digit code to you@…",
-        // because the client only ever sees this endpoint's 200. That was
-        // the lie: somebody who joined last week, typed their address in
-        // again and sat waiting for a code that was never minted.
-        //
-        // So mint one, on the resend kind rather than the join kind: the
-        // words a returning person needs are "here is your code", not a
-        // second welcome, and waitlist_joined's one-per-day rule would
-        // drop this send anyway. An already-confirmed address gets the
-        // mail's other shape, which says there is nothing left to do.
-        //
-        // Both are fire-and-forget, and the response body below is
-        // untouched — byte for byte the same object every re-join has
-        // always received, whatever branch ran here. The mail throttle is
-        // what bounds how often this can actually send.
-        await resendConfirmation(email).catch(() => {});
+        return res.json({
+          ok: true,
+          message: "You're on the waitlist. We'll email you when access opens up.",
+          // Stage-2 capability — present only on the first join.
+          more_token: moreToken,
+          ...(disclose
+            ? {
+              status: signupStatus({
+                submitted_at: submittedAt,
+                confirmed_at: null,
+                released_at: null,
+                linked_user_id: null,
+              }),
+            }
+            : {}),
+        });
       }
-      res.json({
+
+      // A RE-JOIN, and which of the two depends on the row. Read it
+      // FIRST: case 3 must not touch the code table at all, and the old
+      // code here called into resendConfirmation unconditionally, which
+      // deleted a confirmed reader's live code to mint one it then mailed
+      // as a status code nobody was waiting for.
+      const row = await waitlist.getSignupByEmail(pool, email);
+      // A row that vanished between the INSERT and this read (an admin
+      // deletion mid-request) is the only way this is null. Treat it as
+      // case 2's shape: it is the answer that asks for the least and
+      // discloses nothing that is not already true.
+      const confirmedRow = !!(row && row.confirmed_at);
+
+      // CASE 3 — already on the list AND confirmed. There is nothing left
+      // for this person to do, so there is nothing to mint, nothing to
+      // delete and nothing to mail. The status block is what lands the
+      // client on the settled panel instead of a code field.
+      if (confirmedRow) {
+        // No address in the log line: which addresses came back is not
+        // something worth writing down to answer a support question.
+        log.info('public-api', 'Waitlist re-join, already confirmed', {});
+        return res.json({
+          ok: true,
+          message: "You're already on the waitlist, and this address is confirmed.",
+          more_token: null,
+          ...(disclose ? { status: signupStatus(row) } : {}),
+        });
+      }
+
+      // CASE 2 — on the list, not confirmed. Mail a fresh code, on the
+      // resend kind rather than the join kind: the words a returning
+      // person needs are "here is your code", not a second welcome, and
+      // waitlist_joined's one-per-day rule would drop this send anyway.
+      // Fire-and-forget, and the mail throttle plus the reuse window in
+      // resendConfirmation are what bound how often it actually sends.
+      await resendConfirmation(email).catch(() => {});
+      return res.json({
         ok: true,
-        message: "You're on the waitlist. We'll email you when access opens up.",
-        // Stage-2 capability — present only on the first join.
-        more_token: moreToken || null,
+        message: "You're already on the waitlist. We've sent a fresh six-digit "
+          + 'code to that address.',
+        more_token: null,
+        ...(disclose && row ? { status: signupStatus(row) } : {}),
       });
     } catch (err) {
       log.error('public-api', 'waitlist join failed', { message: err.message });
@@ -295,7 +307,10 @@ function publicApiRoutes(config) {
   });
 
   // Mint a fresh code for an address and mail it. Shared by POST /resend
-  // and by the re-join branch above so the two cannot drift.
+  // and by case 2 of the re-join branch above so the two cannot drift.
+  // Case 3 deliberately does NOT come through here: a confirmed address
+  // re-joining has nothing to be sent, and routing it here is what used
+  // to delete its live code.
   //
   // A CONFIRMED row gets a code too (#1538). It used to get the
   // "nothing left to do" mail carrying its more_token LINK, which is
@@ -315,6 +330,21 @@ function publicApiRoutes(config) {
     // one would tell a stranger's inbox that somebody typed it here.
     if (!row) return;
     const confirmed = !!row.confirmed_at;
+    // A code minted seconds ago is still in the inbox, so LEAVE IT THERE.
+    //
+    // Minting is unconditional below and the mail throttle only decides
+    // afterwards, so without this check two asks a few seconds apart
+    // destroyed a working code and delivered nothing to replace it
+    // (waitlist_code allows one send per address per minute, and the
+    // second send is recorded suppressed_rate_limit). Production carried
+    // 59 suppressions against 32 sends over thirty days, which is the
+    // same number of readers left typing a code that no longer existed.
+    //
+    // Returning early is the whole fix: only the bcrypt hash is stored,
+    // so the live code cannot be re-mailed, and the mail that carried it
+    // is already out. See CODE_REUSE_WINDOW_SECONDS, which mirrors
+    // OTP_REUSE_WINDOW_SECONDS in services/email-signup.js.
+    if (await waitlist.hasReusableCode(pool, email).catch(() => false)) return;
     // Issuing deletes every unconsumed code for the address first, so the
     // previous one dies here: exactly one code is live at a time and a
     // forwarded older mail is already dead. That is what makes "use the
@@ -351,8 +381,17 @@ function publicApiRoutes(config) {
   // here — invalid address, not on the list, on the list and unconfirmed,
   // already confirmed — and three of them answer with the SAME 200 and the
   // same body. Anything else makes this an oracle for "is this person on
-  // the waitlist", which is the contract the join and confirm endpoints
-  // beside it already keep.
+  // the waitlist".
+  //
+  // POST /confirm beside it keeps the same contract (one 422 for a wrong
+  // code and for an address that was never on the list). POST
+  // /api/public/waitlist no longer does, on purpose: #2201 has it report
+  // membership and confirmed state so a returning reader lands on their
+  // status instead of an empty code field. That is a decision about THAT
+  // endpoint, made with its rate limiter in front of it, and it is not a
+  // licence to relax this one — this route takes a bare address with no
+  // survey behind it and no browser bucket, which is the cheapest
+  // possible oracle to drive.
   //
   // That includes the cooldown. A per-address "wait 47 more seconds" would
   // be a membership test in itself, so `cooldown_seconds` is a CONSTANT the
@@ -377,6 +416,69 @@ function publicApiRoutes(config) {
       log.error('public-api', 'waitlist resend failed', { message: err.message });
     }
     return res.json(RESEND_RESPONSE);
+  });
+
+  // POST /api/public/waitlist/status — where one address stands, by address.
+  //
+  // The read half of check-my-status, and the one route in this family that
+  // answers the membership question OUT LOUD: not on the list, on it and
+  // unconfirmed, or on it and confirmed. Everything else here refuses to,
+  // and the difference is deliberate rather than an oversight to tidy up.
+  //
+  // The decision it rests on is not this endpoint's. #2201 accepted
+  // membership + confirmed-state disclosure on the JOIN endpoint, with the
+  // silent alternative in front of the owner, because the silence was
+  // costing every returning person their way back in. This route discloses
+  // the same three cases for strictly less: it writes nothing, mails
+  // nothing, and mints nothing, where a join creates a row and sends a code.
+  // So it introduces no new disclosure class. If that decision is ever
+  // reversed and the join endpoint goes back to one frozen body, THIS route
+  // has to be revisited in the same motion — the two cannot fall out of step.
+  //
+  // What it never says, whatever the branch: more_token (the stage-2
+  // capability, first join only), invite_code, invited_by, answers, ip, the
+  // linked account, or an echo of the submitted address. Confirming an
+  // address still means holding the code that was mailed to it, so nothing
+  // here helps anyone claim a mailbox they do not have.
+  //
+  // Not mounted with waitlistIntegratorAuth, unlike the join route above. A
+  // key re-keys a WRITE budget for genuinely proxied signups; a read has no
+  // proxied end user to re-key for, and a key must not buy a bigger oracle
+  // budget. A key-bearing caller is simply an anonymous caller here: one
+  // behaviour, one bucket, no second response shape to keep in sync.
+  //
+  // Both branches run the SAME single indexed lookup on the unique email
+  // column and nothing else, so the clock does not separate them either. Do
+  // not add a query, a cache, or an await to only one of them.
+  router.post('/api/public/waitlist/status', waitlistStatusIpLimiter, waitlistStatusLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    // The same words /resend refuses with: a syntactically invalid address
+    // is not a fact about the waitlist, so the two surfaces answer it alike.
+    if (!email) {
+      return res.status(422).json({ error: 'A valid email address is required.' });
+    }
+    try {
+      const row = await waitlist.getSignupByEmail(pool, email);
+      if (!row) {
+        return res.json({ ok: true, on_list: false, admitted: false, status: null });
+      }
+      // signupStatus is the ONE derivation of where a row stands, shared with
+      // POST /confirm and GET /more/:token. Deriving it a second time here is
+      // how one row starts being described three ways; `admitted` is mirrored
+      // at the top level exactly as /more/:token does it.
+      const status = signupStatus(row);
+      return res.json({
+        ok: true,
+        on_list: true,
+        admitted: status.admitted,
+        status,
+      });
+    } catch (err) {
+      // No address in the payload: this line is about our failure, not about
+      // whose lookup it was.
+      log.error('public-api', 'waitlist status read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/public/waitlist/confirm/:token — the one-click confirm link
@@ -510,8 +612,14 @@ function publicApiRoutes(config) {
           linkedin: config.waitlistFollowLinkedinUrl || null,
           instagram: config.waitlistFollowInstagramUrl || null,
         },
+        // The link points at the marketing site's /waitlist page, not at
+        // this app's #waitlist route: it is shared with people who have
+        // never seen the product, and the shell has nothing to tell them.
+        // The `ref` code is unchanged and still comes back here as
+        // `invite_code` on the join (see the note above), so links minted
+        // before this change keep attributing correctly.
         invite: {
-          url: inviteCode ? `${PRODUCTION_ORIGIN}/#waitlist?ref=${inviteCode}` : null,
+          url: inviteUrl(config, inviteCode),
           count: invited.count,
           emails: invited.emails,
         },

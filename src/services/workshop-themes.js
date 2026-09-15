@@ -68,6 +68,7 @@
 const crypto = require('crypto');
 const github = require('./github');
 const topicAttrs = require('./topic-attributes');
+const issueProgress = require('./issue-progress');
 const { currentVotePredicateSql } = require('./pr-vote-revision');
 const limits = require('./limits');
 const llm = require('./llm');
@@ -191,6 +192,24 @@ async function buildThemeInput(pool, app) {
     seen.add(item.key);
     items.push(item);
   };
+  // #1903: an issue somebody is on belongs in the underway lane, not in
+  // open. Both halves of the in-progress status count — a hand-set claim and
+  // a live dev session that names the issue — because the alternative is the
+  // card the Board already shows as in progress sitting in `open` here.
+  //
+  // One-directional on purpose: a group-voted ASSIGNEE does not move
+  // anything. "Who should do this" and "who is doing it" are different
+  // facts, and only the second one is a lane. Claiming casts the assignee
+  // vote too (routes/issues.js's claim route has done that since it was
+  // written), so pressing Claim is the one gesture that does both.
+  let inProgress = new Set();
+  try {
+    inProgress = await issueProgress.inProgressIssueNumbers(pool, appId);
+  } catch (err) {
+    // A failed read must not empty the board. Every issue then reads `open`,
+    // which is exactly the behaviour this change replaces — degraded, not broken.
+    log.warn('workshop-themes', 'in-progress read failed', { app: app.slug, message: err.message });
+  }
   for (const i of ghIssues.slice(0, MAX_ISSUES)) {
     const a = attrs.get(i.number) || {};
     const category = top(a.category);
@@ -198,7 +217,7 @@ async function buildThemeInput(pool, app) {
     push({
       key: `issue:${i.number}`,
       kind: 'issue',
-      state: 'open',
+      state: inProgress.has(i.number) ? 'underway' : 'open',
       title: clip(i.title, TITLE_MAX),
       excerpt: excerpt(i.body),
       by: i.user || null,

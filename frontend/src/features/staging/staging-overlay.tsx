@@ -249,12 +249,20 @@ export function StagingOverlay(): ReactNode {
             wrapped, `src` assigned only through stagingBridge.setSrc — see the
             file header. tests/staging-iframe-identity.test.js pins this.
         */}
+        {/*
+            `allow` is the UNGATED BASE and nothing else (#2219). It used to
+            be "pointer-lock; geolocation". A staging preview shows a build
+            the group has not voted in yet, and handing unreviewed code a
+            camera is what the gate exists to stop; the permission PROMPT is
+            still relayed here, so an app can see why it was refused. See
+            ../app-frame/app-frame-policy.js.
+        */}
         <iframe
           id="staging-iframe"
           ref={iframeRef}
           className="absolute inset-0 w-full h-full border-0"
           style={{ background: state.background || "#08080f" }}
-          allow="pointer-lock; geolocation"
+          allow="clipboard-write; pointer-lock"
         >
         </iframe>
         {/*

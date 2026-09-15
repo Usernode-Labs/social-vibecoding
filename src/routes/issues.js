@@ -4,6 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
+const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
@@ -17,6 +18,13 @@ const { placeBounty } = require('../services/bounties');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
+// #2086: the featured-illustration governance kind. Its proposals are
+// opened by src/routes/app-illustrations.js (the bytes travel with the
+// save, which the generic create route below cannot carry, so the kind is
+// deliberately absent from VALID_KINDS); the apply lives here beside the
+// other governance kinds so the vote, sweeper and force-apply paths share
+// one gate.
+const illustrationProposals = require('../services/illustration-proposals');
 // #1112: the same in-process "a turn is running" predicate /api/sessions
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
@@ -66,19 +74,20 @@ const MAX_SECRET_VALUE_LENGTH = 4096;
 // with embedded code snippets are legitimate, so the cap is generous.
 const MAX_CAMPAIGN_INSTRUCTIONS_LENGTH = 20000;
 const MAX_CAMPAIGN_TITLE_LENGTH = 200;
-// "In progress" status windows. Two separate 7-day constants on purpose —
-// they protect different things and may be tuned independently:
-//  - IN_PROGRESS_PAUSED_WINDOW_DAYS: how long a PAUSED (never-promoted,
-//    never-archived) session keeps counting toward an issue's derived
-//    in-progress status. Active/promoted/merging sessions always count;
-//    archived/merged never do; paused ones age out on last_activity_at
-//    because nothing ever archives them automatically.
-//  - ISSUE_CLAIM_TTL_DAYS: how long a manual issue_claims row stays live
-//    without activity. Activity = the claim's own claimed_at (renewed by
-//    re-POSTing) OR any message in the issue's discussion thread, so an
-//    issue under active discussion keeps its claims alive with no writes.
-const IN_PROGRESS_PAUSED_WINDOW_DAYS = 7;
-const ISSUE_CLAIM_TTL_DAYS = 7;
+// "In progress" status windows, and what keeps a claim live.
+//
+// #1903: both constants and the claim-liveness predicates now live in
+// services/issue-progress.js, because the Workshop's lane assignment needs
+// exactly the same rules and a second copy of them is a second copy to
+// drift. The bulk read below stays here: it needs per-issue DETAIL for the
+// chip and already holds the thread timestamps, so calling the Set helper
+// would be a redundant query on a hot path.
+const {
+  IN_PROGRESS_PAUSED_WINDOW_DAYS,
+  ISSUE_CLAIM_TTL_DAYS,
+  claimExpiresAt,
+  claimIsLive,
+} = require('../services/issue-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -99,7 +108,8 @@ const MAX_ISSUE_TITLE_LENGTH = 200;
 // PRs the engine opens are the repo-visible artifact; a twin issue on
 // the PLATFORM repo would be noise.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign';
+  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign'
+    && kind !== 'featured_illustration';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -310,6 +320,17 @@ function stagingMockGovernance() {
     mk(9100001, 'rename', '[Mock] Rename app to "Staging Demo App"',
       { newName: 'Staging Demo App' }, 6, 2, 0,
       { required: 2, windowEndsAt: hoursAhead(36) }),
+    // #2086: an open featured-illustration proposal, so the card's preview
+    // (proposed image beside the current one) is reviewable via ?demo=1 on
+    // an empty staging DB. The image is a shipped static asset rather than
+    // an app-illustrations id, which the empty DB could not serve.
+    mk(9100008, 'featured_illustration', '[Mock] Change the featured illustration',
+      {
+        proposed: { url: '/icons/icon-512.png', darkUrl: null, zoom: 1.2, x: 10, y: -5, tint: 'teal' },
+        current: { url: '/icons/icon-192.png', darkUrl: null, zoom: 1, x: 0, y: 0 },
+        remove: false,
+      }, 5, 1, 0,
+      { required: 2, windowEndsAt: hoursAhead(30) }),
     // Contested secret change (down >= 1/3) → no countdown, full count gate.
     mk(9100002, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
       { key: 'FEATURE_FLAG', action: 'set', hasValue: true }, 8, 4, 3,
@@ -716,7 +737,8 @@ function issueRoutes(config) {
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
-           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+                          'featured_illustration')
          LIMIT 1`,
         [appId, id, userId]
       );
@@ -1086,6 +1108,30 @@ function issueRoutes(config) {
       }
       const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
       await sendSystemMessage(pool, app.id, createdMsg, 'system');
+
+      // #1374: a new issue notified nobody before this. Fanned out to the
+      // app's stakeholders and gated on the `new_issues` category, which
+      // DEFAULTS OFF — so on a platform with no stored preferences this
+      // sends nothing at all, and it is opt-in per app from the tile menu.
+      //
+      // Best-effort and never awaited into the response: filing an issue
+      // must not fail because a notification insert did. The issue is on
+      // the board either way, which is the whole reason suppressing a
+      // notification here is not destructive.
+      // Wrapped: a `.catch()` covers a rejected promise, not a synchronous
+      // throw, and filing an issue must not fail because of a notification.
+      try {
+        notifications.createIssueOpenedNotifications?.(pool, {
+          appId: app.id,
+          issueNumber: githubIssueNumber || rows[0].id,
+          authorId: req.user.id,
+        })?.then((created) => Promise.all(
+          created.map((row) => notifications.hydrateAndPush(pool, row))
+        ))?.catch((err) => log.error('issues',
+          'Issue-opened notification failed', { appId: app.id, err: err.message }));
+      } catch (err) {
+        log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
+      }
       // Dual-post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
@@ -1093,7 +1139,7 @@ function issueRoutes(config) {
       // thread yet). A close_issue proposal ALSO posts into its target
       // issue's thread so followers of the issue see the vote start.
       if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue'
-          || kind === 'maintenance_campaign') {
+          || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
         if (kind === 'close_issue' && payload.issueNumber) {
@@ -1177,6 +1223,10 @@ function issueRoutes(config) {
         voteSubject = `close proposal for issue #${issue.payload?.issueNumber || '?'}`;
       } else if (issue.kind === 'maintenance_campaign') {
         voteSubject = `maintenance campaign "${issue.payload?.title || issue.title}"`;
+      } else if (issue.kind === 'featured_illustration') {
+        voteSubject = issue.payload?.remove
+          ? 'the proposal to remove the featured illustration'
+          : 'the proposed featured illustration';
       } else {
         voteSubject = `issue: "${issue.title}"`;
       }
@@ -1202,6 +1252,7 @@ function issueRoutes(config) {
       let secretChanged = null;
       let issueClosed = null;
       let campaignStarted = null;
+      let illustrationChanged = null;
       if (vote === 'up' && issue.kind === 'rename') {
         renamed = await maybeApplyRenameProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'secret_change') {
@@ -1210,9 +1261,11 @@ function issueRoutes(config) {
         issueClosed = await maybeApplyCloseIssueProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
         campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+      } else if (vote === 'up' && issue.kind === 'featured_illustration') {
+        illustrationChanged = await maybeApplyFeaturedIllustrationProposal(pool, issue);
       }
 
-      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
+      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted, illustrationChanged });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1511,15 +1564,13 @@ function issueRoutes(config) {
           ORDER BY ic.claimed_at ASC`,
         [app.id]
       );
-      const claimTtlMs = ISSUE_CLAIM_TTL_DAYS * 24 * 3600 * 1000;
       const claimsByNumber = new Map();
+      const claimNow = Date.now();
       for (const c of claimRows) {
-        const lastAt = Date.parse(chatByNumber.get(c.n)?.last_at || '') || 0;
-        const claimedAt = Date.parse(c.claimed_at) || 0;
-        const freshest = Math.max(claimedAt, lastAt);
-        if (freshest <= Date.now() - claimTtlMs) continue; // expired — inert row
+        const lastAt = chatByNumber.get(c.n)?.last_at;
+        if (!claimIsLive(c.claimed_at, lastAt, claimNow)) continue; // expired — inert row
         const list = claimsByNumber.get(c.n) || [];
-        list.push({ ...c, expires_at: new Date(freshest + claimTtlMs).toISOString() });
+        list.push({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() });
         claimsByNumber.set(c.n, list);
       }
 
@@ -2303,8 +2354,8 @@ function issueRoutes(config) {
         return res.status(409).json({ error: 'Issue is not open' });
       }
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
-          && issue.kind !== 'maintenance_campaign') {
-        return res.status(400).json({ error: 'Only secret-change, close-issue, and maintenance-campaign proposals can be admin-applied' });
+          && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
+        return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
       }
       // Campaigns are self-app governance with fleet-wide blast radius:
       // only a FULL platform admin may force one, never an app admin.
@@ -2320,7 +2371,9 @@ function issueRoutes(config) {
         ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
         : issue.kind === 'maintenance_campaign'
           ? await maybeApplyMaintenanceCampaignProposal(config, pool, issue, { force: true, forceBy: req.user })
-          : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
+          : issue.kind === 'featured_illustration'
+            ? await maybeApplyFeaturedIllustrationProposal(pool, issue, { force: true, forceBy: req.user })
+            : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
 
@@ -2564,6 +2617,116 @@ async function maybeApplyRenameProposal(pool, issue) {
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     log.error('issues', 'Rename apply failed', { issueId: issue.id, err: err.message });
+    return { applied: false, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Vote-apply path for `kind='featured_illustration'` issues (#2086). Same
+ * shape as maybeApplyRenameProposal, the card it is modelled on: gate
+ * check, lock the issue row, write the proposed record onto the app
+ * (services/illustration-proposals.js applyProposal) and stamp the audit
+ * payload, all in one transaction; then chat + WS outside it.
+ *
+ * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply)
+ * skips the majority and locked-app gates, like the other kinds.
+ */
+async function maybeApplyFeaturedIllustrationProposal(pool, issue, options = {}) {
+  const force = !!options.force;
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
+
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
+  const required = force ? upCount : gate.required;
+  if (!force && !gate.mergeable) {
+    return {
+      applied: false, upCount, majority, active,
+      required: gate.required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
+    };
+  }
+
+  // Locked apps additionally require at least one admin up vote, the same
+  // rule as the rename path. An admin force-apply trivially satisfies it.
+  if (!force && await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      log.info('issues', 'Illustration majority reached but app is locked; awaiting admin up', {
+        issueId: issue.id, upCount, majority,
+      });
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: lockRows } = await client.query(
+      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
+      [issue.id]
+    );
+    if (!lockRows.length || lockRows[0].status !== 'open') {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    const locked = lockRows[0];
+
+    const { rows: appRows } = await client.query(
+      'SELECT id, slug, name FROM apps WHERE id = $1 FOR UPDATE',
+      [locked.app_id]
+    );
+    if (!appRows.length) {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    const app = appRows[0];
+
+    const illustration = await illustrationProposals.applyProposal(
+      client, app.id, locked.payload || {}, locked.id
+    );
+
+    const auditPayload = {
+      ...locked.payload,
+      appliedAt: new Date().toISOString(),
+      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
+      upCount, required, active,
+    };
+    await client.query(
+      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
+      [JSON.stringify(auditPayload), locked.id]
+    );
+
+    await client.query('COMMIT');
+
+    // Side effects (chat + WS) are best-effort and live outside the txn.
+    const appliedHow = force
+      ? `by admin override (${options.forceBy?.username || 'admin'})`
+      : `by group vote (${upCount}/${required})`;
+    const msg = illustration
+      ? `Featured illustration changed ${appliedHow}`
+      : `Featured illustration removed ${appliedHow}`;
+    await sendSystemMessage(pool, app.id, msg, 'system')
+      .catch((err) => log.warn('issues', 'Illustration chat message failed', { err: err.message }));
+    await sendSystemMessage(pool, app.id, msg, 'system',
+      null, { type: 'governance', ref: locked.id }).catch(() => {});
+
+    pushAppUpdate({ action: 'illustration_changed', appId: app.id, slug: app.slug, illustration });
+    pushIssueUpdate({ action: 'closed', appSlug: app.slug, appId: app.id, issueId: locked.id });
+
+    log.info('issues', 'Featured illustration proposal applied', {
+      appId: app.id, issueId: locked.id, removed: !illustration, force, upCount, active,
+    });
+    return { applied: true, illustration, upCount, majority, active };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    log.error('issues', 'Illustration apply failed', { issueId: issue.id, err: err.message });
     return { applied: false, error: err.message };
   } finally {
     client.release();
@@ -3287,6 +3450,7 @@ module.exports = {
   maybeApplySecretChangeProposal,
   maybeApplyCloseIssueProposal,
   maybeApplyMaintenanceCampaignProposal,
+  maybeApplyFeaturedIllustrationProposal,
   // Exported for the merge path and the issue-close watcher (auto-resolve
   // of close proposals whose target was closed by other means).
   resolveSupersededCloseProposals,

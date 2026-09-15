@@ -3,8 +3,9 @@
 // uses this to gray out "account required" apps instead of letting an
 // anonymous visitor tap through into a 401.
 //
-// How: fetch `http://usernode-app-<slug>:3000/` (the app's container on
-// the shared docker network — the same address Caddy proxies to) with NO
+// How: fetch the app's own origin — `applicationRuntime.appOrigin()`, which
+// is the container name on the shared docker network or the ClusterIP
+// Service on kubernetes, whichever lane this app actually runs in — with NO
 // cookies and NO Sec-Fetch-Dest header, exactly like an anonymous
 // browser hitting the app subdomain, and classify the response:
 //
@@ -30,9 +31,9 @@
 
 const http = require('http');
 const log = require('./logger');
+const applicationRuntime = require('./application-runtime');
 const { getPool } = require('../db/pool');
 
-const APP_CONTAINER_PORT = 3000;
 const PROBE_TIMEOUT_MS = 5000;
 const MAX_REDIRECT_HOPS = 3;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -47,8 +48,22 @@ let sweepInFlight = false;
 let lastSweepAt = null;
 let lastError = null;
 
-function appShellUrl(slug) {
-  return `http://usernode-app-${slug}:${APP_CONTAINER_PORT}/`;
+// The app ROW decides the address, not the slug alone: `runtime_kind` and
+// `runtime_name` are what the deploy actually created, so an app on
+// kubernetes resolves through its Service and one on docker through its
+// container name.
+//
+// The identity check is NOT defensive noise. productionRef() DERIVES a name
+// when `runtime_name` is null, and neither lane's derivation validates its
+// inputs: a row without an id and slug yields the plausible-looking
+// `sv-app-undefined-undefined`, which resolves nowhere, classifies 'unknown'
+// and gates the app — the same silent failure #1894 is about, one layer
+// down. Return null instead and let the caller leave the verdict alone.
+function appShellUrl(app, config) {
+  if (!app) return null;
+  if (!app.runtime_name && !(app.id && app.slug)) return null;
+  const origin = applicationRuntime.appOrigin(config, applicationRuntime.productionRef(config, app));
+  return origin ? `${origin}/` : null;
 }
 
 // Pure classifier over (statusCode, Location header, probed URL) so tests
@@ -115,8 +130,15 @@ async function probeUrl(url) {
   return probeEndpoint(new URL('/api/', url).toString(), { allowMissing: true });
 }
 
-async function probeApp(pool, app) {
-  const verdict = await probeUrl(appShellUrl(app.slug));
+async function probeApp(pool, app, config) {
+  const url = appShellUrl(app, config);
+  // No address to ask means no evidence either way. Leave the stored verdict
+  // and its timestamp alone rather than writing 'unknown' over a good one.
+  if (!url) {
+    log.warn('shell-probe', 'No runtime address for app; skipping probe', { slug: app.slug });
+    return app.anon_shell;
+  }
+  const verdict = await probeUrl(url);
   await pool.query(
     `UPDATE apps SET anon_shell = $1, anon_shell_checked_at = NOW() WHERE id = $2`,
     [verdict, app.id]
@@ -134,7 +156,7 @@ async function probeApp(pool, app) {
 // view-private apps never appear on the landing page anyway.
 async function selectDueApps(pool, refreshPublic = false) {
   const { rows } = await pool.query(
-    `SELECT id, slug, anon_shell FROM apps
+    `SELECT id, slug, anon_shell, runtime_kind, runtime_name FROM apps
       WHERE status = 'running'
         AND self_hosted IS NOT TRUE
         AND view_visibility = 'public'
@@ -167,7 +189,7 @@ async function sweep(config) {
       while (idx < due.length) {
         const app = due[idx++];
         try {
-          await probeApp(pool, app);
+          await probeApp(pool, app, config);
         } catch (err) {
           log.warn('shell-probe', 'Probe failed', { slug: app.slug, err: err.message });
         }

@@ -48,6 +48,7 @@ const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
+const { appPermissionsRoutes, declaredFor, grantedCapabilities, effectiveCapabilities } = require('./src/routes/app-permissions');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
@@ -458,14 +459,15 @@ app.use(appLlmProxyRoutes(config));
 // callers are app containers, not browser sessions.
 app.use(appStorageRoutes(config));
 
-// App-facing read-only platform API (#744). App containers call
-// /api/app-platform/governance/feed with the same per-app token
+// Versioned app-facing read-only platform API (#744, #1908). App containers
+// call /api/app-platform/v1/* with the same per-app token
 // (USERNODE_LLM_PROXY_TOKEN) to read their OWN proposal/vote/merge
-// feed for in-app "what's changing" strips. App-token-only (no user
-// token or grant — the feed holds nothing an app viewer can't already
-// see in the vote panel), same private-IP gate; mounted before
-// authMiddleware because callers are app containers, not browser
-// sessions.
+// feed or the public app directory. The legacy unversioned paths remain
+// aliases. App-token-only endpoints need no user token or grant because
+// they expose only public or already-viewable data. User-directory calls
+// additionally verify the forwarded user token. Same private-IP gate;
+// mounted before authMiddleware because callers are app containers, not
+// browser sessions.
 app.use(appPlatformApiRoutes(config));
 
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
@@ -593,6 +595,7 @@ app.use(collaboratorRoutes(config));
 app.use(appDirectoryRoutes(config));
 app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
+app.use(appPermissionsRoutes(config));
 app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
@@ -760,7 +763,40 @@ app.get('/api/iframe-token', async (req, res) => {
       code: 'signing_unavailable',
     });
   }
-  res.json({ token });
+
+  // Gated browser capabilities for THIS user and THIS app (#2219).
+  //
+  // It rides the token response because of when the shell needs it. A
+  // frame's Permissions Policy is computed from `allow` at NAVIGATION, so
+  // the granted set has to be in hand on the line before `src` is assigned
+  // — which is exactly the line that already has this token. A separate
+  // fetch would be a second round trip on the launch path, in the one place
+  // the platform measures (docs/preview-performance.md), for data the mint
+  // is already authenticated and app-scoped for.
+  //
+  // `effective` is the intersection of granted and still-declared: a
+  // capability an app has dropped from its dapp.json stops being delegated
+  // on the next deploy, without the grant row being destroyed.
+  //
+  // Best-effort by design. A failure here degrades to delegating NOTHING
+  // beyond the ungated base, which is the safe direction, and never fails
+  // the token the app needs to boot at all.
+  let permissions = { declared: [], granted: [], effective: [] };
+  try {
+    const { rows } = await pool.query(
+      'SELECT manifest_snapshot FROM apps WHERE id = $1',
+      [appRow.id]
+    );
+    const declared = declaredFor(rows[0] || {});
+    const granted = await grantedCapabilities(pool, appRow.id, req.user.id);
+    permissions = { declared, granted, effective: effectiveCapabilities(declared, granted) };
+  } catch (err) {
+    log.warn('iframe-token', 'Permission read failed; delegating none', {
+      slug, err: err.message,
+    });
+  }
+
+  res.json({ token, permissions });
 });
 
 // Bridge centralization: versioned bridge served from /usernode-bridge/vN/.
@@ -1037,6 +1073,10 @@ async function becomeLeader() {
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
   // comparison can't afford. See services/estimate-backfill.js.
   require('./src/services/estimate-backfill').start(config);
+  // #1374: the once-a-day "what needs your vote" digest. Hourly sweep,
+  // advisory-locked so only one instance sends, and the counterweight to
+  // new-proposal notifications now defaulting off.
+  require('./src/services/vote-digest').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
@@ -4796,7 +4836,8 @@ function startGovernanceApplyTicker(config) {
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
+                                                  'featured_illustration')
           LIMIT 100`
       );
       for (const issue of rows) {
@@ -4816,6 +4857,8 @@ function startGovernanceApplyTicker(config) {
             result = await issuesModule.maybeApplyRenameProposal(pool, issue);
           } else if (issue.kind === 'maintenance_campaign') {
             result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else if (issue.kind === 'featured_illustration') {
+            result = await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
           } else {
             result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
           }
@@ -4991,7 +5034,8 @@ function startStalePrSweeper(config) {
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
+                                                  'featured_illustration')
           LIMIT 100`
       );
       for (const issue of rows) {
@@ -5009,6 +5053,8 @@ function startStalePrSweeper(config) {
             await issuesModule.maybeApplyRenameProposal(pool, issue);
           } else if (issue.kind === 'maintenance_campaign') {
             await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else if (issue.kind === 'featured_illustration') {
+            await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
           } else {
             await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
           }

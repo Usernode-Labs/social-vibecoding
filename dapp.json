@@ -487,6 +487,13 @@
       "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
     },
     {
+      "key": "MARKETING_BASE_URL",
+      "group": "Waitlist",
+      "required": false,
+      "default": "https://onhomeroom.com",
+      "description": "Origin of the public marketing site that owns the /waitlist page a shared invite link lands on. A referral link is built as <this>/waitlist?ref=<code>, so the code still comes back to the join endpoint as invite_code. Not the app's own origin: invites are opened by people who have never seen the product. Point it at your own site when self-hosting."
+    },
+    {
       "key": "WAITLIST_FOLLOW_X_URL",
       "group": "Waitlist",
       "required": false,
@@ -994,6 +1001,16 @@
       "expectSelector": "#app-iframe[sandbox=\"\"]:not([src])"
     },
     {
+      "name": "Inside a dark app the bar takes the app's tone: night ground under the light shell (#1945)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",
@@ -1150,6 +1167,30 @@
       "expectText": "1 of 2 app slots used"
     },
     {
+      "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
+      "path": "/?shot=create-details#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-step=\"details\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
+      "expectText": "App name"
+    },
+    {
+      "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
+      "path": "/?shot=create-import#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"import\"][data-import-state=\"idle\"] #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectText": "GitHub repo URL"
+    },
+    {
+      "name": "Create-app dialog opens on a start step with two choices and a step count, not every field at once (#1911)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"start\"] [data-create-step=\"start\"] .create-mode-pill[data-mode-pill=\"new\"] + .create-mode-pill[data-mode-pill=\"import\"]",
+      "expectText": "Step 1 of 3"
+    },
+    {
+      "name": "Create-app dialog's last step holds the two visibility rails and the Create pill, reached through ?shot=create-access (#1911)",
+      "path": "/?shot=create-access#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"access\"] [data-create-step=\"access\"] #create-visibility-block .create-vis-pill[data-view-vis=\"private\"]",
+      "expectText": "Who can build it"
+    },
+    {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "Start work",
@@ -1159,6 +1200,12 @@
       "name": "Session/proposal cards render reverse #N issue chips",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "[data-issue-chip]"
+    },
+    {
+      "name": "Board cards name the auto-drafted category they were placed in (#1933)",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-issue-row=\"900001\"] [data-theme-chip=\"demo-appearance\"]",
+      "expectText": "[Mock] Appearance & theming"
     },
     {
       "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
@@ -1552,6 +1599,20 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist status check says so when the address is not on the list (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-note:not(.hidden)",
+      "expectText": "find that address on the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist not-found offers to join with that address instead (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-join-instead:not(.hidden)",
+      "expectText": "Join the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Waitlist withholds the stage-2 offer until the email is confirmed",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-more-offer.hidden",
@@ -1632,6 +1693,25 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "A confirmed address re-joining lands on the settled panel (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-pill:not(.hidden)",
+      "expectText": "On the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A confirmed re-join reads back instead of congratulating (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A confirmed re-join is never asked for a code (#2201)",
+      "path": "/?shot=waitlist-rejoined",
+      "expectSelector": "#waitlist-confirm.hidden",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Stage-2 survey says where a pending signup stands",
       "path": "/?shot=waitlist-more#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
       "expectSelector": "#more-form #more-status-pill",
@@ -1650,6 +1730,19 @@
       "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
       "expectSelector": "#more-form #more-signup-email",
       "expectText": "staging-demo-waitlist-confirmed@example.invalid",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The shared invite link lands on the marketing waitlist page, not the in-app route",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist?ref=\"]:not([value*=\"#waitlist\"])",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The invite link keeps its copy affordance beside it",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist\"] ~ #more-invite-copy",
+      "expectText": "Bring someone you",
       "allowConsoleErrors": true
     },
     {
@@ -1793,6 +1886,18 @@
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
       "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
+    },
+    {
+      "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "[data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "expectText": "Proposed"
+    },
+    {
+      "name": "An illustration proposal's discussion page carries the same preview (#2086)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100008",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectText": "Change the featured illustration"
     },
     {
       "name": "An applied close proposal opens its discussion, not the board (#1115)",
@@ -2058,6 +2163,12 @@
       "expectText": "Show older"
     },
     {
+      "name": "Since your last visit: Clear goes live once Show older has walked below the line, so the seen rows can be folded again (#2240)",
+      "path": "/?demo=1&shot=since-seen#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
+      "expectText": "Clear"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": ".attr-avatar"
@@ -2148,6 +2259,16 @@
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
+    },
+    {
+      "name": "Sending a saved draft leaves the composer empty (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form #dc-input[data-shot-sent=\"1\"]:placeholder-shown"
+    },
+    {
+      "name": "…on the same screen where the drafts list is actually painted (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send"
     },
     {
       "name": "Saved-drafts header says the list follows you across devices (#940)",
@@ -2986,7 +3107,7 @@
       "expectText": "automatic, after 1"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal says so in a red tag, and still shows its vote",
+      "name": "Freshness (#1442): a conflicting proposal says so in a tag, and still shows its vote",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": "#gc-thread-head [data-status-tag=\"mergeability_conflict\"]",
       "expectText": "Conflicts with main"
@@ -3178,6 +3299,11 @@
       "path": "/#admin/limits",
       "expectSelector": "#admin-limit-weekly",
       "expectText": "Default per-user weekly cap"
+    },
+    {
+      "name": "Spend limits: the weekly cap is set per identity tier, with GitHub-and-X and zkPassport fields beside the unverified one (#838)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
     },
     {
       "name": "A user row states week-to-date spend, not just today's (#1788)",
@@ -3614,6 +3740,12 @@
       "expectText": "Staging demo app — letter tile"
     },
     {
+      "name": "The all-apps directory is one pane: the search head over the list body, with the rows inside it (#1919)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
+      "expectText": "Sort"
+    },
+    {
       "name": "Shared report link serves the report document without a session",
       "path": "/reports/00abcdef00abcdef00abcdef00abcdef",
       "expectSelector": ".staging-fixture-report",
@@ -3732,6 +3864,16 @@
       "name": "The coding run is a card and its facts are chips",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
+    },
+    {
+      "name": "#1944: an open coding-run card keeps its chevron in the head row",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-head > .dc-cc-attached-chevron"
+    },
+    {
+      "name": "#1944: an open coding-run card shows its log panel",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > pre.dc-cc-attached-log"
     },
     {
       "name": "Capture routes past the first sit behind a disclosure",
@@ -3962,10 +4104,10 @@
       "expectText": "Bringing up to date"
     },
     {
-      "name": "#2038: a refused merge is named for what it was, not as a conflict",
+      "name": "#2221: a refused merge names the next action, not the actor who refused",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"merge_conflict\"]",
-      "expectText": "GitHub refused the merge"
+      "expectText": "Needs author to sync with main"
     },
     {
       "name": "#2038: automatic conflict resolution says nobody has to act",
@@ -3989,6 +4131,48 @@
       "name": "#2061: the checklist lists the steps after the one it is stuck on",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
+    },
+    {
+      "name": "#2219: the app-permission prompt names the app and what it is asking for",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden)",
+      "expectText": "record audio from your microphone"
+    },
+    {
+      "name": "#2219: the first grant says the app will reopen, because the policy only applies on navigation",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden) #permission-consent-allow",
+      "expectText": "Allow and reopen"
+    },
+    {
+      "name": "#2219: granted device permissions are listed per app in Settings, with a way back",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-list",
+      "expectText": "Staging demo app A"
+    },
+    {
+      "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
+      "expectText": "the next time it opens"
+    },
+    {
+      "name": "#1374: per-app notification settings are reachable and name both places they apply",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "the bell here and a notification on your phone"
+    },
+    {
+      "name": "#1374: muting is described honestly as stopping the notification, not the thing",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "still appear on this app's board"
+    },
+    {
+      "name": "#1374: Settings rolls up your notification defaults and the apps set differently",
+      "path": "/?demo=1#settings/alerts",
+      "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #settings-notification-prefs #notification-prefs-list",
+      "expectText": "Apps set differently"
     }
   ],
   "governance": {

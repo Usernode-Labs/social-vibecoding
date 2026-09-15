@@ -28,7 +28,19 @@ export function useAppAllowance() {
   return { ...state, quota, blocked };
 }
 
-export function AppAllowance({ id }: { id?: string }) {
+/**
+ * The panel's two surfaces. `inset` is the bordered block the fork dialog's
+ * white card still uses. `pane` is the create dialog's (#1910): that dialog
+ * sits on the grey pane ground, where a bordered grey inset reads as a hole,
+ * so the allowance becomes one of the white cards floating on it, in the
+ * same recipe as its field cards.
+ */
+const SURFACE = {
+  inset: 'mb-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-800/60',
+  pane: 'mb-4 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
+} as const;
+
+export function AppAllowance({ id, surface = 'inset' }: { id?: string; surface?: keyof typeof SURFACE }) {
   const { quota, requestedAt, loading, error, blocked } = useAppAllowance();
   const [busy, setBusy] = useState(false);
   const [requestError, setRequestError] = useState('');
@@ -41,7 +53,7 @@ export function AppAllowance({ id }: { id?: string }) {
     finally { setBusy(false); }
   };
   return (
-    <div id={id} className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-800/60"
+    <div id={id} className={SURFACE[surface]}
       aria-live="polite" data-quota-state={!quota ? 'loading' : blocked ? 'spent' : 'available'}>
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-medium text-zinc-700 dark:text-zinc-200">App allowance</span>

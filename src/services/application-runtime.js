@@ -99,14 +99,45 @@ async function status(config, ref) {
   return kubernetes.getApplicationStatus(config, ref.runtimeName);
 }
 
+// THE ONE PLACE THAT KNOWS HOW TO REACH A RUNNING APP FROM THE PLATFORM,
+// given the ref productionRef() hands back. Every in-cluster caller goes
+// through this rather than building the host itself, because the host is
+// runtime-specific and a caller that hardcodes one lane silently stops
+// reaching apps in the other — with no error to read, just a connection
+// that never lands.
+//
+// That is #1894 exactly: the anonymous-shell probe built
+// `usernode-app-<slug>` inline, which is the DOCKER container name. On
+// kubernetes every probe failed DNS, classified the app 'unknown', and the
+// directory read `requires_login` off that verdict — so the whole fleet
+// showed as "account required" while nothing logged an error.
+//
+// The two lanes:
+//   docker      the container name IS the hostname on the shared network
+//   kubernetes  a ClusterIP Service in `appNamespace`, which is NOT the
+//               platform's own namespace, so the name needs qualifying
+//
+// Port 3000 in both: the app container listens on it, and
+// createApplication()'s Service declares `port: 3000, targetPort: 3000`.
+const APP_PORT = 3000;
+
+function appOrigin(config, ref) {
+  if (!ref || !ref.runtimeName) return null;
+  if ((ref.runtimeKind || mode(config)) === 'docker') {
+    return `http://${ref.runtimeName}:${APP_PORT}`;
+  }
+  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  return `http://${ref.runtimeName}.${namespace}.svc:${APP_PORT}`;
+}
+
 async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     return docker.probeHealthOnce(ref.runtimeName, 3000, '/health', { timeoutMs });
   }
-  if (!ref.runtimeName) return false;
-  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  const origin = appOrigin(config, ref);
+  if (!origin) return false;
   try {
-    const response = await fetch(`http://${ref.runtimeName}.${namespace}.svc:3000/health`, {
+    const response = await fetch(`${origin}/health`, {
       signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
     });
     await response.body?.cancel();
@@ -135,5 +166,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, productionRef, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, appOrigin, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

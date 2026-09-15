@@ -1205,7 +1205,10 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
   // The blocker is a red tag on the row's META line — beside the number and
   // the author, with the item's own tags — not on the band. The band is the
   // vote and the Vote button, at both sizes.
-  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
+  // #2222: amber. The folded row carries the same tag the card does, and a
+  // predicted conflict the platform resolves by itself is not the reader's
+  // move — it reads like the "Behind main" beside it, not like a failure.
+  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
   assert.ok(html.indexOf('Conflicts with main') < html.indexOf('dev-ws-row-band'),
     'the tag is above the band, on the meta line');
   assert.ok(!html.includes('dev-ws-row-pill'),
@@ -3427,6 +3430,71 @@ test('the since-list controls have a declared check on Current status, through a
   assert.equal(check.expectText, 'Show older');
 });
 
+test('Clear is live once the walk has crossed the line, and folds what it revealed (#2240)', () => {
+  // The state the request is about, and it is the one `Show older` invites
+  // most often: a reader with NOTHING new. #2183 kept that button live on a
+  // quiet day on purpose — "a control that is sometimes there is one nobody
+  // learns to reach for" — so the first press has no new row to spend and
+  // falls straight through to the seen side. What came out was a wall of
+  // rows the reader had already read and no way back up: Clear folds the
+  // walk, and Clear was disabled, because new rows were the only thing it
+  // gated on. Nothing about the press needed changing — only when it is
+  // offered.
+  const AppView = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now()) } });
+  seed(AppView);
+  const v = AppView._workshopView();
+  assert.ok(v.since, 'the line exists, so the strip is drawn');
+  assert.equal(v.since.rows.length, 0, 'and nothing is above it');
+  assert.ok(v.since.seen.rows.length > 0, 'while the whole list is below it, to walk into');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-since-none=""/, 'the strip opens on "nothing has changed"');
+  assert.match(html, /data-ws-since-more=""(?! disabled)/, 'with the walk live');
+  assert.match(html, /data-ws-since-clear="" disabled=""/,
+    'and Clear still disabled BEFORE the walk — there is nothing on screen to fold yet');
+
+  // The walk is state, which renderToStaticMarkup cannot press, so the
+  // predicate is pinned in the source the way the rest of the walk is.
+  assert.match(WORKSHOP, /disabled=\{!v\.since\.rows\.length && !seenShown\}/,
+    'live while there are new rows to dismiss OR a walk below the line to fold');
+  // ONE handler, unchanged: it does not branch on which of the two made it
+  // live, and folding the seen side is already what it did.
+  assert.match(WORKSHOP, /const clearSince = \(\) => \{[\s\S]*?setSinceShown\(SINCE_FIRST\);\s*setSeenShown\(0\);/);
+
+  // With nothing new the baseline move is inert rather than special-cased:
+  // the line is already past every row, so `Clear` on a quiet day changes
+  // what is drawn and nothing else.
+  AppView._workshopClearSince('demo-app', v.since.through);
+  const after = AppView._workshopView();
+  assert.equal(after.since.rows.length, 0, 'still nothing new');
+  assert.equal(after.since.seen.total, v.since.seen.total, 'and not one row moved sides');
+});
+
+test('?shot=since-seen is the URL that reaches the walked state, for the check and the capture', () => {
+  // A declared check loads a URL and asserts a selector — it cannot press a
+  // button — and the before/after screenshots the voters see are shot the
+  // same way. So the deep link has to land IN the walked state, which is
+  // `?shot=board-unfold`'s problem and takes its shape: drive the real
+  // control on an interval, stop on the mark it produces, and stand aside
+  // the moment a human touches the page.
+  assert.match(APP_VIEW_SRC, /if \(shot === 'since-seen'\) \{\s*AppView\._workshopSince\[slug\] = Date\.now\(\);/,
+    'the line is seeded at NOW, so every row is on the seen side');
+  const block = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("if (shot === 'since-seen') {"));
+  const body = block.slice(0, block.indexOf('\n      }\n') + 1);
+  assert.match(body, /document\.querySelector\('\[data-ws-since-seen\]'\)/,
+    'it stops on the "Seen before" mark, not after a fixed number of presses');
+  assert.match(body, /button\[data-ws-since-more\]:not\(\[disabled\]\)/, 'and presses the real control');
+  assert.match(body, /e\.isTrusted/, 'and lets go on the first real gesture');
+  assert.ok(!/localStorage/.test(body), 'nothing is written to storage — a human is not told they were here');
+
+  const check = dapp.tests.find((t) => /data-ws-since-clear\]:not\(\[disabled\]\)/.test(t.expectSelector || ''));
+  assert.ok(check, 'declared');
+  assert.match(check.path, /^\/\?demo=1&shot=since-seen#app\/usernode-2d5619\/workshop$/,
+    'the Current status tab, which is where the strip lives');
+  assert.match(check.expectSelector, /\[data-ws-since\]:has\(> \[data-ws-since-seen\]\) > \.dev-ws-since-head > button\[data-ws-since-clear\]:not\(\[disabled\]\)/,
+    'the seen mark AND a live Clear — either alone would pass on the old behaviour');
+  assert.equal(check.expectText, 'Clear');
+});
+
 test('the composer shows its model picker and send circle at every width', () => {
   // It used to open expanded above the breakpoint and stay one line on a
   // phone until the field was tapped. The tap was the problem: a picker
@@ -4001,4 +4069,107 @@ test('#2182: a guest has no strip to keep', () => {
   const v = AppView._workshopView();
   assert.equal(v.mine.viewer, false);
   assert.ok(!workshopHtml(AppView).includes('data-ws-mine='), 'no empty strip for a reader with no work to have');
+});
+
+// ── #1933: the category chip on the Board's cards ───────────────────────
+//
+// The themes are the Workshop's grouping, and until now they were visible
+// ONLY as that pane's headings: the Board's columns and the stage pane sort
+// by state, and a card there said nothing about where the model had placed
+// it. The chip is the theme's name on the card's meta line, looked up by the
+// same key the server placed the card under.
+
+test('#1933: a card names the auto-drafted category it was placed in, once the themes have arrived', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._sharedSessions = [
+    { id: 56, session_title: 'Shared thing', status: 'active', shared_at: at(1), linked_issues: [], created_at: at(1), last_activity_at: at(0) },
+  ];
+  const chipOf = (card) => (card.badges || []).find((b) => b && b.key === 'theme') || null;
+
+  // No themes yet: nothing is drawn, so a slow fetch never paints a wrong name.
+  AppView._workshopThemes = null;
+  assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[0])), null);
+
+  AppView._workshopThemes = themes([
+    { id: 'theming', name: 'Theming', items: ['issue:12', 'session:34', 'session:56', 'session:78'] },
+  ]);
+  const issue = chipOf(AppView._issueCardModel(AppView._ghIssues[0]));
+  assert.ok(issue, 'the issue the theme names carries the chip');
+  assert.equal(issue.t, 'chip');
+  assert.equal(issue.meta, true, 'it rides the meta line beside the priority / assignee / category tags');
+  assert.equal(issue.label, 'Theming');
+  assert.deepEqual(plain(issue.data), { 'data-theme-chip': 'theming' });
+  assert.match(issue.cls, /^dev-badge /);
+  assert.equal(issue.cls, `dev-badge ${AppView._categoryTint('theming').cls}`,
+    'one category is one colour on every card, through the same hash the custom category chips use');
+  assert.match(issue.title, /Category: Theming/);
+  assert.doesNotMatch(issue.title, /—/, 'platform copy carries no em dashes');
+
+  // Not named by any theme: no chip. A card the placer declined is simply
+  // absent from every list, so it reads the same way.
+  assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[1])), null);
+
+  // Every card kind the server keys: a proposal and a merge by their
+  // chat_sessions row, a shared session likewise.
+  assert.equal(chipOf(AppView._proposalCardModel(AppView._proposals[0])).label, 'Theming');
+  assert.equal(chipOf(AppView._sharedSessionCardModel(AppView._sharedSessions[0])).label, 'Theming');
+  assert.equal(chipOf(AppView._mergedRowModel(AppView._merged[0])).label, 'Theming');
+
+  // And it reaches the Board's markup, on the card the columns draw.
+  const html = kanbanHtml(AppView);
+  assert.ok(html.includes('data-theme-chip="theming"'), 'the chip is in the kanban markup');
+  assert.ok(/data-theme-chip="theming"[^>]*>Theming</.test(html), 'with the category\'s name as its text');
+  // On the folded row the declared check selects through, under the item
+  // hook the row carries (`data-issue-row`), not the open card's `data-ref-issue`.
+  assert.match(html, /data-issue-row="12"[^]*?data-theme-chip="theming"/, 'inside the folded row for issue 12');
+});
+
+test('#1933: under the "By category" pane the chip is dropped, because the heading already says it', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 'theming', name: 'Theming', items: ['issue:12', 'session:34'] }]);
+  const chipOf = (row) => (row.card.badges || []).find((b) => b && b.key === 'theme') || null;
+  const lane = (t, k) => t.lanes.find((l) => l.key === k);
+
+  AppView._getWorkshopGroup = () => 'category';
+  const grouped = AppView._workshopView();
+  assert.equal(chipOf(lane(grouped.themes[0], 'open').rows[0]), null, 'no chip under its own heading');
+  assert.equal(chipOf(lane(grouped.themes[0], 'review').rows[0]), null);
+  // The vote strip is not grouped by category, so its card keeps the name.
+  assert.equal(grouped.votes.rows.length, 1);
+  assert.equal(chipOf(grouped.votes.rows[0]).label, 'Theming');
+
+  AppView._getWorkshopGroup = () => 'stage';
+  const staged = AppView._workshopView();
+  assert.equal(chipOf(lane(staged.themes[0], 'open').rows[0]).label, 'Theming', 'the stage pane sorts by state, so the chip stays');
+});
+
+test('#1933: the themes landing repaints whichever surface is up, not only the Workshop pane', async () => {
+  const AppView = makeAppView({
+    fetch: async () => ({ ok: true, json: async () => ({ themes: [{ id: 't', name: 'T', items: ['issue:12'] }], source: 'ai' }) }),
+  });
+  seed(AppView);
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(AppView._workshopThemes.themes.length, 1);
+  assert.equal(repaints, 1, 'the board repaints so its cards can pick up their chips');
+});
+
+test('#1933: the declared check reads the chip off a demo issue card on the board', () => {
+  const check = dapp.tests.find((t) => /#1933/.test(t.name || ''));
+  assert.ok(check, 'declared');
+  assert.match(check.path, /demo=1.*#app\/usernode-2d5619\/board$/);
+  // `data-issue-row`, not `data-ref-issue`: the Board draws FOLDED rows, and
+  // a folded row carries only the item hooks (fold.tsx ITEM_HOOKS), which is
+  // the one the first run of this check learned the hard way.
+  assert.match(check.expectSelector, /#dev-kanban \[data-issue-row="900001"\] \[data-theme-chip="demo-appearance"\]/);
+  assert.equal(check.expectText, '[Mock] Appearance & theming');
+  // The name and the placement it asserts are the staging demo theme's.
+  const route = read('src/routes/workshop-themes.js');
+  assert.ok(route.includes("id: 'demo-appearance'"));
+  assert.ok(route.includes("name: '[Mock] Appearance & theming'"));
+  assert.ok(/items: \['issue:900001'/.test(route));
 });

@@ -66,15 +66,18 @@ import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
+import { PermissionConsentModal } from './modals/permission-consent-modal';
 import {
   autoSessionModalStore,
   creditOptionsModalStore,
   llmConsentModalStore,
+  permissionConsentModalStore,
 } from './modals/modals-store';
 import type {
   AutoSessionModalView,
   CreditOptionsModalView,
   LlmConsentModalView,
+  PermissionConsentModalView,
 } from './modals/model';
 
 /** What app-view.js passes for the card list. */
@@ -113,6 +116,7 @@ export interface DevBoardBridge {
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
+  mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
@@ -177,6 +181,7 @@ topicHeadStore.setFlush(flushSync);
 autoSessionModalStore.setFlush(flushSync);
 creditOptionsModalStore.setFlush(flushSync);
 llmConsentModalStore.setFlush(flushSync);
+permissionConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -339,6 +344,11 @@ export const devBoardBridge: DevBoardBridge = {
   mountLlmConsentModal(host, view) {
     llmConsentModalStore.set({ view });
     mountLegacyPortal(host, createElement(LlmConsentModal));
+  },
+
+  mountPermissionConsentModal(host, view) {
+    permissionConsentModalStore.set({ view });
+    mountLegacyPortal(host, createElement(PermissionConsentModal));
   },
 
   // The 30s countdown tick (see card/dev-card.tsx's header).

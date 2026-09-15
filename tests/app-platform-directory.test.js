@@ -156,17 +156,17 @@ function userJwt({ appId = APP_A_ID, id = 7, username = 'tester', ttl } = {}) {
   return platformJwt.signAppIdentityToken({ appId, user: { id, username }, ttl });
 }
 
-function url(path, qs = '') {
-  return `http://127.0.0.1:${server.address().port}/api/app-platform/users/${path}${qs}`;
+function url(path, qs = '', apiRoot = '/api/app-platform') {
+  return `http://127.0.0.1:${server.address().port}${apiRoot}/users/${path}${qs}`;
 }
 
 async function call(path, {
-  token = APP_A_TOKEN, userToken = userJwt(), qs = '', headers = {},
+  token = APP_A_TOKEN, userToken = userJwt(), qs = '', headers = {}, apiRoot,
 } = {}) {
   const h = { ...headers };
   if (token != null) h['x-usernode-app-token'] = token;
   if (userToken != null) h['x-usernode-user-token'] = userToken;
-  const res = await fetch(url(path, qs), { headers: h });
+  const res = await fetch(url(path, qs, apiRoot), { headers: h });
   return { status: res.status, body: await res.json() };
 }
 
@@ -260,7 +260,7 @@ test('a scoped infrastructure token is rejected even when otherwise valid', asyn
 
 // ── User-token-only (staging previews, #1213) ────────────────────────
 //
-// Preview containers get USERNODE_PLATFORM_API_URL but no app token, so
+// Preview containers get both app-platform API base URLs but no app token, so
 // the two directory routes — and only these — also accept the caller's
 // forwarded iframe token on its own. The token's audience picks which
 // app id the verifier pins; the SIGNATURE is what authenticates it.
@@ -293,6 +293,21 @@ test('no app token + a valid user token succeeds, same body, no leak', async () 
     assert.deepEqual(Object.keys(u).sort(), ['id', 'username']);
   }
   assertNoLeak(s.body, s.body.users);
+});
+
+test('the v1 user routes and permanent unversioned aliases return the same contract', async () => {
+  state.users = [user(1, 'alice'), user(2, 'alina')];
+  const versionedLookup = await lookup({
+    qs: '?username=alice', apiRoot: '/api/app-platform/v1',
+  });
+  const legacyLookup = await lookup({ qs: '?username=alice' });
+  assert.deepEqual(versionedLookup, legacyLookup);
+
+  const versionedSearch = await search({
+    qs: '?q=ali', apiRoot: '/api/app-platform/v1',
+  });
+  const legacySearch = await search({ qs: '?q=ali' });
+  assert.deepEqual(versionedSearch, legacySearch);
 });
 
 test('a tampered audience cannot redirect the app identity', async () => {

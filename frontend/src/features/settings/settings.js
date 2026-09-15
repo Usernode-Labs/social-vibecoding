@@ -267,6 +267,7 @@
       // into something to act on (a build in flight, a reload waiting). See
       // sections/about.tsx.
       { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
+      { key: 'app-permissions', label: 'App device permissions', group: 'Advanced' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
       { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
@@ -727,6 +728,8 @@
       this._refreshSpend();
       this._refreshOpenRouter();
       this._renderLlmGrants();
+      this._renderAppPermissions();
+      this._renderNotificationPrefs();
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
@@ -3887,6 +3890,219 @@
       if (!el) return;
       paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── App device permissions (#2219) ───────────────────────────
+    //
+    // The sibling of the AI-permissions block above, against
+    // /api/me/permission-grants. Grants are per (app, capability), so the
+    // rows are GROUPED by app here rather than in the component: which
+    // shape the list takes is this module's call, and the component
+    // renders the answer (see ./app-permissions-list.tsx).
+    //
+    // Like the AI grants, the table is staging:private and therefore always
+    // empty in a clone, so ?demo=1 is passed through for the preview.
+
+    async _renderAppPermissions() {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsAppPermissions : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', apps: [] });
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      let grants = [];
+      try {
+        const r = await fetch('/api/me/permission-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        grants = j.grants || [];
+      } catch {
+        publish({ phase: 'error', apps: [] });
+        return;
+      }
+      publish({ phase: 'ready', apps: this._permissionAppViews(grants) });
+    },
+
+    // Grants as DATA, one entry per app. Insertion order is the server's
+    // (active apps first, then by name), and the capability order inside an
+    // app is the catalogue's, because that is the order the API returns.
+    _permissionAppViews(grants) {
+      const byApp = new Map();
+      for (const g of grants) {
+        const appId = g.appId;
+        if (!byApp.has(appId)) {
+          byApp.set(appId, {
+            appId,
+            appName: String(g.appName ?? g.appSlug ?? ''),
+            appSlug: String(g.appSlug ?? ''),
+            items: [],
+          });
+        }
+        byApp.get(appId).items.push({
+          capability: String(g.capability ?? ''),
+          label: String(g.label ?? g.capability ?? ''),
+          revoked: g.status !== 'active',
+        });
+      }
+      return [...byApp.values()];
+    },
+
+    _setAppPermissionsStatus(text, kind) {
+      const el = document.getElementById('app-permissions-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── What apps tell you about (#1374) ─────────────────────────────
+    //
+    // Two layers, one fetch: the account-wide defaults and every per-app
+    // exception. GET /api/me/notification-preferences returns both, because
+    // an exception is meaningless without the default it departs from.
+    //
+    // Like the AI grants above, the table is staging:private and therefore
+    // always empty in a clone, so ?demo=1 is passed through for the preview.
+
+    async _renderNotificationPrefs() {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsNotificationPrefs : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', categories: [], apps: [] });
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      try {
+        const r = await fetch('/api/me/notification-preferences' + (demo ? '?demo=1' : ''),
+          { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        publish({
+          phase: 'ready',
+          categories: j.categories || [],
+          apps: j.apps || [],
+        });
+      } catch {
+        publish({ phase: 'error', categories: [], apps: [] });
+      }
+    },
+
+    _setNotificationPrefsStatus(text, kind) {
+      const el = document.getElementById('notification-prefs-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // Change the account-wide default for one category. Every app that has
+    // no exception of its own follows this immediately; the ones that do
+    // keep theirs, which is the whole point of the two layers.
+    async _onNotificationDefaultChange(category, enabled) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      try {
+        const r = await fetch('/api/me/notification-preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ preferences: { [category]: enabled } }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to save.', 'error'); return; }
+        status('Saved.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // Drop one app's exceptions so it follows the defaults again.
+    //
+    // A DELETE rather than writing each category to the default's current
+    // value: the app goes back to INHERITING, so it keeps following if a
+    // default changes later. Writing the values would freeze them.
+    async _onNotificationAppReset(appId, appSlug) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      try {
+        const r = await fetch(
+          `/api/apps/${encodeURIComponent(appSlug)}/notification-preferences`,
+          { method: 'DELETE', credentials: 'same-origin' }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to reset.', 'error'); return; }
+        status('Following your defaults again.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // Revoke one capability from one app.
+    //
+    // The confirm copy says NEXT TIME IT OPENS rather than "immediately",
+    // and that difference is not hedging: a frame's Permissions Policy is
+    // computed from its `allow` attribute at navigation and cannot be
+    // narrowed afterwards, so a running app keeps what it already holds
+    // until it is reopened. The AI section can honestly promise immediate
+    // because its gate is a server-side check on every call.
+    async _onPermissionRevoke(appId, capability) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const ok = await ConfirmModal.show({
+        title: 'Revoke this permission?',
+        message: 'The app loses it the next time it opens. It can ask you again later.',
+        confirmLabel: 'Revoke',
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(
+          `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
+          { method: 'DELETE', credentials: 'same-origin' }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        status('Revoked. It stops the next time the app opens.', 'ok');
+        this._renderAppPermissions();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // The way back from Revoke, for the same reason the AI rows grew one
+    // (#1957): re-approving otherwise depends on the app asking again, and
+    // an app that never asks again never opens the prompt. The grant POST is
+    // an upsert keyed on (slug, capability) that re-activates the row, and
+    // it re-checks the declaration server-side — so an app that has since
+    // dropped the capability from its dapp.json is refused here too, which
+    // is the answer we want to show.
+    //
+    // No confirm dialog: this is not destructive, and the row's copy already
+    // says what the click restores.
+    async _onPermissionReenable(appId, appSlug, capability) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      // The fabricated ?demo=1 rows name apps that do not exist, so the POST
+      // would 404. Same guard the revoke path above has.
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch('/api/me/permission-grants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ appSlug, capability }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          status(j.code === 'not_declared'
+            ? 'This app no longer asks for that permission.'
+            : (j.error || 'Failed to re-enable.'), 'error');
+          return;
+        }
+        status('Re-enabled. It applies the next time the app opens.', 'ok');
+        this._renderAppPermissions();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     // ── Agent instructions & skills (#460) ───────────────────────

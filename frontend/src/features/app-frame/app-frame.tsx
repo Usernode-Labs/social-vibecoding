@@ -24,6 +24,11 @@
  * - There is no `src` prop. `src` is assigned through the registered ref by
  *   `appFrameBridge.setSrc` and nowhere else; re-applying a `src` prop is a
  *   document reload even when the value has not changed.
+ * - `sandbox` and `allow` ARE rendered props, and the difference is that
+ *   re-applying either is a no-op: React writes the same string to the same
+ *   attribute and the document is untouched. Both are also read at
+ *   navigation and not before, so `setSrc` publishes them on the line above
+ *   the `src` assignment (see ./app-frame-policy.js).
  * - Parking (Dev tab) hides the HOST, it does not unmount this component.
  *
  * `opacity` is a rendered prop rather than an imperative write because React
@@ -32,20 +37,13 @@
  * existing node's style; it never re-creates it.
  */
 
-import { memo, useRef, type ReactNode } from 'react';
+import { memo, useEffect, useRef, type ReactNode } from 'react';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
-
-/**
- * The permission-policy contract stays here; the sandbox policy is shared with
- * the bridge because it has two phases. A source-less frame is fully
- * restricted, then setSrc synchronously publishes sandboxReady before the
- * verified cross-origin navigation starts.
- */
-const ALLOW = 'clipboard-write; pointer-lock; geolocation';
+import { publishAppTone } from './app-tone.js';
 
 function LaunchCover({
   iconKind,
@@ -116,13 +114,19 @@ const AppFrame = memo(function AppFrame(_props: { slug: string }): ReactNode {
   const cover = state.cover;
   return (
     <>
+      {/*
+          `allow` was the constant 'clipboard-write; pointer-lock; geolocation'
+          before #2219 — every app, unconditionally. The ungated base still
+          ships to everyone; the nine gated capabilities come from THIS user's
+          grants for THIS app, rebuilt by setSrc before each navigation.
+      */}
       <iframe
         id="app-iframe"
         ref={iframeRef}
         className="w-full h-full border-0"
         style={{ opacity: state.faded ? 0 : 1, backgroundColor: state.background || undefined }}
         sandbox={state.sandboxReady ? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
-        allow={ALLOW}
+        allow={state.allow}
       >
       </iframe>
       {cover ? (
@@ -164,6 +168,18 @@ export function AppFrameHost(): ReactNode {
   // #app-view's own `hidden` is toggled by app.js's visibility seam and the same
   // discipline applies all the way down this subtree.
   useHiddenClass(hostRef, !state.active);
+
+  // #1945: the bar above the frame takes the app's tone. The page colour the
+  // app's bridge reports (`background`) is turned into `data-app-tone` on
+  // <html> — a node React does not own, written from an effect the same way
+  // the head's theme module writes `.dark` there — and cleared the moment the
+  // frame is parked or dropped. `useEffect`, not a layout effect: the tone is
+  // a repaint of the strip, never something a first paint has to wait for,
+  // and it must not run in the prerender pass at all (the shipped document
+  // carries no tone, exactly like the empty store).
+  useEffect(() => {
+    publishAppTone(document, state, window);
+  }, [state.slug, state.active, state.background]);
 
   return (
     <div
