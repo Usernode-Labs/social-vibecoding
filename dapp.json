@@ -569,9 +569,9 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "Edit profile keeps username read-only and social accounts proof-backed (#982, #1939)",
+      "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
-      "expectSelector": "#profile-edit-sheet:has(#profile-edit-github:not(:has(input))):has(#profile-edit-x:not(:has(input))):has(a[href='#settings/connectors']) #profile-edit-username[disabled]",
+      "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",
       "expectText": "Manage social accounts"
     },
     {
