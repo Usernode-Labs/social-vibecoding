@@ -310,6 +310,20 @@ function adminRoutes(config) {
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
                 ) AS social_verified,
+                -- #838: the three proofs the identity tier is read from,
+                -- the same three limits.getIdentityTier reads per turn.
+                EXISTS (
+                  SELECT 1 FROM user_social_identities gh
+                   WHERE gh.user_id = u.id AND gh.provider = 'github'
+                ) AS has_github,
+                EXISTS (
+                  SELECT 1 FROM user_social_identities xi
+                   WHERE xi.user_id = u.id AND xi.provider = 'x'
+                ) AS has_x,
+                EXISTS (
+                  SELECT 1 FROM user_activities zk
+                   WHERE zk.user_id = u.id AND zk.source = 'zkpassport'
+                ) AS has_zkpassport,
                 managed.id AS openrouter_key_id,
                 managed.status AS openrouter_key_status,
                 managed.remote_key_hash AS openrouter_key_hash,
@@ -343,7 +357,12 @@ function adminRoutes(config) {
          ORDER BY u.created_at ASC`,
         [req.user.id]
       );
-      res.json(rows);
+      // #838: name the tier on each row so the console shows it and the
+      // two readers of the flags can never disagree.
+      res.json(rows.map((row) => ({
+        ...row,
+        identity_tier: limits.identityTierFromFlags(row).tier,
+      })));
     } catch (err) {
       log.error('admin', 'List users failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -760,18 +779,30 @@ function adminRoutes(config) {
   // whichever is exhausted first, and either set to 0 means that cap does
   // not apply. limits.resolveCaps owns the full interaction.
 
+  // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
+  // is the unverified tier (the base); the social and zkPassport keys are
+  // null when unset, meaning "same as the base", and a PUT of null clears
+  // one back to that.
+  async function readLimitsPayload() {
+    const userCents = await limits.getDefaultUserLimitCents(pool);
+    const globalCents = await limits.getGlobalLimitCents(pool);
+    const systemCents = await limits.getSystemTokensLimitCents(pool);
+    const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
+    const weeklySocial = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_SOCIAL);
+    const weeklyZk = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_ZK);
+    return {
+      user_daily_limit_cents: userCents,
+      user_weekly_limit_cents: weeklyCents,
+      user_weekly_limit_social_cents: weeklySocial,
+      user_weekly_limit_zk_cents: weeklyZk,
+      global_daily_limit_cents: globalCents,
+      system_tokens_daily_limit_cents: systemCents,
+    };
+  }
+
   router.get('/api/admin/limits', async (_req, res) => {
     try {
-      const userCents = await limits.getDefaultUserLimitCents(pool);
-      const globalCents = await limits.getGlobalLimitCents(pool);
-      const systemCents = await limits.getSystemTokensLimitCents(pool);
-      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
-      res.json({
-        user_daily_limit_cents: userCents,
-        user_weekly_limit_cents: weeklyCents,
-        global_daily_limit_cents: globalCents,
-        system_tokens_daily_limit_cents: systemCents,
-      });
+      res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Read limits failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -779,8 +810,9 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, weekly, global, system } = req.body || {};
+    const { user, weekly, global, system, weeklySocial, weeklyZk } = req.body || {};
     const updates = [];
+    const clears = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
       const n = Number(v);
@@ -788,6 +820,12 @@ function adminRoutes(config) {
         return `${label} must be a non-negative integer (cents)`;
       }
       return n;
+    };
+    // #838: the two tier caps also accept null, which clears the stored
+    // value so the tier inherits the base weekly cap again.
+    const validateOptional = (label, v) => {
+      if (v === null) return 'clear';
+      return validate(label, v);
     };
     const userN = validate('user', user);
     if (typeof userN === 'string') return res.status(400).json({ error: userN });
@@ -797,11 +835,22 @@ function adminRoutes(config) {
     if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
     const weeklyN = validate('weekly', weekly);
     if (typeof weeklyN === 'string') return res.status(400).json({ error: weeklyN });
-    if (userN === null && globalN === null && systemN === null && weeklyN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, weekly, global, system' });
+    const socialN = validateOptional('weeklySocial', weeklySocial);
+    if (typeof socialN === 'string' && socialN !== 'clear') return res.status(400).json({ error: socialN });
+    const zkN = validateOptional('weeklyZk', weeklyZk);
+    if (typeof zkN === 'string' && zkN !== 'clear') return res.status(400).json({ error: zkN });
+    if (userN === null && globalN === null && systemN === null && weeklyN === null
+        && socialN === null && zkN === null) {
+      return res.status(400).json({
+        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, global, system',
+      });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
     if (weeklyN !== null) updates.push([limits.KEY_WEEKLY, String(weeklyN)]);
+    if (socialN === 'clear') clears.push(limits.KEY_WEEKLY_SOCIAL);
+    else if (socialN !== null) updates.push([limits.KEY_WEEKLY_SOCIAL, String(socialN)]);
+    if (zkN === 'clear') clears.push(limits.KEY_WEEKLY_ZK);
+    else if (zkN !== null) updates.push([limits.KEY_WEEKLY_ZK, String(zkN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -815,23 +864,18 @@ function adminRoutes(config) {
           [key, value, req.user.id]
         );
       }
+      for (const key of clears) {
+        await pool.query('DELETE FROM platform_settings WHERE key = $1', [key]);
+      }
       // Hot-flip the cache so new limits apply on the very next request
       // instead of waiting up to 10s for the TTL to expire.
-      limits.invalidate(...updates.map(([k]) => k));
+      limits.invalidate(...updates.map(([k]) => k), ...clears);
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
         user: userN, weekly: weeklyN, global: globalN, system: systemN,
+        weeklySocial: socialN, weeklyZk: zkN,
       });
-      const userCents = await limits.getDefaultUserLimitCents(pool);
-      const globalCents = await limits.getGlobalLimitCents(pool);
-      const systemCents = await limits.getSystemTokensLimitCents(pool);
-      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
-      res.json({
-        user_daily_limit_cents: userCents,
-        user_weekly_limit_cents: weeklyCents,
-        global_daily_limit_cents: globalCents,
-        system_tokens_daily_limit_cents: systemCents,
-      });
+      res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
