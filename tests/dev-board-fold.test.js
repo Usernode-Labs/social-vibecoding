@@ -504,7 +504,20 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 627 → 629: #1910 adds two checks on the restyled create-app dialog: the
   // form view on `/#create` (the name card and the segmented rail) and the
   // import view reached through `?shot=create-import`.
-  assert.equal(DAPP.tests.length, 629);
+  // 627 → 629: on the other side of the same merge, the invite link now
+  // points at the marketing site's /waitlist page instead of the in-app
+  // #waitlist route, so two checks read the link's own field on the
+  // more-to-do screen — one that its value is the marketing URL and carries
+  // no hash route, one that the copy affordance is still beside it.
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  // 629 → 633: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 627 → 629 alone, with
+  // the #1910 checks above; main independently took the same 627 → 631 with
+  // the waitlist-link and saved-drafts checks above. One +2 and one +4
+  // against a shared 627 is 633.
+  assert.equal(DAPP.tests.length, 633);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

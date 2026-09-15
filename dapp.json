@@ -487,6 +487,13 @@
       "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
     },
     {
+      "key": "MARKETING_BASE_URL",
+      "group": "Waitlist",
+      "required": false,
+      "default": "https://onhomeroom.com",
+      "description": "Origin of the public marketing site that owns the /waitlist page a shared invite link lands on. A referral link is built as <this>/waitlist?ref=<code>, so the code still comes back to the join endpoint as invite_code. Not the app's own origin: invites are opened by people who have never seen the product. Point it at your own site when self-hosting."
+    },
+    {
       "key": "WAITLIST_FOLLOW_X_URL",
       "group": "Waitlist",
       "required": false,
@@ -1665,6 +1672,19 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The shared invite link lands on the marketing waitlist page, not the in-app route",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist?ref=\"]:not([value*=\"#waitlist\"])",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The invite link keeps its copy affordance beside it",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-invite-url[value^=\"https://onhomeroom.com/waitlist\"] ~ #more-invite-copy",
+      "expectText": "Bring someone you",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
       "path": "/#leaderboard/users",
       "expectText": "Top users"
@@ -2160,6 +2180,16 @@
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
+    },
+    {
+      "name": "Sending a saved draft leaves the composer empty (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form #dc-input[data-shot-sent=\"1\"]:placeholder-shown"
+    },
+    {
+      "name": "…on the same screen where the drafts list is actually painted (#1962)",
+      "path": "/?shot=draft-sent#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send"
     },
     {
       "name": "Saved-drafts header says the list follows you across devices (#940)",
