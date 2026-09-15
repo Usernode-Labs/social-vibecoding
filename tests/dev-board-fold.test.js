@@ -646,7 +646,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // back to their shared base does not reconcile cleanly through this
   // comment trail. The literal is the ground truth here, not the
   // arithmetic.
-  assert.equal(DAPP.tests.length, 661);
+  //
+  // 661 → 662: #1508 (per-app Add to Home Screen) declares one check on the
+  // seeded app's install page (/app/staging-demo-admins/install, a
+  // server-rendered document with the app's own manifest, not an SPA
+  // route), asserting its #app-install root renders for a signed-in viewer.
+  assert.equal(DAPP.tests.length, 662);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -1937,6 +1937,11 @@
       "expectText": "Staging demo admin roster"
     },
     {
+      "name": "App install page renders",
+      "path": "/app/staging-demo-admins/install",
+      "expectSelector": "#app-install"
+    },
+    {
       "name": "Improve button is present on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#improve-btn:not(.hidden)",
