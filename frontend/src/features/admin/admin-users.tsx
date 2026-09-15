@@ -65,6 +65,11 @@ interface User {
   weekly_limit_cents?: number | null;
   usernode_pubkey?: string | null;
   social_verified?: boolean;
+  // #838: the identity tier the weekly cap follows, and its three proofs.
+  identity_tier?: 'unverified' | 'social' | 'zkpassport';
+  has_github?: boolean;
+  has_x?: boolean;
+  has_zkpassport?: boolean;
   openrouter_key_id?: string | null;
   openrouter_key_status?: string | null;
   openrouter_key_hash?: string | null;
@@ -75,6 +80,21 @@ interface User {
 const console_ = () => (window as any).AdminConsole;
 
 const SMALL_INPUT = 'rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60';
+
+// #838: the identity tier as the console names it, and what it is short of.
+// The weekly cap in Spend limits is set per tier, so the row says which one
+// this account is on and, for the unverified tier, which proofs it holds.
+const TIER_LABEL: Record<string, string> = {
+  unverified: 'No verified identity',
+  social: 'GitHub and X verified',
+  zkpassport: 'zkPassport verified',
+};
+function tierDetail(user: User): string {
+  if (user.identity_tier === 'zkpassport' || user.identity_tier === 'social') return '';
+  if (user.has_github && !user.has_x) return 'GitHub only';
+  if (user.has_x && !user.has_github) return 'X only';
+  return '';
+}
 const TINY_LABEL = 'text-xs text-zinc-500 dark:text-zinc-400';
 const CONTROL = 'flex items-center gap-1 shrink-0';
 
@@ -537,11 +557,19 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
               type="number" inputMode="decimal" placeholder="default" disabled={!canWrite}
               committed={overrideDollars} onCommit={commitCap} />
           </div>
-          <div className={CONTROL} title="Per-user weekly cap in dollars, enforced on top of the daily one. Blank = use platform default. 0 switches the weekly window off.">
+          <div className={CONTROL} title="Per-user weekly cap in dollars, enforced on top of the daily one. Blank = use the platform default for this account's identity tier. 0 switches the weekly window off.">
             <span className={TINY_LABEL}>Weekly $</span>
             <CommitField className={`admin-user-weekly-limit-input w-20 ${SMALL_INPUT}`}
               type="number" inputMode="decimal" placeholder="default" disabled={!canWrite}
               committed={weeklyOverrideDollars} onCommit={commitWeeklyCap} />
+          </div>
+          <div className={CONTROL} title="The identity tier this account's default weekly cap follows (Spend limits sets one cap per tier).">
+            <span className={TINY_LABEL}>Tier</span>
+            <span className="admin-user-tier rounded px-1.5 py-0.5 text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
+              data-tier={user.identity_tier || 'unverified'}>
+              {TIER_LABEL[user.identity_tier || 'unverified']}
+              {tierDetail(user) ? ` (${tierDetail(user)})` : ''}
+            </span>
           </div>
           {canWrite ? (
             <div className="flex items-center gap-2 shrink-0" title={roleTitle}>

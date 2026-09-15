@@ -3257,6 +3257,11 @@
       "expectText": "Default per-user weekly cap"
     },
     {
+      "name": "Spend limits: the weekly cap is set per identity tier, with GitHub-and-X and zkPassport fields beside the unverified one (#838)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
+    },
+    {
       "name": "A user row states week-to-date spend, not just today's (#1788)",
       "path": "/?demo=1#admin/users",
       "expectText": "this week"
@@ -4082,6 +4087,30 @@
       "name": "#2061: the checklist lists the steps after the one it is stuck on",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
+    },
+    {
+      "name": "#2219: the app-permission prompt names the app and what it is asking for",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden)",
+      "expectText": "record audio from your microphone"
+    },
+    {
+      "name": "#2219: the first grant says the app will reopen, because the policy only applies on navigation",
+      "path": "/?shot=app-permission",
+      "expectSelector": "#permission-consent-modal:not(.hidden) #permission-consent-allow",
+      "expectText": "Allow and reopen"
+    },
+    {
+      "name": "#2219: granted device permissions are listed per app in Settings, with a way back",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-list",
+      "expectText": "Staging demo app A"
+    },
+    {
+      "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
+      "path": "/?demo=1#settings/app-permissions",
+      "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
+      "expectText": "the next time it opens"
     }
   ],
   "governance": {

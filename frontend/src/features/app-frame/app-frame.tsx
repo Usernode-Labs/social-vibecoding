@@ -24,6 +24,11 @@
  * - There is no `src` prop. `src` is assigned through the registered ref by
  *   `appFrameBridge.setSrc` and nowhere else; re-applying a `src` prop is a
  *   document reload even when the value has not changed.
+ * - `sandbox` and `allow` ARE rendered props, and the difference is that
+ *   re-applying either is a no-op: React writes the same string to the same
+ *   attribute and the document is untouched. Both are also read at
+ *   navigation and not before, so `setSrc` publishes them on the line above
+ *   the `src` assignment (see ./app-frame-policy.js).
  * - Parking (Dev tab) hides the HOST, it does not unmount this component.
  *
  * `opacity` is a rendered prop rather than an imperative write because React
@@ -39,14 +44,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
-
-/**
- * The permission-policy contract stays here; the sandbox policy is shared with
- * the bridge because it has two phases. A source-less frame is fully
- * restricted, then setSrc synchronously publishes sandboxReady before the
- * verified cross-origin navigation starts.
- */
-const ALLOW = 'clipboard-write; pointer-lock; geolocation';
 
 function LaunchCover({
   iconKind,
@@ -117,13 +114,19 @@ const AppFrame = memo(function AppFrame(_props: { slug: string }): ReactNode {
   const cover = state.cover;
   return (
     <>
+      {/*
+          `allow` was the constant 'clipboard-write; pointer-lock; geolocation'
+          before #2219 — every app, unconditionally. The ungated base still
+          ships to everyone; the nine gated capabilities come from THIS user's
+          grants for THIS app, rebuilt by setSrc before each navigation.
+      */}
       <iframe
         id="app-iframe"
         ref={iframeRef}
         className="w-full h-full border-0"
         style={{ opacity: state.faded ? 0 : 1, backgroundColor: state.background || undefined }}
         sandbox={state.sandboxReady ? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
-        allow={ALLOW}
+        allow={state.allow}
       >
       </iframe>
       {cover ? (

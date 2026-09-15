@@ -31,6 +31,32 @@ const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
 // set to 0 — or missing — means "this cap does not apply"; see
 // resolveCaps() for the full four-way table.
 const KEY_WEEKLY = 'user_weekly_limit_cents';
+// #838: the weekly cap by IDENTITY TIER. Three tiers, resolved from what
+// the account has proven about itself, each with its own admin-set weekly
+// default:
+//
+//   unverified  no verified identity at all      → KEY_WEEKLY (the base)
+//   social      GitHub AND X both verified        → KEY_WEEKLY_SOCIAL
+//   zkpassport  a zkPassport-verified challenge   → KEY_WEEKLY_ZK
+//               completed (the proof-backed
+//               user_activities rows the mobile
+//               flow records, source 'zkpassport')
+//
+// The two higher keys are OPTIONAL: absent (or cleared) they inherit the
+// base weekly cap, so an untouched deployment behaves exactly as before
+// and a tier only starts to differ once an admin gives it a value. A
+// per-user override (users.weekly_limit_cents) still wins over every tier,
+// and the daily cap is untouched by tiers. Tiers replace, never stack: a
+// zkPassport-verified account gets the zkPassport value whatever social
+// links it also holds.
+const KEY_WEEKLY_SOCIAL = 'user_weekly_limit_social_cents';
+const KEY_WEEKLY_ZK = 'user_weekly_limit_zk_cents';
+const IDENTITY_TIER_UNVERIFIED = 'unverified';
+const IDENTITY_TIER_SOCIAL = 'social';
+const IDENTITY_TIER_ZK = 'zkpassport';
+const IDENTITY_TIERS = Object.freeze([
+  IDENTITY_TIER_UNVERIFIED, IDENTITY_TIER_SOCIAL, IDENTITY_TIER_ZK,
+]);
 
 const CREDIT_POLICY_LEGACY = 'legacy';
 const CREDIT_POLICY_TIERED = 'tiered';
@@ -137,6 +163,92 @@ async function getSystemTokensLimitCents(pool) {
   return readSettingCents(pool, KEY_SYSTEM, 2500);
 }
 
+// #838: a setting that may legitimately be ABSENT, answered as null rather
+// than a fallback so the caller can inherit. Cached like readSettingCents
+// (the sentinel keeps a "nothing stored" answer in the cache too, or every
+// unset tier would re-query on every turn); a read failure answers null,
+// which inherits the base cap — the non-punitive direction.
+const UNSET = Symbol('unset');
+async function readOptionalSettingCents(pool, key) {
+  const cached = fromCache(key);
+  if (cached === UNSET) return null;
+  if (cached != null) return cached;
+  try {
+    const { rows } = await pool.query(
+      'SELECT value FROM platform_settings WHERE key = $1',
+      [key]
+    );
+    const raw = rows[0]?.value;
+    const n = raw != null ? parseInt(raw, 10) : NaN;
+    const value = Number.isFinite(n) && n >= 0 ? n : null;
+    toCache(key, value == null ? UNSET : value);
+    return value;
+  } catch (err) {
+    log.warn('limits', 'platform_settings read failed; tier cap inherits', { key, err: err.message });
+    return null;
+  }
+}
+
+// #838: the platform_settings key behind a tier's weekly cap, or null for
+// the unverified tier, which IS the base weekly cap.
+function tierWeeklyKey(tier) {
+  if (tier === IDENTITY_TIER_SOCIAL) return KEY_WEEKLY_SOCIAL;
+  if (tier === IDENTITY_TIER_ZK) return KEY_WEEKLY_ZK;
+  return null;
+}
+
+// #838: the tier's own stored value, or null when it inherits the base.
+async function getTierWeeklyLimitCents(pool, tier) {
+  const key = tierWeeklyKey(tier);
+  if (!key) return null;
+  return readOptionalSettingCents(pool, key);
+}
+
+// #838: which tier the account's proofs place it in. One round trip, three
+// EXISTS: the social links live in user_social_identities (one row per
+// provider), and a zkPassport verification is a user_activities row the
+// mobile flow wrote with source 'zkpassport' after the bridge confirmed the
+// proof. A read failure answers the unverified tier, which inherits the
+// base cap — same non-punitive stance as an unreadable override.
+async function getIdentityTier(pool, userId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (
+                SELECT 1 FROM user_social_identities usi
+                 WHERE usi.user_id = $1 AND usi.provider = 'github'
+              ) AS has_github,
+              EXISTS (
+                SELECT 1 FROM user_social_identities usi
+                 WHERE usi.user_id = $1 AND usi.provider = 'x'
+              ) AS has_x,
+              EXISTS (
+                SELECT 1 FROM user_activities ua
+                 WHERE ua.user_id = $1 AND ua.source = 'zkpassport'
+              ) AS has_zkpassport`,
+      [userId]
+    );
+    return identityTierFromFlags(rows[0]);
+  } catch (err) {
+    log.warn('limits', 'identity tier read failed; treating as unverified', {
+      userId, err: err.message,
+    });
+    return identityTierFromFlags(null);
+  }
+}
+
+// Pure: the tier for a set of proofs. Exported for the admin users list,
+// which reads the same three flags in its own query, so the two can never
+// disagree about what "GitHub + X" means.
+function identityTierFromFlags(flags) {
+  const hasGithub = !!(flags && flags.has_github);
+  const hasX = !!(flags && flags.has_x);
+  const hasZk = !!(flags && flags.has_zkpassport);
+  const tier = hasZk ? IDENTITY_TIER_ZK
+    : (hasGithub && hasX) ? IDENTITY_TIER_SOCIAL
+      : IDENTITY_TIER_UNVERIFIED;
+  return { tier, hasGithub, hasX, hasZkpassport: hasZk };
+}
+
 function identityCreditPolicy() {
   return process.env.IDENTITY_CREDIT_POLICY === CREDIT_POLICY_TIERED
     ? CREDIT_POLICY_TIERED
@@ -168,7 +280,7 @@ async function getUserCreditEntitlement(pool, userId) {
     }
     // #1788: the weekly allowance is resolved independently of the daily
     // one — a user may hold an override for either, both or neither.
-    const weekly = await resolveWeeklyEntitlement(pool, row);
+    const weekly = await resolveWeeklyEntitlement(pool, row, userId);
     const override = row?.daily_limit_cents;
     if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
       return {
@@ -207,7 +319,7 @@ async function getUserCreditEntitlement(pool, userId) {
     );
     const row = rows[0];
     if (!row) throw new Error('user not found');
-    const weekly = await resolveWeeklyEntitlement(pool, row);
+    const weekly = await resolveWeeklyEntitlement(pool, row, userId);
     const override = row.daily_limit_cents;
     if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
       return {
@@ -255,6 +367,7 @@ async function getUserCreditEntitlement(pool, userId) {
       // either axis — checkBudget refuses before any cap arithmetic runs.
       weeklyLimitCents: 0,
       weeklySource: 'unavailable',
+      identityTier: null,
     };
   }
 }
@@ -265,14 +378,31 @@ async function getUserCreditEntitlement(pool, userId) {
 // platform default. A missing row (read failure) also falls back, which is
 // the non-punitive direction — an unreadable override must not silently
 // become a cut-off.
-async function resolveWeeklyEntitlement(pool, row) {
+//
+// #838: with no override, the allowance is the account's IDENTITY TIER's
+// weekly cap. `weeklySource` says which: 'tier' when the tier has its own
+// stored value, 'default' when it inherits the base weekly cap (always the
+// case for the unverified tier). Both are admin-set numbers, so both keep
+// the "0 switches the window off" reading in resolveCaps. `identityTier`
+// rides along so the admin console and the settings page can name it.
+async function resolveWeeklyEntitlement(pool, row, userId) {
   const override = row?.weekly_limit_cents;
   if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
-    return { weeklyLimitCents: Number(override), weeklySource: 'admin_override' };
+    return {
+      weeklyLimitCents: Number(override),
+      weeklySource: 'admin_override',
+      identityTier: userId == null ? null : (await getIdentityTier(pool, userId)).tier,
+    };
+  }
+  const identity = userId == null ? identityTierFromFlags(null) : await getIdentityTier(pool, userId);
+  const tierCents = await getTierWeeklyLimitCents(pool, identity.tier);
+  if (tierCents != null) {
+    return { weeklyLimitCents: tierCents, weeklySource: 'tier', identityTier: identity.tier };
   }
   return {
     weeklyLimitCents: await getDefaultUserWeeklyLimitCents(pool),
     weeklySource: 'default',
+    identityTier: identity.tier,
   };
 }
 
@@ -301,7 +431,10 @@ function resolveCaps(entitlement = {}) {
 
   const weeklyLimitCents = Number(entitlement.weeklyLimitCents) || 0;
   const weeklySource = entitlement.weeklySource;
-  const weeklyOptional = weeklySource === 'admin_override' || weeklySource === 'default';
+  // #838: a tier's weekly value is an admin-set number like the base one,
+  // so it takes the same zero-means-off reading.
+  const weeklyOptional = weeklySource === 'admin_override' || weeklySource === 'default'
+    || weeklySource === 'tier';
 
   return {
     dailyApplies: dailyOptional ? dailyLimitCents > 0 : true,
@@ -507,6 +640,10 @@ async function getBudgetSnapshot(pool, userId) {
     verificationRequired: entitlement.verificationRequired,
     entitlementAvailable: entitlement.entitlementAvailable,
     tierLimitCents: TIER_ONE_LIMIT_CENTS,
+    // #838: the identity tier the weekly cap was resolved from, and where
+    // that cap came from ('admin_override' | 'tier' | 'default').
+    identityTier: entitlement.identityTier ?? null,
+    weeklySource: entitlement.weeklySource ?? null,
     limitCents: weeklyBinds ? caps.weeklyLimitCents : limitCents,
     spentCents: weeklyBinds ? weeklySpentCents : spentCents,
     remainingCents: weeklyBinds ? weeklyRemaining : dailyRemaining,
@@ -789,10 +926,20 @@ module.exports = {
   claimByokSwitchNotice,
   settleTurnSpend,
   invalidate,
+  getIdentityTier,
+  identityTierFromFlags,
+  getTierWeeklyLimitCents,
+  tierWeeklyKey,
   KEY_USER,
   KEY_GLOBAL,
   KEY_WEEKLY,
+  KEY_WEEKLY_SOCIAL,
+  KEY_WEEKLY_ZK,
   KEY_SYSTEM,
+  IDENTITY_TIERS,
+  IDENTITY_TIER_UNVERIFIED,
+  IDENTITY_TIER_SOCIAL,
+  IDENTITY_TIER_ZK,
   CREDIT_POLICY_LEGACY,
   CREDIT_POLICY_TIERED,
   TIER_ONE_LIMIT_CENTS,

@@ -24,7 +24,7 @@
  */
 
 import { appFrameRefs, appFrameStore, COVER_DEFAULTS } from './app-frame-store.js';
-import { isSafeAppFrameSrc } from './app-frame-policy.js';
+import { allowAttribute, BASE_ALLOW, isSafeAppFrameSrc } from './app-frame-policy.js';
 
 /** Frames created. A tab switch must NEVER move this. */
 let mounts = 0;
@@ -63,6 +63,11 @@ export const appFrameBridge = {
       faded: !!faded,
       background: sameFrame ? current.background : '',
       sandboxReady: sameFrame ? current.sandboxReady : false,
+      // A DIFFERENT app starts from the ungated base. setSrc recomputes it
+      // before the navigation that would use it, so this is belt-and-braces
+      // rather than the gate — but the belt is one line and what it guards
+      // against is one app's camera grant sitting on another app's frame.
+      allow: sameFrame ? current.allow : BASE_ALLOW,
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
     });
     return !!appFrameRefs.iframe;
@@ -99,7 +104,8 @@ export const appFrameBridge = {
   /** Drop the frame entirely: the app is being left, not parked. */
   unmount() {
     appFrameStore.set({
-      slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+      slug: '', active: false, faded: true, background: '', sandboxReady: false,
+      allow: BASE_ALLOW, cover: null,
     });
   },
 
@@ -123,17 +129,41 @@ export const appFrameBridge = {
   /**
    * Point the frame at `src`. The ONLY way its `src` ever changes, and an
    * imperative write by design — see app-frame-store.js.
+   *
+   * `granted` (#2219) is this user's granted capabilities for this app, as
+   * the iframe-token mint returned them. It has to arrive HERE, with the
+   * navigation, and not a moment later: a frame's Permissions Policy is
+   * computed from `allow` when it navigates, so an attribute written after
+   * the fact applies to nothing. That is the same two-phase property the
+   * sandbox switch below relies on, and the same flushSync carries both.
+   *
+   * Omitting `granted` narrows the frame to the ungated base rather than
+   * leaving the previous app's delegation in place. A caller that has not
+   * read the grants yet must not accidentally hand them on.
    */
-  setSrc(src) {
+  setSrc(src, { granted = [] } = {}) {
     const el = appFrameRefs.iframe;
     if (!el || !src) return false;
     const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
     if (!isSafeAppFrameSrc(src, platformOrigin)) return false;
-    // flushSync updates the sandbox on this same element before the navigation.
-    appFrameStore.set({ sandboxReady: true });
+    // flushSync updates the sandbox AND the permission policy on this same
+    // element before the navigation.
+    appFrameStore.set({ sandboxReady: true, allow: allowAttribute(granted) });
     navigations += 1;
     el.src = src;
     return true;
+  },
+
+  /**
+   * The delegation the mounted frame's CURRENT document actually holds.
+   *
+   * Read back off the store rather than the element so it answers the same
+   * before and after a render. The permission relay uses it to tell "granted
+   * and live" apart from "granted, and this document predates the grant" —
+   * the difference between answering the app and reloading it.
+   */
+  allow() {
+    return appFrameStore.get().allow;
   },
 
   /**
