@@ -522,7 +522,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // plus the waitlist-link pair and #1944's pair on top of the shared 628.
   // One shared +2 counted once, plus main's two additional +2s, against a
   // shared 628 is 634.
-  assert.equal(DAPP.tests.length, 634);
+  // 634 → 638: #2219's four. Two photograph the app-permission prompt
+  // through `?shot=app-permission` (the dialog an embedded app opens by
+  // calling usernode.requestPermission, which no plain route can reach
+  // because it needs a running app that asks); two read the new Settings
+  // pane behind `?demo=1#settings/app-permissions`, one for the rows and
+  // one for the copy that must NOT promise a revoke lands while the app is
+  // still open.
+  assert.equal(DAPP.tests.length, 638);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

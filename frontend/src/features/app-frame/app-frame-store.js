@@ -28,6 +28,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { BASE_ALLOW } from './app-frame-policy.js';
 
 /**
  * `cover: null` needs declaring, or `tsc --noEmit` infers the field as `null`
@@ -40,7 +41,7 @@ import { createStore } from '../../lib/plain-store.js';
  * }} LaunchCoverState
  * @typedef {{
  *   slug: string, active: boolean, faded: boolean, background: string,
- *   sandboxReady: boolean, cover: LaunchCoverState | null,
+ *   sandboxReady: boolean, allow: string, cover: LaunchCoverState | null,
  * }} AppFrameState
  */
 
@@ -62,6 +63,18 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   background: '',
   /** False while the source-less blank document must remain fully restricted. */
   sandboxReady: false,
+  /**
+   * #2219: the frame's Permissions Policy delegation, rebuilt from this
+   * user's grants for this app on the line before every navigation.
+   *
+   * State, where `src` deliberately is not, and the difference is that a
+   * re-render re-applying this value is a no-op: React writes the same
+   * string to the same attribute and the document is untouched. Re-applying
+   * `src` would be a reload. It starts at the ungated base so a frame that
+   * navigates before any grant is read delegates nothing extra rather than
+   * everything.
+   */
+  allow: BASE_ALLOW,
   /** The launch cover, or null once revealed. See COVER_DEFAULTS. */
   cover: null,
 }));

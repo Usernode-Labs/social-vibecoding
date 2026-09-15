@@ -11,6 +11,12 @@
 //      public/index.html. It is NOT sandboxed, so it only needs
 //      `allow="pointer-lock"` — and must NOT gain a sandbox attribute.
 //
+// Both values moved behind the permission catalogue in #2219, but
+// pointer-lock itself did not move: it is in the UNGATED base, delegated to
+// every app frame with no grant required. See tests/app-permissions.test.js
+// for the catalogue contract and tests/iframe-geolocation.test.js for the
+// capability that DID become gated.
+//
 // These are plain string assertions on the source so a refactor can't
 // silently drop the delegation.
 //
@@ -36,8 +42,12 @@ test('App-tab iframe sandbox carries allow-pointer-lock', () => {
 });
 
 test('App-tab iframe allow merges pointer-lock with clipboard-write', () => {
+  // #2219 turned the flat constant into `_allowAttribute(granted)`. Both
+  // capabilities this test exists for are in the UNGATED base, so both still
+  // reach every app; what left is `geolocation`, which is now a grant.
   const src = read('public/js/app-view.js');
-  assert.match(src, /allow="clipboard-write; pointer-lock; geolocation"/);
+  assert.match(src, /_appIframeUngated: \['clipboard-write', 'pointer-lock'\]/);
+  assert.match(src, /allow="\$\{AppView\._allowAttribute\(\[\]\)\}"/);
 });
 
 test('staging preview iframe delegates pointer-lock', () => {
@@ -46,7 +56,9 @@ test('staging preview iframe delegates pointer-lock', () => {
     .split('\n')
     .find((l) => l.includes('id="staging-iframe"'));
   assert.ok(line, 'staging-iframe element should exist');
-  assert.match(line, /allow="pointer-lock; geolocation"/);
+  // #2219: the ungated base. A staging preview shows a build the group has
+  // not voted in yet, so it delegates no gated capability at all.
+  assert.match(line, /allow="clipboard-write; pointer-lock"/);
   // It is intentionally not sandboxed; adding a sandbox attribute would
   // restrict a frame that is currently unrestricted.
   assert.ok(!/\bsandbox=/.test(line), 'staging-iframe must not be sandboxed');

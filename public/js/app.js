@@ -859,11 +859,12 @@ const App = {
     // once-per-document: _applyMenuNavShot clicks a drawer row and
     // _applySettingsBackShot assigns a hash and traverses back out of it, so
     // re-running either on the hashchange it just caused would loop, and
-    // _applyNotifPermissionsShot / _applyTermsConsentShot present overlays
-    // that would stack.
+    // _applyNotifPermissionsShot / _applyTermsConsentShot /
+    // _applyAppPermissionShot present overlays that would stack.
     App._applySettingsBackShot();
     App._applyNotifPermissionsShot();
     App._applyTermsConsentShot();
+    App._applyAppPermissionShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -1245,6 +1246,48 @@ const App = {
       if (!backdrop) return;
       backdrop.click();
       if (sheet.el) sheet.el.setAttribute('data-un-ghost-click', 'dispatched');
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep link `?shot=app-permission` (#2219): present the
+  // platform's app-permission prompt — the dialog an embedded app opens by
+  // calling usernode.requestPermission().
+  //
+  // It needs a link because there is no other way to reach it. The real
+  // prompt appears only when a running app in the frame asks for a gated
+  // capability it has declared and this user has not answered for yet: three
+  // conditions no URL can arrange, and the first of them needs a deployed app
+  // that actually calls the bridge. So the before/after captures would show
+  // the app screen instead of the thing the change is about.
+  //
+  // Renders from a fixed snapshot, calls no bridge method and writes nothing
+  // (the POST that stores a grant happens on Allow, which nothing here
+  // presses), so it is pure UI state — ungated for the same reason as
+  // ?shot=notif-permissions above, and on the same retry budget, because
+  // `AppView._reactDevBoard()` may not have wired up on the first tick.
+  _applyAppPermissionShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-permission') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      if (!window.AppView || typeof AppView.showPermissionConsentModal !== 'function'
+          || !AppView._reactDevBoard()) {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
+      // Not awaited: the shot leaves the dialog standing for the camera. It
+      // resolves if somebody dismisses it, and its answer goes nowhere.
+      AppView.showPermissionConsentModal({
+        appName: 'Staging demo app',
+        capability: 'microphone',
+        label: 'Microphone',
+        blurb: 'record audio from your microphone',
+        reason: 'Records your voice notes',
+        needsReload: true,
+        surfaced: false,
+      });
     };
     setTimeout(attempt, 50);
   },
