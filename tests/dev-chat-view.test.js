@@ -173,7 +173,11 @@ test('every id and class the skeleton emitted still renders', () => {
   // The lift classes are ADDED to this run, not a rewrite of it — the
   // legacy modules and dapp.json's declared checks select on it.
   assert.match(out, /class="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session"/);
-  assert.match(out, /id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0"/);
+  // `platform-kb-column` ADDED (#1937/#1491), same spirit as the lift classes
+  // above: the pane is a flex column whose composer bar is a shrink-0 sibling
+  // below #dc-messages, so it reserves the on-screen keyboard's height rather
+  // than letting the bar sit behind the keys. Nothing else in the string moved.
+  assert.match(out, /id="dc-tab-chat" class="dc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0"/);
   assert.match(out, /id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"/);
   // `display: contents` — #dc-view is a flex column and each banner has to
   // stay exactly the flex child it was.

@@ -175,7 +175,16 @@
 // previous cached bundle has only Disconnect once an account is linked and
 // still contains the retired free-text profile inputs, so this is also the
 // remote repair for the silent stale-client failure reported after #1939.
-const SW_VERSION = 'v22';
+// v23: the four composer columns reserve the on-screen keyboard's height, so
+// the message box stops hiding behind the keys (#1937, #1491). The whole
+// user-visible surface is public/css/app.css and the React shell bundle —
+// precisely the case the v10 entry names — and the miss was caught the way
+// v15 describes, one step earlier for once: the topic thread was verified on
+// a FRESH preview, then the same preview, by then holding a shell cache, drew
+// the general chat from the old stylesheet and read as a fix that simply had
+// not worked. The deployed CSS had the new rule the whole time. Bumped here so
+// an installed client is not the next one to report it as unfixed.
+const SW_VERSION = 'v23';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

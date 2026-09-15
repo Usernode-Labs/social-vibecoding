@@ -131,6 +131,53 @@ test('keyboard-up suppresses the inset on both utilities', () => {
     'the bar keeps its base gap with the keyboard up, just not the inset');
 });
 
+test('every composer column reserves the keyboard inset, exactly once', () => {
+  // #1937/#1491. Four screens are built the same way: a flex column with a
+  // flex-1 scroller and the typing slot + composer pinned BELOW it as
+  // shrink-0 siblings, OUTSIDE the scroller. The kit cannot help there —
+  // `attachKeyboardAvoidance` gates on `scrollEl.contains(field)` and
+  // `.un-kb-avoid` pads the inside of a scroller — so the composer sat behind
+  // the keyboard on all four, and on iOS the settled pin also reset Safari's
+  // reveal-pan once per keypress. Reserving on the column is what native does
+  // (iOS and Android Messages both shrink the content area rather than cover
+  // or pan it), and it leaves the pin inert.
+  const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
+  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
+    'the column must reserve the kit-published keyboard inset');
+  assert.match(col[1], /transition:\s*none/,
+    'no transition while the keyboard is up — the bar tracks it exactly');
+
+  const COLUMNS = [
+    ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],
+    ['frontend/src/features/group-chat/general-chat.tsx', /className="gc-chat-pane platform-kb-column/],
+    ['frontend/src/features/dev-chat/view.tsx', /className="dc-chat-pane platform-kb-column/],
+    ['frontend/src/features/messages/index.tsx', /messages-thread-pane platform-kb-column/],
+  ];
+  for (const [file, re] of COLUMNS) {
+    assert.match(read(file), re, `${file} must reserve the keyboard inset on its column`);
+  }
+
+  // EXACTLY once: a column that reserves the inset must not also hang
+  // `un-kb-avoid` on its scroller, which would pad the inside of it on top.
+  // Scoped to rendered class strings — these files DISCUSS `.un-kb-avoid` in
+  // their comments, which is not the same as wearing it.
+  for (const [file] of COLUMNS) {
+    const worn = read(file).match(/className=(?:"[^"]*"|\{`[^`]*`\})/g) || [];
+    const twice = worn.filter((c) => c.includes('un-kb-avoid'));
+    assert.deepEqual(twice, [],
+      `${file} must not reserve the inset twice (column + un-kb-avoid)`);
+  }
+
+  // The boxed thread layout is not screen-bottom-anchored, so reserving
+  // keyboard space there would be dead space in the middle of a page.
+  const shell = read('frontend/src/features/group-chat/thread-shell.tsx');
+  const boxedRoot = /className="dev-thread border[^"]*"/.exec(shell);
+  assert.ok(boxedRoot, 'the boxed root should still be plain dev-thread');
+  assert.ok(!boxedRoot[0].includes('platform-kb-column'),
+    'only screen-bottom-anchored columns reserve the keyboard inset');
+});
+
 // ── 3. Every screen scroller opts in ─────────────────────────────────
 
 // The top-level screens and the fixed auth overlays. A new screen that
@@ -166,8 +213,13 @@ test('Messages insets both of its independent scrollers and its composer', () =>
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(source, /className="messages-list-scroll platform-safe-scroll"/,
     'the conversation list must clear the home indicator');
-  assert.match(source, /className="messages-thread-scroll platform-safe-scroll un-kb-avoid"/,
+  assert.match(source, /className="messages-thread-scroll platform-safe-scroll"/,
     'the message history must clear the home indicator');
+  // #1491: `un-kb-avoid` was REMOVED here on purpose. The column carries the
+  // keyboard reservation now, and the kit's class would pad the inside of
+  // this scroller on top of it — the inset twice, as dead space.
+  assert.ok(!/messages-thread-scroll[^"]*un-kb-avoid/.test(source),
+    'the Messages scroller must not reserve the inset a second time');
   assert.match(composer, /messages-composer platform-safe-bar/,
     'the pinned Messages composer must carry the inset itself');
 });

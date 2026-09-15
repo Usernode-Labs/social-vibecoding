@@ -137,7 +137,10 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           child of a wrapper. */}
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
-        <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
+        {/* `platform-kb-column` (app.css): #dc-messages scrolls and
+            #dc-composer-bar is a shrink-0 sibling below it, so the keyboard
+            inset is reserved here, on the column. */}
+        <div id="dc-tab-chat" className="dc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
           {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"

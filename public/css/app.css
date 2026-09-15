@@ -326,6 +326,48 @@ html.un-kb .platform-safe-sheet {
   padding-bottom: 1.25rem !important;
 }
 
+/* Keyboard up: reserve its height on a COMPOSER COLUMN (#1937, #1491).
+
+   Four screens are built the same way — the topic thread, the general chat,
+   the dev chat and Messages. Each is a flex column holding a `flex-1`
+   scroller with the typing slot and composer pinned BELOW it as `shrink-0`
+   siblings, OUTSIDE the scroller. That shape is deliberate (thread-shell.tsx
+   explains it), and it is exactly what the kit's keyboard avoidance cannot
+   help with: `attachKeyboardAvoidance` gates every path on
+   `scrollEl.contains(field)`, and `html.un-kb .un-kb-avoid`'s padding lands
+   INSIDE the scroller. So nothing lifted the composer and you typed blind.
+
+   On iOS there was a second symptom on top of that. Safari pans the document
+   to reveal the focused field, and `settledPin()` — which runs on EVERY
+   settled viewport event, not only on focus — reset that pan with
+   `window.scrollTo(0, 0)`. Typing resizes the visual viewport (QuickType), so
+   the page snapped back once per keypress and took the transcript with it.
+   Android never had that half: Chrome does not pan (measured: scrollY stays
+   0), though its composer was covered just the same.
+
+   Reserving the inset on the column fixes both, and is what native does — iOS
+   Messages and Android Messages both shrink the content area by the keyboard's
+   height and pin the composer above it rather than covering or panning.
+   The scroller loses that height instead of being covered, so the transcript
+   stays visible, the composer sits above the keys, and nothing needs to pan,
+   which leaves the settled pin inert rather than destructive.
+
+   Transition shape copied from the kit's own `.un-kb-avoid`: none while the
+   keyboard is up so the bar tracks it exactly, eased on the way out so the
+   browser's scrollTop clamp rides the ease instead of snapping.
+
+   A column that takes this must NOT also carry `.un-kb-avoid` on its
+   scroller — that would reserve the inset twice and leave dead space under
+   the transcript. */
+.platform-kb-column {
+  transition: padding-bottom 150ms ease-out;
+}
+
+html.un-kb .platform-kb-column {
+  padding-bottom: var(--un-kb-inset, 0px);
+  transition: none;
+}
+
 /* ── Platform Messages screen ─────────────────────────────
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.

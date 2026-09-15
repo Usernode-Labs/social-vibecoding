@@ -322,10 +322,14 @@ function ConversationThread() {
     rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} shape={shape} />);
   }
   return (
-    <section className={`flex messages-thread-pane dc-lift dc-lift-session ${shape === 'bubble' ? 'messages-thread-direct' : 'messages-thread-group'}`} aria-label={snap.active?.title || 'Conversation'}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session ${shape === 'bubble' ? 'messages-thread-direct' : 'messages-thread-group'}`} aria-label={snap.active?.title || 'Conversation'}>
       <ThreadHeader />
       <InvitationBanner />
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll un-kb-avoid" aria-live="polite">
+      {/* No `un-kb-avoid` here: the column reserves the keyboard inset now
+          (`platform-kb-column` above), and the kit's class would pad the
+          inside of this scroller on top of that — the inset twice over, as
+          dead space under the last message. */}
+      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
         {snap.loadingThread ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
         {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
