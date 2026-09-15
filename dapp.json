@@ -3729,6 +3729,16 @@
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
     },
     {
+      "name": "#1944: an open coding-run card keeps its chevron in the head row",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-head > .dc-cc-attached-chevron"
+    },
+    {
+      "name": "#1944: an open coding-run card shows its log panel",
+      "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached[open] > pre.dc-cc-attached-log"
+    },
+    {
       "name": "Capture routes past the first sit behind a disclosure",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-more > .usn-visual-more-summary",
