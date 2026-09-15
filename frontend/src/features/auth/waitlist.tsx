@@ -328,6 +328,18 @@ export function WaitlistScreen() {
    * #waitlist-resend-note, beside the field it is about.
    */
   const [requestNote, setRequestNote] = useState<{ text: string; tone: MsgTone } | null>(null);
+  /**
+   * The address step asked, and the answer was "that address is not on the
+   * waitlist" (#2201's disclosure, read through POST
+   * /api/public/waitlist/status). It reveals the way out of the dead end:
+   * telling somebody we cannot find them is only half an answer if the only
+   * control on screen still says "email me a code".
+   *
+   * Its own flag rather than a tone on `requestNote`, because the note is
+   * also where a connection failure and a 429 land, and neither of those
+   * should offer to start a join.
+   */
+  const [notFound, setNotFound] = useState(false);
   const [resending, setResending] = useState(false);
   /** Epoch ms the cooldown ends, and the seconds left, ticked once a second. */
   const [cooldownUntil, setCooldownUntil] = useState(0);
@@ -394,7 +406,13 @@ export function WaitlistScreen() {
     // with the celebration swapped for the state pill, which is the
     // difference `codeOnly` makes and the state most status readers are in.
     const shotStatus = shot === 'waitlist-status';
-    // The sixth (#2201): joined with an address that was already confirmed,
+    // The sixth: the address step after a lookup that found nothing (#2201).
+    // A shot of its own because it is the state this change exists to add,
+    // and it cannot be photographed from any of the others: the note and the
+    // join control only appear once the status read has come back. Painted
+    // from literals, same as the rest, so the capture makes no request.
+    const shotNotFound = shot === 'waitlist-not-found';
+    // The seventh (#2201): joined with an address that was already confirmed,
     // so the settled panel reads the state back and the code step never
     // appears. It needs a shot of its own because no other one paints it —
     // `waitlist-status` reaches the same panel through `codeOnly`, which
@@ -480,6 +498,22 @@ export function WaitlistScreen() {
       // and not a fetch: this branch only ever sets state.
       setSentTo('you@example.com');
     }
+    if (shotNotFound) {
+      setMsg(null);
+      setJoined(true);
+      setCodeOnly(true);
+      // The address step, which is the only place this state exists: the
+      // lookup happens before anything advances.
+      setFlowStep('address');
+      // No `sentTo`: nothing was sent, which is the whole point of the
+      // branch being reachable at all.
+      setSentTo('');
+      setRequestNote({
+        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        tone: 'error',
+      });
+      setNotFound(true);
+    }
 
     // Who invited them, if they arrived on somebody's share link. A code
     // that doesn't resolve is dropped server-side rather than refused, so a
@@ -508,7 +542,7 @@ export function WaitlistScreen() {
     setHasSession(session);
     // Never resurrect the form over the success state (a re-show after a join,
     // e.g. back-then-forward).
-    if (shotCodeEntry || shotCodeStep || shotAdmitted || shotRejoined) {
+    if (shotCodeEntry || shotCodeStep || shotAdmitted || shotNotFound || shotRejoined) {
       // A shot has to paint a settled state, and a focus ring is not one.
     } else if (!session && !joined && !shotJoined && !shotConfirmed) {
       email.current?.focus({ preventScroll: true });
@@ -732,14 +766,27 @@ export function WaitlistScreen() {
   }, [confirmAddress, cooldownLeft, resending, startCooldown]);
 
   /**
-   * Send the code from the address step (#1876).
+   * Check the address, then do the right one of three things (#2201).
    *
-   * Same endpoint and same frozen body as the resend above, so there is
-   * nothing here to branch on: a request the server accepted ALWAYS advances,
-   * whatever the address was. A step that advanced only for addresses we hold
-   * would answer the membership question that constant body exists to refuse.
-   * The "if that address is on our waitlist" line travels to the next step,
-   * where the field it is about is.
+   * This step used to POST /resend and advance unconditionally, because the
+   * resend body says the same words to everybody and there was nothing to
+   * branch on. That vagueness has one bad ending: an address that is NOT on
+   * the list gets told a code is on its way, lands on a box wanting six
+   * digits, and waits for a mail that was never sent, because there was
+   * nothing to send it about.
+   *
+   * So the read comes first. POST /api/public/waitlist/status writes nothing
+   * and mails nothing, and it answers honestly, which is what lets this step
+   * separate the three cases:
+   *
+   *   1. not on the list  - say so, offer the join, send nothing;
+   *   2. on it, unconfirmed - exactly as before: send, then advance;
+   *   3. on it, confirmed - straight to the status panel, no code at all.
+   *
+   * The check is never the only way this works. A non-200, a body without
+   * `on_list`, an older deployment that has no such route, a 429 on its
+   * bucket: every one of those falls through to the send-and-advance path
+   * below rather than stranding somebody on a step that cannot continue.
    */
   const onRequestCode = useCallback(async () => {
     if (resending || cooldownLeft > 0) return;
@@ -748,7 +795,55 @@ export function WaitlistScreen() {
       return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
     }
     setRequestNote(null);
+    setNotFound(false);
     setResending(true);
+
+    // `null` means "we did not get a usable answer", which is deliberately
+    // distinct from "not on the list" - only the second one is allowed to
+    // stop the errand.
+    let known: { onList: boolean; status: WaitlistStatus | null } | null = null;
+    try {
+      const res = await fetch('/api/public/waitlist/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailVal }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && typeof data.on_list === 'boolean') {
+        known = { onList: data.on_list, status: data.status || null };
+      }
+    } catch {
+      /* Fall through to the send: a lookup we could not make is not an answer. */
+    }
+
+    if (known && !known.onList) {
+      setRequestNote({
+        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        tone: 'error',
+      });
+      setNotFound(true);
+      setResending(false);
+      return;
+    }
+
+    if (known && known.status?.confirmed) {
+      // Already confirmed, so there is nothing a code would prove. Read the
+      // state back instead of mailing six digits to make somebody type them
+      // in to be told what we already know.
+      setMsg(null);
+      setSentTo(emailVal.toLowerCase());
+      setStatus(known.status);
+      setConfirmed(true);
+      // No stage-2 offer on this path: its link needs a `more_token`, and the
+      // status endpoint deliberately never returns one (it is the first-join
+      // capability). An "Answer them now" button pointing nowhere is worse
+      // than no button. The mailed-code path still raises the offer, because
+      // /confirm carries the token.
+      setOffer(false);
+      setResending(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/public/waitlist/resend', {
         method: 'POST',
@@ -795,8 +890,37 @@ export function WaitlistScreen() {
       return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
     }
     setRequestNote(null);
+    setNotFound(false);
     goToCodeStep();
   }, [confirmAddress, goToCodeStep]);
+
+  /**
+   * Out of the dead end (#2201): the address is not on the waitlist, so the
+   * useful next move is to put it there.
+   *
+   * Back to the join form rather than a second join control here, because
+   * joining also asks for a country and how they found us, and a duplicate
+   * form is a second place for those questions to drift. The address they
+   * just typed travels with them, so nobody retypes what they have already
+   * typed once, and the fragment goes back to the plain screen so a reload
+   * lands on the form instead of on the check-my-status step they left.
+   */
+  const onJoinInstead = useCallback(() => {
+    const emailVal = confirmAddress();
+    setNotFound(false);
+    setRequestNote(null);
+    setMsg(null);
+    setJoined(false);
+    setCodeOnly(false);
+    setFlowStep('address');
+    if (emailVal && email.current) email.current.value = emailVal;
+    try {
+      if (location.hash !== '#waitlist') location.hash = '#waitlist';
+    } catch {
+      /* ignore */
+    }
+    window.setTimeout(() => email.current?.focus({ preventScroll: true }), 0);
+  }, [confirmAddress]);
 
   /**
    * Jump straight to the confirm step, for somebody who joined on another
@@ -1265,6 +1389,38 @@ export function WaitlistScreen() {
               >
                 {requestNote ? requestNote.text : null}
               </p>
+              {/*
+                  The way out of the one dead end this step used to have
+                  (#2201). Before the status check, an address that was not on
+                  the list was told a code was coming and left waiting for a
+                  mail nobody sent; now it is told the truth, and the truth is
+                  only half an answer unless the next move is on screen beside
+                  it.
+
+                  Always in the markup and hidden until the lookup says so:
+                  the id is part of the shell's inventory, so rendering it
+                  conditionally would take it out of the document. The class
+                  rides on the BUTTON rather than on a wrapper, because the
+                  declared checks assert presence — `#waitlist-join-instead`
+                  matching a `:not(.hidden)` selector is the only way a check
+                  can tell the offered state from the withheld one.
+
+                  Filled neutral rather than the accent: the send above it is
+                  still the primary action on this step, and two solid violet
+                  pills stacked read as two competing primaries with no answer
+                  to which one the note meant.
+              */}
+              <Button
+                id="waitlist-join-instead"
+                type="button"
+                size="lg"
+                variant="neutral"
+                ink="neutral"
+                className={hiddenLast(!notFound, 'mt-3')}
+                onClick={onJoinInstead}
+              >
+                Join the waitlist
+              </Button>
             </div>
             {/*
                 Step 2 (#1876): the six digits. Visible by default, because
