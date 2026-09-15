@@ -489,7 +489,7 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   assert.match(verifiedSocials.expectSelector, /#profile-edit-github:not\(:has\(input\)\)/);
   assert.match(verifiedSocials.expectSelector, /#profile-edit-x:not\(:has\(input\)\)/);
   assert.match(verifiedSocials.expectSelector, /a\[href='#settings\/connectors'\]/);
-  assert.equal(verifiedSocials.expectText, 'Manage social accounts');
+  assert.equal(verifiedSocials.expectText, 'Connect or change social accounts');
 });
 
 test('the profile checks assert on the changed screen, not on "/"', () => {

@@ -39,14 +39,18 @@ test('OAuth state is hashed at rest, PKCE-bound, user/provider-bound, and single
       if (/INSERT INTO social_identity_oauth_states/.test(sql)) {
         pending = {
           hash: params[0], userId: params[1], provider: params[2],
-          verifier: params[3], expiresAt: params[4],
+          intent: params[3], verifier: params[4], expiresAt: params[5],
         };
         return { rows: [] };
       }
       if (/DELETE FROM social_identity_oauth_states[\s\S]*RETURNING/.test(sql)) {
         if (!pending || params[0] !== pending.hash || params[1] !== pending.userId
             || params[2] !== pending.provider) return { rows: [] };
-        const row = { pkce_verifier: pending.verifier, expires_at: pending.expiresAt };
+        const row = {
+          intent: pending.intent,
+          pkce_verifier: pending.verifier,
+          expires_at: pending.expiresAt,
+        };
         pending = null;
         return { rows: [row] };
       }
@@ -54,7 +58,9 @@ test('OAuth state is hashed at rest, PKCE-bound, user/provider-bound, and single
     },
   };
 
-  const created = await identity.createOauthState(pool, { userId: 7, provider: 'github' });
+  const created = await identity.createOauthState(pool, {
+    userId: 7, provider: 'github', intent: 'replace',
+  });
   assert.match(created.state, identity.STATE_RE);
   assert.match(created.challenge, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(created.challenge, created.verifier);
@@ -71,6 +77,7 @@ test('OAuth state is hashed at rest, PKCE-bound, user/provider-bound, and single
   const consumed = await identity.consumeOauthState(pool, {
     userId: 7, provider: 'github', state: created.state,
   });
+  assert.equal(consumed.intent, 'replace');
   assert.equal(consumed.verifier, created.verifier);
   assert.equal(await identity.consumeOauthState(pool, {
     userId: 7, provider: 'github', state: created.state,
@@ -118,7 +125,7 @@ test('saving a proof stores no token, dual-writes GitHub attribution, and serial
   assert.match(compatibility.sql, /github_oauth_token_enc = NULL/);
 });
 
-test('a provider account is unique globally and account swaps require explicit disconnect', async () => {
+test('a provider account is unique globally and a different subject requires Change account', async () => {
   const duplicate = transactionPool(async (sql) => {
     if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
     if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
@@ -147,9 +154,164 @@ test('a provider account is unique globally and account swaps require explicit d
     identity.saveIdentity(swap.pool, 7, {
       provider: 'x', subject: '11', handle: 'different',
     }),
-    (err) => err.code === 'disconnect_before_relink'
+    (err) => err.code === 'different_account'
   );
   assert.equal(swap.calls.some((call) => /INSERT INTO user_social_identities/.test(call.sql)), false);
+});
+
+test('refreshing the same immutable subject updates its handle without changing visibility', async () => {
+  const tx = transactionPool(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+    if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/SELECT provider_subject, handle, public_visible/.test(sql)) {
+      return { rows: [{ provider_subject: '10', handle: 'old_name', public_visible: false }] };
+    }
+    if (/INSERT INTO user_social_identities/.test(sql)) {
+      return { rows: [{
+        provider: 'x', handle: 'new_name', linked_at: new Date(0),
+        last_verified_at: new Date(1), public_visible: false,
+      }] };
+    }
+    if (/DELETE FROM social_identity_pending_replacements/.test(sql)) {
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`unexpected query ${sql}`);
+  });
+
+  const result = await identity.finishIdentityVerification(tx.pool, 7, {
+    provider: 'x', subject: '10', handle: 'new_name',
+  }, 'refresh');
+  assert.equal(result.outcome, 'refreshed');
+  assert.equal(result.identity.handle, 'new_name');
+  const write = tx.calls.find((call) => /INSERT INTO user_social_identities/.test(call.sql));
+  assert.match(write.sql, /handle = EXCLUDED\.handle/);
+  assert.doesNotMatch(write.sql, /public_visible = EXCLUDED\.public_visible/);
+  assert.deepEqual(write.params, [7, 'x', '10', 'new_name']);
+});
+
+test('Change account stages a verified replacement and leaves the current proof authoritative', async () => {
+  const tx = transactionPool(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+    if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/SELECT provider_subject, handle, public_visible/.test(sql)) {
+      return { rows: [{ provider_subject: '10', handle: 'current_name', public_visible: true }] };
+    }
+    if (/SELECT user_id[\s\S]*provider_subject/.test(sql)) return { rows: [] };
+    if (/INSERT INTO social_identity_pending_replacements/.test(sql)) {
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`unexpected query ${sql}`);
+  });
+
+  const result = await identity.finishIdentityVerification(tx.pool, 7, {
+    provider: 'x', subject: '11', handle: 'replacement1',
+  }, 'replace');
+  assert.equal(result.outcome, 'pending_replacement');
+  assert.equal(result.currentHandle, 'current_name');
+  assert.equal(result.replacementHandle, 'replacement1');
+  assert.ok(result.expiresAt instanceof Date);
+  assert.ok(result.expiresAt.getTime() <= Date.now() + identity.REPLACEMENT_TTL_MS + 1000);
+  assert.equal(tx.calls.some((call) => /INSERT INTO user_social_identities/.test(call.sql)), false,
+    'the OAuth callback cannot replace the active proof by itself');
+  const staged = tx.calls.find((call) => /INSERT INTO social_identity_pending_replacements/.test(call.sql));
+  assert.deepEqual(staged.params.slice(0, 4), [7, 'x', '11', 'replacement1']);
+});
+
+test('replacement confirmation atomically swaps the proof and its chosen profile visibility', async () => {
+  const tx = transactionPool(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+    if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/SELECT provider_subject[\s\S]*FROM user_social_identities[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '10' }] };
+    }
+    if (/FROM social_identity_pending_replacements[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '11', handle: 'replacement1' }] };
+    }
+    if (/SELECT user_id[\s\S]*provider_subject/.test(sql)) return { rows: [] };
+    if (/INSERT INTO user_social_identities/.test(sql)) {
+      return { rows: [{
+        provider: 'x', handle: 'replacement1', linked_at: new Date(0),
+        last_verified_at: new Date(0), public_visible: false,
+      }] };
+    }
+    if (/DELETE FROM social_identity_pending_replacements/.test(sql)) {
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`unexpected query ${sql}`);
+  });
+
+  const row = await identity.confirmIdentityReplacement(tx.pool, 7, 'x', false);
+  assert.equal(row.handle, 'replacement1');
+  assert.equal(row.public_visible, false);
+  const write = tx.calls.find((call) => /INSERT INTO user_social_identities/.test(call.sql));
+  assert.match(write.sql, /provider_subject = EXCLUDED\.provider_subject/);
+  assert.match(write.sql, /public_visible = EXCLUDED\.public_visible/);
+  assert.deepEqual(write.params, [7, 'x', '11', 'replacement1', false]);
+  const writeAt = tx.calls.indexOf(write);
+  const discardAt = tx.calls.findIndex((call) => /DELETE FROM social_identity_pending_replacements/.test(call.sql));
+  assert.ok(discardAt > writeAt, 'the pending proof is removed only after the durable swap succeeds');
+});
+
+test('a replacement claimed during confirmation rolls back and keeps the pending and current proofs', async () => {
+  const tx = transactionPool(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+    if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/SELECT provider_subject[\s\S]*FROM user_social_identities[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '10' }] };
+    }
+    if (/FROM social_identity_pending_replacements[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '11', handle: 'replacement1' }] };
+    }
+    if (/SELECT user_id[\s\S]*provider_subject/.test(sql)) return { rows: [] };
+    if (/INSERT INTO user_social_identities/.test(sql)) {
+      const err = new Error('unique violation');
+      err.code = '23505';
+      throw err;
+    }
+    throw new Error(`unexpected query ${sql}`);
+  });
+
+  await assert.rejects(
+    identity.confirmIdentityReplacement(tx.pool, 7, 'x', true),
+    (err) => err.code === 'identity_in_use'
+  );
+  assert.ok(tx.calls.some((call) => call.sql === 'ROLLBACK'));
+  assert.equal(tx.calls.some((call) => /DELETE FROM social_identity_pending_replacements/.test(call.sql)), false);
+});
+
+test('replacement confirmation rechecks global ownership before attempting the swap', async () => {
+  const tx = transactionPool(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+    if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/SELECT provider_subject[\s\S]*FROM user_social_identities[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '10' }] };
+    }
+    if (/FROM social_identity_pending_replacements[\s\S]*FOR UPDATE/.test(sql)) {
+      return { rows: [{ provider_subject: '11', handle: 'replacement1' }] };
+    }
+    if (/SELECT user_id[\s\S]*provider_subject/.test(sql)) return { rows: [{ user_id: 8 }] };
+    throw new Error(`unexpected query ${sql}`);
+  });
+
+  await assert.rejects(
+    identity.confirmIdentityReplacement(tx.pool, 7, 'x', true),
+    (err) => err.code === 'identity_in_use'
+  );
+  assert.ok(tx.calls.some((call) => /user_id <> \$3/.test(call.sql)));
+  assert.equal(tx.calls.some((call) => /INSERT INTO user_social_identities/.test(call.sql)), false);
+  assert.equal(tx.calls.some((call) => /DELETE FROM social_identity_pending_replacements/.test(call.sql)), false);
+});
+
+test('profile visibility changes only the requested connected provider', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => {
+    calls.push({ sql: String(sql), params });
+    return { rows: [{ provider: 'github', handle: 'octo', public_visible: false }] };
+  } };
+  const row = await identity.setProfileVisibility(pool, 7, 'github', false);
+  assert.equal(row.public_visible, false);
+  assert.deepEqual(calls[0].params, [7, 'github', false]);
+  assert.match(calls[0].sql, /WHERE user_id = \$1 AND provider = \$2/);
 });
 
 test('disconnect serializes with callback saves and invalidates unfinished OAuth flows', async () => {
@@ -157,6 +319,7 @@ test('disconnect serializes with callback saves and invalidates unfinished OAuth
     if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
     if (/SELECT id FROM users/.test(sql)) return { rows: [{ id: 7 }] };
     if (/DELETE FROM social_identity_oauth_states/.test(sql)) return { rows: [], rowCount: 1 };
+    if (/DELETE FROM social_identity_pending_replacements/.test(sql)) return { rows: [], rowCount: 1 };
     if (/DELETE FROM user_social_identities/.test(sql)) return { rows: [], rowCount: 1 };
     if (/UPDATE users/.test(sql)) return { rows: [], rowCount: 1 };
     throw new Error(`unexpected query ${sql}`);
@@ -189,6 +352,7 @@ test('public profile links come only from validated provider proof rows', async 
     query: async (sql, params) => {
       assert.match(sql, /SELECT provider, handle/);
       assert.match(sql, /FROM user_social_identities/);
+      assert.match(sql, /public_visible = TRUE/);
       assert.deepEqual(params, [7]);
       return {
         rows: [
@@ -211,6 +375,10 @@ test('schema and route mounting enforce privacy, uniqueness, replay safety, and 
   assert.match(SCHEMA, /UNIQUE \(provider, provider_subject\)/);
   assert.match(SCHEMA, /COMMENT ON TABLE user_social_identities IS 'staging:private'/);
   assert.match(SCHEMA, /COMMENT ON TABLE social_identity_oauth_states IS 'staging:private'/);
+  assert.match(SCHEMA, /public_visible BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(SCHEMA, /intent\s+VARCHAR\(16\) NOT NULL DEFAULT 'connect'/);
+  assert.match(SCHEMA, /CREATE TABLE IF NOT EXISTS social_identity_pending_replacements/);
+  assert.match(SCHEMA, /COMMENT ON TABLE social_identity_pending_replacements IS 'staging:private'/);
   assert.doesNotMatch(SCHEMA.slice(
     SCHEMA.indexOf('CREATE TABLE IF NOT EXISTS user_social_identities'),
     SCHEMA.indexOf('-- Which external coding agent')
@@ -221,10 +389,33 @@ test('schema and route mounting enforce privacy, uniqueness, replay safety, and 
   assert.ok(consumeAt > 0 && exchangeAt > consumeAt, 'state is consumed before provider exchange');
   assert.match(ROUTES, /browserCsrf\(config, req, res\)/);
   assert.match(ROUTES, /if \(IS_STAGING\) return res\.status\(404\)/);
+  assert.match(ROUTES, /router\.post\('\/api\/me\/social-identities\/:provider\/replacement'/);
+  assert.match(ROUTES, /router\.delete\('\/api\/me\/social-identities\/:provider\/replacement'/);
+  assert.match(ROUTES, /router\.patch\('\/api\/me\/social-identities\/:provider\/visibility'/);
   const authAt = SERVER.indexOf('app.use(authMiddleware(config));');
   const identityAt = SERVER.indexOf('app.use(socialIdentityRoutes(config));');
   const mcpAt = SERVER.indexOf('app.use(mcpBrowserRoutes(config));');
   assert.ok(authAt < identityAt && identityAt < mcpAt);
+});
+
+test('pending replacement status exposes only display metadata, never the provider subject', async () => {
+  const pool = { query: async (sql, params) => {
+    assert.match(sql, /expires_at > NOW\(\)/);
+    assert.doesNotMatch(sql, /provider_subject/);
+    assert.deepEqual(params, [7]);
+    return { rows: [{
+      provider: 'github', handle: 'octo-next',
+      created_at: new Date('2026-09-15T10:00:00Z'),
+      expires_at: new Date('2026-09-15T10:10:00Z'),
+    }] };
+  } };
+  assert.deepEqual(await identity.pendingReplacementInfo(pool, 7), {
+    github: {
+      handle: 'octo-next',
+      createdAt: '2026-09-15T10:00:00.000Z',
+      expiresAt: '2026-09-15T10:10:00.000Z',
+    },
+  });
 });
 
 test('pendingStateInfo reports only live-state timestamps, never hashes or verifiers (#1291)', async () => {
@@ -296,7 +487,7 @@ test('the identity-x-misconfigured demo mode round-trips between route and clien
   // diagnostics and a stale pending attempt, and the client forwards it.
   for (const mode of [
     'identity-connected', 'identity-unverified', 'identity-legacy',
-    'identity-x-misconfigured',
+    'identity-x-misconfigured', 'identity-replacement',
   ]) {
     assert.ok(ROUTES.includes(`'${mode}'`), `route accepts demo=${mode}`);
     assert.ok(SETTINGS.includes(`'${mode}'`), `settings client forwards demo=${mode}`);

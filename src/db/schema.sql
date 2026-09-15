@@ -5830,9 +5830,12 @@ CREATE TABLE IF NOT EXISTS user_social_identities (
   handle              VARCHAR(64) NOT NULL,
   linked_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_verified_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  public_visible      BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE (user_id, provider),
   UNIQUE (provider, provider_subject)
 );
+ALTER TABLE user_social_identities
+  ADD COLUMN IF NOT EXISTS public_visible BOOLEAN NOT NULL DEFAULT TRUE;
 COMMENT ON TABLE user_social_identities IS 'staging:private';
 CREATE INDEX IF NOT EXISTS user_social_identities_user_idx
   ON user_social_identities (user_id);
@@ -5845,14 +5848,36 @@ CREATE TABLE IF NOT EXISTS social_identity_oauth_states (
   state_hash       CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
   user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider         VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  intent           VARCHAR(16) NOT NULL DEFAULT 'connect'
+                     CHECK (intent IN ('connect', 'refresh', 'replace')),
   pkce_verifier    VARCHAR(128) NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at       TIMESTAMPTZ NOT NULL,
   UNIQUE (user_id, provider)
 );
+ALTER TABLE social_identity_oauth_states
+  ADD COLUMN IF NOT EXISTS intent VARCHAR(16) NOT NULL DEFAULT 'connect'
+    CHECK (intent IN ('connect', 'refresh', 'replace'));
 COMMENT ON TABLE social_identity_oauth_states IS 'staging:private';
 CREATE INDEX IF NOT EXISTS social_identity_oauth_states_expiry_idx
   ON social_identity_oauth_states (expires_at);
+
+-- Provider-verified replacement awaiting the user's same-origin confirmation.
+-- The current identity remains authoritative until this short-lived row is
+-- consumed transactionally. As with the durable proof, it stores no token.
+CREATE TABLE IF NOT EXISTS social_identity_pending_replacements (
+  user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider            VARCHAR(16) NOT NULL CHECK (provider IN ('github', 'x')),
+  provider_subject    VARCHAR(40) NOT NULL CHECK (provider_subject ~ '^[1-9][0-9]{0,39}$'),
+  handle              VARCHAR(64) NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at          TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (user_id, provider),
+  CHECK (expires_at > created_at)
+);
+COMMENT ON TABLE social_identity_pending_replacements IS 'staging:private';
+CREATE INDEX IF NOT EXISTS social_identity_pending_replacements_expiry_idx
+  ON social_identity_pending_replacements (expires_at);
 
 -- Which external coding agent produced a proposal, for the "built with
 -- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column
