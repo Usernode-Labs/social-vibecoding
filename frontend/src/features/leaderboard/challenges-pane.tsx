@@ -317,7 +317,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           After the challenges, what setup still hides and what opens it: the
           locked placeholder, whose second line IS the unlock note, so the
           note paragraph draws only when there is no placeholder (a locked
-          event on a server without the count, or the unlocked notice). Both
+          event on a server without the count; unlocked, there is no note). Both
           sit under the last card at the grid's own 12px gap. The placeholder's
           wrapper is a GRID too, so on a wide pane it takes one column like a
           card instead of stretching into a banner across all of them.

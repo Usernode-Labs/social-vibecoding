@@ -1,7 +1,7 @@
 'use strict';
 
 // #1915: the challenges block's completion-status line ("Finish these to
-// unlock persistent and weekly challenges.") pads both sides. There is no
+// unlock the rest of the season.") pads both sides. There is no
 // hairline above it any more (the block is a flat column on the page ground);
 // the padding is the column's one rhythm: every band, the season progress and
 // the body included, opens on `pt-2` and closes on `pb-1.5`, so the note keeps
@@ -14,6 +14,8 @@
 // declared check's `.home-panel-season + .home-panel-body` adjacency true
 // while setup is locked. The dashed "N challenges locked" placeholder carries
 // the unlock line itself, so the note is drawn only when that card is not.
+// S10 (owner decision, 2026-09-15): the note is the Challenges tab's words, and
+// it shows only while setup is locked; once unlocked there is no note at all.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -32,7 +32,7 @@
 // never the task, which the tab's detail overlay carries. Under a group
 // header that carries the clock (This week, Always open, Season challenges;
 // ./group-header.tsx) the card leaves the deadline to that header and the
-// line keeps only the reward; Setup's cards and an ungrouped grid keep it. A
+// line keeps only the reward; Get started's cards and an ungrouped grid keep it. A
 // finished card has nothing to count down to.
 //
 // The RAIL IS CLEAN: its own full-width row holding the state and nothing

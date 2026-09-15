@@ -179,12 +179,12 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Setup' },
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Get started' },
     'setup is its own scope while it gates the rest');
-  assert.match(grid.notice, /unlock persistent and weekly/);
+  assert.equal(grid.notice, 'Finish these to unlock the rest of the season.');
   assert.equal(grid.lockedCount, 0, 'no hidden_count in this payload, so no placeholder');
   assert.equal(grid.groups.length, 1);
-  assert.equal(grid.groups[0].heading, 'Setup', 'the ITERATION 03 board’s group name');
+  assert.equal(grid.groups[0].heading, 'Get started', 'the setup group’s heading (key `setup`)');
   assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');
 });
 
@@ -198,14 +198,14 @@ test('unlocked challenge groups preserve each card’s detail target', () => {
   pane._onboarding = { total: 3, completed: 3, unlocked: true, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  // The board's order (tests/challenge-groups.test.js), so the identity card
-  // is found by its group rather than by position.
+  // The board's order (tests/challenge-groups.test.js): unlocked, Get started
+  // goes last. The identity card is found by its group rather than by position.
   assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
-    ['Setup', 'This week', 'Always open']);
+    ['This week', 'Always open', 'Get started']);
   const identity = grid.groups.find((g) => g.key === 'always').cards[0];
   pane._openIdx(identity.idx);
   assert.equal(pane._detailChallenge.id, 4);
-  assert.match(grid.notice, /are unlocked/);
+  assert.equal('notice' in grid, false, 'unlocked, there is no notice');
 });
 
 test('a locked weekly event explains how to return to the introductory steps', () => {
@@ -789,8 +789,8 @@ test('the page descriptor: category, the card’s meta line, task, a clean rail'
   const { pane, store } = loadPane({ challenges: [ch], eventId: 900500 });
   pane.openChallengeDetail(ch);
   const d = store.get().detail;
-  assert.equal(d.eyebrow, 'Setup',
-    'a grouped page names its group; Setup’s header has no clock, so the deadline stays on the meta line');
+  assert.equal(d.eyebrow, 'Get started',
+    'a grouped page names its group; Get started’s header has no clock, so the deadline stays on the meta line');
   assert.equal(d.deadline, '3d left', 'in the card’s words, from the card’s rule');
   assert.equal(d.goal, 'Join block production');
   assert.equal(d.task, 'Up to 2,000 pts a week');

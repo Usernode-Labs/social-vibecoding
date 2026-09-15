@@ -118,8 +118,8 @@ export interface ChallengeRowView {
    * "5d left" on the meta line under the title, beside the reward — the
    * challenge's own end, else its event's, else the season's; null on a
    * finished or not-open challenge, or with no end in the future. Also null
-   * under a This week, Always open or other group header, which owns the
-   * clock when the block's cards span more than one group.
+   * under a This week, Always open or Season challenges header, which owns
+   * the clock; only Get started's cards keep their own.
    */
   deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
@@ -127,9 +127,11 @@ export interface ChallengeRowView {
 }
 
 /**
- * One group of the block's cards under the board's group header. `heading` is
- * null when every card on screen is from one group (no header), and `meta` is
- * the header's clock ("3d left", "no deadline") or null; never a count.
+ * One group of the block's cards under the board's group header. Every group
+ * is headed, a block of one group included, so `heading` ("Get started", "This
+ * week", "Always open", "Season challenges") is null only on the renderer's
+ * fallback for a view built before groups existed. `meta` is the header's
+ * clock ("3d left", "no deadline") or null; never a count.
  */
 export interface ChallengeGroupView {
   key: string;
@@ -150,6 +152,11 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
+  /**
+   * "Finish these to unlock the rest of the season." while setup gates the
+   * season; null once unlocked or with no gate. Drawn only when the locked
+   * placeholder is not, which says the same thing.
+   */
   onboardingNote?: string | null;
   /**
    * How many challenges setup still hides (the server's
@@ -178,8 +185,9 @@ export interface ChallengesView {
   expanded: boolean;
   rows: ChallengeRowView[];
   /**
-   * The same row objects as `rows`, under their group headers: contiguous in
-   * group order. Absent on a view built before groups existed.
+   * The same row objects as `rows`, under their group headers: contiguous, in
+   * the Challenges tab's group order. Absent on a view built before groups
+   * existed.
    */
   groups?: ChallengeGroupView[];
 }
