@@ -16191,20 +16191,15 @@ const AppView = {
     };
   },
 
-  // Navigate to the work behind an issue's "In progress" chip, reusing
-  // the Dev board's existing handlers verbatim: a proposal opens its
-  // discussion topic, the viewer's own session opens their dev chat,
-  // and a shared session opens its public discussion (never the owner's
-  // dev chat — those endpoints stay owner-scoped server-side).
+  // Navigate to the CHANGE behind an issue's "In progress" chip. The proposal
+  // route is lifecycle-aware: active/paused rows still render underway
+  // controls, while promoted rows render voting, and both retain the issue,
+  // checks, testing and workspace context around the card.
   openInProgressTarget(kind, sessionId) {
     const id = parseInt(sessionId, 10);
     if (!id) return;
-    if (kind === 'proposal') {
+    if (kind === 'proposal' || kind === 'session-own' || kind === 'session-shared') {
       AppView.openTopic('proposal', id);
-    } else if (kind === 'session-own') {
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev', id, 'sessions');
-    } else if (kind === 'session-shared') {
-      AppView.openTopic('session', id);
     }
   },
 

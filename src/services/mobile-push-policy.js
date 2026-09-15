@@ -250,6 +250,24 @@ function buildCopy(kind, context, now) {
           : 'It is holding for your answer',
       };
     }
+    // #2253: the app storage cap speaks through app_health, and its two
+    // tokens say what happened and what to do. Every other app_health
+    // detail keeps the generic copy it has always had: a deploy failure's
+    // reason is on the app row, not in the push.
+    case 'app_health':
+      if (detail === 'storage_warn') {
+        return {
+          title: withApp('Storage is nearly full'),
+          body: `${app || 'Your app'} has used most of its storage. Clean up old data or ask an admin to raise the limit`,
+        };
+      }
+      if (detail === 'storage_full') {
+        return {
+          title: withApp('Out of storage'),
+          body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
+        };
+      }
+      return null;
     default:
       return null;
   }

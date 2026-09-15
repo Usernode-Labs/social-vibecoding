@@ -30,7 +30,7 @@
  * ── #846: the import POST is awaited IN PLACE ─────────────────────────
  *
  * Progress row, dimmed list, frozen buttons — and only a server-confirmed
- * import routes the user to its DISCUSSION page (`openTopic('session')`),
+ * import routes the user to its full change page (`openTopic('proposal')`),
  * never the dev-chat session view. An imported PR has no dev session by
  * design (see the sessionBtn / importedNote
  * branches in `_renderProposalCard` / `_proposalDetailsHtml`), and that view
@@ -216,7 +216,6 @@ export function ImportPrDialog() {
     setImportBusy(true, pr);
 
     let sessionId: string | null = null;
-    let status = 'active';
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import`, {
         method: 'POST',
@@ -237,20 +236,19 @@ export function ImportPrDialog() {
         return;
       }
       sessionId = data.sessionId;
-      status = data.status || 'active';
     } catch {
       setImportBusy(false);
       setError('Network error. Please try again.');
       return;
     }
 
-    // Import confirmed. Land on the imported item's discussion page, THEN close the
+    // Import confirmed. Land on the imported item's full change page, THEN close the
     // dialog — so it covers the transition instead of flashing the screen the
     // user came from.
     setImportBusy(false);
     try {
       await (appView?.openTopic as ((kind: string, id: string | null) => Promise<void>))(
-        status === 'promoted' ? 'proposal' : 'session',
+        'proposal',
         sessionId,
       );
     } catch {

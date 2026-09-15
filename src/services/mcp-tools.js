@@ -30,6 +30,7 @@
 // unit tests exercise directly, and they should not need the server stack
 // on the require path to do it.
 const log = require('./logger');
+const { changeWebPath } = require('./change-destination');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -933,9 +934,7 @@ function shapeProposal(session, origin) {
       })(),
     },
     externalAgent: session.external_agent || null,
-    webPath: session.app_slug
-      ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`
-      : null,
+    webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
   };
 }
 
@@ -2405,7 +2404,7 @@ function registerTools(server, ctx) {
       changed: body.changed === true,
       prBodyUpdated: body.prBodyUpdated === true,
       prBodyStatus: String(body.prBodyStatus || 'unknown'),
-      webPath: `${origin}/#app/${body.appSlug || ''}/dev/sessions/${proposalId}`,
+      webPath: changeWebPath(origin, body.appSlug || '', proposalId),
       nextStep: `The proposal now carries the returned linkedIssues set. No code or votes changed.${prNote}`,
     });
   });
@@ -3324,7 +3323,7 @@ function registerTools(server, ctx) {
         shared: null,
         sessionId: null,
         webPath: result.proposalId
-          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
+          ? changeWebPath(origin, result.appSlug, result.proposalId)
           : `${origin}/#app/${result.appSlug}`,
         nextStep: (result.unchanged ? resubmitStep : landedStep)
           + rejectedNote + titleNote + descNote + proposeNote,
@@ -3358,7 +3357,7 @@ function registerTools(server, ctx) {
         proposed: null,
         proposeError: null,
         webPath: result.sessionId
-          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.sessionId}`
+          ? changeWebPath(origin, result.appSlug, result.sessionId)
           : `${origin}/#app/${result.appSlug}`,
         nextStep: (result.reshared
           ? 'The new commits are on the same in-progress card the group was already watching'
@@ -3396,7 +3395,7 @@ function registerTools(server, ctx) {
         shared: null,
         sessionId: null,
         webPath: result.proposalId
-          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
+          ? changeWebPath(origin, result.appSlug, result.proposalId)
           : `${origin}/#app/${result.appSlug}`,
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
           + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
@@ -3432,7 +3431,7 @@ function registerTools(server, ctx) {
       shared: null,
       sessionId: null,
       webPath: result.proposalId
-        ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
+        ? changeWebPath(origin, result.appSlug, result.proposalId)
         : `${origin}/#app/${result.appSlug}`,
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
@@ -3668,7 +3667,7 @@ function registerTools(server, ctx) {
       prNumber,
       prUrl: (promoted.body && promoted.body.prUrl) || null,
       webPath: session.app_slug
-        ? `${origin}/#app/${session.app_slug}/dev/sessions/${clone.id}`
+        ? changeWebPath(origin, session.app_slug, clone.id)
         : `${origin}/#`,
       nextStep: `It is up for a vote now as ${proposalRef(clone.id, prNumber)}. Use get_proposal to follow its checks and tally.`,
     });
