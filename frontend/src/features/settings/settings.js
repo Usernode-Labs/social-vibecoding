@@ -3353,15 +3353,24 @@
       paintStatus(el, text, kind);
     },
 
+    // Browser-review state for the native-only password-creation link. It
+    // changes availability only: the wallet submit path still requires the
+    // real native bridge before it can make a request.
+    _passwordCreateDemo() {
+      return this._demoParam('shot') === 'password-create';
+    },
+
     // Decide whether the wallet option is even offered, then default to
     // the password form. The "Create one" link only appears in the Homeroom
     // native app (signMessage available) AND when the logged-in account has a
-    // linked wallet to prove control of.
+    // linked wallet to prove control of, except for the read-only screenshot
+    // state that makes this native-only copy reviewable in a browser.
     _renderChangePasswordSection() {
       const section = document.getElementById('change-password-section');
       if (!section) return;
       const isNative = !!(window.usernode && window.usernode.isNative);
-      this._walletChangeAvailable = isNative && !!this.state.usernodePubkey;
+      this._walletChangeAvailable = this._passwordCreateDemo()
+        || (isNative && !!this.state.usernodePubkey);
       // Clear any stale field values / status on each open.
       ['cp-current', 'cp-new', 'cp-confirm'].forEach((id) => {
         const el = document.getElementById(id);

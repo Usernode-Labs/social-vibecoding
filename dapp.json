@@ -2933,7 +2933,7 @@
     },
     {
       "name": "Settings deep-links the Password section with clear password-creation copy (#2282)",
-      "path": "/#settings/password",
+      "path": "/?shot=password-create#settings/password",
       "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save",
       "expectText": "Don’t have a password? Create one"
     },
