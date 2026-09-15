@@ -1,5 +1,9 @@
 'use strict';
 
+// #1884: the sheet is scoped to both card hosts now — the Board's open cards
+// carry a thread and a comment tail, and those need the same frame around
+// them. Everything below is unchanged in substance; only the scope widened.
+//
 // #1885: opening a Workshop row dropped its card into a padded, frosted
 // frame — the sheet's 10px padding sat around the card as well as around the
 // thread under it. The card is now pulled out to the sheet's edges and takes
@@ -22,11 +26,11 @@ function rule(selector) {
 }
 
 test('the sheet keeps its padding for what hangs under the card', () => {
-  assert.match(rule('#dev-workshop .dev-feed-entry'), /\n\s*padding: 10px 10px 12px;/);
+  assert.match(rule(':is(#dev-workshop, #dev-kanban) .dev-feed-entry'), /\n\s*padding: 10px 10px 12px;/);
 });
 
 test('the card is pulled flush to the sheet\'s top and sides, and takes its corners', () => {
-  const body = rule('#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child');
+  const body = rule(':is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child');
   // Exactly cancels the sheet's 10px top/side padding.
   assert.match(body, /\n\s*margin: -10px -10px 0;/);
   // `w-full` is 100% of the CONTENT box, so it has to grow by both sides.
@@ -35,7 +39,7 @@ test('the card is pulled flush to the sheet\'s top and sides, and takes its corn
 });
 
 test('a card with nothing under it is the whole sheet', () => {
-  const body = rule('#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child');
+  const body = rule(':is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child');
   assert.match(body, /\n\s*margin-bottom: -12px;/, 'cancels the 12px bottom padding');
 });
 

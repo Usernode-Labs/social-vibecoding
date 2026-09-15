@@ -357,6 +357,23 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   return shapeOutcome({ passed, reason, graduated, summary });
 }
 
+// Did a proposal's stored checks (chat_sessions.test_results) include a
+// PASSING run of this suite? The row is found by the identity shapeOutcome
+// gives it, so a rename of the check cannot silently turn this false. Used
+// by the main_healthy gate's level-and-green pass-through: a head whose
+// own run of the same suite passed on the exact tree a merge would land
+// is not what a red main could be hiding (services/main-watch.js).
+function passedIn(testResults) {
+  let rows = testResults;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return false; }
+  }
+  if (!Array.isArray(rows)) return false;
+  const row = rows.find((r) => r && typeof r === 'object'
+    && (r.index === UNIT_CHECK_INDEX || (r.name === UNIT_CHECK_NAME && r.path === UNIT_CHECK_PATH)));
+  return !!row && row.status === 'pass';
+}
+
 // The unit-suite check as the checks pipeline consumes it: one extraRows
 // entry plus its check-history record. Shared by the live run above and the
 // harvest path below so the two can never drift in shape.
@@ -412,6 +429,7 @@ async function outcomeFromLog({
 module.exports = {
   maybeRunUnitSuite,
   outcomeFromLog,
+  passedIn,
   makeUnitSuiteTracker,
   loadExpectedTests,
   storeExpectedTests,

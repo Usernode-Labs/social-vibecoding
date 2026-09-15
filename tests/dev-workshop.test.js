@@ -1503,47 +1503,47 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
   assert.ok(!/dev-card-band-break|dev-card-status-end/.test(CSS));
 });
 
-test('Open card builds the topic screen\u2019s own sections, without navigating', () => {
+test('Open card goes to the item\u2019s page, from the Workshop as from the Board', () => {
+  // This used to assert the opposite: "Open card" built the topic screen's
+  // sections from `_workshopCardBody` and opened them in place, and the pill
+  // only became the link on a second tap ("Open page \u203a", #1886). #1884
+  // round two retires that. One word meant an in-place open on the Workshop
+  // and a navigation on the Board, and which one you got depended on the
+  // screen you had reached the same card from — the last thing about the
+  // card the two surfaces still disagreed on.
+  //
+  // What that costs is reading the ledger and the transcript without leaving
+  // the lander. What it buys is that the label means one thing. The sections
+  // are unchanged and still drawn by topic-head.tsx; the page is where they
+  // live, and the pill goes there.
   const AppView = makeAppView();
   seed(AppView);
-  // Resolved from the CARD KEY alone. There is no `_devTopic` and there must
-  // not be one: opening a card in place is not navigation, and the topic
-  // store holds the one screen the app is actually on.
-  const body = AppView._workshopCardBody('proposal:34');
-  assert.ok(body, 'a live proposal resolves');
-  assert.ok('details' in body, 'the ledger the topic screen draws');
-  assert.ok('aboutTitle' in body, 'and the About sheet\u2019s heading');
-  assert.equal(body.comments, false,
-    'but not the GitHub host: #dev-issue-comments is a singleton id and the sheet already carries both threads');
-  assert.equal(AppView._devTopic, null, 'and nothing navigated');
+  assert.equal(typeof AppView._workshopCardBody, 'undefined',
+    'the in-place builder is retired, not left with no caller');
 
-  assert.equal(AppView._workshopCardBody('issue:12').issueBodyHtml !== undefined, true, 'issues too');
-  assert.equal(AppView._workshopCardBody('proposal:99999'), null, 'an item the board no longer holds');
-  assert.equal(AppView._workshopCardBody('nonsense'), null, 'and a key that is not one');
-
-  // The sheet renders it under the card, and the toggle rides in the card's
-  // own action band — the Board's seat too — rather than in a strip below it.
-  const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
+  const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
   assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
-  assert.match(unfolded, /<TopicBodySections body=\{detail\} \/>/);
-  assert.match(unfolded, /detail \? 'Close card' : 'Open card'/);
-  assert.match(unfolded, /readAppView<TopicBody>\('_workshopCardBody', key\)/,
-    'built on demand: a lander of forty rows must not build forty topic bodies to draw none');
-  assert.ok(!unfolded.includes('Open card \u203a'), 'the link out is no longer what "Open card" means');
+  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/,
+    'one anchor, one label');
+  assert.ok(!/TopicBodySections|readAppView|useState/.test(unfolded),
+    'nothing left that built or held an in-place body');
+  assert.equal(AppView._devTopic, null, 'and reading the source navigated nothing');
 });
 
 test('the open card collapses on a click at the card, not at what it opened', () => {
-  // The wrapper's click closes the row. With a ledger, a thread and a comment
-  // list open under the card there is a lot of prose to land on, and
-  // collapsing the item because somebody selected a word in it loses their
-  // place — so the three regions below the card are excluded alongside the
-  // controls. `details` is the merge-requirements checklist (#2128): a
-  // disclosure the reader taps open, not a place to fold from.
+  // The wrapper's click closes the row. With a thread and a comment list open
+  // under the card there is a lot of prose to land on, and collapsing the
+  // item because somebody selected a word in it loses their place — so the
+  // two regions below the card are excluded alongside the controls.
+  // `details` is the merge-requirements checklist (#2128): a disclosure the
+  // reader taps open, not a place to fold from. (There were three regions
+  // until #1884 round two sent "Open card" to the item's page on both
+  // surfaces; the ledger is on that page now, not under the card.)
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
   for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form', 'details',
     '\\[data-attr-chip\\]', '\\[data-issue-chip\\]',
-    '\\.dev-ws-detail', '\\.dev-feed-thread', '\\.dev-feed-comments']) {
+    '\\.dev-feed-thread', '\\.dev-feed-comments']) {
     assert.match(view, new RegExp(sel), `the guard excludes ${sel}`);
   }
   assert.match(view, /el\.closest\(/, 'and it is a closest() test, not a target equality one');
@@ -1661,14 +1661,14 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   const open = workshopHtml(AppView);
   assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
     'the open card, hook intact');
-  // The change's page is the pill's, not a line under the sheet (#1886):
-  // "Open card" opens the card's sections here, and once they are open the
-  // same pill is "Open page ›", the link to the change's page.
-  assert.match(open, /<button type="button" class="gc-vote-btn dev-ws-open-btn" aria-expanded="false" data-ws-open-card="mine:my-session:51">Open card<\/button>/,
-    'the open card carries the pill');
-  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
-    'and open, the pill is the page link');
+  // The change's page is the pill's, not a line under the sheet (#1886) —
+  // and since #1884 round two the pill IS that link on its first tap, here
+  // as on the Board, rather than opening the sections in place and becoming
+  // the link on a second.
+  assert.match(open, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="mine:my-session:51">Open card<\/a>/,
+    'the open card carries the pill, and it is the page link');
   assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
+  assert.ok(!open.includes('Open page ›'), 'and no second step to reach one');
   // Under the sheet, the session — alone. #2030's point was that two
   // controls both reading "Open" confused; the session is a different
   // destination from the page the pill opens, so it keeps its own link,
@@ -2108,8 +2108,13 @@ test('the open sheet is a DIRECT child of the wrapper, the way the check selects
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
   const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => /^\s*(\.dark\s+)?#dev-feed\b/.test(l));
   assert.deepEqual(rules, [], 'no rule is scoped to the retired #dev-feed');
-  assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
-  assert.match(CSS, /#dev-workshop \.dev-feed-thread \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
+  // #1884: the thread and the comment tail are scoped to BOTH card hosts now,
+  // so the same card opened on the Board reads the same as on the Workshop.
+  // `:is()` takes its specificity from its most specific argument, so the rule
+  // still weighs what it did when the id stood alone.
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-thread \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-comments:empty \{ display: none; \}/);
   // The bottom is `--ws-gap` now, not 12px: it is the same air the sticky rail
   // rests on, so the gap under the bar is identical whether the lander fills
   // the scroller (rail at its bottom edge, padding decides) or overflows it
@@ -3902,7 +3907,7 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   // The bucketing this leans on, pinned here so moving `promoted` to another
   // column fails locally rather than as a red check on somebody's proposal.
   assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
-  assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
+  assert.match(APP_VIEW_SRC, /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
 });
 
 test('the selection slides between tabs instead of snapping', () => {

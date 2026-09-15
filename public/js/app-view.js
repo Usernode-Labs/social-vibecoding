@@ -5581,6 +5581,11 @@ const AppView = {
         lockedHint: locked
           ? ' <span class="text-amber-800 font-normal dark:text-amber-300">· locked: also needs an admin yes</span>'
           : '',
+        // services/main-watch.js: the unit suite's verdict on the last merge
+        // commit and whether it is pausing this app's merges. App state, one
+        // read per panel; the board banner (_renderMainPauseNotice) draws it.
+        mainCheck: promotedData.mainCheck && typeof promotedData.mainCheck === 'object'
+          ? promotedData.mainCheck : null,
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
@@ -5643,6 +5648,7 @@ const AppView = {
       return;
     }
     AppView._renderLockedNotice();
+    AppView._renderMainPauseNotice();
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
@@ -5790,6 +5796,30 @@ const AppView = {
     AppView._reactDevBoard()?.publishLockedNotice(
       !!(AppView._proposalsCtx && AppView._proposalsCtx.locked),
       !!(AppView.appData && AppView.appData.collab_visibility === 'private'));
+  },
+
+  // The "merges are paused" banner (features/dev-board/main-pause-store.ts),
+  // from the promoted list's `mainCheck` block: services/main-watch.js's
+  // verdict on the last merge commit. App state, so it is said once above
+  // the cards rather than once per card — the per-card ledger still carries
+  // the step, but a collapsed ledger is where the pause hid for an
+  // afternoon. The resume verb is offered on the server's rule (full admin,
+  // not read-only), which is the same rule the route enforces.
+  _renderMainPauseNotice() {
+    const mc = AppView._proposalsCtx && AppView._proposalsCtx.mainCheck;
+    const paused = !!(mc && mc.paused);
+    // "since <sha>" is the red commit the pause is about (pausedSha); while
+    // a newer merge is being re-tested, `sha` is that newer commit instead.
+    const redSha = paused ? (mc.pausedSha || mc.sha) : null;
+    AppView._reactDevBoard()?.publishMainPause?.({
+      paused,
+      confirming: paused && !!mc.confirming,
+      sha: redSha ? String(redSha).slice(0, 7) : null,
+      failingTest: paused && mc.failingTest ? String(mc.failingTest) : null,
+      canResume: paused && !AppView.readOnly
+        && !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite),
+      slug: (AppView.appData && AppView.appData.slug) || null,
+    });
   },
 
   // ── The app's general discussion, as a board citizen ────────────────
@@ -6049,6 +6079,29 @@ const AppView = {
       return item.id != null ? { type: 'governance', ref: item.id } : null;
     }
     return null;
+  },
+
+  // Hang the item's conversation on a card row: the app's own thread (the
+  // reply box) and, for an issue, its recent GitHub comments.
+  //
+  // #1884: the Workshop's rows carried both and the Board's carried
+  // neither, so the SAME card read as two different objects depending on
+  // which view you opened it from — the Board's had no reply box and no
+  // comment preview under it. Every surface that builds a card row calls
+  // this now, which is what stops the two drifting apart again; the fold
+  // renders whatever the row carries (card/fold.tsx UnfoldedRow).
+  //
+  // `my-session` is addressed as `shared-session`, the way _workshopRows
+  // has always addressed it: the thread is per session id, and whether the
+  // session is shared yet does not change which conversation it is.
+  _attachRowConversation(row, kind, item) {
+    if (!row || !item) return row;
+    const th = AppView._feedThreadRef({
+      kind: kind === 'my-session' ? 'shared-session' : kind, item,
+    });
+    if (th) row.thread = th;
+    if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+    return row;
   },
 
   // ── The Workshop ───────────────────────────────────────────────────
@@ -6670,21 +6723,6 @@ const AppView = {
    * for a second host would give the page two nodes with one id and the
    * loader would fill whichever it found first.
    */
-  _workshopCardBody(key) {
-    const at = String(key || '').indexOf(':');
-    if (at < 0) return null;
-    const rawKind = key.slice(0, at);
-    const kind = ['my-session', 'shared-session'].includes(rawKind) ? 'session' : rawKind;
-    const rest = key.slice(at + 1);
-    const id = kind === 'issue' ? Number(rest) : Number(rest);
-    if (!Number.isFinite(id)) return null;
-    const item = AppView._findItem(kind, id);
-    if (!item) return null;
-    const built = AppView._topicViewFor(kind, item);
-    if (!built) return null;
-    return { ...built.body, comments: false };
-  },
-
   _issueUnclaimed(it) {
     const ip = it && it.in_progress;
     if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;
@@ -6779,10 +6817,7 @@ const AppView = {
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'theme')) {
         card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'theme')) };
       }
-      const row = { t: 'card', key: card.key, card };
-      const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
-      if (th) row.thread = th;
-      if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+      const row = AppView._attachRowConversation({ t: 'card', key: card.key, card }, kind, item);
       const created = createdOf(kind, item);
       if (baseline && created > baseline) row.fresh = true;
       const people = [];
@@ -6849,12 +6884,9 @@ const AppView = {
           ? AppView._mySessionCardModel(item)
           : AppView._proposalCardModel(item);
         if (!card) return null;
-        const row = { t: 'card', key: `mine:${card.key}`, card };
-        const th = AppView._feedThreadRef({
-          kind: kind === 'my-session' ? 'shared-session' : kind, item,
-        });
-        if (th) row.thread = th;
-        return row;
+        return AppView._attachRowConversation(
+          { t: 'card', key: `mine:${card.key}`, card }, kind, item,
+        );
       }).filter(Boolean),
     };
 
@@ -6912,9 +6944,7 @@ const AppView = {
         body: null,
         visuals: kind === 'proposal' ? AppView._workshopVisuals(item && item.visuals) : null,
       };
-      const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
-      if (th) row.thread = th;
-      return row;
+      return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
@@ -7402,11 +7432,16 @@ const AppView = {
     // the request and its answer detaches this one, and writing into an
     // orphan would silently drop the comments.
     const paint = (entry) => {
-      const feed = document.getElementById('dev-workshop');
-      if (!feed) return;
-      const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
-      if (!live) return;
-      live.innerHTML = AppView._feedCommentsHtml(entry.comments);
+      // Document-wide, not `#dev-workshop`-wide: the Board draws the same
+      // slot inside its unfolded cards now (#1884), and the same issue can
+      // legitimately hold a slot in more than one place at once — the
+      // Workshop's stage pane IS the Board's columns. Every live slot for
+      // this number gets the answer; a detached one is simply not found.
+      const html = AppView._feedCommentsHtml(entry.comments);
+      const live = document.querySelectorAll(
+        `.dev-feed-comments[data-comments-for="${number}"]`
+      );
+      for (const node of live) node.innerHTML = html;
     };
 
     const cached = AppView._ghComments[number];
@@ -8309,6 +8344,10 @@ const AppView = {
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
     AppView._fillKudosHosts(board);
+    // The comment slots an unfolded card ships empty, same as the Workshop's
+    // repaint does (#1884). The store flushed synchronously above, so the
+    // slots this walks are the ones just rendered.
+    AppView._wireFeedComments(board);
     AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
     AppView._reanchorCardMenu();
@@ -8413,16 +8452,23 @@ const AppView = {
         : { kind: 'moreCompleted', n: moreCount };
     }
 
-    const cardRows = (items, build) => items.map((it) => {
+    // `refOf` names the kind and item the row's conversation hangs off
+    // (_attachRowConversation). A column that passes none gets a bare row:
+    // Done is built from merged rows, and a merged thing's conversation
+    // lives on the proposal it came from, which is what _feedThreadRef
+    // already declines to address.
+    const cardRows = (items, build, refOf) => items.map((it) => {
       const card = build(it);
-      return { t: 'card', key: card.key, card };
+      const row = { t: 'card', key: card.key, card };
+      const ref = refOf ? refOf(it) : null;
+      return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
     });
     const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
 
     const cols = [
       {
         key: 'issues', title: 'Issues', count: kIssues.length,
-        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i)),
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,
       },
@@ -8442,8 +8488,12 @@ const AppView = {
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
-        rows: cardRows(kInReview, (x) => (x.kind === 'proposal'
-          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item))),
+        rows: cardRows(
+          kInReview,
+          (x) => (x.kind === 'proposal'
+            ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)),
+          (x) => ({ kind: x.kind, item: x.item }),
+        ),
         empty: kInReview.length ? null : emptyNote,
         footer: null,
       },
@@ -9052,7 +9102,7 @@ const AppView = {
       rows.push(AppView._privateDividerRow());
       for (const e of priv) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     if (archived) rows.push(archived);
@@ -9060,18 +9110,18 @@ const AppView = {
       rows.push(AppView._visibleDividerRow());
       for (const e of vis) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     for (const e of issues) {
       const card = AppView._issueCardModel(e.item);
-      rows.push({ t: 'card', key: card.key, card });
+      rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
     }
     if (shared.length) {
       rows.push(AppView._othersDividerRow());
       for (const e of shared) {
         const card = AppView._sharedSessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     return rows;
@@ -9841,6 +9891,10 @@ const AppView = {
   _requirementAction(gate, viewer) {
     if (!gate || gate.key !== 'main_healthy' || gate.state !== 'blocked') return null;
     if (!viewer || !viewer.isAdmin || AppView.readOnly) return null;
+    // A first red being re-run to confirm is not yet a verdict to override;
+    // the re-run settles it in minutes, either way. Same rule as the board
+    // banner's button.
+    if (gate.detail && gate.detail.confirming) return null;
     const slug = (AppView.appData && AppView.appData.slug)
       || (typeof App !== 'undefined' && App.currentApp) || null;
     if (!slug) return null;
@@ -10428,25 +10482,43 @@ const AppView = {
 
     // ── Step 1: one row for "get this branch onto current main" ─────────
     const sync = iConflict >= 0 ? rows[iConflict] : behindRow;
-    const manual = iConflict >= 0;
+    // WHO does the sync is the conflict lane's call, and _conflictRemedy is
+    // where the card already reads it (#2221/#2222): the platform resolves
+    // a conflict itself unless the lane has recorded that it tried and could
+    // not, or a real merge attempt failed. This step used to treat EVERY
+    // conflict as the author's — "so the automatic sync cannot finish this
+    // one", in red, over a proposal the lane resolved ten minutes later by
+    // itself (#2247). The tag beside it had already stopped saying that.
+    const remedy = iConflict >= 0
+      ? AppView._conflictRemedy(pr, pr && pr.merge_conflict_state === 'failed' ? 'failed'
+        : (pr && pr.merge_conflict_state === 'conflict' ? 'conflict' : 'predicted'))
+      : null;
+    const manual = !!remedy && remedy.tone === 'blocking';
+    const laneWorking = !!remedy && remedy.tone === 'running';
+    const served = (pr && pr.integration && Array.isArray(pr.integration.blockReasons))
+      ? pr.integration.blockReasons : [];
     const moved = behindN > 0
       ? `Main has moved ${behindN} commit${behindN === 1 ? '' : 's'} ahead`
       : 'Main has moved ahead';
+    const bothSides = conflictFiles.length
+      ? `${conflictFiles.length} file${conflictFiles.length === 1 ? '' : 's'} changed on both sides`
+      : 'the two changes touch the same lines';
     sync.label = 'Sync with main';
     sync.tone = manual ? 'bad' : 'warn';
-    sync.sub = manual ? `${creator}, now` : 'automatic, now';
+    sync.sub = manual ? `${creator}, now`
+      : (remedy && !laneWorking && served.includes('awaiting_approval') ? 'automatic, after the vote' : 'automatic, now');
     sync.text = manual
-      ? [conflictFiles.length
-        ? `${moved}, and ${conflictFiles.length} file${conflictFiles.length === 1 ? '' : 's'} changed on both sides, so the automatic sync cannot finish this one.`
-        : `${moved} and the two changes touch the same lines, so the automatic sync cannot finish this one.`]
-      : [`${moved}. The platform is syncing this proposal onto it, then it retries the merge.`];
+      ? [`${moved}, and ${bothSides}, so the automatic sync cannot finish this one.`]
+      : remedy
+        ? [laneWorking
+          ? `${moved}, and ${bothSides}. The platform is resolving it now, then it retries the merge.`
+          : `${moved}, and ${bothSides}. The platform resolves it automatically, then retries the merge.`]
+        : [`${moved}. The platform is syncing this proposal onto it, then it retries the merge.`];
     // The remedy sentence is the only foot line worth keeping from the box:
-    // it names the person and the exact action. The rest restated the row's
-    // own text. The file list keeps its lead-in and sits under it.
-    const remedy = manual
-      ? (AppView._conflictRemedy(pr, pr && pr.merge_conflict_state === 'failed' ? 'failed'
-        : (pr && pr.merge_conflict_state === 'conflict' ? 'conflict' : 'predicted')).parts)
-      : null;
+    // it names the person and the exact action — or says that nobody need
+    // act, and how the author can hurry it. The rest restated the row's own
+    // text. The file list keeps its lead-in and sits under it.
+    const remedyParts = remedy ? remedy.parts : null;
     // The file list does NOT survive into the step. It was the bulkiest
     // thing on the panel and the least actionable: both-sides-changed is an
     // upper bound on the conflict rather than the conflict (two edits at
@@ -10455,8 +10527,10 @@ const AppView = {
     // overlaps. The COUNT stays, in the sentence, where it says how big the
     // job is without pretending to say which files it is.
     sync.foot = [];
-    if (remedy) sync.foot.push(remedy);
-    if (manual && iBehind >= 0) rows.splice(iBehind, 1);
+    if (remedyParts) sync.foot.push(remedyParts);
+    // Conflict and behind-main are one fact, whoever resolves it: the row
+    // that says "sync" says both.
+    if (iConflict >= 0 && iBehind >= 0) rows.splice(iBehind, 1);
 
     // ── Step 2: checks, which are not the blocker while step 1 stands ───
     const checks = rows[at('checks')];
@@ -10468,14 +10542,15 @@ const AppView = {
       // they pass" in the present tense made a five-day-old run read as
       // the live state of the branch.
       // A failing verdict is demoted only when it cannot be trusted or
-      // re-run until step 1 happens: a MANUAL sync (nobody can re-run them
-      // over a branch that will not merge) or a base main has already left
-      // behind. A proposal that is merely a few commits behind keeps its
-      // failing verdict at full weight — the platform will sync it by
-      // itself, and the failing check is the author's actual next move. A
-      // PASSING verdict is never rewritten either way: "nothing to do here"
-      // over a green run throws away the one piece of good news on the page.
-      const stale = manual || !!(checks.attrs && checks.attrs['data-checks-base']);
+      // re-run until step 1 happens: a CONFLICT (nobody can re-run them over
+      // a branch that will not merge, and whoever resolves it pushes a new
+      // head that gets its own run) or a base main has already left behind.
+      // A proposal that is merely a few commits behind keeps its failing
+      // verdict at full weight — the platform will sync it by itself, and
+      // the failing check is the author's actual next move. A PASSING
+      // verdict is never rewritten either way: "nothing to do here" over a
+      // green run throws away the one piece of good news on the page.
+      const stale = iConflict >= 0 || !!(checks.attrs && checks.attrs['data-checks-base']);
       if (stale && checks.tone === 'bad') {
         checks.tone = 'mute';
         checks.text = ['They start themselves once the branch is up to date. Nothing to do here.'];
@@ -14844,6 +14919,18 @@ const AppView = {
     };
   },
 
+  // The app's main-health step off the row's requirements ledger: the
+  // blocked detail ({ paused, confirming, note }) while the app's merges are
+  // paused by a red main, null otherwise — including for a level-and-green
+  // head the gate lets through. Same reading as MergeStatus.mainPauseOf, kept
+  // here because app-view's tags are derived on their own.
+  _mainPauseOf(pr) {
+    const mr = pr && pr.mergeRequirements && typeof pr.mergeRequirements === 'object' ? pr.mergeRequirements : null;
+    const gates = mr && Array.isArray(mr.gates) ? mr.gates : [];
+    const g = gates.find((x) => x && x.key === 'main_healthy');
+    return g && g.state === 'blocked' && g.detail && g.detail.paused ? g.detail : null;
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
@@ -15003,6 +15090,24 @@ const AppView = {
         soft: true,
       });
     }
+    // The APP's merges are paused by a red main (services/main-watch.js).
+    // Not the proposal's fault and not in any column of its own: the row's
+    // requirements ledger carries the main-health step live (services/
+    // merge-requirements.js mainStep), and this is the one reason that
+    // applies to every open card at once — which is exactly why it has to
+    // be ON the card. A pause that lived only inside a collapsed ledger went
+    // undiscovered for an afternoon while the board read "merging shortly".
+    // A level-and-green head is 'done' with the pass-through named, and
+    // draws nothing here: it merges.
+    const mainPause = AppView._mainPauseOf(p);
+    if (mainPause) {
+      out.push({
+        key: 'main_paused',
+        label: mainPause.confirming ? 'Merges paused · re-checking main' : 'Merges paused',
+        detail: `${mainPause.note ? mainPause.note.charAt(0).toUpperCase() + mainPause.note.slice(1) : 'Main’s unit suite is failing, so merges for this app are paused'}. `
+          + 'Nothing about this proposal is wrong; it merges once main is green again or an admin resumes merges.',
+      });
+    }
 
     // #2038: the advisory console tag is gone.
     //
@@ -15082,11 +15187,26 @@ const AppView = {
         });
       }
     }
-    // Checks in flight. The live counts ride the label exactly as they did in
-    // the bar: a board of cards should say how far each run is, not just that
-    // it is running.
-    if (p.check_state === 'pending'
-      || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
+    // A deferred run is `pending` with nothing running: the preview was built
+    // for reviewers and the tests wait for a head that merges cleanly
+    // (check_phase 'deferred'; services/check-admission.js). merge-status.js
+    // and the checks panel already said so; this chip kept spinning "Checks
+    // running…" beside a body that read "Checks deferred", which is the
+    // contradiction #2247 was reported for. No spinner, soft tone: nothing is
+    // in flight and nobody has to act on it.
+    if (p.check_state === 'pending' && p.check_phase === 'deferred') {
+      const copy = AppView._checksPhaseCopy('deferred');
+      out.push({
+        t: 'chip', key: 'tag-checks-deferred', cls: AppView.STATUS_TAG_CLS.soft,
+        label: copy.title, meta: true,
+        data: { 'data-status-tag': 'checks-deferred' },
+        title: copy.detail,
+      });
+    } else if (p.check_state === 'pending'
+        || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
+      // Checks in flight. The live counts ride the label exactly as they did
+      // in the bar: a board of cards should say how far each run is, not just
+      // that it is running.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
       const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
       out.push({

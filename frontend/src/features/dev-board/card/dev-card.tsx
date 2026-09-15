@@ -713,6 +713,15 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
 // Stateful on purpose: `open` seeds from the model's viewer-aware rule, and
 // then belongs to the reader. Rendering it straight from the model would snap
 // a card the reader opened shut again on the next websocket repaint.
+//
+// With one re-seed: when the rule flips from "nothing here is yours" to "the
+// step it is stuck on is yours to clear", the ledger opens. A card that
+// mounted while main was fine and then saw main go red — the admin's Resume
+// is now the verb the card is waiting on — kept its collapsed seed for an
+// afternoon, and the only control that would have ended the pause sat one
+// click below a line that read like everything else. A reader who closes it
+// after that keeps it closed: the re-seed fires on the transition, not on
+// every repaint while the condition holds.
 const REQ_MARK: Record<string, string> = {
   done: '✓', active: '', waiting: '!', blocked: '✕', pending: '·',
 };
@@ -729,6 +738,14 @@ const REQ_ACTOR: Record<string, string> = {
 
 function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
   const [open, setOpen] = useState(x.open);
+  // The model's seed as of the previous render, so the effect below can tell
+  // a false→true FLIP from a repaint that merely still says true.
+  const seedRef = useRef(x.open);
+  useEffect(() => {
+    const was = seedRef.current;
+    seedRef.current = x.open;
+    if (x.open && !was) setOpen(true);
+  }, [x.open]);
   return (
     <details
       className="mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 overflow-hidden"

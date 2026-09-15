@@ -10958,7 +10958,7 @@ body.is-offline [data-offline-disabled] {
    a 3px left edge as the feed's "the stream crossed a line" marker; its bar
    says "✓ Merged" and its edge is green (the card's own `[data-edge="ok"]`),
    which is the same fact said once instead of three times. */
-#dev-workshop .dev-feed-entry {
+:is(#dev-workshop, #dev-kanban) .dev-feed-entry {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -10967,9 +10967,9 @@ body.is-offline [data-offline-disabled] {
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  #dev-workshop .dev-feed-entry { background-color: var(--dc-sheet); }
+  :is(#dev-workshop, #dev-kanban) .dev-feed-entry { background-color: var(--dc-sheet); }
 }
-#dev-workshop .dev-feed-entry + .dev-feed-entry {
+:is(#dev-workshop, #dev-kanban) .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
 }
 /* #1885: THE CARD SITS FLUSH in its sheet. The sheet's padding is for what
@@ -10977,13 +10977,22 @@ body.is-offline [data-offline-disabled] {
    and those keep it (their own margins are measured from it). The card itself
    is pulled out to the sheet's edges, so opening a row no longer drops it into
    a frosted frame, and it takes the sheet's corners so the two outlines are
-   one. With nothing under it the card is the whole sheet. */
-#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
+   one. With nothing under it the card is the whole sheet.
+
+   #1884: the sheet is the Board's too now. Its cards carry the thread and the
+   comment tail, and a reply box hanging on a column's background with no
+   container around it is not the same control the Workshop offers — it is a
+   third presentation of it. The `:only-child` rule is what keeps the Board's
+   quiet cards looking untouched: a card with nothing under it still covers
+   every edge of the sheet, so the frosting behind it never shows. What it
+   does pick up is the sheet's 26px corner in place of its own 22px, which is
+   the Workshop's open card exactly — one card, one open state. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
   width: calc(100% + 20px);
   margin: -10px -10px 0;
   border-radius: inherit;
 }
-#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
+:is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
   margin-bottom: -12px;
 }
 /* A reading column. The stream is one column of cards each with a thread
@@ -11005,12 +11014,19 @@ body.is-offline [data-offline-disabled] {
    The tail of a thread, indented under the row it belongs to, with no box
    of its own — the indent and the muted type are the whole treatment. A
    bordered comment card inside a de-carded row would put the chrome back
-   one level down. */
-#dev-workshop .dev-feed-comments:empty { display: none; }
-#dev-workshop .dev-feed-comments {
+   one level down.
+
+   Scoped to BOTH card hosts (#1884). The comment tail and the reply thread
+   below it used to be the Workshop's alone, so the same card opened from the
+   Board had neither; both surfaces draw them now, from the same fold, and
+   `:is()` takes its specificity from its most specific argument — so these
+   rules land at exactly the weight they had when the id stood alone, and
+   nothing in the cascade below them moves. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-comments:empty { display: none; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comments {
   padding: 0 0.75rem 0.5rem 22px;
 }
-#dev-workshop .dev-feed-comment {
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -11019,30 +11035,30 @@ body.is-offline [data-offline-disabled] {
   color: rgb(82 82 91); /* zinc-600 */
   padding: 0.15rem 0;
 }
-.dark #dev-workshop .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
-#dev-workshop .dev-feed-comment-main {
+.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-main {
   flex: 1;
   min-width: 0;
 }
-#dev-workshop .dev-feed-comment-author {
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-author {
   font-weight: 500;
   color: rgb(63 63 70); /* zinc-700 */
 }
-.dark #dev-workshop .dev-feed-comment-author { color: rgb(228 228 231); }
+.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment-author { color: rgb(228 228 231); }
 /* The body sits INLINE after the author, like a chat line. Its markdown
    arrives as block elements, so they are flattened back to inline here —
    a paragraph per comment would otherwise put the text on its own line and
    undo the compactness that makes this worth showing inline at all. */
-#dev-workshop .dev-feed-comment-body { display: inline; }
-#dev-workshop .dev-feed-comment-body > * { display: inline; margin: 0; }
-#dev-workshop .dev-feed-comment-time {
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-body { display: inline; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-body > * { display: inline; margin: 0; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-time {
   flex-shrink: 0;
   margin-left: auto;
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */
 }
-.dark #dev-workshop .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
-#dev-workshop .dev-feed-comment-more {
+.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-more {
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */
   padding: 0.15rem 0;
@@ -11055,19 +11071,19 @@ body.is-offline [data-offline-disabled] {
    box is the last line of it, at the same indent as the bubbles — the
    viewer's reply joins the conversation it sits under. On a phone the
    thread takes the sheet's full width. */
-#dev-workshop .dev-feed-thread {
+:is(#dev-workshop, #dev-kanban) .dev-feed-thread {
   margin: 6px 6px 0 22px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 @media (max-width: 639px) {
-  #dev-workshop .dev-feed-thread { margin-left: 0; margin-right: 0; }
-  #dev-workshop .dev-feed-comments { padding-left: 0; padding-right: 0; }
+  :is(#dev-workshop, #dev-kanban) .dev-feed-thread { margin-left: 0; margin-right: 0; }
+  :is(#dev-workshop, #dev-kanban) .dev-feed-comments { padding-left: 0; padding-right: 0; }
 }
 /* "N earlier replies", first in the thread and aligned with the bubbles
    (22px avatar + 8px gap), so it reads as the top of the conversation. */
-#dev-workshop .dev-feed-earlier { padding-left: 30px; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-earlier { padding-left: 30px; }
 /* One reply, as a bubble — the Messages row at the feed's scale (see
    card/feed-thread.tsx MessageLine). The bubble is the card's white on the
    sheet; the viewer's own take the accent tint, as their sent messages do. */
@@ -11114,8 +11130,9 @@ body.is-offline [data-offline-disabled] {
    (36px, filled accent, up-arrow), the pair every composer on the platform
    now shares. The field's own utilities (input.tsx `activityReply`) draw a
    bordered r16 box; this is the widget-language reading of the same field,
-   and `#dev-workshop` scopes it to the one place it is read this way. */
-#dev-workshop .dev-feed-thread textarea {
+   and the host scope keeps it to the places it is read that way — the two
+   card surfaces, and nowhere else. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-thread textarea {
   min-height: 36px;
   padding: 8px 14px;
   border-radius: 18px;
@@ -11135,7 +11152,7 @@ body.is-offline [data-offline-disabled] {
 .dev-feed-send:hover:not(:disabled) { background: var(--accent-light); }
 /* Nothing loaded and no box to draw (a viewer who cannot post) — collapse
    rather than leaving a gap under every row. */
-#dev-workshop .dev-feed-thread:empty {
+:is(#dev-workshop, #dev-kanban) .dev-feed-thread:empty {
   display: none;
 }
 
@@ -13815,7 +13832,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
 .dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
   a:active, button:active, input:active, textarea:active, select:active,
-  .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+  .dev-feed-thread:active, .dev-feed-comments:active
 )) {
   background: var(--dev-press);
   /* Instant. The open card carries transition-colors, so the press colour
@@ -13846,7 +13863,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   .dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
   .dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
     a:active, button:active, input:active, textarea:active, select:active,
-    .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+    .dev-feed-thread:active, .dev-feed-comments:active
   )),
   #dev-forum-scroll [role="button"]:active {
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
@@ -14043,17 +14060,6 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    reader can see where the item ends. Not the comment threads: the sheet
    already carries both, above and below this block. */
 .dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
-.dev-ws-detail {
-  margin-top: 10px;
-  padding-left: 10px;
-  border-left: 2px solid var(--border-light);
-  display: flex; flex-direction: column; gap: 8px;
-}
-/* The topic sheets are their own surfaces on their own page; inside a card
-   that is already a surface they lose the second one and keep the spacing. */
-.dev-ws-detail .dev-topic-sheet {
-  background: transparent; box-shadow: none; border-radius: 0; padding: 0;
-}
 /* The "Open session" link under a card about the viewer's own session (#1887). */
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
