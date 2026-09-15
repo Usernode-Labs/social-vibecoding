@@ -274,6 +274,10 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1911: the create-app dialog is three steps ───────────────────
+  'create-step-indicator': 'The "Step N of 3" line under the create dialog\'s title. The dialog used to show every choice on one page; it is a start step (from scratch or from a repo), a details step and an access step now, and this names where the reader is.',
+  'create-back': 'The create dialog\'s Back pill, on the details and access steps. Ships hidden on the start step (app.css keys it off #create-card[data-step]) because a choice there is the way forward and Cancel is the way out.',
+  'create-next': 'The create dialog\'s Next pill, the details step\'s way to the access step. It runs the guards the old single page ran at submit, one step earlier.',
   // ── #2219: App device permissions ────────────────────────────────
   // The Settings sibling of the App AI permissions section. It exists
   // because a permission the platform asks for has to be one a person can

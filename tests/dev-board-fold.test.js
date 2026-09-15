@@ -547,7 +547,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
   // one for the rows and one for the copy that must NOT promise a revoke
   // lands while the app is still open.
-  assert.equal(DAPP.tests.length, 646);
+  // 646 → 648: #1911 adds two checks on the create-app dialog's steps, the
+  // start step's two choices on /#create and the access step through
+  // `?shot=create-access`; the #1910 name-card check moved to
+  // `?shot=create-details`, where that field is on screen.
+  assert.equal(DAPP.tests.length, 648);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -64,6 +64,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { ChevronRightIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -85,6 +86,25 @@ import { useDialog } from './use-dialog';
 type Mode = 'new' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 type Vis = 'public' | 'private';
+/**
+ * #1911: the dialog is three steps rather than one page of every choice.
+ *
+ *   start    how to begin: from scratch, or from a GitHub repo. The two
+ *            choices ARE the old mode pills (same `create-mode-pill` class,
+ *            same `data-mode-pill`, same #create-card[data-mode] styling),
+ *            drawn as two rows; picking one advances.
+ *   details  the name — and, for an import, the repo URL and its access
+ *            check first (the name card reveals on a passed check, as
+ *            before).
+ *   access   who can build it and who can see it, then Create / Import.
+ *
+ * Every section stays in the document on every step (the declared checks
+ * and public/js select on the same ids as before); app.css shows the
+ * current step off `#create-card[data-step]`, the same attribute-driven
+ * mechanism `data-mode` and `data-import-state` already use.
+ */
+type Step = 'start' | 'details' | 'access';
+const STEPS: readonly Step[] = ['start', 'details', 'access'];
 
 /** The inline row under the repo URL: spinner, green tick, or red error. */
 interface ImportStatus {
@@ -106,6 +126,23 @@ function shotMode(): Mode {
     return new URLSearchParams(location.search).get('shot') === 'create-import' ? 'import' : 'new';
   } catch {
     return 'new';
+  }
+}
+
+/**
+ * #1911: which step a `?shot=` lands on. `create-import` and
+ * `create-details` open on the details step (import and new respectively);
+ * `create-access` opens on the last step. Everything else, including a
+ * real open, starts at the start.
+ */
+function shotStep(): Step {
+  try {
+    const shot = new URLSearchParams(location.search).get('shot');
+    if (shot === 'create-import' || shot === 'create-details') return 'details';
+    if (shot === 'create-access') return 'access';
+    return 'start';
+  } catch {
+    return 'start';
   }
 }
 
@@ -167,6 +204,16 @@ const RAIL = 'flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-800 p
 const SEGMENT = 'flex-1 min-h-8 rounded-full px-3 py-1 leading-tight transition-colors';
 const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
   + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors';
+/*
+ * #1911: the start step's two choices, one white card each, full width,
+ * with a title and a one-line caption and a chevron at the trailing edge.
+ * The selection colours (the solid inversion when this is the mode the
+ * dialog is in) stay in app.css on `.create-mode-pill`, keyed off
+ * #create-card[data-mode] exactly as the old segmented pills were.
+ */
+const CHOICE = 'create-mode-pill w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
+const CHOICE_TITLE = 'block text-[15px] font-semibold';
+const CHOICE_CAPTION = 'block text-xs mt-0.5';
 
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -180,6 +227,7 @@ export function CreateAppDialog() {
   const viewPrivateRef = useRef<HTMLButtonElement>(null);
 
   const [mode, setMode] = useState<Mode>('new');
+  const [step, setStep] = useState<Step>('start');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [status, setStatus] = useState<ImportStatus>(IDLE_STATUS);
   const [collabVis, setCollabVis] = useState<Vis>('public');
@@ -196,8 +244,13 @@ export function CreateAppDialog() {
   const dialog = useDialog('create', {
     onOpen: () => {
       applyMode(shotMode());
+      // #1911: a real open starts on the first step; the shot links land
+      // on the one they name. Focus follows: nothing on the start step
+      // wants the keyboard, the details step's first field does.
+      const initial = shotStep();
+      setStep(initial);
       void invalidateAppAllowance();
-      setTimeout(() => nameRef.current?.focus(), 0);
+      if (initial === 'details') setTimeout(() => focusDetails(shotMode()), 0);
     },
     // Verbatim from App.hideCreateModal: reset the form, clear the error, and
     // put mode, import state and visibility back to their defaults so the
@@ -206,6 +259,7 @@ export function CreateAppDialog() {
       formRef.current?.reset();
       setError('');
       applyMode('new');
+      setStep('start');
       setCollabVis('public');
       setViewVis('public');
       // Drop the progress view too, so the next open lands on the form.
@@ -262,6 +316,44 @@ export function CreateAppDialog() {
       clearInterval(timer);
     };
   }, [creatingSlug]);
+
+  /** #1911: the field the details step opens on, for the mode it is in. */
+  function focusDetails(forMode: Mode) {
+    (forMode === 'import' ? urlRef.current : nameRef.current)?.focus();
+  }
+
+  /** #1911: the start step's choice — set the mode and move on. */
+  function choose(next: Mode) {
+    applyMode(next);
+    setStep('details');
+    setTimeout(() => focusDetails(next), 0);
+  }
+
+  /**
+   * #1911: leave the details step. The same two guards the old single page
+   * applied at submit, applied one step earlier so the access step is never
+   * reached with nothing to create; the error line names what is missing.
+   */
+  function next() {
+    const name = (nameRef.current?.value || '').trim();
+    if (mode === 'import') {
+      if (!normalizeRepositoryUrlInput()) return setError('Paste a GitHub repo URL first.');
+      if (importState !== 'ok') return setError('Click "Check" to verify bot access first.');
+    }
+    if (!name) {
+      setError('Give your app a name.');
+      nameRef.current?.focus();
+      return;
+    }
+    setError('');
+    setStep('access');
+  }
+
+  function back() {
+    setError('');
+    setStep(step === 'access' ? 'details' : 'start');
+    if (step === 'access') setTimeout(() => focusDetails(mode), 0);
+  }
 
   /** Verbatim from App.setCreateMode: one entry point keeps every mirror in sync. */
   function applyMode(next: Mode) {
@@ -349,6 +441,11 @@ export function CreateAppDialog() {
   // Verbatim from App.handleCreateApp.
   async function submit(event: FormEvent) {
     event.preventDefault();
+    // #1911: Enter on the details step advances; only the last step creates.
+    if (step !== 'access') {
+      if (step === 'details') next();
+      return;
+    }
     const name = (nameRef.current?.value || '').trim();
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
@@ -412,6 +509,7 @@ export function CreateAppDialog() {
       ref={dialog.rootRef}
       data-mode={mode}
       data-import-state={importState}
+      data-step={step}
       {...dialog.backdropProps}
     >
       {/*
@@ -425,6 +523,7 @@ export function CreateAppDialog() {
         id="create-card"
         data-mode={mode}
         data-import-state={importState}
+        data-step={step}
         className={PANE}
       >
         {created ? (
@@ -466,42 +565,67 @@ export function CreateAppDialog() {
           />
         ) : (
         <>
-        <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
-          {mode === 'import' ? 'Import existing app' : 'Create a new app'}
+        <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+          {step === 'start'
+            ? 'Create a new app'
+            : step === 'details'
+              ? (mode === 'import' ? 'Import existing app' : 'Name your app')
+              : 'Who can use it'}
         </h2>
-        <AppAllowance id="create-app-quota" surface="pane" />
         {/*
-            The mode switch is the language's segmented control: a raised
-            WHITE track on the pane ground, and the selected segment is the
-            solid inversion (near-black fill, page-coloured ink). The colours
-            are still keyed off #create-card[data-mode] in app.css, so this
-            markup only flips the attribute, as it always has.
+            #1911: where the reader is in the flow. Text, not dots, because
+            the dialog is narrow and three words say it; the index is also
+            on the attribute for the declared checks.
         */}
-        <div className={RAIL + ' mb-4'}>
-          <button
-            type="button"
-            data-mode-pill="new"
-            className={'create-mode-pill ' + SEGMENT}
-            onClick={() => applyMode('new')}
-          >
-            Create new
-          </button>
-          <button
-            type="button"
-            data-mode-pill="import"
-            className={'create-mode-pill ' + SEGMENT}
-            onClick={() => applyMode('import')}
-          >
-            Import existing
-          </button>
-        </div>
+        <p
+          id="create-step-indicator"
+          data-step-index={String(STEPS.indexOf(step) + 1)}
+          className="text-xs text-zinc-500 dark:text-zinc-400 mb-3"
+        >
+          {`Step ${STEPS.indexOf(step) + 1} of ${STEPS.length}`}
+        </p>
+        <AppAllowance id="create-app-quota" surface="pane" />
         <form id="create-form" ref={formRef} className="space-y-4" onSubmit={submit}>
           {/*
-              Import-only: GitHub repo URL + Check button. The Check
-              button runs the bot-access pre-flight; on success the
-              #app-name field below appears, prefilled with the repo
-              name. CSS hides this whole block in "new" mode.
+              STEP 1 (#1911): how to begin. The two rows are the old mode
+              pills — same class, same data-mode-pill, same
+              #create-card[data-mode] selection colours in app.css — so
+              coming back to this step shows which way the dialog is set.
+              A choice advances; there is no Next here.
           */}
+          <div data-create-step="start" className="space-y-2">
+            <button
+              type="button"
+              data-mode-pill="new"
+              className={CHOICE}
+              onClick={() => choose('new')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className={CHOICE_TITLE}>Start from scratch</span>
+                <span className={CHOICE_CAPTION}>Name it, then describe what you want and build it with the group.</span>
+              </span>
+              <ChevronRightIcon className="w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              data-mode-pill="import"
+              className={CHOICE}
+              onClick={() => choose('import')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className={CHOICE_TITLE}>Import a GitHub repo</span>
+                <span className={CHOICE_CAPTION}>Bring an app that already exists. You will invite the bot to it first.</span>
+              </span>
+              <ChevronRightIcon className="w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+            </button>
+          </div>
+          {/*
+              STEP 2 (#1911): the details. Import-only: GitHub repo URL +
+              Check button. The Check button runs the bot-access pre-flight;
+              on success the #app-name field below appears, prefilled with
+              the repo name. CSS hides the URL block in "new" mode.
+          */}
+          <div data-create-step="details" className="space-y-4">
           <div id="create-import-block" className="create-import-block">
             <div className={CARD}>
               <div className={ROW}>
@@ -599,11 +723,13 @@ export function CreateAppDialog() {
               />
             </div>
           </div>
+          </div>
           {/*
-              Visibility: two segmented controls. Collab=Everyone forces
-              View=Everyone (a publicly-buildable app can't be privately
-              viewed) — applyVisibility enforces it.
+              STEP 3 (#1911): visibility, two segmented controls.
+              Collab=Everyone forces View=Everyone (a publicly-buildable app
+              can't be privately viewed) — applyVisibility enforces it.
           */}
+          <div data-create-step="access">
           <div id="create-visibility-block" className="space-y-3">
             <div>
               <p className={LABEL + ' mb-1.5'}>
@@ -663,9 +789,16 @@ export function CreateAppDialog() {
               </p>
             </div>
           </div>
+          </div>
           <div id="create-error" ref={errorRef} className="px-1 text-red-400 text-sm hidden">
             {error}
           </div>
+          {/*
+              #1911: the footer changes with the step, through CSS on
+              #create-card[data-step] rather than by mounting and unmounting
+              (every id ships on every step). Start: Cancel alone. Details:
+              Back and Next. Access: Back and Create / Import.
+          */}
           <div className="flex gap-2 pt-1">
             <button
               type="button"
@@ -675,6 +808,26 @@ export function CreateAppDialog() {
             >
               Cancel
             </button>
+            <button
+              type="button"
+              id="create-back"
+              className={PILL_SECONDARY}
+              onClick={back}
+            >
+              Back
+            </button>
+            <Button
+              type="button"
+              id="create-next"
+              variant="pillAccent"
+              size="pill"
+              layout="flex"
+              disabledStyle="block"
+              disabled={quotaBlocksCreation}
+              onClick={next}
+            >
+              Next
+            </Button>
             <Button
               type="submit"
               id="create-submit"

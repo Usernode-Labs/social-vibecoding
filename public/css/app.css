@@ -9826,18 +9826,57 @@ a.drawer-ver--fork:hover {
 }
 
 /* Import-mode visibility gating.
-   The flow is: paste URL → click Check → on success, the name field +
-   submit button reveal so the user can confirm/edit and click Import.
-   data-import-state on #create-card drives the reveal so app.js only
-   needs to flip an attribute, never toggle .hidden on each child. */
+   The flow is: paste URL → click Check → on success, the name field
+   reveals so the user can confirm/edit it. data-import-state on
+   #create-card drives the reveal so the component only flips an
+   attribute, never toggles .hidden on each child. (The Import button
+   itself is gated by the STEP now — see below — because the access step
+   cannot be reached until the check has passed.) */
 #create-card[data-mode="new"] .create-import-block { display: none; }
 
-#create-card[data-mode="import"] #create-name-block,
-#create-card[data-mode="import"] #create-submit {
+#create-card[data-mode="import"] #create-name-block { display: none; }
+#create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
+
+/* THE THREE STEPS (#1911). Every step's section ships on every step —
+   the declared checks and the legacy lookups select on the same ids
+   whichever step is showing — and #create-card[data-step] picks the one
+   on screen, the same attribute-driven mechanism data-mode and
+   data-import-state use above (and, for the same reason, keyed on the
+   CARD: the kit lifts it out of #create-modal while presented).
+
+   The footer follows the step: Cancel alone on the start step (a choice
+   there advances, so it has no Next), Back and Next on the details step,
+   Back and Create / Import on the last. */
+#create-card [data-create-step] { display: none; }
+#create-card[data-step="start"]   [data-create-step="start"],
+#create-card[data-step="details"] [data-create-step="details"],
+#create-card[data-step="access"]  [data-create-step="access"] {
+  display: block;
+}
+#create-card:not([data-step="start"]) #create-cancel { display: none; }
+#create-card[data-step="start"] #create-back,
+#create-card[data-step="start"] #create-next,
+#create-card[data-step="start"] #create-submit,
+#create-card[data-step="details"] #create-submit,
+#create-card[data-step="access"] #create-next {
   display: none;
 }
-#create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
-#create-card[data-mode="import"][data-import-state="ok"] #create-submit     { display: block; }
+
+/* The start step's two choice rows carry .create-mode-pill, so the rule
+   above paints the chosen one in the inversion when the reader comes back
+   to this step; unchosen rows read as plain white cards with the muted ink
+   the rule also gives them, and the caption stays muted either way. */
+#create-card [data-create-step="start"] .create-mode-pill {
+  color: var(--text-primary);
+}
+#create-card [data-create-step="start"] .create-mode-pill > span > span + span {
+  color: var(--text-muted);
+}
+#create-card[data-mode="new"]    [data-create-step="start"] .create-mode-pill[data-mode-pill="new"] > span > span + span,
+#create-card[data-mode="import"] [data-create-step="start"] .create-mode-pill[data-mode-pill="import"] > span > span + span {
+  color: inherit;
+  opacity: 0.8;
+}
 
 /* Import status row — spinner on checking, green check on success,
    red text on failure. JS sets the text + adds an --ok / --err
