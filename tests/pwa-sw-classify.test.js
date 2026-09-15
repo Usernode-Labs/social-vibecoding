@@ -59,6 +59,12 @@ test('OAuth Connect and callback navigations never use the cached SPA fallback (
     '/api/cli/device/approval?user_code=ABCD-EFGH',
     '/api/me/cli-tokens',
     '/api/auth/login',
+    // Waitlist social connect: the start redirect and the callback's status
+    // page, for signers who have no platform account.
+    '/waitlist/connect/github?token=' + 'a'.repeat(48),
+    '/waitlist/connect/x?token=' + 'a'.repeat(48),
+    '/waitlist/connect/linkedin/callback?code=example&state=example',
+    '/waitlist/connect/x/callback?error=access_denied&state=example',
   ]) {
     for (const mode of ['navigate', 'cors', 'no-cors']) {
       assert.equal(classify('GET', path, 'text/html', mode), 'bypass', `${path} (${mode})`);
@@ -87,6 +93,8 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
     for (const path of [
       `/api/me/social-identities/${provider}/connect?account=7`,
       `/api/me/${provider}/callback?code=example&state=example`,
+      `/waitlist/connect/${provider}?token=${'a'.repeat(48)}`,
+      `/waitlist/connect/${provider}/callback?code=example&state=example`,
     ]) {
       handlers.fetch({
         request: { method: 'GET', url: ORIGIN + path, headers: new Headers({ accept: 'text/html' }), mode: 'navigate' },
