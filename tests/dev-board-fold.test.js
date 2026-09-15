@@ -551,7 +551,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // start step's two choices on /#create and the access step through
   // `?shot=create-access`; the #1910 name-card check moved to
   // `?shot=create-details`, where that field is on screen.
-  assert.equal(DAPP.tests.length, 648);
+  // 646 → 647: independently on main, #838 adds one check on Spend limits,
+  // pinning the three per-tier weekly cap fields (unverified, GitHub and X,
+  // zkPassport).
+  // 648 → 649, 647 → 649: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 646 → 648
+  // alone, with the #1911 checks above; main independently took the SAME
+  // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
+  // 646 is 649.
+  assert.equal(DAPP.tests.length, 649);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
