@@ -288,23 +288,40 @@ test('edit still writes only the override keys the API reports back', () => {
 
 // ── The template's illustration ────────────────────────────────────────
 //
-// One dropdown on the Challenge TEMPLATE form picks the art every challenge
-// stamped out of that template is drawn with. It is template-level only by
-// owner decision, so it has two sides worth pinning: the challenge form above
-// never copies it, and the template form round-trips it — including a stored
-// slug this build's registry does not know, which must survive an edit rather
-// than being quietly saved over with null.
+// One field on the Challenge TEMPLATE form picks the art every challenge
+// stamped out of that template is drawn with. It was a dropdown; it is a
+// gallery of tiles now (2026-09-15), and tests/illustration-gallery.test.js
+// pins the gallery itself: its tiles, tones, markers, write gate and the
+// SVG allowlist. What stays here is the part that belongs to the FORM, which
+// did not change with the control: the value is still the slug string, it
+// is template-level only by owner decision (so the challenge form above never
+// copies it), and the template form round-trips it, including a stored slug
+// the gallery does not list, which must survive an edit rather than being
+// quietly saved over with null.
 
 const TEMPLATES_ENTRY = 'frontend/src/features/admin/topochain/challenge-templates.tsx';
 const TPL = loadTsx(TEMPLATES_ENTRY);
-const { ILLUSTRATIONS } = loadTsx('frontend/src/lib/challenge-illustrations.ts');
+const GALLERY = loadTsx('frontend/src/features/admin/topochain/illustration-gallery.tsx');
 const { renderToHtml, createElement } = require('./lib/render-tsx');
 
-const renderPicker = (value) => renderToHtml(createElement(TPL.IllustrationPicker, {
-  id: 'admin-topo-tpl-f-illustration', value, onChange() {},
-}));
-const optionsOf = (html) => [...html.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)]
-  .map((m) => ({ value: m[1], label: m[2], selected: /selected=""/.test(m[0]) }));
+// The gallery as the form renders it, for an admin who can write. The console
+// is not loaded under the static renderer, so AdminTopochain is stubbed for
+// the one render and removed again.
+const renderGallery = (value) => {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const prev = globalThis.window;
+  globalThis.window = { AdminTopochain: { canWrite: () => true } };
+  try {
+    return renderToHtml(createElement(GALLERY.IllustrationGallery, {
+      id: 'admin-topo-tpl-f-illustration', value, onChange() {},
+    }));
+  } finally {
+    if (had) globalThis.window = prev; else delete globalThis.window;
+  }
+};
+const checkedOf = (html) => [
+  ...html.matchAll(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*data-illustration="([^"]*)"/g),
+].map((m) => m[1]);
 
 // A stored template as GET /api/v4/admin/challenge-templates/:id returns it.
 const storedTemplate = (illustration) => ({ ...TEMPLATE_WITH_METRIC, illustration });
@@ -320,64 +337,43 @@ test('the challenge form never copies the template illustration', () => {
   assert.ok(!('illustration' in body), 'and a new challenge does not send one');
 });
 
-test('the template form offers every registry illustration, and (none)', () => {
+test('the template form renders the illustration field as the gallery', () => {
   assert.ok(TPL.ALL_FIELDS.some((f) => f.key === 'illustration' && f.kind === 'illustration'),
     'the field is in ALL_FIELDS, so the fill and the save both carry it');
-  const html = renderPicker('');
-  assert.match(html, /<select[^>]*id="admin-topo-tpl-f-illustration"/, 'the select carries the field id');
-  const options = optionsOf(html);
-  assert.equal(options.length, 10, 'nine illustrations plus the blank');
-  assert.deepEqual(options[0], { value: '', label: '(none)', selected: true },
-    'an empty value selects (none)');
-  assert.deepEqual(options.slice(1).map((o) => o.value), Object.keys(ILLUSTRATIONS),
-    'the options are the registry, in table order');
-  for (const o of options.slice(1)) {
-    assert.equal(o.label, ILLUSTRATIONS[o.value].label, `${o.value} is listed under its label`);
-  }
-  assert.ok(!/<img/.test(html), 'nothing is previewed without a pick');
-});
-
-test('a picked illustration is previewed from the registry, on its tone', () => {
-  const html = renderPicker('useful-feedback');
-  assert.equal(optionsOf(html).find((o) => o.selected).value, 'useful-feedback');
-  const img = html.match(/<img[^>]*>/);
-  assert.ok(img, 'the pick is previewed');
-  assert.match(img[0], /src="\/illustrations\/challenges\/useful-feedback\.svg"/,
-    'from the same-origin static path');
-  assert.match(img[0], /alt="Send useful feedback"/, 'labelled with what the picker calls it');
-  assert.match(img[0], /class="home-tone-orange [^"]*bg-\[var\(--tint-art\)\]/,
-    "on the illustration's own tone, read through --tint-art");
-});
-
-test('the preview never draws a URL the API handed back', () => {
-  for (const hostile of ['https://evil.example/art.svg', '/illustrations/challenges/x.svg',
-    'javascript:alert(1)', '../../etc/passwd']) {
-    const html = renderPicker(hostile);
-    assert.ok(!/<img/.test(html), `no preview for ${hostile}`);
-    assert.ok(!/src=/.test(html), 'and no src anywhere in the field');
-  }
+  assert.ok(!('IllustrationPicker' in TPL), 'the dropdown picker is gone');
+  const src = fs.readFileSync(path.join(root, TEMPLATES_ENTRY), 'utf8');
+  assert.match(src, /<IllustrationGallery\n\s*id=\{fieldId\(f\.key\)\}/,
+    'the gallery is handed the field id, admin-topo-tpl-f-illustration');
+  assert.match(renderGallery(''), /<div id="admin-topo-tpl-f-illustration" role="radiogroup"/,
+    'which its radio group carries');
+  assert.deepEqual(checkedOf(renderGallery('')), [''], 'an empty value checks (none)');
 });
 
 test('a stored slug this build does not know is kept, not dropped', () => {
   const values = TPL.templateFormValues(storedTemplate('retired-art'));
   assert.equal(values.illustration, 'retired-art', 'the edit form pre-fills the stored slug as-is');
-  const options = optionsOf(renderPicker(values.illustration));
-  const kept = options.find((o) => o.value === 'retired-art');
-  assert.ok(kept, 'it is listed as its own option rather than collapsing to (none)');
-  assert.ok(kept.selected, 'and is the selected one');
-  assert.match(kept.label, /^retired-art\b/, 'under its raw value');
-  assert.equal(options.length, 11, 'beside the nine registry entries and the blank');
+  assert.deepEqual(checkedOf(renderGallery(values.illustration)), ['retired-art'],
+    'the gallery shows it checked rather than collapsing to (none)');
   assert.equal(TPL.buildTemplateBody(values).illustration, 'retired-art',
     'so saving an unrelated edit writes it back unchanged');
 });
 
 test('editing a template pre-fills its illustration, and save sends the pick', () => {
   assert.equal(TPL.templateFormValues(storedTemplate('try-three-apps')).illustration, 'try-three-apps');
+  assert.deepEqual(checkedOf(renderGallery('try-three-apps')), ['try-three-apps']);
   assert.equal(TPL.templateFormValues(storedTemplate(null)).illustration, '',
     'no illustration fills as empty, not "null"');
 
   const values = { ...TPL.templateFormValues(storedTemplate(null)), illustration: 'block-production' };
   assert.equal(TPL.buildTemplateBody(values).illustration, 'block-production', 'the picked slug is sent');
+});
+
+test('an uploaded illustration round-trips as its slug', () => {
+  const slug = `u-${'0123456789abcdef'.repeat(2)}`;
+  const values = TPL.templateFormValues(storedTemplate(slug));
+  assert.equal(values.illustration, slug);
+  assert.deepEqual(checkedOf(renderGallery(slug)), [slug], 'checked before the upload list has loaded');
+  assert.equal(TPL.buildTemplateBody(values).illustration, slug, 'and sent back unchanged');
 });
 
 test('(none) clears a stored illustration with null', () => {

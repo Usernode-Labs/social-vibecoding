@@ -16,8 +16,16 @@
 // URL directly, and a board export is exactly where an editor's metadata, a
 // linked font or a stray handler would ride in unnoticed.
 //
-// The registry is read as TEXT rather than imported — it is TypeScript, and
-// its slug table is a plain object literal whose keys a pattern finds.
+// The file checks read the registry as TEXT — its slug table is a plain
+// object literal whose keys a pattern finds. The resolution checks import it
+// through tests/lib/render-tsx.js, because what they pin is behaviour: an
+// UPLOADED slug (`u-` plus 32 lowercase hex) derives its path, its tone falls
+// back to gray, and anything else resolves to null rather than a guessed URL.
+//
+// TONES is spelled three times — the registry, Home's featured-illustration
+// tones (features/home/panels/ui.tsx) and the server's list — and a tone one
+// side accepts that another does not is an upload drawn on the wrong colour.
+// The server lists are read as text too, matched on their array literal.
 //
 // Run with: node --test tests/challenge-illustrations.test.js
 
@@ -25,6 +33,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+
+const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const REGISTRY_PATH = 'frontend/src/lib/challenge-illustrations.ts';
@@ -112,4 +122,85 @@ test('the registry carries no inline artwork', () => {
   // included, and treats either spelling as an inline glyph.
   assert.ok(!REGISTRY.includes('<svg'), `${REGISTRY_PATH} contains the literal <svg`);
   assert.ok(!REGISTRY.includes(' d="M'), `${REGISTRY_PATH} contains inline path data`);
+});
+
+// ── Uploaded art and tones ────────────────────────────────────────────
+
+const Registry = loadTsx(REGISTRY_PATH);
+const HEX = '0123456789abcdef0123456789abcdef';
+
+test('an uploaded slug resolves to its derived path, on its tone', () => {
+  const art = Registry.resolveIllustration(`u-${HEX}`, 'teal');
+  assert.deepEqual({ ...art }, {
+    slug: `u-${HEX}`, label: '', tone: 'teal', toneClass: 'home-tone-teal',
+    src: `/challenge-illustrations/${HEX}`, uploaded: true,
+  });
+  for (const tone of Registry.TONES) {
+    assert.equal(Registry.resolveIllustration(`u-${HEX}`, tone).toneClass, `home-tone-${tone}`, `${tone} is honoured`);
+  }
+});
+
+test('an uploaded slug without a known tone falls back to gray', () => {
+  for (const tone of [undefined, null, '', 'magenta', 'Teal', 'home-tone-teal', 7, {}]) {
+    const art = Registry.resolveIllustration(`u-${HEX}`, tone);
+    assert.equal(art.tone, 'gray', `${String(tone)}: gray`);
+    assert.equal(art.toneClass, 'home-tone-gray');
+    assert.equal(art.src, `/challenge-illustrations/${HEX}`, 'and still draws');
+  }
+});
+
+test('a built-in keeps its own tone and static path whatever tone is passed', () => {
+  const art = Registry.resolveIllustration('useful-feedback', 'teal');
+  assert.equal(art.tone, 'orange');
+  assert.equal(art.src, '/illustrations/challenges/useful-feedback.svg');
+  assert.equal(art.uploaded, false);
+  assert.deepEqual(Registry.builtInIllustrations().map((a) => a.slug), registrySlugs(),
+    'the gallery’s built-ins are the table, in order');
+});
+
+test('a malformed or unknown slug resolves to null, never a path', () => {
+  const BAD = [
+    'u-XYZ', `u-${HEX.slice(1)}`, `u-${HEX}0`, `u-${HEX.toUpperCase()}`, `U-${HEX}`, 'u-',
+    `u-../${HEX}`, `../u-${HEX}`, `u-${HEX}/`, `u-${HEX}.svg`, `u-${HEX.slice(0, 31)}g`,
+    '../../etc/passwd', 'not-in-the-registry', 'Useful-Feedback', '', null, undefined, 42,
+  ];
+  for (const slug of BAD) {
+    assert.equal(Registry.resolveIllustration(slug, 'teal'), null, `${String(slug)} draws nothing`);
+  }
+});
+
+/** The quoted strings of the first `TONES = [ ... ]` array literal in `src`. */
+function tonesLiteral(src) {
+  const m = /\bTONES\s*=\s*\[([\s\S]*?)\]/.exec(src);
+  return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null;
+}
+
+test('TONES agree across the registry, Home and the server', () => {
+  const client = [...Registry.TONES];
+  assert.equal(client.length, 12, 'twelve harmonic tones');
+  assert.deepEqual(tonesLiteral(REGISTRY), client, 'the text literal is what the module exports');
+  for (const tone of client) {
+    assert.equal(Registry.TONE_CLASS[tone], `home-tone-${tone}`, `${tone} has its complete class literal`);
+    assert.ok(Registry.isTone(tone));
+  }
+
+  const home = fs.readFileSync(path.join(ROOT, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
+  assert.deepEqual(tonesLiteral(home), client, 'features/home/panels/ui.tsx TONES');
+
+  const appIllustrations = fs.readFileSync(path.join(ROOT, 'src/routes/app-illustrations.js'), 'utf8');
+  assert.deepEqual(tonesLiteral(appIllustrations), client, 'src/routes/app-illustrations.js TONES');
+
+  // The upload routes validate the tone an admin picks. They either spell the
+  // list or take it from app-illustrations.js; both are the same list then.
+  // They ship in the same change, so their absence fails rather than skips.
+  const uploadRoutes = path.join(ROOT, 'src/routes/topochain/challenge-illustrations.js');
+  assert.ok(fs.existsSync(uploadRoutes), 'src/routes/topochain/challenge-illustrations.js exists');
+  const routes = fs.readFileSync(uploadRoutes, 'utf8');
+  const own = tonesLiteral(routes);
+  if (own) {
+    assert.deepEqual(own, client, 'src/routes/topochain/challenge-illustrations.js TONES');
+  } else {
+    assert.match(routes, /\bTONES\b[\s\S]*require\(['"]\.\.\/app-illustrations(?:\.js)?['"]\)|require\(['"]\.\.\/app-illustrations(?:\.js)?['"]\)[\s\S]*\bTONES\b/,
+      'the upload routes spell no TONES literal, so they must take the list from app-illustrations.js');
+  }
 });

@@ -47,6 +47,7 @@ function freshDb() {
       { id: 'SEND_TX_CHALLENGE', name: 'Send a transaction' },
     ],
     challengeTemplates: [],
+    challengeIllustrations: [],
     seasons: [],
     seasonEvents: [],
     challenges: [],
@@ -175,6 +176,20 @@ function handleQuery(rawSql, params = []) {
   if (sql === 'BEGIN') { snapshot = JSON.parse(JSON.stringify(db)); return { rows: [] }; }
   if (sql === 'COMMIT') { snapshot = null; return { rows: [] }; }
   if (sql === 'ROLLBACK') { if (snapshot) db = JSON.parse(JSON.stringify(snapshot)); snapshot = null; return { rows: [] }; }
+
+  // D4's two GETs select an uploaded illustration's tone beside `*`. Answer
+  // the query without that subselect, then add the tone the way the scalar
+  // subquery would: the matching challenge_illustrations row's, else null.
+  const toneSelect = ', (SELECT ci.tone FROM challenge_illustrations ci WHERE ci.slug = challenge_templates.illustration) AS illustration_tone';
+  if (sql.includes(toneSelect)) {
+    const { rows } = handleQuery(sql.replace(toneSelect, ''), params);
+    return {
+      rows: rows.map((r) => ({
+        ...r,
+        illustration_tone: db.challengeIllustrations.find((ci) => ci.slug === r.illustration)?.tone ?? null,
+      })),
+    };
+  }
 
   // ── shared: challenge_kinds / season_events / challenge_templates by id ─
   if (sql === 'SELECT id FROM challenge_kinds WHERE id = $1') {
@@ -639,6 +654,28 @@ test('D4: create accepts v4-only cta_type/mobile_cta_*/metric_* fields, and reje
 // The server checks the slug's SHAPE only. Membership in the artwork set is
 // the client registry's call (it draws a known slug and falls back otherwise),
 // so a well-shaped slug no build draws yet is stored, not refused.
+// An uploaded illustration (slug `u-<id>`) has its tone in challenge_illustrations,
+// and both D4 GETs select it beside the row, so the admin screen reads the same
+// value the public card payload carries. A built-in slug, or none, reads null.
+test('D4: GET list and GET :id carry an uploaded illustration\'s tone, null for a built-in or none', async () => {
+  const uploaded = `u-${'e'.repeat(32)}`;
+  db.challengeIllustrations.push({ id: 'e'.repeat(32), slug: uploaded, label: 'Kite', tone: 'teal', archived: true });
+  db.challengeTemplates.push(
+    { id: 1, category: 'a', goal: 'g1', task: 't', reward: 'r', illustration: uploaded, created_at: T(0), updated_at: T(0) },
+    { id: 2, category: 'b', goal: 'g2', task: 't', reward: 'r', illustration: 'block-production', created_at: T(0), updated_at: T(0) },
+    { id: 3, category: 'c', goal: 'g3', task: 't', reward: 'r', illustration: null, created_at: T(0), updated_at: T(0) },
+  );
+  const { server, base } = await listen(buildSubApp(challengeTemplatesAdminRoutes));
+  try {
+    const list = await (await fetch(`${base}/api/v4/admin/challenge-templates`)).json();
+    assert.deepEqual(list.data.map((t) => [t.illustration, t.illustration_tone]),
+      [[uploaded, 'teal'], ['block-production', null], [null, null]], 'archived art still reports its tone');
+    const one = await (await fetch(`${base}/api/v4/admin/challenge-templates/1`)).json();
+    assert.equal(one.data.illustration_tone, 'teal');
+    assert.equal((await (await fetch(`${base}/api/v4/admin/challenge-templates/3`)).json()).data.illustration_tone, null);
+  } finally { server.close(); }
+});
+
 test('D4: illustration — create/update echo the slug, a malformed one 422s, omitted keeps it, null clears it', async () => {
   const { server, base } = await listen(buildSubApp(challengeTemplatesAdminRoutes));
   const send = (method, url, body) => fetch(`${base}${url}`, {

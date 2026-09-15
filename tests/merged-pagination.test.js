@@ -250,12 +250,16 @@ test('the first page carries exact week counts over the whole merged history', a
   assert.deepEqual(payload.shipped, { week: 34, prevWeek: 27 });
   const call = captured.calls.find((c) => /AS shipped_week/.test(c.sql));
   assert.ok(call, 'the week counts are queried');
-  assert.deepEqual(call.params, [1], 'scoped to this app only');
+  assert.equal(call.params[0], 1, 'scoped to this app only');
+  assert.equal(call.params.length, 2, 'the app id and the week start, nothing else');
   // Same rows and timestamps as the client's count (app-view.js mergedAtOf).
   assert.match(call.sql, /COALESCE\(merged_at, created_at\) AS t\s+FROM chat_sessions\s+WHERE app_id = \$1 AND status = 'merged'/);
   assert.match(call.sql, /FROM issues\s+WHERE app_id = \$1 AND kind = 'close_issue' AND status = 'closed'\s+AND payload \? 'appliedAt'/);
-  assert.match(call.sql, /t > now\(\) - interval '7 days'/);
-  assert.match(call.sql, /t <= now\(\) - interval '7 days'\s+AND t > now\(\) - interval '14 days'/);
+  // #2176: the calendar week (Monday 00:00 UTC), not a trailing seven days.
+  assert.match(call.sql, /t >= \$2::timestamptz\)::int AS shipped_week/);
+  assert.match(call.sql, /t < \$2::timestamptz\s+AND t >= \$2::timestamptz - interval '7 days'\)::int AS shipped_prev_week/);
+  assert.match(String(call.params[1]), /^\d{4}-\d{2}-\d{2}T00:00:00Z$/, 'the week start rides as a parameter');
+  assert.equal(new Date(call.params[1]).getUTCDay(), 1, 'and it is a Monday');
   assert.doesNotMatch(call.sql, /AS total\b|cs\.status/, 'never collides with the other stubs');
 });
 

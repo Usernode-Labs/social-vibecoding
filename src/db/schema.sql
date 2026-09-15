@@ -2107,6 +2107,11 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
+-- #2161: 'app_deleted' has no app row left to join (notifications.app_id
+-- cascades with the app), so the deleted app's NAME rides in `detail`.
+-- apps.name is VARCHAR(255); widening is metadata-only in Postgres and
+-- re-running it is a no-op.
+ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(255);
 
 -- #1559: grant existing accounts at least two slots once, preserving higher
 -- allowances. A later explicit admin reduction must survive every restart.
@@ -3695,6 +3700,31 @@ CREATE INDEX IF NOT EXISTS idx_challenge_templates_category ON challenge_templat
 -- Declared in the table above for fresh databases; the ALTER is what reaches
 -- the ones that already have it, since migrate.js replays this file each boot.
 ALTER TABLE challenge_templates ADD COLUMN IF NOT EXISTS illustration VARCHAR(64);
+
+-- Illustrations an admin uploaded from the template form's gallery, beside the
+-- nine built-in drawings under /illustrations/challenges/. A template names one
+-- in that same `illustration` column as `u-` plus the row's id, so the column
+-- needs no second shape and no foreign key: a slug whose row is missing draws
+-- the kind icon, exactly like a built-in slug from another build.
+--
+-- `id` is a random 32-hex string that doubles as the public file id, served at
+-- /challenge-illustrations/<id> with an immutable cache header, so the bytes
+-- under an id never change. `tone` is one of the twelve harmonic tones the card
+-- paints behind the art, and travels to the client beside the slug. Rows are
+-- never deleted: `archived` hides one from the gallery while every template
+-- already using it keeps drawing it. An SVG row passed the strict allowlist in
+-- src/services/svg-safety.js before it was stored.
+CREATE TABLE IF NOT EXISTS challenge_illustrations (
+  id            VARCHAR(32) PRIMARY KEY,
+  slug          VARCHAR(64) NOT NULL UNIQUE,
+  label         VARCHAR(80) NOT NULL,
+  tone          VARCHAR(16) NOT NULL,
+  content_type  TEXT NOT NULL,
+  data          BYTEA NOT NULL,
+  archived      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- `challenges` — the Challenge level of Season → Event → Challenge: an
 -- instance of a `challenge_templates` row scoped to one season_event,

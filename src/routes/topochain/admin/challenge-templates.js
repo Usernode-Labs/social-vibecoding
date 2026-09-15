@@ -18,13 +18,14 @@ const { formatTemplate } = require('../challenge-view');
 
 const CTA_TYPE_VALUES = new Set(['url', 'app']);
 
-// The shape of an illustration slug: the file name under
-// /illustrations/challenges/ without its extension. Only the SHAPE is checked
-// here, not membership in the artwork set: that registry ships with the client
-// (frontend/src/lib/challenge-illustrations.ts), which draws a slug only when
-// it knows it, so a server that refused unknown slugs would have to be released
-// in lockstep with every new drawing. The shape is what keeps the value from
-// ever becoming a path or a URL.
+// The shape of an illustration slug. A slug names either a built-in drawing
+// (its file name under /illustrations/challenges/ without the extension) or an
+// admin upload (`u-` plus the id of its challenge_illustrations row, served
+// from /challenge-illustrations/<id>). Only the SHAPE is checked here, not
+// membership: the client registry (frontend/src/lib/challenge-illustrations.ts)
+// decides what it draws, so a server that refused unknown slugs would have to
+// be released in lockstep with every new drawing. The shape is what keeps the
+// value from ever becoming a path or a URL.
 const ILLUSTRATION_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // ─── Create/update validation (SPEC 2548-2562, 2575-2577) ──────────────
@@ -218,8 +219,18 @@ function challengeTemplatesAdminRoutes(config) {
       );
       const total = countRows[0].c;
 
+      // The two GETs also select an uploaded illustration's tone, the value the
+      // public card payload carries beside the slug (challenge-view.js's
+      // t_illustration_tone). A scalar subquery rather than a join: `slug` is
+      // UNIQUE, a built-in slug never has a row, and a join would widen
+      // `SELECT *`. Written out in each query rather than shared as a fragment
+      // so both stay statically checkable by scripts/check-sql.js. The write
+      // responses below leave the tone null: they echo the row as written, and
+      // the form's gallery already holds every tone from its own list.
       const { rows } = await pool.query(
-        `SELECT * FROM challenge_templates
+        `SELECT *, (SELECT ci.tone FROM challenge_illustrations ci
+                      WHERE ci.slug = challenge_templates.illustration) AS illustration_tone
+           FROM challenge_templates
           WHERE ($1::text IS NULL OR goal ILIKE $1 OR task ILIKE $1 OR category ILIKE $1 OR kind ILIKE $1)
             AND ($2::text = '' OR category = $2)
           ORDER BY category ASC, goal ASC
@@ -287,7 +298,11 @@ function challengeTemplatesAdminRoutes(config) {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'Challenge template not found.');
 
-      const { rows } = await pool.query('SELECT * FROM challenge_templates WHERE id = $1', [id]);
+      const { rows } = await pool.query(
+        `SELECT *, (SELECT ci.tone FROM challenge_illustrations ci
+                      WHERE ci.slug = challenge_templates.illustration) AS illustration_tone
+           FROM challenge_templates WHERE id = $1`, [id]
+      );
       if (!rows.length) return fail(res, 404, 'Challenge template not found.');
 
       return ok(res, { data: formatTemplate(rows[0]) });

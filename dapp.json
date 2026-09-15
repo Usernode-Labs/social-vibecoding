@@ -1739,6 +1739,12 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"shipped\"] ~ [data-ws-dash-cell=\"unclaimed\"] > b"
     },
     {
+      "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182)",
+      "path": "/?demo=1&shot=mine-empty#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectText": "You have no work going on."
+    },
+    {
       "name": "Proposal view shows the How-voting-works help button",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
       "expectSelector": ".voting-help-btn"
@@ -2015,6 +2021,12 @@
       "expectText": "Ask"
     },
     {
+      "name": "#2172: one card past the last Needs-you item is a summary that says that's it, with the way back",
+      "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-cta",
+      "expectText": "See what changed this week"
+    },
+    {
       "name": "The view strip marks Workshop as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
@@ -2038,6 +2050,12 @@
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
+    },
+    {
+      "name": "Since your last visit carries a Clear on its heading and a Show older that is drawn even when nothing is new (#2183)",
+      "path": "/?demo=1&shot=since-visit#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since] > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
+      "expectText": "Show older"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2822,6 +2840,12 @@
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
+      "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
+      "path": "/?shot=app-settings#app/usernode-2d5619",
+      "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked",
+      "expectText": "core platform app"
+    },
+    {
       "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
@@ -3439,6 +3463,12 @@
       "name": "The venue dropdown sits in the session header, before the mode switch (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]",
+      "expectText": "Homeroom · Claude"
+    },
+    {
+      "name": "The session descriptor is one compact row: py-1, wrapping only below sm, the venue still beside the name (#1941)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-view > #dc-session-header.py-1.flex-wrap.sm\\:flex-nowrap:not(.py-2) > .dc-session-title ~ button#dc-venue-select[data-venue-change]",
       "expectText": "Homeroom · Claude"
     },
     {

@@ -11,7 +11,7 @@
 //     on each challenge — became a decoration on these (richer) cards, see
 //     "personalization" below;
 //   - its season-scope leaderboard block is gone: it was a thinner copy of the
-//     standings tab, which the "See where the season stands" link now points at.
+//     standings tab, one tab over (#1917 retired the link that pointed there).
 //
 // Hosted in #challenges-root inside #leaderboard-screen (public/index.html);
 // mounted/unmounted by the Leaderboard module (./leaderboard.js) when
@@ -78,9 +78,9 @@
 //     retire with it, because it guards a real `href` attribute and React
 //     does not validate schemes.
 //   * The four `addEventListener` sweeps that were re-bound after every
-//     render (the cards, the see-the-standings link, the two overlay
+//     render (the cards, the two overlay
 //     backdrops, the close buttons, the breakdown's Load more and its
-//     participant rows) are named methods now — `_openIdx`, `_toStandings`,
+//     participant rows) are named methods now — `_openIdx` and
 //     `_moreBreakdown` — and the component calls them. The behaviour stayed
 //     here; only the wiring moved.
 //   * The overlays' `hidden` class retired into their descriptors: `detail`
@@ -193,11 +193,23 @@ const TopochainChallenges = {
   // import frontend/src/lib/challenge-illustrations.ts — it stays an
   // import-free classic script (see tests/challenge-deep-link.test.js) — so it
   // checks only the shape the server already checks, and the components
-  // resolve the slug by MEMBERSHIP. Nothing here builds a path from it.
+  // resolve it (a built-in by MEMBERSHIP, an admin upload by its `u-` slug).
+  // Nothing here builds a path from it.
   ILLUSTRATION_SLUG: /^[a-z0-9][a-z0-9-]{0,63}$/,
   _illustrationOf(cp) {
     const slug = cp && cp.illustration;
     return typeof slug === 'string' && TopochainChallenges.ILLUSTRATION_SLUG.test(slug) ? slug : null;
+  },
+
+  // An uploaded illustration's tone, which the server sends beside the slug
+  // (null for a built-in, which carries its own). Again only its SHAPE: a
+  // lowercase word of the length a tone name has. The registry decides
+  // whether it is one of its TONES and draws an unknown one on gray, so a
+  // tone added there needs no change here.
+  ILLUSTRATION_TONE: /^[a-z]{3,10}$/,
+  _illustrationToneOf(cp) {
+    const tone = cp && cp.illustration_tone;
+    return typeof tone === 'string' && TopochainChallenges.ILLUSTRATION_TONE.test(tone) ? tone : null;
   },
 
   async fetchJson(url) {
@@ -519,6 +531,7 @@ const TopochainChallenges = {
       icon: str(cp.icon || '').trim().slice(0, 8) || null,
       reward: TopochainChallenges.formatReward(cp.reward),
       illustration: TopochainChallenges._illustrationOf(cp),
+      illustrationTone: TopochainChallenges._illustrationToneOf(cp),
       ...TopochainChallenges._stateOf(c),
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
         ? null : TopochainChallenges._deadlineOf(c),
@@ -709,12 +722,6 @@ const TopochainChallenges = {
     const challenge = TopochainChallenges._ordered()[idx];
     TopochainChallenges.openChallengeDetail(challenge);
     TopochainChallenges._pushDetailHash(challenge);
-  },
-
-  // Real hash navigation so the section switch goes through the router
-  // (and the shared event selection is untouched).
-  _toStandings() {
-    window.location.hash = '#leaderboard/topochain';
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
@@ -1078,6 +1085,7 @@ const TopochainChallenges = {
       task: cp.task ? str(cp.task) : null,
       // The same artwork as the card's tile, for the page's well under the task.
       illustration: TopochainChallenges._illustrationOf(cp),
+      illustrationTone: TopochainChallenges._illustrationToneOf(cp),
       state: rail.state,
       stateLabel: rail.stateLabel,
       fill: rail.fill,

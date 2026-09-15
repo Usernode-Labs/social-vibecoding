@@ -389,10 +389,14 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
       >
         {s.title}
       </span>
+      {/* #1941: `shrink-0 whitespace-nowrap` on the PR number, because it is
+          the one child that could WRAP: at 375px it broke into "PR" over
+          "#21" and made the strip two lines tall with nothing on the second
+          line but half a word. It sits on the title's line at every width. */}
       {s.pr ? (
         <button
           id="dc-pr-header-link"
-          className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="shrink-0 whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
           onClick={() => controller()?.revealPrCard?.()}
         >
@@ -405,7 +409,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
            row is the name and the switch, nothing else; hiding it below `sm`
            is the nearest thing to that which still shows it where there is
            room. */
-        <span className="max-sm:hidden text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is
@@ -417,8 +421,16 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           below `sm` behind a "Details ▾" button that opened a Session details
           dialog, which put the one thing people look this strip up for — what
           the session is built with — a tap and a sheet away. The control caps
-          its own width (`max-width: min(45%, 14rem)`, app.css), and the title
-          is what gives way. */}
+          its own width (`max-width: min(45%, 14rem)`, app.css).
+
+          #1941: on a phone it is the first thing on the strip's SECOND line.
+          "The title is what gives way" gave way completely — at 375px the
+          venue, the switch and the ⋯ together are wider than the strip, so
+          the title's width went to zero and the ⋯ ran off the right edge.
+          The strip wraps below `sm` now (view.tsx): the name and the PR
+          number on one line, this control, the switch and the ⋯ on the next.
+          Two lines, every fact still on the strip, and it stays ONE line
+          from `sm` up. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
       {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
       {/* #1904: the session's own actions, last — the far right of the strip,

@@ -8,8 +8,10 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
   const dockerfile = read('Dockerfile.kubernetes');
   assert.match(dockerfile, /postgresql-client/);
   assert.doesNotMatch(dockerfile, /docker-cli|docker\.sock/);
-  assert.match(dockerfile, /USER 1000:1000/);
-  assert.doesNotMatch(dockerfile, /USER node/,
+  // Numeric, not `node`: the pod runs with runAsNonRoot and no runAsUser, and
+  // Kubernetes can verify a numeric image user only.
+  assert.match(dockerfile, /^USER 1000:1000$/m);
+  assert.doesNotMatch(dockerfile, /^USER node$/m,
     'runAsNonRoot cannot verify a symbolic image user before startup');
 });
 

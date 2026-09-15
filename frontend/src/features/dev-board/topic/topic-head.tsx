@@ -676,7 +676,7 @@ function IssueAssociations({
   return (
     <aside className="dev-change-issues" aria-label="Issues this change addresses">
       <div className="flex items-center justify-between gap-3">
-        <h4 className="dev-topic-h">Addresses</h4>
+        <h4 className="dev-topic-h">{issues.length === 1 ? 'Addresses issue' : 'Addresses issues'}</h4>
         {editable && !editing ? <Button
           type="button"
           variant="unstyled"

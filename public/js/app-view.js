@@ -434,7 +434,7 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false },
   // Which app's filters `_kanbanFilters` currently holds. The persisted set
   // is per slug, so this is what tells a repaint whether it is looking at a
   // stale app's narrowing (restore) or at the viewer's own unsaved edit
@@ -444,7 +444,9 @@ const AppView = {
   // Workshop's: "Open on Board" from a theme narrows the board to that
   // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
+    // #1935: `assignedToMe` / `createdByMe` are the strip's two quick
+    // toggles — one tap, no dialog — for the viewer's own board.
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
   },
   // `?q=<text>` — a deep link to a surface already narrowed to a search, the
   // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
@@ -825,6 +827,16 @@ const AppView = {
           }
         }, 300);
       }
+      // #2161: `?shot=app-settings` opens the App settings dialog (the
+      // danger zone) on this app, so the declared check can photograph the
+      // blocked state on the platform's own app. Same guard as above.
+      if (shot === 'app-settings') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appSettings?.open({ slug });
+          }
+        }, 300);
+      }
       // #816: the preview loader is the screen this change is about, and it
       // only exists mid-click on a Preview button — no URL reaches it, so
       // the before/after captures would show the dev board instead. These
@@ -1035,6 +1047,23 @@ const AppView = {
       // _workshopView's autoExpand).
       if (shot === 'mine-session') {
         AppView._workshopShot = 'mine-session';
+      }
+      // `?shot=since-visit` gives the page a last visit to be since (#2183).
+      // The since-list is drawn only for a RETURNING reader — a first visit
+      // has no baseline and gets the dashboard alone — so a fresh browser,
+      // which is what the checks and the captures are, never sees its
+      // controls. This seeds the in-memory baseline a month back, before
+      // the Workshop's first paint reads it; nothing is written to storage,
+      // so a human who opens the link is not told they were here.
+      if (shot === 'since-visit') {
+        AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
+      }
+      // `?shot=mine-empty` draws "What you are working on" with nothing in
+      // it — the state #2182 keeps on screen — whatever sessions the viewer
+      // has. The demo seeds one busy session of the viewer's, so without
+      // this no URL could reach the empty strip.
+      if (shot === 'mine-empty') {
+        AppView._workshopShot = 'mine-empty';
       }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
@@ -5889,6 +5918,11 @@ const AppView = {
   WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
+  // Rows of the SAME list from before the baseline — what the reader has
+  // already seen — that `Show older` can walk down into (#2183). The board
+  // holds every card, so this is a cap, not a window; the count of the
+  // whole rest is published beside it.
+  WORKSHOP_SEEN_MAX: 30,
   // One calendar week, in ms. The digest's windows are Monday-anchored in
   // UTC — see services/workshop-themes.js `weekStart`, which this file's
   // `_weekStart` mirrors. The two MUST agree: the server decides which
@@ -5933,6 +5967,28 @@ const AppView = {
       window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`, String(Date.now()));
     } catch { /* private mode — the strip just never appears */ }
     return prev;
+  },
+
+  // "Clear" on the since-list (#2183). Moves the baseline up to now — the
+  // in-memory copy, so this page session compares against the new point,
+  // AND the stored stamp, so a reload does not bring the list back — and
+  // repaints. Nothing is thrown away: what was new is "seen before" now, a
+  // `Show older` press away, the way a read notification is still in the
+  // inbox. `through` is the newest activity stamp among the rows being
+  // cleared, so a row a server clock put a moment in the future is cleared
+  // with the rest rather than surviving the press.
+  _workshopClearSince(slug, through) {
+    const s = slug || (typeof App !== 'undefined' && App.currentApp) || '';
+    if (!s) return;
+    const stamp = Math.max(Date.now(), Number(through) || 0);
+    AppView._workshopSince[s] = stamp;
+    try {
+      window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${s}`, String(stamp));
+    } catch { /* private mode — cleared for this page session only */ }
+    const react = AppView._reactDevBoard();
+    if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
+      react.publishWorkshop(AppView._workshopView());
+    }
   },
 
   // The key a card has in the themes' `items` lists. Mirrors the server's
@@ -6438,10 +6494,16 @@ const AppView = {
         && String(x.item.user_id) === String(meId))
         .map((x) => ({ kind: 'proposal', item: x.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    // #2182: the strip stays on screen when there is nothing in it, so the
+    // pane's shape does not change with the viewer's workload. `viewer` is
+    // what the empty strip is drawn on: a guest has no work to have none of.
+    // `?shot=mine-empty` empties it on purpose, for the declared check.
+    const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
     const mine = {
-      count: mineItems.length,
+      viewer: meId != null,
+      count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
-      rows: mineItems.map(({ kind, item }) => {
+      rows: mineList.map(({ kind, item }) => {
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : AppView._proposalCardModel(item);
@@ -6604,12 +6666,26 @@ const AppView = {
     let since = null;
     if (baseline) {
       const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
+      // The rest of the same list, newest first: what moved BEFORE the
+      // baseline, which the reader has already seen. `Show older` walks
+      // down into it once the new rows are exhausted, and `Clear` moves the
+      // new rows here (#2183) — the notifications sheet's read/unread split,
+      // on one list. Keyed `seen:` so a row cannot be drawn twice under the
+      // same key on the day the baseline moves between two publishes.
+      const seen = entries.filter((e) => !(e.t > baseline)).sort((a, b) => b.t - a.t);
       since = {
         baseline,
+        // The newest stamp among the new rows, for `Clear` (see
+        // _workshopClearSince). Zero when nothing is new.
+        through: moved.length ? moved[0].t : 0,
         shipped: entries.filter((e) => e.kind === 'merged' && e.created > baseline).length,
         opened: entries.filter((e) => e.kind === 'issue' && e.created > baseline).length,
         proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
+        seen: {
+          total: seen.length,
+          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({ ...e.row, key: `seen:${e.row.key}` })),
+        },
       };
     }
 
@@ -6627,6 +6703,11 @@ const AppView = {
     // and these numbers are the answer anyway.
     const nowMs = Date.now();
     const WEEK = 7 * 86400000;
+    // #2176: the calendar week, Monday 00:00 UTC — the same Monday the
+    // digest weeks below (_weekStart) and the server's counts (#1922,
+    // weekStartUtc) use — rather than a trailing seven days, which moved
+    // every day and matched no week anybody talks about.
+    const weekStartMs = AppView._weekStart(nowMs);
     const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
     const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
     const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
@@ -6651,14 +6732,14 @@ const AppView = {
       votesWaiting: buckets.inReview.length,
       shippedWeek: serverShipped
         ? serverShipped.week
-        : allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+        : allMerged.filter((m) => mergedAtOf(m) >= weekStartMs).length,
       // The week before, for a rate rather than a count. Same source as the
       // week above so the two are comparable.
       shippedPrevWeek: serverShipped
         ? serverShipped.prevWeek
         : allMerged.filter((m) => {
           const t = mergedAtOf(m);
-          return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+          return t < weekStartMs && t >= weekStartMs - WEEK;
         }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
@@ -7458,6 +7539,10 @@ const AppView = {
       // session is not an assignable board item.
       if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
         && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
+      // #1935: a session is nobody's to assign, so it is "yours" on both
+      // quick toggles exactly when you started it — the same reading the
+      // named-person filter above gives it.
+      if ((f.assignedToMe || f.createdByMe) && !AppView._devCardIsMine(kind, it)) return false;
       return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
@@ -7479,6 +7564,22 @@ const AppView = {
       const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
       if (!assignedToUser && !authoredByUser) return false;
     }
+    // #1935: the strip's quick toggles. "Created by you" is authorship on
+    // every kind. "Assigned to you" is the community-voted assignee on the
+    // kinds that carry one (issues); a proposal or merged change carries no
+    // assignee — whoever opened it is the one doing it — so there it reads
+    // as authorship too. Governance rows are never assigned, so they drop
+    // out of "Assigned to you" rather than all matching it.
+    if (f.createdByMe && !AppView._devCardIsMine(kind, it)) return false;
+    if (f.assignedToMe) {
+      const me = AppView._viewerUsername();
+      if (!me || kind === 'gov') return false;
+      if (kind === 'issue') {
+        if (!(it.assignee && it.assignee.top === me)) return false;
+      } else if (!AppView._devCardIsMine(kind, it)) {
+        return false;
+      }
+    }
     if (f.needsVote) {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted).
@@ -7494,7 +7595,27 @@ const AppView = {
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
+      || f.assignedToMe || f.createdByMe);
+  },
+
+  // #1935: the signed-in viewer's handle, as the board's person fields spell
+  // it (assignee.top, created_by_username, username). Null when signed out —
+  // the quick toggles do not render then, and a stale persisted one matches
+  // nothing rather than everything.
+  _viewerUsername() {
+    return (typeof App !== 'undefined' && App.user && App.user.username) || null;
+  },
+  _devCardIsMine(kind, item) {
+    const me = AppView._viewerUsername();
+    return !!me && AppView._devCardAuthor(kind, item) === me;
+  },
+  // A quick toggle's tap: flip it and repaint. Persistence rides the repaint,
+  // as it does for every other filter change.
+  _toggleKanbanQuickFilter(key) {
+    if (key !== 'assignedToMe' && key !== 'createdByMe') return;
+    AppView._kanbanFilters[key] = !AppView._kanbanFilters[key];
+    AppView._repaintBoardSurface();
   },
 
   // Person dropdown options: the union of top-voted assignees and authors
@@ -7605,6 +7726,10 @@ const AppView = {
       seq: AppView._kanbanFilterSeq,
       count: AppView._kanbanFilterCount(),
       chips: AppView._kanbanActiveChips(),
+      // #1935: the two quick toggles, only for someone who has a "you".
+      quick: AppView._viewerUsername()
+        ? { assignedToMe: !!f.assignedToMe, createdByMe: !!f.createdByMe }
+        : null,
     };
   },
 

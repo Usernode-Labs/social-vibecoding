@@ -115,10 +115,20 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
 
           No `overflow-hidden`: the session sheet's shoulders are painted
           OUTSIDE its own arc (see `.dc-lift` in app.css), and clipping to
-          the radius would erase exactly them. */}
+          the radius would erase exactly them.
+
+          #1941: ONE COMPACT ROW. `py-1`, not `py-2` — the 28px controls
+          set the row's height and the strip carries no more around them
+          than the platform header does around its own. Below `sm` the row
+          may WRAP, and only there: the title and the PR number take the
+          first line, the venue, the mode switch and the actions menu the
+          second (app.css gives the title the basis that forces that break).
+          It used to stay a single line at every width, which at 375px
+          shrank the title to nothing and pushed the actions menu off the
+          right edge — nothing was folded, it was just gone. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 shrink-0 dc-lift dc-lift-strip"
+        className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 px-3 py-1 shrink-0 dc-lift dc-lift-strip"
       >
         <SessionHeader embedded={s.embedded} />
       </div>

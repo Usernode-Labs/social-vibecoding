@@ -147,7 +147,7 @@ function row(over = {}) {
     t_goal: 'Template goal', t_task: 'Template task', t_reward: '250 pts',
     t_cta_label: null, t_cta_link: null,
     t_metric_type: null, t_metric_target: null, t_metric_label: null,
-    t_schedule_start: null, t_schedule_end: null, t_illustration: null,
+    t_schedule_start: null, t_schedule_end: null, t_illustration: null, t_illustration_tone: null,
     my_activity_count: 0, my_points: 0, my_blocks: null,
     ...over,
   };
@@ -315,6 +315,17 @@ test('buildChallengeRow: passes the template\'s illustration slug through, null 
   assert.equal(buildChallengeRow(row()).illustration, null);
   assert.equal(buildChallengeRow(row({ t_illustration: undefined })).illustration, null,
     'a row without the column still carries the key, so the client sees one shape');
+});
+
+test('buildChallengeRow: carries an uploaded illustration\'s tone, null for a built-in slug or none', () => {
+  const slug = `u-${'d'.repeat(32)}`;
+  const built = buildChallengeRow(row({ t_illustration: slug, t_illustration_tone: 'coral' }));
+  assert.equal(built.illustration, slug);
+  assert.equal(built.illustration_tone, 'coral');
+  assert.equal(buildChallengeRow(row({ t_illustration: 'block-production' })).illustration_tone, null);
+  assert.equal(buildChallengeRow(row()).illustration_tone, null);
+  assert.equal(buildChallengeRow(row({ t_illustration_tone: undefined })).illustration_tone, null,
+    'a row without the column still carries the key');
 });
 
 test('the registry is ordered and carries the challenges panel', () => {

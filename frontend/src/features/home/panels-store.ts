@@ -98,9 +98,11 @@ export interface ChallengeRowView {
   icon: string | null;
   /**
    * The challenge template's illustration slug (shape-checked). The tile draws
-   * it in place of the icon when lib/challenge-illustrations.ts has it.
+   * it in place of the icon when lib/challenge-illustrations.ts resolves it.
    */
   illustration: string | null;
+  /** An uploaded illustration's tone (shape-checked); null for a built-in. */
+  illustrationTone: string | null;
   goal: string;
   done: boolean;
   reward: string | null;

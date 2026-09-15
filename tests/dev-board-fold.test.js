@@ -482,9 +482,26 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
   // Codex CLI block's config.toml entry and one for the generic MCP-client
   // walkthrough.
-  // 621 → 622: challenge illustrations, one check that a Home challenge card
+  // 621 → 622: the #2161 check that opens App settings on the platform's own
+  // app (`?shot=app-settings`) and reads the danger zone's blocked notice.
+  // 621 → 622: #2172 adds one check on the Needs-you feed's end card, the
+  // summary one swipe past the last item, on the ?shot=needs-end route that
+  // opens on it.
+  // 621 → 622: the #1941 check on the session screen, pinning the compact
+  // session strip — py-1, wrapping only below sm — with the venue still a
+  // direct child beside the name.
+  // 621 → 622: #2183 adds one check on the since-list's Clear and its
+  // always-drawn Show older, reached through `?shot=since-visit`.
+  // 621 → 622: #2182 independently adds the check that the viewer's strip
+  // stays on screen when it is empty, reached through `?shot=mine-empty`.
+  // 622 → 626: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 621 → 622 alone, with
+  // the #2161 check above; main independently took the SAME 621 to 625 with
+  // the four entries listed above it. One +1 and one +4 against a shared 621
+  // is 626.
+  // 626 → 627: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
-  assert.equal(DAPP.tests.length, 622);
+  assert.equal(DAPP.tests.length, 627);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

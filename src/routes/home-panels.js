@@ -145,6 +145,10 @@ function buildChallengeRow(r) {
     // own. Whether the slug actually draws is the client registry's call; the
     // card falls back to `icon` when it does not.
     illustration: r.t_illustration || null,
+    // The tone of an UPLOADED illustration (TEMPLATE_JOIN_COLUMNS_SQL's
+    // t_illustration_tone), null otherwise. The client only honours it for an
+    // uploaded slug and only when it is one of its twelve tones.
+    illustration_tone: r.t_illustration_tone || null,
     goal: eff('goal'),
     task: eff('task'),
     reward: eff('reward'),

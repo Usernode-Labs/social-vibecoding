@@ -18,6 +18,7 @@ const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
 const limits = require('../services/limits');
+const { weekStartUtc } = require('../services/leaderboard-users');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
@@ -3672,21 +3673,28 @@ function voteRoutes(config) {
       );
       let total = (totalRows[0]?.total || 0) + (closeTotalRows[0]?.close_total || 0);
 
-      // #1922: what shipped in the last 7 days and the 7 before, counted over
-      // the WHOLE history. The Workshop's "shipped this week" used to count
-      // the loaded page, so on any week with more merges than a page holds it
+      // #1922: what shipped this week and the week before, counted over the
+      // WHOLE history. The Workshop's "shipped this week" used to count the
+      // loaded page, so on any week with more merges than a page holds it
       // could only say "20+". Same rows and same timestamp as the client's
       // count (public/js/app-view.js `mergedAtOf`: a PR's merged_at, falling
       // back to created_at; an applied close-issue proposal's created_at), so
       // the two agree wherever both can see everything. First page only — it
       // is a fact about the column, not about the page being fetched. Plain
       // aliases on purpose: test stubs key on `AS total` and `cs.status`.
+      //
+      // #2176: "this week" is the CALENDAR week, Monday 00:00 UTC to now,
+      // and "the week before" the whole seven days ahead of that Monday —
+      // not a trailing 7-day window, which read as a rolling total that
+      // moved every day. Same Monday the digest weeks and the kudos
+      // allowance use (weekStartUtc, which mirrors date_trunc('week')).
       let shipped = null;
       if (isFirstPage) {
+        const weekStart = `${weekStartUtc()}T00:00:00Z`;
         const { rows: shippedRows } = await pool.query(
-          `SELECT COUNT(*) FILTER (WHERE t > now() - interval '7 days')::int AS shipped_week,
-                  COUNT(*) FILTER (WHERE t <= now() - interval '7 days'
-                                     AND t > now() - interval '14 days')::int AS shipped_prev_week
+          `SELECT COUNT(*) FILTER (WHERE t >= $2::timestamptz)::int AS shipped_week,
+                  COUNT(*) FILTER (WHERE t < $2::timestamptz
+                                     AND t >= $2::timestamptz - interval '7 days')::int AS shipped_prev_week
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
@@ -3697,7 +3705,7 @@ function voteRoutes(config) {
                 WHERE app_id = $1 AND kind = 'close_issue' AND status = 'closed'
                   AND payload ? 'appliedAt'
              ) shipped_rows`,
-          [appRows[0].id]
+          [appRows[0].id, weekStart]
         );
         const week = Number(shippedRows[0]?.shipped_week);
         const prevWeek = Number(shippedRows[0]?.shipped_prev_week);
@@ -3788,15 +3796,16 @@ function voteRoutes(config) {
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
         total += injected.length;
-        // Same for the week counts (#1922), with the client's timestamp rule.
+        // Same for the week counts (#1922), with the client's timestamp rule
+        // and the same calendar-week bounds as the query above (#2176).
         if (shipped) {
-          const nowMs = Date.now();
+          const weekStartMs = Date.parse(`${weekStartUtc()}T00:00:00Z`);
           const WEEK = 7 * 86400000;
           for (const m of injected) {
             const t = new Date(m.merged_at || m.closed_at || m.created_at).getTime();
             if (!Number.isFinite(t)) continue;
-            if (t > nowMs - WEEK) shipped.week += 1;
-            else if (t > nowMs - 2 * WEEK) shipped.prevWeek += 1;
+            if (t >= weekStartMs) shipped.week += 1;
+            else if (t >= weekStartMs - WEEK) shipped.prevWeek += 1;
           }
         }
       }

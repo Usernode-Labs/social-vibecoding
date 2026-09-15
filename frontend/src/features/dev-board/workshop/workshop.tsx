@@ -86,9 +86,20 @@ type TabKey = 'status' | 'needs' | 'all';
  * Three, because that is what fits above the fold beside the panes around it
  * and because a returning member's question is "did anything happen", which
  * three rows answer. The step is the same number so each press pays the same
- * scroll, and the button leaves when the list is exhausted — there is no
- * "show fewer", for the reason the week walk gives: this is one pane with a
- * way to ask for more, not a thing being opened and shut.
+ * scroll. There is no "show fewer", for the reason the week walk gives: this
+ * is one pane with a way to ask for more, not a thing being opened and shut.
+ *
+ * #2183: the button no longer leaves when the new rows run out. The list it
+ * walks is the WHOLE activity list, newest first, and the baseline is only a
+ * line across it: above the line is what moved since the reader was last
+ * here, below it is what they have already seen. `Show older` reveals three
+ * more of the new rows while there are any, then crosses the line under a
+ * "Seen before" mark and keeps going — so a quiet visit, or a visit just
+ * after Clear, still has somewhere to look. It disables, rather than leaves,
+ * when the rows it can draw are exhausted: a control that is sometimes there
+ * is a control nobody learns to reach for. That is the notifications
+ * sheet's split between Unread and the archive that holds what was read,
+ * on one list instead of two tabs.
  */
 const SINCE_FIRST = 3;
 const SINCE_STEP = 3;
@@ -496,7 +507,9 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
       n: d.shippedWeek,
       label: 'shipped this week',
       cls: d.shippedWeek ? 'dev-ws-dash-good' : undefined,
-      title: d.partial ? 'At least this many: the merged history is longer than the page loaded.' : undefined,
+      title: d.partial
+        ? 'At least this many: the merged history is longer than the page loaded.'
+        : 'This calendar week, counted from Monday 00:00 UTC.',
     },
     {
       key: 'votes',
@@ -739,6 +752,18 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  * the pin, and the scroller re-syncs to the row you are on BY KEY, so a row
  * leaving above you never shifts what you are reading.
  *
+ * ── The end card (#2172) ─────────────────────────────────────────────
+ *
+ * One card PAST the last item, always: the swipe that would have hit the
+ * end of the scroller lands on a summary instead — how many decisions this
+ * pass answered, how many were passed over and are still waiting above,
+ * and the way back to the lander. It is one more snap point in the same
+ * scroller, not a footer, so on a phone it arrives the way every item did.
+ * With nothing in the queue it is the whole screen, which is what the
+ * empty state already was. The counter and the progress line count only
+ * the decisions ("3 / 7"); the end card is where you are once they are
+ * behind you. `?shot=needs-end` opens on it, for the declared check.
+ *
  * ── Two rules kept from the deck this replaces ───────────────────────
  *
  * The ask thread loads in an EFFECT, never in render — a first paint that
@@ -784,8 +809,10 @@ function chipTone(tone: string | undefined): string {
  * not the card's badge band, and the rail already says a vote is owed.
  */
 /** The key legend for an item of this kind: the keys it answers to. */
-function legendFor(kind: QueueRow['kind']): Array<[string[], string]> {
+function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
   const keys: Array<[string[], string]> = [[['↑', '↓'], 'move']];
+  // The end card answers to the move keys alone.
+  if (kind === 'done') return keys;
   if (kind === 'vote') keys.push([['V'], 'vote']);
   keys.push([['A'], 'ask'], [['C'], 'comments']);
   if (kind === 'vote') keys.push([['T'], 'try it']);
@@ -1066,24 +1093,78 @@ function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: 
   );
 }
 
-/** The end of the feed: nothing waiting, and the only place a total appears. */
-function DoneItem({ total, onDone }: { total: number; onDone: () => void }): ReactNode {
+/**
+ * The scroll position the end card is keyed under (see `curKeyRef` in
+ * NeedsFeed): a row key names an item, and this names the slot after them.
+ */
+const END_KEY = 'done';
+
+/**
+ * `?shot=needs-end`: open the feed ON the end card. The declared check's
+ * route, and the only way to a state that otherwise takes a swipe past
+ * every item. Read at mount, guarded for the vm the tests render in.
+ */
+function wantsEnd(): boolean {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
+  try { return new URLSearchParams(window.location.search).get('shot') === 'needs-end'; } catch { return false; }
+}
+
+/** "3 proposals", "1 proposal": a count with its noun. */
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The end of the feed: one card past the last item, and the only place a
+ * total appears.
+ *
+ * `acted` is what this pass answered, `left` what it passed over (still in
+ * the feed, above), and `leftVotes` the proposals among those, so the ring
+ * can say where the viewer stands against `total` — everything they could
+ * vote on, answered or not. The headline is one of three: the pass had
+ * things in it and answered them all, it left some waiting, or there was
+ * nothing to begin with.
+ */
+function DoneItem({ total, acted, left, leftVotes, onDone, onBack }: {
+  total: number;
+  acted: number;
+  left: number;
+  leftVotes: number;
+  onDone: () => void;
+  onBack: () => void;
+}): ReactNode {
+  const done = Math.max(0, Math.min(total, total - leftVotes));
+  const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
+  const parts: string[] = [];
+  if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
+  if (left > 0) parts.push(`${left} ${left === 1 ? 'is' : 'are'} still waiting on you above.`);
+  else if (acted > 0) parts.push('Nothing else needs you right now.');
+  else parts.push('Every proposal you can vote on has your answer, and every open issue has somebody on it.');
   return (
-    <section className="dev-ws-item dev-ws-needs-done" data-ws-item="done" data-ws-kind="done">
+    <section
+      className="dev-ws-item dev-ws-needs-done"
+      data-ws-item={END_KEY}
+      data-ws-kind="done"
+      data-ws-done-acted={acted}
+      data-ws-done-left={left}
+    >
       {total ? (
         <ProgressRing
           className="dev-ws-done-ring"
-          pct={100}
-          label={`${total}/${total}`}
-          title={`All ${total} open proposals voted on`}
-          arcClassName="stroke-emerald-500"
+          pct={Math.round((done / total) * 100)}
+          label={`${done}/${total}`}
+          title={done === total ? `All ${total} open proposals voted on` : `${done} of ${total} open proposals voted on`}
+          arcClassName={done === total ? 'stroke-emerald-500' : undefined}
         />
       ) : null}
-      <p className="dev-ws-needs-done-line">You’re all caught up.</p>
-      <p className="dev-ws-needs-done-sub">
-        Every proposal you can vote on has your answer, and every open issue has somebody on it.
-      </p>
+      <p className="dev-ws-needs-done-line">{line}</p>
+      <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>
       <button type="button" className="dev-ws-done-cta" onClick={onDone}>See what changed this week</button>
+      {left > 0 ? (
+        <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
+          Back to the first one waiting
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -1099,7 +1180,15 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   onDone: () => void;
 }): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [at, setAt] = useState(0);
+  // Whether the route asked to open on the end card. Read once, at mount:
+  // the URL does not change for the life of the feed, and a state seed is
+  // the one place a render-time read of it is evaluated once.
+  const [endOnOpen] = useState(wantsEnd);
+  // Which slot is in view: an item's index, or `n` for the end card. The
+  // `?shot=needs-end` route opens on the end card, so the seed is the count
+  // of rows the publish already holds (the re-sync below corrects it by key
+  // when rows land later).
+  const [at, setAt] = useState(() => (endOnOpen ? rows.filter((r) => r.t === 'card').length : 0));
   const [sheet, setSheet] = useState<SheetKind | null>(null);
   // The sheet on its way out. It stays mounted, marked `data-ws-leaving`,
   // for as long as app.css's leave animation runs, then is dropped.
@@ -1116,8 +1205,12 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const pinsRef = useRef<Map<string, { row: QueueRow; index: number }>>(new Map());
   const [pinsVersion, setPinsVersion] = useState(0);
   // Which row the reader is ON, by key — the thing the list is re-synced to
-  // when rows leave or arrive above it.
-  const curKeyRef = useRef<string | null>(null);
+  // when rows leave or arrive above it. `END_KEY` is the end card, the slot
+  // after every row, and it is the seed when the route asked for it.
+  const curKeyRef = useRef<string | null>(endOnOpen ? END_KEY : null);
+  // Still owed the instant scroll to the end card (the effect below): true
+  // until the scroller has a height to scroll by.
+  const endScrollRef = useRef<boolean>(endOnOpen);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
   const wide = useWideLayout();
@@ -1150,8 +1243,15 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     return out;
   }, [rows, pinsVersion]);
   const n = items.length;
-  const i = Math.min(at, Math.max(0, n - 1));
-  const row = n ? items[i] : null;
+  // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
+  // end card, and `row` is null there.
+  const i = Math.min(at, n);
+  const row = i < n ? items[i] : null;
+  // What the pass amounts to, for the end card: answered here this session
+  // (the pinned rows), and passed over (still in the feed, unanswered).
+  const acted = items.filter((r) => !!answered[r.key]).length;
+  const left = n - acted;
+  const leftVotes = items.filter((r) => r.kind === 'vote' && !answered[r.key]).length;
   /**
    * Each row's tint, decided the first time it is seen and kept for life.
    * The tints alternate so a swipe reads as a new item, and a row seen for
@@ -1188,7 +1288,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     const el = scrollRef.current;
     const key = curKeyRef.current;
     if (key) {
-      const idx = items.findIndex((r) => r.key === key);
+      const idx = key === END_KEY ? items.length : items.findIndex((r) => r.key === key);
       if (idx >= 0) {
         if (idx !== at) {
           setAt(idx);
@@ -1206,15 +1306,39 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         return;
       }
     }
-    const clamped = Math.min(at, Math.max(0, items.length - 1));
+    // The end card is a place to BE only once there are rows to be past:
+    // with none, the key stays unset, so the first rows to land are what the
+    // reader opens on rather than the card after them.
+    const clamped = Math.min(at, items.length);
     curKeyRef.current = items[clamped] ? items[clamped].key : null;
     if (clamped !== at) setAt(clamped);
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * The `?shot=needs-end` open: the seed put `at` on the end card, and this
+   * puts the scroller there in the same frame, instantly (see the re-sync
+   * above for why not smoothly). Once — but on the first publish that finds
+   * the scroller laid out, not necessarily the first render, because a
+   * scroller with no height yet has nothing to scroll by. After that, rows
+   * landing later are the re-sync's job, which follows `END_KEY` to wherever
+   * the end moves.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!endScrollRef.current || !el || !el.clientHeight) return;
+    endScrollRef.current = false;
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = items.length * el.clientHeight;
+    el.style.scrollBehavior = '';
+  }, [items]);
+
   const landOn = (idx: number) => {
-    const c = Math.min(Math.max(idx, 0), Math.max(0, items.length - 1));
-    curKeyRef.current = items[c] ? items[c].key : null;
+    const c = Math.min(Math.max(idx, 0), items.length);
+    curKeyRef.current = items[c] ? items[c].key : (items.length ? END_KEY : null);
     setAt(c);
+    // A sheet stays with its item: arriving on the end card closes it, so
+    // the way back up shows the card and not a panel about the row above.
+    if (c >= items.length && sheet) { setLeaving(null); setSheet(null); }
   };
   const onScroll = () => {
     const el = scrollRef.current;
@@ -1228,7 +1352,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
    */
   const go = (delta: number) => {
     const el = scrollRef.current;
-    const idx = Math.min(Math.max(i + delta, 0), Math.max(0, n - 1));
+    const idx = Math.min(Math.max(i + delta, 0), n);
     if (idx === i) return;
     if (el && el.clientHeight) el.scrollTo({ top: idx * el.clientHeight, behavior: 'smooth' });
     landOn(idx);
@@ -1322,8 +1446,9 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // the screen, so there is no card face to tap for it (app-view.js's
   // _toggleCardMenu reads it off the trigger).
   const cardHref = row ? openHref(slug, row.card) : null;
-  // What is rendered: the open sheet, or the one still leaving.
-  const shown = sheet || leaving;
+  // What is rendered: the open sheet, or the one still leaving. Never on
+  // the end card, which has no item for a sheet to be about.
+  const shown = row ? (sheet || leaving) : null;
   const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '' } : {};
   const commentCount = row ? (row.card.chatCount || 0) : 0;
 
@@ -1503,6 +1628,24 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
   );
 
+  /**
+   * Moving by a press. On a phone the swipe is the move and app.css hides
+   * these; on a wide window they sit under the rail and do what the wheel
+   * does. Disabled at the ends rather than wrapping: the end card is the
+   * last slot, so Next goes dark there. Written once, because the rail on
+   * the end card is these alone (see below).
+   */
+  const moveRow = (
+    <div className="dev-ws-move" data-ws-move-row="">
+      <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label="Previous" disabled={i <= 0} onClick={() => go(-1)}>
+        <ChevronUpIcon className="dev-ws-move-icon" aria-hidden="true" />
+      </button>
+      <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label="Next" disabled={i >= n} onClick={() => go(1)}>
+        <ChevronDownIcon className="dev-ws-move-icon" aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   return (
     <div
       className="dev-ws-needs"
@@ -1517,7 +1660,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           drag pages it with `scroll-snap`, and the index is read back from
           the scroll position so a swipe and a press cannot disagree. */}
       <div className="dev-ws-needs-scroll" data-ws-feed="" ref={scrollRef} onScroll={onScroll}>
-        {n === 0 ? <DoneItem total={total} onDone={onDone} /> : items.map((r, k) => (
+        {items.map((r, k) => (
           <FeedItem
             key={r.key}
             row={r}
@@ -1531,6 +1674,16 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             onFull={openFull}
           />
         ))}
+        {/* ALWAYS, after the last item: the swipe past the end lands here.
+            With no items it is the whole screen. */}
+        <DoneItem
+          total={total}
+          acted={acted}
+          left={left}
+          leftVotes={leftVotes}
+          onDone={onDone}
+          onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
+        />
       </div>
 
       {row ? (
@@ -1615,17 +1768,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             <span className="dev-ws-rail-lab">More</span>
             <kbd className="dev-ws-rail-key" aria-hidden="true">M</kbd>
           </button>
-          {/* Moving by a press. On a phone the swipe is the move and app.css
-              hides these; on a wide window they sit under the rail and do
-              what the wheel does. Disabled at the ends rather than wrapping. */}
-          <div className="dev-ws-move" data-ws-move-row="">
-            <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label="Previous" disabled={i <= 0} onClick={() => go(-1)}>
-              <ChevronUpIcon className="dev-ws-move-icon" aria-hidden="true" />
-            </button>
-            <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label="Next" disabled={i >= n - 1} onClick={() => go(1)}>
-              <ChevronDownIcon className="dev-ws-move-icon" aria-hidden="true" />
-            </button>
-          </div>
+          {moveRow}
           {/* The vote: the question, where it stands, and the two answers. A
               sheet from the floor on a phone, a popover on this button on a
               wide window (app.css). Decide later closes it. */}
@@ -1646,16 +1789,28 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             </div>
           ) : null}
         </aside>
-      ) : null}
+      ) : (
+        /* THE END CARD'S RAIL: the move pair alone, so the way back up is
+           where the thumb learned it is, and on a wide window the stage
+           keeps its width rather than re-centring when the rail goes. On a
+           phone the pair is hidden (app.css) and the rail draws nothing.
+           Only once there are rows to go back to: an empty queue has no
+           rail, as before. */
+        n ? (
+          <aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">
+            {moveRow}
+          </aside>
+        ) : null
+      )}
 
       {/* The keys, listed once, where a keyboard is likely (app.css). Only
           the keys this item answers to: an issue has no vote and nothing
           to try, so those two are left off rather than listed and dead.
           Each pair is one child with one text run, so the prerender never
           emits two adjacent text nodes (React #418). */}
-      {row ? (
+      {row || n ? (
         <p className="dev-ws-keys" aria-hidden="true">
-          {legendFor(row.kind).map(([keys, word]) => (
+          {legendFor(row ? row.kind : 'done').map(([keys, word]) => (
             <span key={word} className="dev-ws-key">
               {keys.map((k) => <kbd key={k}>{k}</kbd>)}
               {` ${word}`}
@@ -1973,6 +2128,9 @@ export function DevWorkshop(): ReactNode {
   // had to open; the first three are simply on screen now and the rest are a
   // press away, which is the WeekWalk's bargain one pane down.
   const [sinceShown, setSinceShown] = useState(SINCE_FIRST);
+  // #2183: how many of the rows the reader has ALREADY seen are drawn under
+  // the new ones. Zero until `Show older` has no new row left to reveal.
+  const [seenShown, setSeenShown] = useState(0);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -2057,6 +2215,26 @@ export function DevWorkshop(): ReactNode {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
   };
 
+  // The since-list's two controls (#2183). `Show older` walks down the list:
+  // the rest of the new rows first, three a press, then the rows from before
+  // the baseline. `Clear` moves the baseline to now — AppView owns the stamp
+  // and its storage, and republishes — and folds the walk back to its start,
+  // so what the reader dismissed is under `Show older` rather than gone.
+  const sinceMore = !!v.since
+    && (v.since.rows.length > sinceShown || v.since.seen.rows.length > seenShown);
+  const showOlder = () => {
+    if (!v.since) return;
+    if (v.since.rows.length > sinceShown) setSinceShown(sinceShown + SINCE_STEP);
+    else setSeenShown(seenShown + SINCE_STEP);
+  };
+  const clearSince = () => {
+    if (!v.since) return;
+    setSinceShown(SINCE_FIRST);
+    setSeenShown(0);
+    setOpenRows((cur) => ({ ...cur, since: '' }));
+    callAppView('_workshopClearSince', slug, v.since.through);
+  };
+
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
   const autoKey = v.autoExpand ? `${v.autoExpand.theme}:${v.autoExpand.key}` : null;
@@ -2075,7 +2253,7 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}`;
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}|seen:${seenShown}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -2258,12 +2436,20 @@ export function DevWorkshop(): ReactNode {
           doing, what the group needs, what nobody has picked up. A
           half-finished session of theirs was somewhere down inside a theme,
           under a heading about the theme. */}
-      {v.mine && v.mine.rows.length ? (
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What you are working on</span>
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same. */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                You have no work going on. Pick up an open item below, or start something from the + button.
+              </p>
+            ) : null}
             {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
               <CardRowView
                 key={row.key}
@@ -2315,17 +2501,33 @@ export function DevWorkshop(): ReactNode {
           So the pane is open and the LENGTH is what is bargained instead,
           the way the week walk one pane up bargains its history: the newest
           three on screen, the rest under a button that reveals three more
-          each press and leaves when there are none. Same control, same
-          chevron, pointing down at what it is about to show. */}
+          each press. Same control, same chevron, pointing down at what it
+          is about to show. Since #2183 the button stays once the new rows
+          are out and goes on down into what the reader has already seen,
+          and a Clear on the heading moves the line between the two up to
+          now — see the note on SINCE_FIRST. */}
       {v.since ? (
         <section className="dev-ws-strip" data-ws-since="">
           {/* NOT A BUTTON ANY MORE. It opens nothing, so it must not look
               like it does — a row that reads as tappable and is not is worse
               than a plain heading. The label and the count keep their
-              classes; the caret went with the press. */}
+              classes; the caret went with the press. Clear rides the far
+              end of the same row, as "Mark all read" rides the notifications
+              sheet's title row: an action on the list, drawn small, and
+              disabled rather than absent when there is nothing to clear so
+              the row does not reflow. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
             <span className="dev-ws-since-label">Since your last visit</span>
             <span className="dev-ws-since-n">{v.since.rows.length}</span>
+            <button
+              type="button"
+              className="dev-ws-since-clear"
+              data-ws-since-clear=""
+              disabled={!v.since.rows.length}
+              onClick={clearSince}
+            >
+              Clear
+            </button>
           </div>
           {v.since.rows.slice(0, sinceShown).map((row) => (row.t === 'card' ? (
             <CardRowView
@@ -2345,19 +2547,45 @@ export function DevWorkshop(): ReactNode {
               Nothing has changed since you were last here.
             </p>
           )}
-          {v.since.rows.length > sinceShown ? (
-            <button
-              type="button"
-              className="dev-ws-reveal dev-ws-since-more"
-              data-ws-since-more=""
-              onClick={() => setSinceShown(sinceShown + SINCE_STEP)}
-            >
-              {/* Pointing DOWN, at where the rows it reveals appear — the
-                  week walk's own reading of the same control. */}
-              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-              Show older
-            </button>
+          {/* Below the line: rows from before the baseline, drawn only once
+              `Show older` has walked past the new ones, under a mark that
+              says which side of the line they are on. Same rows, same fold,
+              same one-open-at-a-time scope as the rows above. */}
+          {seenShown > 0 && v.since.seen.rows.length ? (
+            <>
+              <div className="dev-ws-since-seen" data-ws-since-seen="">
+                <span className="dev-ws-since-seen-label">Seen before</span>
+                <span className="dev-ws-since-seen-n">{v.since.seen.total}</span>
+              </div>
+              {v.since.seen.rows.slice(0, seenShown).map((row) => (row.t === 'card' ? (
+                <CardRowView
+                  key={row.key}
+                  row={row}
+                  slug={slug}
+                  canPost={canPost}
+                  open={openRows.since === row.key}
+                  onToggle={() => toggleRow('since', row.key)}
+                />
+              ) : null))}
+            </>
           ) : null}
+          {/* ALWAYS DRAWN. Disabled, not absent, once there is nothing left
+              to draw: the reader who cleared the list or arrived on a quiet
+              day is exactly the one who wants a way back into what they
+              already saw, and a control that is sometimes there is one
+              nobody learns to reach for. */}
+          <button
+            type="button"
+            className="dev-ws-reveal dev-ws-since-more"
+            data-ws-since-more=""
+            disabled={!sinceMore}
+            onClick={showOlder}
+          >
+            {/* Pointing DOWN, at where the rows it reveals appear — the
+                week walk's own reading of the same control. */}
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+            Show older
+          </button>
         </section>
       ) : null}
 

@@ -165,6 +165,11 @@ test('challenge illustrations bypass the worker, with no offline copy', () => {
   assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'bypass');
   assert.equal(classify('GET', '/illustrations/challenges/block-production.svg', 'image/svg+xml', 'no-cors'),
     'bypass');
+  // Uploaded artwork too. Its id is immutable, which would suit cache-first, but
+  // it is the same decoration with the same fallback, so it stays on the
+  // network rather than joining the `immutable` app-icon rule.
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'bypass');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'bypass');
 });
 
 // ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into

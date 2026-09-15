@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { illustrationOptions, resolveIllustration } from '../../../lib/challenge-illustrations.ts';
 import { fetchJson, send } from './api.ts';
+import { IllustrationGallery } from './illustration-gallery.tsx';
 import { BTN } from './tokens.ts';
 import {
   EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input, List,
@@ -30,12 +30,15 @@ import type { Column, PageMeta } from './ui.tsx';
 //
 // Ids are like-for-like — `admin-topo-tpl-*` and every `-f-` field id.
 //
-// The Illustration picker is the one field whose options are not typed here:
-// they are frontend/src/lib/challenge-illustrations.ts, the same table the
-// challenge cards resolve a slug through, so an admin can only pick art this
-// build can draw. It is template-level by owner decision — a challenge
-// inherits it and has no override, which is why challenge-fields.ts does not
-// list it and the Add-challenge form never copies it.
+// The Illustration field is the one whose options are not typed here: it is
+// a gallery (./illustration-gallery.tsx) of the built-ins in
+// frontend/src/lib/challenge-illustrations.ts plus the art admins have
+// uploaded, resolved through the same table the challenge cards use, so an
+// admin can only pick art this build can draw. Its value is still the slug
+// string, so the round trip below does not know it is a gallery. It is
+// template-level by owner decision — a challenge inherits it and has no
+// override, which is why challenge-fields.ts does not list it and the
+// Add-challenge form never copies it.
 
 const topo = () => (window as any).AdminTopochain;
 const canWrite = () => !!topo()?.canWrite();
@@ -81,7 +84,8 @@ const CARD: FieldSpec[] = [
     key: 'illustration',
     label: 'Illustration',
     kind: 'illustration',
-    help: 'Drawn on the challenge card and detail page. (none) keeps the plain tile.',
+    help: 'Drawn on the challenge card and detail page. (none) keeps the plain tile. '
+      + 'Archiving uploaded art hides it here; templates that use it keep drawing it.',
   },
 ];
 
@@ -154,41 +158,6 @@ const COLUMNS: Column<Template>[] = [
   { label: 'Kind', cell: (t) => t.kind || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
 ];
 
-// The illustration <select>, with the pick previewed on its tile tone.
-//
-// The preview's src comes from resolveIllustration and from nothing else, so
-// it is only ever a same-origin static path for a slug in the table — never a
-// string the API handed back. A stored slug the table does not know (art a
-// later build retired, or a value written straight through the API) stays
-// listed as its own option under its raw value: dropping it would show
-// "(none)" and then save null over it on the next unrelated edit.
-function IllustrationPicker({ id, value, onChange }: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const art = resolveIllustration(value);
-  const options = illustrationOptions();
-  if (value && !art) options.push({ value, label: `${value} (not in this build)` });
-  return (
-    <div className="flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-          <Options options={options} blank="(none)" />
-        </Select>
-      </div>
-      {art ? (
-        <img
-          src={art.src}
-          alt={art.label}
-          draggable={false}
-          className={`${art.toneClass} h-16 w-16 shrink-0 rounded-xl bg-[var(--tint-art)]`}
-        />
-      ) : null}
-    </div>
-  );
-}
-
 function FormFields({ specs, values, onChange }: {
   specs: FieldSpec[];
   values: Record<string, string>;
@@ -197,9 +166,17 @@ function FormFields({ specs, values, onChange }: {
   return (
     <>
       {specs.map((f) => (
-        <Field key={f.key} label={f.label} htmlFor={fieldId(f.key)} help={f.help}>
+        // The gallery spans both columns, and its label names the radio group
+        // through aria-label instead: a <label for> cannot point at a group.
+        <Field
+          key={f.key}
+          label={f.label}
+          htmlFor={f.kind === 'illustration' ? undefined : fieldId(f.key)}
+          help={f.help}
+          className={f.kind === 'illustration' ? 'md:col-span-2' : undefined}
+        >
           {f.kind === 'illustration' ? (
-            <IllustrationPicker
+            <IllustrationGallery
               id={fieldId(f.key)}
               value={values[f.key] || ''}
               onChange={(value) => onChange(f.key, value)}
@@ -495,5 +472,5 @@ function ChallengeTemplatesScreen() {
 }
 
 export {
-  ALL_FIELDS, ChallengeTemplatesScreen, IllustrationPicker, buildTemplateBody, templateFormValues,
+  ALL_FIELDS, ChallengeTemplatesScreen, buildTemplateBody, templateFormValues,
 };

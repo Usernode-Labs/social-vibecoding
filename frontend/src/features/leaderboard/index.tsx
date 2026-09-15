@@ -82,10 +82,15 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // platform and the screen's own title, and the `key`s are the platform's
 // vocabulary for these tabs — every hash alias in app.js and every dapp.json
 // check speaks in them, and Leaderboard.SECTIONS still validates against them.
+//
+// #1917 reordered the strip to Challenges → Kudos → Leaderboard: what you can
+// do next leads, the ranking it feeds comes last. Only the ORDER moved — the
+// keys, labels and the default section behind a bare #leaderboard are as
+// they were.
 const SECTION_TABS = [
-  { key: 'topochain', label: 'Leaderboard' },
-  { key: 'kudos', label: 'Kudos' },
   { key: 'challenges', label: 'Challenges' },
+  { key: 'kudos', label: 'Kudos' },
+  { key: 'topochain', label: 'Leaderboard' },
 ];
 
 export function LeaderboardScreen() {

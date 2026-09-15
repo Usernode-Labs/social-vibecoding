@@ -430,3 +430,18 @@ test('/illustrations/ is in PUBLIC_PATHS, and nothing broader was opened with it
   const related = entries.filter((p) => p.startsWith('/illustrations') || '/illustrations/'.startsWith(p));
   assert.deepEqual(related, ['/illustrations/']);
 });
+
+// Uploaded challenge artwork decorates the same public cards, so its image
+// route is public too, at its own prefix. Same shape as the entry above: the
+// trailing slash stays, and nothing wider comes along with it.
+test('/challenge-illustrations/ is in PUBLIC_PATHS, and nothing broader was opened with it', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'middleware', 'auth.js'),
+    'utf8'
+  );
+  const m = src.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);
+  assert.ok(m, 'PUBLIC_PATHS array found');
+  const entries = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const related = entries.filter((p) => p.startsWith('/challenge') || '/challenge-illustrations/'.startsWith(p));
+  assert.deepEqual(related, ['/challenge-illustrations/']);
+});

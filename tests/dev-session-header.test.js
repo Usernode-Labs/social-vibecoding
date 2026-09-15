@@ -718,3 +718,98 @@ test('an action’s outcome is folded back into the strip', async () => {
   assert.ok(at !== -1);
   assert.match(DEV_CHAT_SRC.slice(at, at + 500), /_syncCurrentSessionFromList\(\)/);
 });
+
+// ── 5. #1941: one compact row ──────────────────────────────────────────
+//
+// The strip is the session's descriptor — its name, its PR, where it is
+// built, the doing<->seeing switch and its own actions — and it was asked to
+// take less height. Two things had made it tall: `py-2` around 28px controls,
+// and, on a phone, a single line that could not hold every control, so the
+// PR number broke into two lines while the title shrank to nothing and the ⋯
+// ran off the right edge. It is `py-1` and ONE line from `sm` up, and at most
+// TWO lines below it, with every fact still on the strip.
+
+const VIEW_TSX_SRC = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
+const APP_CSS_SRC = read('public', 'css', 'app.css');
+
+function stripTag() {
+  const at = VIEW_TSX_SRC.indexOf('id="dc-session-header"');
+  assert.ok(at > 0);
+  return VIEW_TSX_SRC.slice(at, VIEW_TSX_SRC.indexOf('>', at));
+}
+
+test('#1941: the strip is a compact row — py-1 around the 28px controls, one line from sm up', () => {
+  const tag = stripTag();
+  assert.match(tag, /\bpy-1\b/);
+  assert.doesNotMatch(tag, /\bpy-2\b|\bpy-3\b/, 'no taller padding than the controls need');
+  assert.match(tag, /\bitems-center\b/);
+  // The row may wrap ONLY below sm. From sm up nothing wraps, so the desktop
+  // strip is exactly one line whatever the session carries.
+  assert.match(tag, /\bflex-wrap\b/);
+  assert.match(tag, /\bsm:flex-nowrap\b/);
+  assert.match(tag, /\bgap-y-1\b/, 'the two phone lines sit close');
+  // Still the constant className the kit writes onto, still the lift strip.
+  assert.match(tag, /className="[^"{]*"/);
+  assert.match(tag, /\bdc-lift dc-lift-strip\b/);
+});
+
+test('#1941: the PR number never wraps into two lines of its own', () => {
+  // At 375px "PR #21" broke after "PR" and made the strip two lines tall
+  // with half a word on the second one. Both the link and its "New change"
+  // resting state are one unbreakable run that keeps its width.
+  const { view } = makeDevChat();
+  const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
+  const link = withPr.match(/<button[^>]*id="dc-pr-header-link"[^>]*>/)[0];
+  assert.match(link, /\bshrink-0\b/);
+  assert.match(link, /\bwhitespace-nowrap\b/);
+  const without = headerHtml(view(SESSION));
+  const caption = without.match(/<span[^>]*>New change<\/span>/)[0];
+  assert.match(caption, /\bshrink-0\b/);
+  assert.match(caption, /\bwhitespace-nowrap\b/);
+  assert.match(caption, /\bmax-sm:hidden\b/, 'and it still yields the phone line to the name');
+});
+
+test('#1941: on a phone the title takes the first line and the controls the second', () => {
+  // Wrapping is decided on hypothetical sizes, so `flex-1`'s zero basis put
+  // every child on one line and left the title whatever was over — nothing,
+  // at 375px. The title's basis is the strip less room for the PR number,
+  // which is what breaks the line before the venue.
+  const at = APP_CSS_SRC.indexOf('@media (max-width: 639px) {\n  #dc-session-header > .dc-session-title {');
+  assert.ok(at > 0, 'the phone title rule is where the two-line clamp already lived');
+  const block = APP_CSS_SRC.slice(at, APP_CSS_SRC.indexOf('\n}', at));
+  assert.match(block, /flex-basis: calc\(100% - 4rem\);/);
+  assert.match(block, /-webkit-line-clamp: 2;/, 'a long name is still capped at two lines');
+  // The second line is the venue, the mode switch and the ⋯. Its widest
+  // member caps itself so the ⋯ never starts a THIRD line: 10.5rem, the
+  // floor that keeps the two "Your computer · …" venues apart, or what is
+  // left beside a 7.5rem switch, a 1.75rem ⋯ and their two gaps.
+  const cap = APP_CSS_SRC.indexOf('@media (max-width: 30rem) {\n  .dc-venue-select {');
+  assert.ok(cap > 0);
+  const capBlock = APP_CSS_SRC.slice(cap, APP_CSS_SRC.indexOf('\n}', cap));
+  assert.match(capBlock, /max-width: min\(10\.5rem, calc\(100% - 10\.5rem\)\);/);
+  assert.doesNotMatch(APP_CSS_SRC, /#dc-session-header > \.dc-venue-select \{[^}]*flex: 0 1 auto/,
+    'shrinking cannot do this job — a wrapped line never shrinks');
+});
+
+test('#1941: every fact stays on the strip — nothing is folded away to make it shorter', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  DevChat.currentSession = { ...OWNED, pr_number: 7 };
+  const html = headerHtml(view(DevChat.currentSession), { previewSessionId: 5, previewUrl: 'https://x.test' });
+  for (const hook of ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']) {
+    assert.ok(html.includes(`${hook}`), `${hook} is still a child of the strip`);
+  }
+  // …and each one is a DIRECT child, as the declared checks read them.
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const top = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) top.push(Object.fromEntries(token.attrs.map(a => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  const ids = top.map(c => c.id || c.class.split(' ')[0]);
+  assert.deepEqual(ids, ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']);
+  for (const c of top) assert.doesNotMatch(c.class || '', /\bhidden\b|max-sm:hidden/);
+});

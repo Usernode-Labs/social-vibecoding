@@ -11,8 +11,9 @@
 //     deadline never shrinks and the reward truncates after it;
 //   * the rail is a progressbar, with aria-valuenow ONLY when the fill is a
 //     number (indeterminate otherwise), and draws a bar only when counted;
-//   * the tile draws a template's illustration only when the registry has
-//     it, and is otherwise exactly the tile it was.
+//   * the tile draws a template's illustration only when the registry
+//     resolves it (a built-in, or an upload on its payload tone, else gray),
+//     and is otherwise exactly the tile it was.
 //
 // Run with: node --test tests/challenge-card-render.test.js
 
@@ -106,8 +107,8 @@ test('with no illustration the tile is the neutral face: the group headings carr
 
 test('a registry illustration draws in the tile, on its pale tone in both themes', () => {
   const html = tile({ icon: '🧪', illustration: 'try-three-apps' });
-  assert.match(html, /<img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" draggable="false"\/>/,
-    'a same-origin static file, decorative, not draggable');
+  assert.match(html, /<img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" draggable="false" class="object-contain"\/>/,
+    'a same-origin static file, decorative, not draggable, fitted rather than stretched');
   const face = classOf(html, 'aria-hidden="true"').split(' ');
   for (const c of ['h-20', 'w-20', 'home-tone-mint', 'bg-[var(--tint-art)]', 'dark:bg-[var(--tint-art)]']) {
     assert.ok(face.includes(c), `the tile has ${c}`);
@@ -122,10 +123,43 @@ test('a registry illustration draws in the tile, on its pale tone in both themes
     'the card threads its view’s slug to the tile, with that artwork’s tone');
 });
 
+// An admin upload: slug `u-` plus the 32-hex file id, the path DERIVED from
+// it, and the tone the payload sends beside it. A built-in ignores a tone.
+const HEX = '0123456789abcdef0123456789abcdef';
+const UPLOADED = `u-${HEX}`;
+const faceOf = (html) => classOf(html, 'aria-hidden="true"').split(' ');
+
+test('an uploaded illustration draws from its derived path, on the payload tone', () => {
+  const html = tile({ icon: '🧪', illustration: UPLOADED, illustrationTone: 'teal' });
+  assert.ok(html.includes(`<img src="/challenge-illustrations/${HEX}" alt="" draggable="false" class="object-contain"/>`),
+    'the same <img>, from the path the slug derives, fitted so a non-square upload is not stretched');
+  const face = faceOf(html);
+  for (const c of ['home-tone-teal', 'bg-[var(--tint-art)]', 'dark:bg-[var(--tint-art)]']) {
+    assert.ok(face.includes(c), `the tile has ${c}`);
+  }
+  assert.ok(!html.includes('🧪'), 'the upload takes the kind icon’s place too');
+
+  for (const illustrationTone of [undefined, null, 'magenta', 'Teal', 42]) {
+    const plain = faceOf(tile({ illustration: UPLOADED, illustrationTone }));
+    assert.ok(plain.includes('home-tone-gray'), `${String(illustrationTone)}: an upload without a known tone is on gray`);
+  }
+  assert.ok(faceOf(tile({ illustration: 'try-three-apps', illustrationTone: 'coral' })).includes('home-tone-mint'),
+    'a built-in keeps its own tone whatever the payload says');
+
+  const view = { goal: 'Send feedback', reward: null, icon: null, illustration: UPLOADED, illustrationTone: 'pink', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  assert.match(card(view), new RegExp(`class="[^"]*home-tone-pink[^"]*"[^>]*><img src="/challenge-illustrations/${HEX}"`),
+    'the card threads its view’s tone to the tile');
+});
+
 test('a slug the registry does not have is the tile it was, never a guessed path', () => {
-  for (const illustration of ['not-in-the-registry', '../icons/x', 'Try-Three-Apps', '', 42]) {
+  const NOT_SLUGS = [
+    'not-in-the-registry', '../icons/x', 'Try-Three-Apps', '', 42,
+    'u-XYZ', `u-${HEX.slice(1)}`, `u-${HEX.toUpperCase()}`, `u-${HEX}0`, `u-../${HEX}`,
+  ];
+  for (const illustration of NOT_SLUGS) {
     assert.equal(tile({ illustration }), tile({}), `${String(illustration)}: the empty face`);
     assert.equal(tile({ icon: '🧪', illustration }), tile({ icon: '🧪' }), `${String(illustration)}: the kind icon`);
+    assert.equal(tile({ illustration, illustrationTone: 'teal' }), tile({}), `${String(illustration)}: a tone draws nothing alone`);
   }
 });
 
@@ -133,6 +167,7 @@ test('artwork that fails to load puts back the tile it replaced, through state',
   // onError cannot fire in a static render, so this half is the source.
   const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function ChallengeTile('), CARD_SRC.indexOf('export type ChallengeCardView'));
   assert.ok(fn.length > 0, 'ChallengeTile located');
+  assert.match(fn, /resolveIllustration\(illustration, illustrationTone\)/, 'the tile resolves with the payload tone');
   assert.match(fn, /onError=\{\(\) => setFailed\(art\.src\)\}/);
   assert.match(fn, /if \(art && failed !== art\.src\) \{/, 'a failed file falls through to the neutral tile');
   assert.doesNotMatch(fn, /currentTarget|\.style\.|\.remove\(\)/, 'no write to the node: the card is a React island');
@@ -214,4 +249,28 @@ test('the detail page draws the same rail and meta line at page size', () => {
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: 'Earned 900 pts', earned: true })),
     `${META_OPEN}${EARNED('Earned 900 pts')}</div>`, 'the card size is the card’s line, unchanged');
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, {})), '', 'nothing to say, no line');
+});
+
+test('a card that opens something is a keyboard-reachable button, so it takes the kit press (#1918)', () => {
+  const view = { goal: 'Try Three Apps', reward: '500 pts', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  const tappable = renderToHtml(createElement(Card.ChallengeCard, { view, onClick: () => {} }));
+  assert.match(tappable, /^<div[^>]*role="button"/, 'the card root carries the role the native kit presses');
+  assert.match(tappable, /^<div[^>]*tabindex="0"/, 'and is in the tab order');
+  const inert = card(view);
+  assert.doesNotMatch(inert, /role="button"|tabindex/, 'a card with nothing to open stays a plain div');
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.tc-se-card\[role="button"\]:active,\s*\.home-challenge-card\[role="button"\]:active \{\s*transition: transform 0s linear 120ms, filter 0s linear 120ms;/,
+    'on touch the press waits a beat, so a scroll that starts on a card does not flash it');
+});
+
+test('Enter and Space open a focused card like a tap (#1918)', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend', 'src', 'features', 'leaderboard', 'challenge-card.tsx'), 'utf8');
+  const fn = src.slice(src.indexOf('export function ChallengeCard('));
+  assert.match(fn, /e\.key === 'Enter' \|\| e\.key === ' '/);
+  assert.match(fn, /e\.target !== e\.currentTarget/, 'a key pressed inside the card is left to its own target');
+  assert.match(fn, /e\.currentTarget\.click\(\)/);
 });

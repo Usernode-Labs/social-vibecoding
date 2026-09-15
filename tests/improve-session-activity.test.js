@@ -145,8 +145,10 @@ test('the two mock rows are the rendered evidence, with one check per row', () =
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'the arc is still what it selects — #1597\'s check, narrowed');
 
-  // Both RETARGET rather than duplicate: the exact one-per-row assertions
-  // above pin that invariant. Manifest-wide headroom belongs to
-  // improve-session-spinner.test.js and checks-budget.test.js; an absolute
-  // total here makes unrelated declared checks break this regression.
+  // Both RETARGET: each mock row is owned by exactly one check (asserted
+  // above), so the change added no slot. The manifest's total is pinned in
+  // ONE place, tests/dev-board-fold.test.js, with its changelog; a second
+  // literal here went stale the moment other work landed beside this one
+  // (616 on the branch, 621 on main the day it merged) and turned the whole
+  // suite red for every proposal that followed.
 });

@@ -61,7 +61,7 @@
 // over source text, so a computed class name never compiles.
 
 import { useState } from 'react';
-import type { HTMLAttributes, ReactNode } from 'react';
+import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
 import { CheckIcon } from '@/components/ui/icons';
@@ -184,32 +184,39 @@ export function ChallengeMeta({ deadline = null, text = null, earned = false, si
 }
 
 // The 5rem artwork tile. A challenge whose template names an illustration
-// the registry has (../../lib/challenge-illustrations.ts, which resolves by
-// MEMBERSHIP) draws that artwork on its pale harmonic tone. The same file
-// serves both themes, on the tone's dark surface; there is no dark copy.
+// the registry resolves (../../lib/challenge-illustrations.ts: a built-in by
+// MEMBERSHIP, or an admin upload by its `u-` slug) draws that artwork on its
+// pale harmonic tone. A built-in brings its own tone; an upload's is
+// `illustrationTone` from the payload, which the registry honours only when it
+// is one of its TONES and otherwise draws on gray. The same file serves both
+// themes, on the tone's dark surface; there is no dark copy.
+//
+// An upload need not be square, so the image is `object-contain`: a wide or
+// tall one fits inside the 64px art box on its tone rather than stretching.
 //
 // Anything else is the tile as it was: a neutral face holding the challenge
 // kind's icon when the payload carries one (both surfaces do, from
 // `challenge_kinds.icon`) and empty otherwise. That includes artwork that
-// fails to load. The service worker leaves /illustrations/ to the network, so
+// fails to load. The service worker leaves both image paths to the network, so
 // offline the image errors, and the error puts back the tile it replaced
 // rather than a broken-image glyph on a tone. It is component state, not a
 // write to the node: the card is a React island.
 //
 // It never holds the category: headings name it, and a category word in an
 // 80px square was the "ONBOARDIN / G" break on both surfaces.
-export function ChallengeTile({ icon = null, illustration = null }: {
+export function ChallengeTile({ icon = null, illustration = null, illustrationTone = null }: {
   icon?: string | null;
   illustration?: string | null;
+  illustrationTone?: string | null;
 }): ReactNode {
-  const art = resolveIllustration(illustration);
+  const art = resolveIllustration(illustration, illustrationTone);
   // Keyed by the file rather than a flag, so a tile handed a different
   // illustration tries that one instead of inheriting the last failure.
   const [failed, setFailed] = useState<string | null>(null);
   if (art && failed !== art.src) {
     return (
       <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART}`}>
-        <img src={art.src} alt="" draggable={false} onError={() => setFailed(art.src)} />
+        <img src={art.src} alt="" draggable={false} className="object-contain" onError={() => setFailed(art.src)} />
       </IconTile>
     );
   }
@@ -224,8 +231,10 @@ export type ChallengeCardView = {
   goal: string;
   reward: string | null;
   icon?: string | null;
-  /** The template's illustration slug; the tile draws it when the registry has it. */
+  /** The template's illustration slug; the tile draws it when the registry resolves it. */
   illustration?: string | null;
+  /** An uploaded illustration's tone (shape-checked); built-ins ignore it. */
+  illustrationTone?: string | null;
   state: ChallengeState;
   stateLabel: string;
   fill: number | null;
@@ -250,14 +259,37 @@ const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl bord
 // rail, not to the illustration beside it. With a meta line the group is 88px
 // against the 80px tile, without one 68px, at every width — nothing in it
 // wraps.
-export function ChallengeCard({ view, className, ...rest }: {
+//
+// A card that opens something IS a button (#1918): role="button", in the tab
+// order, and Enter/Space open it like a click. The role is also what gives a
+// tap its feedback — the native kit scales and dims every [role="button"] on
+// press, the same press the Dev board's rows and the session rows give — so
+// the card no longer sits unchanged under a finger until the page swaps. On
+// touch that press waits a beat (app.css), so a scroll that starts on a card
+// does not flash it. A card with no onClick stays a plain, inert div.
+export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: {
   view: ChallengeCardView;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
   const reward = view.earned || view.reward;
+  const pressable = onClick
+    ? {
+      role: 'button',
+      tabIndex: 0,
+      onClick,
+      onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented || e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.currentTarget.click();
+        }
+      },
+    }
+    : { onKeyDown };
   return (
-    <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
-      <ChallengeTile icon={view.icon} illustration={view.illustration} />
+    <div className={className ? `${className} ${CARD}` : CARD} {...pressable} {...rest}>
+      <ChallengeTile icon={view.icon} illustration={view.illustration} illustrationTone={view.illustrationTone} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="min-w-0">
           <div className={TITLE}>{view.goal}</div>

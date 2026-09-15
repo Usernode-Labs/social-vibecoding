@@ -662,12 +662,13 @@ test('the homescreen badge count requires the exact native session realm', async
   assert.deepEqual(loaded.nativePosts[3].args, { count: 7 });
 });
 
-test('notification permission actions require the top-frame capability',
+test('notification permission and navigation actions require the top-frame capability',
   async () => {
     const methods = [
       'requestNotificationPermission',
       'requestAlarmPermissions',
       'openNotificationSettings',
+      'setBackNavigationEnabled',
     ];
     const loaded = loadBridge({
       capabilities: ['privilegedBridgeCapability', ...methods],
@@ -709,7 +710,7 @@ test('notification permission actions require the top-frame capability',
     }
 
     assert.equal(relayed.nativePosts.length, 0,
-      'an iframe cannot forward notification permission actions to native');
+      'an iframe cannot forward shell permission or navigation actions to native');
     assert.equal(childReplies.length, methods.length);
     for (const reply of childReplies) {
       assert.match(reply.value.error, /top-level page/);
@@ -732,6 +733,19 @@ test('native screenshot capture is a top-frame privileged action', async () => {
     loaded.nativePosts[2].privilegedCapability,
     'navigation-capability'
   );
+});
+
+test('native navigation requires a privileged envelope and a boolean', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'setBackNavigationEnabled'],
+    responseMethods: { setBackNavigationEnabled: true },
+  });
+  await assert.rejects(loaded.sandbox.usernode.setBackNavigationEnabled({ enabled: 'true' }), /boolean/);
+  assert.equal(loaded.nativePosts.length, 0);
+  assert.equal(await loaded.sandbox.usernode.setBackNavigationEnabled({ enabled: true }), true);
+  const post = loaded.nativePosts.find(post => post.method === 'setBackNavigationEnabled');
+  assert.equal(post.privilegedCapability, 'navigation-capability');
+  assert.equal(post.args.enabled, true);
 });
 
 test('legacy shortcut management gets a full request budget after probing',

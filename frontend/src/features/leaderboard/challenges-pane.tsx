@@ -62,7 +62,6 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
-    _toStandings(): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
@@ -87,6 +86,9 @@ type CardView = {
   // The template's illustration slug, shape-checked by the controller; the
   // card's tile resolves it against the registry.
   illustration: string | null;
+  // An uploaded illustration's tone, shape-checked the same way; the registry
+  // honours it only when it is one of its TONES.
+  illustrationTone: string | null;
   // From TopochainChallenges._stateOf: the rail's state, its one short line,
   // its fill (null = indeterminate), whether it is counted (a bar, from zero),
   // and "Earned N pts" on a finished challenge the viewer scored on.
@@ -122,8 +124,10 @@ type DetailView = {
   eyebrow: string | null;
   goal: string;
   task: string | null;
-  // The template's illustration slug, for the artwork well (see DetailPage).
+  // The template's illustration slug and an upload's tone, for the artwork
+  // well (see DetailPage).
   illustration: string | null;
+  illustrationTone: string | null;
   deadline: string | null;
   amount: { text: string; earned: boolean } | null;
   state: ChallengeState;
@@ -265,15 +269,6 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           </div>
         </Fragment>
       ))}
-      <div className="mt-4 text-center">
-        <button
-          id="tc-se-to-standings"
-          className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
-          onClick={() => controller()?._toStandings()}
-        >
-          See where the season stands →
-        </button>
-      </div>
     </>
   );
 }
@@ -351,20 +346,23 @@ function PageSection({ heading, children }: { heading: string; children: string 
   );
 }
 
-// The artwork well, drawn ONLY for a slug the registry has
+// The artwork well, drawn ONLY for a slug the registry resolves
 // (../../lib/challenge-illustrations.ts): the same artwork as the card's
-// tile, larger, on the same pale tone. Anything else is no well at all rather
-// than an empty one — a 224px block with nothing in it would be the tallest
-// thing on the page — and so is artwork that fails to load, which is the
-// offline case: the service worker leaves /illustrations/ to the network.
-// Dropping it is state, not a write to the node, because the page is React's.
-function ArtworkWell({ slug }: { slug: string | null }): ReactNode {
-  const art = resolveIllustration(slug);
+// tile, larger, on the same pale tone, which for an upload is the payload's
+// `tone` (gray when it is not one the registry knows). Anything else is no
+// well at all rather than an empty one — a 224px block with nothing in it
+// would be the tallest thing on the page — and so is artwork that fails to
+// load, which is the offline case: the service worker leaves both image paths
+// to the network. Dropping it is state, not a write to the node, because the
+// page is React's. The image is `object-contain` so a non-square upload fits
+// the 192px box instead of stretching.
+function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null }): ReactNode {
+  const art = resolveIllustration(slug, tone);
   const [failed, setFailed] = useState<string | null>(null);
   if (!art || failed === art.src) return null;
   return (
     <div className={`${art.toneClass} ${WELL}`}>
-      <img src={art.src} alt="" draggable={false} className="h-48 w-48" onError={() => setFailed(art.src)} />
+      <img src={art.src} alt="" draggable={false} className="h-48 w-48 object-contain" onError={() => setFailed(art.src)} />
     </div>
   );
 }
@@ -389,7 +387,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
       </div>
-      <ArtworkWell slug={view.illustration} />
+      <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
       <ProgressRail
         size="lg"
         state={view.state}

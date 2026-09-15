@@ -8,7 +8,8 @@
 // what makes it a level rather than an overlay — in flow, the grid and the
 // screen's own title, tabs and event bar stepping aside, and no back control
 // of its own — because none of that shows in static markup. The artwork well
-// under the task is drawn only for an illustration the registry has.
+// under the task is drawn only for an illustration the registry resolves: a
+// built-in, or an upload on its payload tone.
 //
 // Run with: node --test tests/challenge-detail-page.test.js
 
@@ -32,6 +33,7 @@ const VIEW = {
   goal: 'Join block production',
   task: 'Up to 2,000 pts a week on-device, or 1,000 delegated.',
   illustration: 'block-production',
+  illustrationTone: null,
   state: 'progress',
   stateLabel: '180/500 blocks',
   fill: 0.36,
@@ -107,15 +109,31 @@ test('the artwork well: only for a registry illustration, on its tone, and dropp
   const html = render(VIEW);
   assert.ok(html.includes(
     '<div class="home-tone-mint flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]">'
-    + '<img src="/illustrations/challenges/block-production.svg" alt="" draggable="false" class="h-48 w-48"/></div>'),
+    + '<img src="/illustrations/challenges/block-production.svg" alt="" draggable="false" class="h-48 w-48 object-contain"/></div>'),
   'a full-width 224px well on the artwork’s tone, the art centred at 192px');
-  for (const illustration of [null, 'not-in-the-registry', '../../icons/x']) {
+
+  // An upload: the path derived from its slug, fitted into the same box, on
+  // the payload's tone, or gray without one the registry knows.
+  const HEX = 'fedcba9876543210fedcba9876543210';
+  const uploaded = (illustrationTone) => render({ ...VIEW, illustration: `u-${HEX}`, illustrationTone });
+  assert.ok(uploaded('sage').includes(
+    '<div class="home-tone-sage flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]">'
+    + `<img src="/challenge-illustrations/${HEX}" alt="" draggable="false" class="h-48 w-48 object-contain"/></div>`),
+  'an uploaded illustration in the same well, on its tone');
+  for (const tone of [null, 'not-a-tone']) {
+    assert.match(uploaded(tone), /<div class="home-tone-gray flex h-56/, `${tone}: an upload with no known tone is on gray`);
+  }
+  assert.match(render({ ...VIEW, illustrationTone: 'coral' }), /<div class="home-tone-mint flex h-56/,
+    'a built-in keeps its own tone');
+
+  for (const illustration of [null, 'not-in-the-registry', '../../icons/x', 'u-XYZ', `u-${HEX.toUpperCase()}`]) {
     assert.doesNotMatch(render({ ...VIEW, illustration }), /<img|h-56|tint-art/,
       `${illustration}: no well at all, never an empty one`);
   }
   // onError cannot fire in a static render, so the drop is pinned on the source.
   const well = src.slice(src.indexOf('function ArtworkWell('), src.indexOf('export function DetailPage('));
   assert.ok(well.length > 0, 'ArtworkWell located');
+  assert.match(well, /resolveIllustration\(slug, tone\)/, 'the well resolves with the payload tone');
   assert.match(well, /onError=\{\(\) => setFailed\(art\.src\)\}/);
   assert.match(well, /if \(!art \|\| failed === art\.src\) return null;/);
   assert.doesNotMatch(src, /until challenges carry illustrations/, 'the reservation note is retired with the reservation');
