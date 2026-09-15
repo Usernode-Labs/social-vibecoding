@@ -7,6 +7,7 @@ import {
   A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
   type InstallOffer, type StoreUrls,
 } from './detect';
+import { isNativeApp, isStandalone } from './environment';
 
 /**
  * `#mobile-install-banner` — the phone-browser strip offering the native app
@@ -74,22 +75,6 @@ function writeDismissed(): void {
   } catch {
     /* A dismissal that cannot be persisted still hides the strip for this page. */
   }
-}
-
-/** Launched from a home-screen icon rather than a browser tab. */
-function isStandalone(): boolean {
-  try {
-    if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
-    // iOS Safari predates the media query and reports it here instead.
-    return (window.navigator as { standalone?: boolean }).standalone === true;
-  } catch {
-    return false;
-  }
-}
-
-function isNativeApp(): boolean {
-  const bridge = (window as { usernode?: { isNative?: boolean } }).usernode;
-  return !!(bridge && bridge.isNative === true);
 }
 
 export function MobileInstallBanner() {
