@@ -5,11 +5,11 @@ import { PasswordInput } from '@/components/ui/password-input';
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
  * (current password required). In the Homeroom native app with a linked
- * wallet, a "Use your wallet instead" link switches to wallet mode
- * (cp-wallet-mode shown, current password hidden) which signs a wallet-check
- * challenge and calls POST /api/me/wallet-change-password — the way back for a
- * logged-in user who's forgotten the password they'd need to type. settings.js
- * wires the mode switch and both submit paths.
+ * wallet, a "Don't have a password? Create one" link switches to the
+ * wallet-backed creation mode (cp-wallet-mode shown, current password hidden),
+ * which signs a wallet-check challenge and calls POST
+ * /api/me/wallet-change-password. settings.js wires the mode switch and both
+ * submit paths.
  */
 export function PasswordSection() {
   return (
@@ -65,7 +65,7 @@ export function PasswordSection() {
         */}
         <p id="cp-wallet-mode" className="hidden text-xs text-center mt-2">
           <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            Forgot it? Use your wallet instead
+            Don’t have a password? Create one
           </a>
         </p>
         <p id="cp-password-mode" className="hidden text-xs text-center mt-2">
