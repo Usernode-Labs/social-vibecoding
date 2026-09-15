@@ -559,6 +559,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
+  // 649 → 650: #2240 adds one check on the since-list's Clear in the state
+  // it was dead in — a reader with nothing new who walked `Show older` down
+  // past the baseline — reached through `?shot=since-seen`, which seeds the
+  // line at now and then presses the walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
   // 649 → 651: on yet another side of this merge, #2201 also gives the
   // check-my-status address step an answer for a mistyped address, and
   // declares the two things that state must show at
@@ -574,7 +582,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and the same preview on the proposal's own discussion page. (This
   // branch took 649 → 651 alone; main independently took the same step
   // with the #2201 pair above, so the merged manifest holds 653.)
-  assert.equal(DAPP.tests.length, 653);
+  // 650 → 655, 652 → 655, 651 → 655: on another side of this merge, the
+  // tallies above were computed on three different sides and cannot be read
+  // as one sequence either. Main took 649 → 650 alone, with the #2240 check
+  // above, and independently took the SAME 649 to both 652 (the #1374
+  // checks above) and 651 (the #2201 not-found pair above). #2240 (+1),
+  // #1374 (+3) and the #2201 pair (+2) are three independent additions
+  // against the shared 649, which is 649 + 1 + 3 + 2 = 655.
+  // 653 → 657, 655 → 657: this branch's #2086 pair and main's #2240/#1374
+  // trio share the #2201 pair in their common ancestry (this branch merged
+  // main's #2201 addition on the way to 651 before adding #2086; main's own
+  // 655 already counts that same #2201 pair once). The union does not add
+  // 653 + 655 against a doubled base: it is the shared 649, plus #2201 (+2,
+  // counted once), plus this branch's #2086 (+2), plus main's #2240 (+1) and
+  // #1374 (+3) — 649 + 2 + 2 + 1 + 3 = 657, which is what the merged
+  // manifest holds.
+  assert.equal(DAPP.tests.length, 657);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

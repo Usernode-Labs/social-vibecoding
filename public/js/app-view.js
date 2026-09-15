@@ -844,6 +844,20 @@ const AppView = {
           }
         }, 300);
       }
+      // #1374: `?shot=app-notifications` opens the per-app Notifications
+      // dialog. It is otherwise two taps inside a tile menu, which neither
+      // the capture pipeline nor a dapp.json check can reach — the same
+      // reason the secrets and app-settings links above exist. Reads the
+      // viewer's own preferences and writes nothing until a switch is
+      // touched, so it is safe on any environment. Same slug guard: a fast
+      // navigate-away must not pop a dialog onto another screen.
+      if (shot === 'app-notifications') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appNotifications?.open({ slug });
+          }
+        }, 300);
+      }
       // #816: the preview loader is the screen this change is about, and it
       // only exists mid-click on a Preview button — no URL reaches it, so
       // the before/after captures would show the dev board instead. These
@@ -1064,6 +1078,42 @@ const AppView = {
       // so a human who opens the link is not told they were here.
       if (shot === 'since-visit') {
         AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
+      }
+      // `?shot=since-seen` lands on the state #2240 is about, which is the
+      // OTHER end of the same walk: a reader with nothing new who pressed
+      // `Show older` anyway — which the strip invites, because that button is
+      // drawn and live on a quiet day by design. One press crosses the
+      // baseline, a wall of already-seen rows comes out, and `Clear`, the
+      // control that folds them again, is what has to be live there.
+      // The baseline is seeded to NOW rather than a month back, so every row
+      // is on the seen side and the strip opens on its "nothing has changed"
+      // note; then `Show older` is pressed — through its own handler, as
+      // `?shot=board-unfold` presses a row — until the "Seen before" mark is
+      // on screen. It stops on the mark rather than after a fixed number of
+      // presses, because how many the first one spends depends on the rows.
+      // Nothing is written to storage, so a human who opens the link is not
+      // told they were here.
+      if (shot === 'since-seen') {
+        AppView._workshopSince[slug] = Date.now();
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        // A human who opens this link must not have the list walked out from
+        // under them after their first real gesture. Same guard as
+        // `?shot=board-unfold` and `?shot=feed-comments` below, the other two
+        // deep links that drive a control rather than seeding state.
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          if (document.querySelector('[data-ws-since-seen]')) { done(); return; }
+          const more = document.querySelector('button[data-ws-since-more]:not([disabled])');
+          if (more) more.click();
+        }, 300);
       }
       // `?shot=mine-empty` draws "What you are working on" with nothing in
       // it — the state #2182 keeps on screen — whatever sessions the viewer

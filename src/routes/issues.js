@@ -4,6 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
+const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
@@ -1107,6 +1108,30 @@ function issueRoutes(config) {
       }
       const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
       await sendSystemMessage(pool, app.id, createdMsg, 'system');
+
+      // #1374: a new issue notified nobody before this. Fanned out to the
+      // app's stakeholders and gated on the `new_issues` category, which
+      // DEFAULTS OFF — so on a platform with no stored preferences this
+      // sends nothing at all, and it is opt-in per app from the tile menu.
+      //
+      // Best-effort and never awaited into the response: filing an issue
+      // must not fail because a notification insert did. The issue is on
+      // the board either way, which is the whole reason suppressing a
+      // notification here is not destructive.
+      // Wrapped: a `.catch()` covers a rejected promise, not a synchronous
+      // throw, and filing an issue must not fail because of a notification.
+      try {
+        notifications.createIssueOpenedNotifications?.(pool, {
+          appId: app.id,
+          issueNumber: githubIssueNumber || rows[0].id,
+          authorId: req.user.id,
+        })?.then((created) => Promise.all(
+          created.map((row) => notifications.hydrateAndPush(pool, row))
+        ))?.catch((err) => log.error('issues',
+          'Issue-opened notification failed', { appId: app.id, err: err.message }));
+      } catch (err) {
+        log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
+      }
       // Dual-post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
