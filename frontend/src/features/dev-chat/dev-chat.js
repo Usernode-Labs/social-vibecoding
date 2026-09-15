@@ -4626,8 +4626,8 @@ const DevChat = {
                 // #195: the capture finished after staging_ready — stash
                 // the artifact ids on the session and re-render so the
                 // staging card upgrades in place with the media tiles.
-                if (DevChat.currentSession && data.visuals) {
-                  DevChat.currentSession.visuals = data.visuals;
+                if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+                  DevChat.currentSession.visuals = data.visuals || null;
                   DevChat.renderMessages();
                 }
                 break;
@@ -5126,8 +5126,8 @@ const DevChat = {
         break;
       case 'visuals_ready':
         // #195: same upgrade-in-place as the primary POST-SSE path.
-        if (DevChat.currentSession && data.visuals) {
-          DevChat.currentSession.visuals = data.visuals;
+        if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+          DevChat.currentSession.visuals = data.visuals || null;
           DevChat.renderMessages();
         }
         break;

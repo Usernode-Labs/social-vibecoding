@@ -1107,19 +1107,18 @@ function buildWorkOrder({
       '   implementation, trade-offs and testing detail belong there and are not',
       '   lost. Write the summary from what the person voting would NOTICE, not',
       '   from what you edited. Not every member of the group is a developer.',
-      // Without these two, an imported proposal has no testing metadata at
-      // all: the capture step falls back to the app's home page, and the
-      // people voting get a before/after pair of a screen the change never
-      // touched. The in-platform build turn supplies the same thing through
-      // its "==== TESTING ====" block; this is that block's connector shape.
+      // Explicit routes override repository-declared visual scenarios. The
+      // in-platform build turn supplies the same thing through its
+      // "==== TESTING ====" block; this is that block's connector shape.
       '   ALSO PASS `testingPaths` AND `testingSteps`. `testingPaths` is the list',
       '   of in-app routes your change is actually visible on, most important',
       '   first — e.g. ["/board?demo=1", "/settings"] — and `testingSteps` is a',
       '   few short numbered lines telling a person what to click to see it.',
       '   Homeroom shoots a before/after screenshot pair of each route for the',
-      '   people voting and shows the steps beside the staging preview. Leave',
-      '   them out and it can only shoot the app\'s home page, which usually shows',
-      '   nothing of what you changed. Point each route at THE SCREEN YOU',
+      '   people voting and shows the steps beside the staging preview. If they',
+      '   are omitted, Homeroom uses a named dapp.json visual scenario whose',
+      '   impact globs match the diff, then falls back to the app home page if',
+      '   nothing matches. Point each route at THE SCREEN YOU',
       '   CHANGED, not the home page; if that screen is only reachable by',
       '   interacting, add a deep link (a query param handled at boot) in this',
       '   same change so a URL can reach it.',
@@ -1197,10 +1196,10 @@ function buildWorkOrder({
       '   branch, so a new commit re-runs the checks by itself. Do not call',
       '   `submit_work` again and do not call `prepare_work` — the pull request',
       '   already exists, and a second submission would duplicate it. If',
-      '   `get_proposal` reports `captureDefaultedToRoot`, your `testingPaths` did',
-      '   not arrive: the voters are looking at screenshots of the home page.',
-      '   `capturePaths` names what it did shoot, which is how you tell that apart',
-      '   from a change whose own first route is "/".',
+      '   `get_proposal` reports `captureDefaultedToRoot`, neither an explicit',
+      '   route nor a named scenario matched, so the screenshots may not show',
+      '   the changed UI. Its `captureRouteSource`, `visualScenarios` and',
+      '   `capturePaths` say exactly what selected the published evidence.',
       '',
       'Do not open the pull request yourself in the normal path: Homeroom opens it,',
       'and the change becomes a proposal with a staging preview, automated checks',

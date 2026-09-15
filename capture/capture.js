@@ -14,7 +14,7 @@
 //   TARGETS             JSON array of capture targets, each:
 //                         { index, beforeUrl, afterUrl, beforeFallbackUrl,
 //                           beforeCookie, afterCookie, viewport?,
-//                           companion? }
+//                           companion?, ready? }
 //                       Looped over sequentially; `index` tags every shot
 //                       frame so the orchestrator attributes each artifact
 //                       to its route. Per-target failures stay independent.
@@ -31,6 +31,9 @@
 //                       under the companion's own index. Absent → no
 //                       companion (an older orchestrator sends a separate
 //                       `still: true` target instead, still supported).
+//                       `ready` reuses a named dapp.json scenario's
+//                       expectSelector / expectText assertions as a bounded
+//                       staging-only wait before either screenshot is taken.
 //   BEFORE_URL          single-target fallback when TARGETS is unset/empty
 //   AFTER_URL           (an older orchestrator, or a rolling deploy). Each
 //   BEFORE_FALLBACK_URL of these mirrors the same-named TARGETS field for a
@@ -152,6 +155,15 @@ function parseCompanion(raw) {
   const index = parseInt(raw.index, 10);
   if (!Number.isInteger(index) || index < 0) return null;
   return { index, viewport };
+}
+
+function parseReady(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const expectSelector = typeof raw.expectSelector === 'string'
+    ? raw.expectSelector.trim().slice(0, 256) : '';
+  const expectText = typeof raw.expectText === 'string'
+    ? raw.expectText.trim().slice(0, 256) : '';
+  return (expectSelector || expectText) ? { expectSelector, expectText } : null;
 }
 
 const NAV_TIMEOUT_MS = 30000;
@@ -600,13 +612,30 @@ async function awaitRepaint(page) {
 // lands in the same rendered row it always has. Best-effort throughout: a
 // failed companion is reported as a failure frame and never costs the
 // target its desktop artifacts.
-async function shootCompanion(page, kind, companion, status, usedFallback) {
+async function waitForScenarioReady(page, ready, { maxMs = ASSERT_MAX_MS, pollMs = ASSERT_POLL_MS } = {}) {
+  if (!ready) return;
+  const boundedMaxMs = Number.isFinite(maxMs) ? Math.max(0, maxMs) : ASSERT_MAX_MS;
+  const boundedPollMs = Number.isFinite(pollMs) ? Math.max(1, pollMs) : ASSERT_POLL_MS;
+  const deadline = Date.now() + boundedMaxMs;
+  let reason = '';
+  while (true) {
+    reason = await assertPresence(page, ready);
+    if (!reason) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Visual scenario was not ready: ${reason}`);
+    }
+    await sleep(boundedPollMs);
+  }
+}
+
+async function shootCompanion(page, kind, companion, status, usedFallback, ready = null) {
   if (!companion) return;
   const { index, viewport } = companion;
   try {
     await page.setViewport({ ...viewport, deviceScaleFactor: VIEWPORT.deviceScaleFactor });
     await page.reload({ waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
     await sleep(SETTLE_MS);
+    await waitForScenarioReady(page, ready);
     const png = await page.screenshot({ type: 'png' });
     emit(kind, 'png', status, Buffer.from(png), index, usedFallback);
   } catch (err) {
@@ -718,7 +747,30 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     return;
   }
 
-  await sleep(SETTLE_MS);
+  try {
+    await sleep(SETTLE_MS);
+    // A scenario assertion is both a merge check and the capture's readiness
+    // barrier. Only staging receives it: production may not contain a newly
+    // introduced element yet, and that absence is exactly what the "before"
+    // side is meant to document. A timed-out assertion produces failure
+    // frames rather than a screenshot of a state we know is not ready.
+    if (kind === 'after') await waitForScenarioReady(page, opts.ready);
+  } catch (err) {
+    if (collectConsole) {
+      pushErr('assertion', err.message, url);
+      emitConsole(index, consoleErrors, status);
+    }
+    if (media) {
+      emitFail(kind, 'png', err.message, index);
+      if (!stillOnly) {
+        emitFail(kind, 'webm', err.message, index);
+        emitFail(kind, 'gif', err.message, index);
+      }
+      if (opts.companion) emitFail(kind, 'png', err.message, opts.companion.index);
+    }
+    await page.close().catch(() => {});
+    return;
+  }
 
   // An HTTP error status that still rendered a body is a failed load too.
   if (collectConsole && status >= 400) {
@@ -749,7 +801,8 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     if (collectConsole) {
       emitConsole(index, consoleErrors, status);
     }
-    await shootCompanion(page, kind, opts.companion, status, usedFallback);
+    await shootCompanion(page, kind, opts.companion, status, usedFallback,
+      kind === 'after' ? opts.ready : null);
     await page.close().catch(() => {});
     return;
   }
@@ -780,7 +833,8 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     if (collectConsole) {
       emitConsole(index, consoleErrors, status);
     }
-    await shootCompanion(page, kind, opts.companion, status, usedFallback);
+    await shootCompanion(page, kind, opts.companion, status, usedFallback,
+      kind === 'after' ? opts.ready : null);
     await page.close().catch(() => {});
     return;
   }
@@ -858,7 +912,8 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     emitConsole(index, consoleErrors, status);
   }
 
-  await shootCompanion(page, kind, opts.companion, status, usedFallback);
+  await shootCompanion(page, kind, opts.companion, status, usedFallback,
+    kind === 'after' ? opts.ready : null);
 
   await page.close().catch(() => {});
 }
@@ -915,6 +970,7 @@ function resolveTargets(env) {
       // null, which is also what a legacy orchestrator produces (it sends
       // a sibling `still: true` target instead, still handled above).
       companion: parseCompanion(t.companion),
+      ready: parseReady(t.ready),
     });
   }
   return out;
@@ -1781,7 +1837,8 @@ async function main() {
         }
         if (t.afterUrl && (media || !haveTests)) {
           await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-            { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+            { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still,
+              companion: t.companion, ready: t.ready });
         }
       }
     })();
@@ -1831,4 +1888,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

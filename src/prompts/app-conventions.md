@@ -79,19 +79,19 @@ Ordered by how badly an agent working offline gets each one wrong.
    username. A public table must never carry a foreign key to a private
    one. Schema is applied idempotently on boot: `CREATE TABLE IF NOT
    EXISTS`, `ADD COLUMN IF NOT EXISTS`.
-5. **Add or extend a `dapp.json` test in the same commit as any
-   user-visible screen.** Each entry is `{ name, path, expectSelector? ,
-   expectText? }`; every proposal also gets a free "loads with no
-   console errors" check. Checks GATE MERGE — a proposal whose checks
+5. **For every user-visible screen, add or extend a `dapp.json` test in
+   the same commit.** Use `{ name, path, expectSelector?, expectText? }`;
+   tag one representative flow with
+   `{ id, visual: true, impact: ["path/**"] }`. Every proposal also gets a
+   free "loads with no console errors" check. Checks GATE MERGE — a proposal whose checks
    are not passing cannot merge even with a winning vote. The test route
    renders against an empty staging database, so seed what it needs.
-   If the changed UI is only reachable by interacting, add a deep link
-   (a query param handled at boot) so a URL can reach it — and point the
-   testing route you report (`path:` in your final message, or
-   `testingPaths` when you submit through the connector) at THAT screen,
-   never at the home page. That route is what the before/after
-   screenshots the voters see are shot from, so a defaulted one shows
-   nothing of what you changed.
+   For interaction-only UI, add a deep link (a query param handled at boot).
+   Report THAT screen in `path:` / `testingPaths`, never the home page; it
+   drives voters' before/after screenshots.
+   Explicit routes win; otherwise changed files select matching scenarios.
+   With no match, capture keeps and marks the app-home default so an
+   irrelevant result is visible and correctable.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -631,7 +631,14 @@ repo. Shape:
 ```json
 {
   "tests": [
-    { "name": "Board renders", "path": "/board?demo=1", "expectSelector": ".board" },
+    {
+      "id": "board.default",
+      "name": "Board renders",
+      "path": "/board?demo=1",
+      "expectSelector": ".board",
+      "visual": true,
+      "impact": ["frontend/src/features/board/**", "public/js/board.js"]
+    },
     { "name": "Settings opens", "path": "/settings", "expectText": "Preferences" }
   ]
 }
@@ -651,6 +658,19 @@ Per-test fields:
 - `allowConsoleErrors` — set `true` only for a route that legitimately
   logs errors; it opts that one test out of the baseline no-console-errors
   rule.
+- `visual` — set `true` on representative flows eligible for before/after
+  capture; the check must have `expectSelector` or `expectText` so Homeroom
+  knows the state is ready.
+- `id` — required with `visual: true`; a stable lowercase scenario name
+  (for example `settings.profile-edit`).
+- `impact` — required with `visual: true`; up to 20 repo-relative globs using
+  `*`, `?`, or `**`. A changed file must match. Keep this mapping in
+  `dapp.json`, not in source functions.
+
+Visual scenarios reuse the check's path and assertions. Homeroom waits for
+them before photographing staging, records scenario provenance, and uses at
+most three matches in declaration order. Explicit `testingPaths` still win;
+when neither exists, capture falls back to `/` and records that it defaulted.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the

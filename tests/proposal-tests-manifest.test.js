@@ -59,6 +59,43 @@ test('allowConsoleErrors + expectText pass through', () => {
   assert.equal(out[0].allowConsoleErrors, true);
 });
 
+test('a named visual scenario keeps its stable id and repository impact globs', () => {
+  const [scenario] = appManifest.readTests({ tests: [{
+    id: 'settings.profile-edit',
+    name: 'Profile editor is ready',
+    path: '/settings?demo=1',
+    expectSelector: '#profile-editor',
+    visual: true,
+    impact: ['frontend/src/features/settings/**', 'public/js/profile-?.js'],
+  }] });
+  assert.deepEqual(scenario, {
+    name: 'Profile editor is ready',
+    path: '/settings?demo=1',
+    expectSelector: '#profile-editor',
+    expectText: null,
+    allowConsoleErrors: false,
+    id: 'settings.profile-edit',
+    visual: true,
+    impact: ['frontend/src/features/settings/**', 'public/js/profile-?.js'],
+  });
+});
+
+test('bad or duplicate visual metadata never drops the underlying checks', () => {
+  const meta = appManifest.readTestsWithMeta({ tests: [
+    { id: 'bad id', path: '/a', visual: true, impact: ['frontend/**'] },
+    { id: 'board.main', path: '/b', visual: true, impact: ['/absolute/**', '../escape/**'] },
+    { id: 'board.main', path: '/c', expectSelector: '.board', visual: true, impact: ['frontend/board.js'] },
+    { id: 'board.main', path: '/d', expectText: 'Board', visual: true, impact: ['frontend/other.js'] },
+    { id: 'route.only', path: '/e', visual: true, impact: ['frontend/route.js'] },
+  ] });
+  assert.equal(meta.tests.length, 5, 'visual metadata does not control whether a check runs');
+  assert.ok(meta.tests.slice(0, 2).every((t) => !('visual' in t)));
+  assert.equal(meta.tests[2].visual, true);
+  assert.ok(!('visual' in meta.tests[3]), 'one stable scenario id cannot name two flows');
+  assert.ok(!('visual' in meta.tests[4]), 'a route without readiness is not a visual flow');
+  assert.equal(meta.invalidVisualDropped, 4);
+});
+
 test('duplicate (name+path) entries collapse', () => {
   const out = appManifest.readTests({
     tests: [{ path: '/a', name: 'A' }, { path: '/a', name: 'A' }, { path: '/a', name: 'B' }],

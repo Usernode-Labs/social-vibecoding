@@ -34,6 +34,7 @@ const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
+const { sameSha } = require('./pr-vote-revision');
 const { getPool } = require('../db/pool');
 const {
   connectionCensus, mentionsConnectionLimit, connectionExhaustionMessage,
@@ -391,6 +392,111 @@ function isFrontendFile(file) {
 
 function isUiAffecting(files) {
   return Array.isArray(files) && files.some(isFrontendFile);
+}
+
+// dapp.json visual scenarios use a deliberately small git-glob dialect:
+// `*` and `?` stay inside one path segment; `**` may cross directories.
+// That is enough for ownership-shaped declarations such as
+// `frontend/src/features/settings/**` without adding a transitive glob
+// package to the platform's runtime surface.
+function visualImpactMatches(pattern, file) {
+  const glob = String(pattern || '').replace(/\\/g, '/');
+  const candidate = String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!glob || !candidate) return false;
+  let source = '^';
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    if (ch === '*') {
+      if (glob[i + 1] === '*') {
+        i++;
+        if (glob[i + 1] === '/') {
+          i++;
+          source += '(?:.*/)?';
+        } else {
+          source += '.*';
+        }
+      } else {
+        source += '[^/]*';
+      }
+    } else if (ch === '?') {
+      source += '[^/]';
+    } else {
+      source += ch.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+    }
+  }
+  try { return new RegExp(`${source}$`).test(candidate); } catch { return false; }
+}
+
+function visualScenarioFingerprint(test) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    id: test.id,
+    path: test.path,
+    expectSelector: test.expectSelector || null,
+    expectText: test.expectText || null,
+  })).digest('hex');
+}
+
+// Select the executable visual flows whose repository ownership overlaps the
+// proposal diff. Declaration order is priority order, matching the existing
+// dapp.json checks contract. One path is photographed once even when several
+// checks assert the same state; the first named scenario owns its provenance.
+function selectVisualScenarios(declaredTests, changedFiles) {
+  if (!Array.isArray(declaredTests) || !Array.isArray(changedFiles)) return [];
+  const files = changedFiles.map((f) => String(f || '')).filter(Boolean);
+  const paths = new Set();
+  const out = [];
+  for (const test of declaredTests) {
+    if (!test || test.visual !== true || typeof test.id !== 'string'
+      || !Array.isArray(test.impact) || !test.impact.length) continue;
+    if (!test.impact.some((pattern) => files.some((file) => visualImpactMatches(pattern, file)))) continue;
+    if (paths.has(test.path)) continue;
+    paths.add(test.path);
+    out.push({
+      id: test.id,
+      path: test.path,
+      fingerprint: visualScenarioFingerprint(test),
+      expectSelector: test.expectSelector || null,
+      expectText: test.expectText || null,
+    });
+    if (out.length >= CAPTURE_MAX_PATHS) break;
+  }
+  return out;
+}
+
+// Submission routes remain an explicit override. With none, prefer a matching
+// named scenario and finally retain the established app-root fallback. The
+// fallback is deliberately labelled `default` / pathDefaulted so an irrelevant
+// screenshot remains visible and reportable while scenario coverage grows.
+function deriveCapturePlan(session, declaredTests, changedFiles) {
+  const raw = (Array.isArray(session?.testing_paths) && session.testing_paths.length)
+    ? session.testing_paths
+    : (session?.testing_path ? [session.testing_path] : []);
+  const seen = new Set();
+  const submitted = [];
+  for (const item of raw) {
+    const value = normalizeStoredPath(item);
+    if (!value || seen.has(value.path)) continue;
+    seen.add(value.path);
+    submitted.push(value.path);
+    if (submitted.length >= CAPTURE_MAX_PATHS) break;
+  }
+  if (submitted.length) {
+    return { paths: submitted, pathDefaulted: false, routeSource: 'submitted', scenarios: [] };
+  }
+  const scenarios = selectVisualScenarios(declaredTests, changedFiles);
+  if (scenarios.length) {
+    return {
+      paths: scenarios.map((scenario) => scenario.path),
+      pathDefaulted: false,
+      routeSource: 'scenario',
+      scenarios,
+    };
+  }
+  return { paths: ['/'], pathDefaulted: true, routeSource: 'default', scenarios: [] };
+}
+
+function shouldCaptureMedia(uiAffecting, routeSource) {
+  return !!uiAffecting || routeSource === 'submitted' || routeSource === 'scenario';
 }
 
 // ── Capture image ──────────────────────────────────────────────────────
@@ -1313,24 +1419,42 @@ function consoleSnapshotFromTests(result) {
 // app-view.js) iterate `captures` and label each row with its `path`.
 
 // Assemble rows ([{kind, media, capture_index, captured_path,
-// captured_viewport, id}]) into the ordered { captures: [...] } shape.
+// captured_viewport, scenario_id, scenario_fingerprint, commit_hash, id}])
+// into the ordered { captures: [...] } shape.
 // Groups missing an "after" are dropped. Shared by storeArtifacts /
 // getForSession / shapeAgg so all three surfaces emit byte-identical
 // shapes. Each group's `viewport` is the label it was shot at ('mobile'
 // for a `@mobile` path, #768) or null for the desktop default — pre-#768
 // rows carry no viewport and land on null.
-function groupRows(rows) {
+//
+// When an expected commit is known, only rows tagged with that exact revision
+// are eligible. Unknown-provenance legacy rows remain readable only to a
+// caller that genuinely has no head to compare. This is the read gate that
+// prevents yesterday's successful screenshots from representing a newer head
+// whose capture is pending or failed.
+function groupRows(rows, expectedCommit = null) {
+  const input = Array.isArray(rows) ? rows : [];
+  const current = expectedCommit
+    ? input.filter((r) => sameSha(r.commit_hash || r.commitHash, expectedCommit))
+    : input;
   const byIndex = new Map();
-  for (const r of rows) {
+  for (const r of current) {
     const idx = Number.isInteger(r.index) ? r.index : (parseInt(r.capture_index, 10) || 0);
     let g = byIndex.get(idx);
-    if (!g) { g = { index: idx, path: null, viewport: null }; byIndex.set(idx, g); }
+    if (!g) {
+      g = { index: idx, path: null, viewport: null, scenarioId: null, scenarioFingerprint: null };
+      byIndex.set(idx, g);
+    }
     if (!g[r.kind]) g[r.kind] = {};
     g[r.kind][r.media] = r.id;
     const p = r.path || r.captured_path;
     if (p && !g.path) g.path = p;
     const vp = r.viewport || r.captured_viewport;
     if (vp && !g.viewport) g.viewport = vp;
+    const scenarioId = r.scenarioId || r.scenario_id;
+    if (scenarioId && !g.scenarioId) g.scenarioId = scenarioId;
+    const scenarioFingerprint = r.scenarioFingerprint || r.scenario_fingerprint;
+    if (scenarioFingerprint && !g.scenarioFingerprint) g.scenarioFingerprint = scenarioFingerprint;
     // A "before" side actually shot at the fallback '/' — renderers caption
     // the pair so the mismatched comparison is explained.
     if (r.kind === 'before' && (r.before_fell_back || r.fellBack)) g.beforeFellBack = true;
@@ -1342,6 +1466,8 @@ function groupRows(rows) {
     captures.push({
       index: g.index, path: g.path || '/', viewport: g.viewport || null,
       before: g.before || null, after: g.after,
+      ...(g.scenarioId ? { scenarioId: g.scenarioId } : {}),
+      ...(g.scenarioFingerprint ? { scenarioFingerprint: g.scenarioFingerprint } : {}),
       // Only present when true so pre-existing shapes stay byte-identical.
       ...(g.beforeFellBack ? { beforeFellBack: true } : {}),
     });
@@ -1361,12 +1487,25 @@ function groupRows(rows) {
 // artifact so the caller can persist WHY a recording is missing (the
 // capture_detail snapshot) instead of only logging it. Returns the grouped
 // shape, or null when nothing usable was stored (no group has an "after").
+// Even a null outcome replaces the prior set: retaining an older successful
+// capture after a failed re-shot is how stale evidence survived a revision.
 async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropped = null) {
   const pathByIndex = new Map();
   const viewportByIndex = new Map();
+  const scenarioByIndex = new Map();
   for (const t of (Array.isArray(targets) ? targets : [])) {
     pathByIndex.set(t.index, t.path);
     if (t.viewport) viewportByIndex.set(t.index, t.viewport);
+    if (t.scenario) scenarioByIndex.set(t.index, t.scenario);
+    // The automatic phone shot is emitted under the companion's odd index,
+    // but it depicts the parent target's exact path/scenario at a mobile
+    // viewport. Record that provenance explicitly instead of letting the
+    // renderer mislabel every companion as an unscoped desktop '/'.
+    if (t.companion && Number.isInteger(t.companion.index)) {
+      pathByIndex.set(t.companion.index, t.path);
+      viewportByIndex.set(t.companion.index, VIEWPORT_MOBILE);
+      if (t.scenario) scenarioByIndex.set(t.companion.index, t.scenario);
+    }
   }
 
   const rows = [];
@@ -1381,27 +1520,31 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropp
       continue;
     }
     const index = Number.isInteger(s.index) ? s.index : 0;
+    const scenario = scenarioByIndex.get(index) || null;
     rows.push({
       id: crypto.randomBytes(16).toString('hex'),
       index,
       capturedPath: pathByIndex.has(index) ? pathByIndex.get(index) : null,
       capturedViewport: viewportByIndex.get(index) || null,
+      scenarioId: scenario?.id || null,
+      scenarioFingerprint: scenario?.fingerprint || null,
       ...s,
     });
   }
-  if (!rows.some((r) => r.kind === 'after')) return null;
+  const hasAfter = rows.some((r) => r.kind === 'after');
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
-    for (const r of rows) {
+    for (const r of (hasAfter ? rows : [])) {
       await client.query(
-        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index, r.capturedViewport,
           Number.isInteger(r.status) && r.status > 0 ? r.status : null,
-          r.kind === 'before' && !!r.fellBack]
+          r.kind === 'before' && !!r.fellBack,
+          r.scenarioId, r.scenarioFingerprint]
       );
     }
     await client.query('COMMIT');
@@ -1412,9 +1555,13 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropp
     client.release();
   }
 
+  if (!hasAfter) return null;
+
   return groupRows(rows.map((r) => ({
     kind: r.kind, media: r.media, id: r.id, index: r.index,
     captured_path: r.capturedPath, captured_viewport: r.capturedViewport,
+    scenario_id: r.scenarioId, scenario_fingerprint: r.scenarioFingerprint,
+    commit_hash: commitHash || null,
     fellBack: r.fellBack,
   })));
 }
@@ -1424,13 +1571,15 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropp
 // /api/sessions/:id (history reloads) and exported for any other surface
 // that wants the same shape. Pre-#270 rows all carry capture_index 0, so
 // they collapse into a single legacy group — back-compatible by default.
-async function getForSession(pool, sessionId) {
+async function getForSession(pool, sessionId, expectedCommit = null) {
   const { rows } = await pool.query(
-    `SELECT id, kind, media, captured_path, capture_index, captured_viewport, before_fell_back FROM session_visuals WHERE session_id = $1`,
+    `SELECT id, kind, media, commit_hash, captured_path, capture_index, captured_viewport,
+            before_fell_back, scenario_id, scenario_fingerprint
+       FROM session_visuals WHERE session_id = $1`,
     [sessionId]
   );
   if (!rows.length) return null;
-  return groupRows(rows);
+  return groupRows(rows, expectedCommit);
 }
 
 // Shape the jsonb_object_agg(...) form produced by the /promoted
@@ -1438,10 +1587,11 @@ async function getForSession(pool, sessionId) {
 // `kind_index_media` (#270); the legacy `kind_media` key (pre-#270 stored
 // rows, or an older query) is also accepted, mapping to capture group 0.
 // The agg VALUE is either a bare artifact id string (legacy query) or an
-// object { id, path, viewport, fellBack } (current query) — the object
-// form carries the group label, frame, and before-fallback flag so the
-// vote-panel tiles render real path labels and the fallback caption.
-function shapeAgg(agg) {
+// object { id, path, viewport, commit, scenarioId, scenarioFingerprint,
+// fellBack } (current query) — the object form carries the group label,
+// frame, revision/scenario provenance, and before-fallback flag so the
+// vote-panel tiles render only current, correctly labelled evidence.
+function shapeAgg(agg, expectedCommit = null) {
   if (!agg || typeof agg !== 'object') return null;
   const rows = [];
   for (const [key, val] of Object.entries(agg)) {
@@ -1451,6 +1601,9 @@ function shapeAgg(agg) {
       ? {
         captured_path: val.path || null,
         captured_viewport: val.viewport || null,
+        commit_hash: val.commit || null,
+        scenario_id: val.scenarioId || null,
+        scenario_fingerprint: val.scenarioFingerprint || null,
         fellBack: !!val.fellBack,
       }
       : {};
@@ -1462,7 +1615,7 @@ function shapeAgg(agg) {
     m = key.match(/^(before|after)_(png|webm|gif)$/);
     if (m) rows.push({ kind: m[1], index: 0, media: m[2], id, ...extra });
   }
-  return groupRows(rows);
+  return groupRows(rows, expectedCommit);
 }
 
 // ── PR body patch ──────────────────────────────────────────────────────
@@ -1488,6 +1641,40 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
     `UPDATE chat_sessions SET pr_visuals_applied = $1, pr_body = $2 WHERE id = $3`,
     [block || null, next, session.id]
   );
+}
+
+async function clearPrVisuals(pool, session, repoOwner, repoName) {
+  if (!session.pr_number || !repoOwner || !repoName || !github.isEnabled()) return;
+  try {
+    await patchPrBody(pool, session, repoOwner, repoName, '');
+  } catch (err) {
+    log.warn('visuals', 'Stale PR body visuals removal failed', {
+      sessionId: session.id, pr: session.pr_number, err: err.message,
+    });
+  }
+}
+
+// A fresh run supersedes the previous evidence immediately, not only after
+// its replacement succeeds. That closes two misleading windows: an open
+// session retaining the old tiles while a new revision is being tested, and
+// a PR body retaining them when the replacement run ultimately fails. The
+// row delete is best-effort because storeArtifacts repeats it transactionally
+// on success; the null event still tells already-open clients to stop showing
+// their cached copy.
+async function resetVisualEvidence(pool, session, repoOwner, repoName, send) {
+  let removed = false;
+  try {
+    const result = await pool.query('DELETE FROM session_visuals WHERE session_id = $1', [session.id]);
+    removed = Number(result.rowCount) > 0;
+  } catch (err) {
+    log.warn('visuals', 'Could not clear superseded visual artifacts', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  notifyVisualsReady(session.id, null, send);
+  if (removed || session.pr_visuals_applied) {
+    await clearPrVisuals(pool, session, repoOwner, repoName);
+  }
 }
 
 // One capture in flight per session — a fast follow-up turn that rebuilds
@@ -1830,6 +2017,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
     notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    // Evidence belongs to a completed run, not merely to this session id.
+    // Clear the previous set before any slow browser/image work so a live
+    // client cannot keep presenting it as the revision now under test.
+    await resetVisualEvidence(pool, session, repoOwner, repoName, send);
     // The build half is over: close its fifth step with the time the
     // hand-off took (and whether it was spent queued), and publish the
     // finished build so the card does not keep a step pulsing under
@@ -1852,32 +2043,51 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       stopHeartbeat = checkRuns.startHeartbeat(operation?.cleanupPool || pool, runId);
     }
 
-    // Heuristic gate. If the compare call fails, default to capturing —
-    // staging exists, and a wasted screenshot is cheaper than a missed one.
+    // Heuristic gate. It classifies a route-less proposal as either
+    // intentionally console-only or missing visual coverage. An explicit
+    // route or matching scenario is stronger evidence and triggers media
+    // even when the changed-file heuristic would call the diff backend-only.
     let uiAffecting = true;
+    let changedFiles = null;
     const gitRef = sessionGitRef(session, commitHash);
     if (github.isEnabled() && repoOwner && repoName && gitRef) {
       try {
-        const files = await github.listChangedFiles(
+        changedFiles = await github.listChangedFiles(
           repoOwner, repoName, `main...${gitRef}`
         );
-        uiAffecting = isUiAffecting(files);
+        uiAffecting = isUiAffecting(changedFiles);
       } catch (err) {
-        log.warn('visuals', 'Changed-file compare failed — defaulting to capture', {
+        log.warn('visuals', 'Changed-file compare failed — visual scenarios cannot be matched', {
           sessionId: session.id, err: err.message,
         });
       }
     }
-    // #381: the headless run now ALWAYS happens so every proposal gets a
-    // console-error check. The UI-affecting heuristic only decides whether
-    // to also shoot the before/after media (the expensive part) — when
-    // it's false we run a lightweight console-only pass (MEDIA=0): navigate
-    // just the staging "after" target(s), collect console errors, skip
-    // screenshots/recordings and the prod "before" leg.
-    const media = uiAffecting;
-    if (!media) {
+
+    // Fetch the branch manifest once, before choosing screenshot routes: its
+    // normal checks still form the full CI suite, while visual:true checks
+    // are also executable screenshot scenarios when their `impact` globs
+    // overlap this diff.
+    const declared = await resolveDeclaredTests(repoOwner, repoName, gitRef);
+    const declaredTests = declared.tests;
+    const capturePlan = deriveCapturePlan(session, declaredTests, changedFiles);
+    const capturePaths = capturePlan.paths;
+    const pathDefaulted = capturePlan.pathDefaulted;
+    const captureRouteSource = capturePlan.routeSource;
+    const visualScenarios = capturePlan.scenarios;
+    const navigationPaths = capturePaths;
+    // #381: the headless run ALWAYS happens so every proposal gets a
+    // console-error check. Explicit routes and named scenarios are strong
+    // evidence that media was requested even if the file heuristic misses the
+    // UI. Otherwise preserve the prior behaviour: UI-affecting changes shoot
+    // the app root, while backend-only changes stay console-only.
+    const media = shouldCaptureMedia(uiAffecting, captureRouteSource);
+    if (captureRouteSource === 'default' && media) {
+      log.info('visuals', 'No submitted route or matching visual scenario — defaulting capture to app root', {
+        sessionId: session.id, ref: gitRef, captureRouteSource,
+      });
+    } else if (!media) {
       log.info('visuals', 'No frontend files in commit range — console-only check', {
-        sessionId: session.id, ref: gitRef,
+        sessionId: session.id, ref: gitRef, captureRouteSource,
       });
     }
 
@@ -1942,37 +2152,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     }
     // Screenshots keep the non-admin token; tests prefer the admin token.
     const { screenshotToken, testsToken } = selectCaptureTokens({ captureToken, adminToken });
-
-    // Capture routes, reached directly over the shared docker network —
-    // same access model waitForHealthy uses, bypassing Caddy's forward-auth
-    // gate. The routes are the validated testing_paths list (#270), falling
-    // back to [testing_path || '/'] for pre-#270 rows; each entry
-    // normalized via normalizeStoredPath (#768 — pre-#768 rows hold plain
-    // strings), deduped by PATH alone (every route now gets both the
-    // desktop and the phone frame automatically, so a legacy `@mobile`
-    // duplicate collapses), capped at CAPTURE_MAX_PATHS, always non-empty
-    // (a change with nothing to point at still shoots '/').
-    //
-    // pathDefaulted records that the agent emitted NO testing path at all —
-    // the shots default to '/' and may show a screen the change never
-    // touched. Persisted in capture_detail so the rate is trackable.
-    const pathDefaulted = !(Array.isArray(session.testing_paths) && session.testing_paths.length)
-      && !session.testing_path;
-    const capturePaths = (() => {
-      const raw = (Array.isArray(session.testing_paths) && session.testing_paths.length)
-        ? session.testing_paths
-        : [session.testing_path || '/'];
-      const seen = new Set();
-      const out = [];
-      for (const p of raw) {
-        const v = normalizeStoredPath(p);
-        if (!v || seen.has(v.path)) continue;
-        seen.add(v.path);
-        out.push(v.path);
-        if (out.length >= CAPTURE_MAX_PATHS) break;
-      }
-      return out.length ? out : ['/'];
-    })();
 
     const kubernetesCapture = config.captureRuntime === 'kubernetes';
     const stagingName = usableRuntimeName(stagingResult?.runtimeName)
@@ -2062,8 +2241,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // of the home feed. For a fragment target the server pathname is
     // always '/', so prod never 404s on a deep page — the '/' fallback is
     // moot and skipped (the bare-'/' and standalone-page cases keep it).
-    const targets = expandCapturePaths(capturePaths).map((entry) => {
+    const targets = expandCapturePaths(navigationPaths).map((entry) => {
       const p = entry.path;
+      const scenario = visualScenarios.find((item) => item.path === p) || null;
       const mobile = entry.viewport === VIEWPORT_MOBILE;
       const visitPath = isSelfApp ? selfAppHashPath(p) : p;
       const isFragmentTarget = visitPath.startsWith('/#');
@@ -2084,6 +2264,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         still: entry.still,
         viewport: mobile ? VIEWPORT_MOBILE : null,
         viewportPixels: mobile ? MOBILE_VIEWPORT : null,
+        scenario,
+        ready: scenario ? {
+          expectSelector: scenario.expectSelector || '',
+          expectText: scenario.expectText || '',
+        } : null,
         // The phone-frame still shot from this target's own page. Same
         // capture index the sibling target used to carry, so the stored
         // artifact lands in exactly the same rendered row.
@@ -2115,16 +2300,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       });
     }
 
-    // #47: resolve the proposal's automated test suite. Declared tests live
-    // in the branch's dapp.json `tests` array (fetched from GitHub so we
-    // don't depend on the now-deleted staging clone). When none are
-    // declared we synthesize the baseline — one "loads with no console
-    // errors" test per capture path — so every proposal gets at least the
-    // #381 coverage. Each test's route is resolved to the same staging
-    // origin + token (and self-app hash normalisation) as the after target.
-    const declared = await resolveDeclaredTests(repoOwner, repoName, gitRef);
-    const declaredTests = declared.tests;
-
     // Which half of the run this head gets (services/check-admission.js). A
     // promoted head that conflicts with main is previewed and not judged:
     // no assertions, no unit suite, and the verdict below is a deferral
@@ -2147,7 +2322,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     const tests = (shotsOnly ? [] : (declaredTests.length
       ? declaredTests
-      : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
+      : navigationPaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
     )).map((t, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
       return {
@@ -2279,11 +2454,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           media,
           capturePaths,
           pathDefaulted,
+          captureRouteSource,
+          visualScenarios,
           prodRunning,
           stagingOrigin,
           targets: targets.map((t) => ({
             index: t.index, path: t.path, still: t.still || undefined,
             viewport: t.viewport || undefined, companion: t.companion || undefined,
+            scenario: t.scenario || undefined, ready: t.ready || undefined,
           })),
           testsCount: tests.length,
           dispatched,
@@ -2315,7 +2493,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning,
-      paths: capturePaths, pathDefaulted, targets: targets.length,
+      paths: capturePaths, pathDefaulted, captureRouteSource,
+      visualScenarios: visualScenarios.map((scenario) => scenario.id), targets: targets.length,
       authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
       tests: tests.length, declaredTests: declaredTests.length,
       blocking: dispatched ? dispatched.filter((d) => d.graduated).length : tests.length,
@@ -2353,6 +2532,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
             beforeCookie: t.beforeCookie,
             afterCookie: t.afterCookie,
             viewport: t.viewportPixels || undefined,
+            // A named visual scenario reuses its declared check assertions
+            // as a readiness barrier. The capture image only applies this
+            // to staging (`after`); production may legitimately predate the
+            // feature and must remain photographable.
+            ready: t.ready || undefined,
             // PNG-only phone-frame companion (no recording). An older
             // capture image ignores the field and records anyway —
             // graceful rolling deploy, same stance as `viewport`.
@@ -2466,7 +2650,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const settled = await settleCaptureRun(config, pool, {
       session, app, commitHash, trigger, send, operation, traceStep, runStartedAt,
       shotsOnly, admissionReason: admission.reason,
-      media, capturePaths, pathDefaulted, prodRunning, stagingOrigin, targets,
+      media, capturePaths, pathDefaulted, captureRouteSource,
+      visualScenarios,
+      prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
       stdout, runPartial, runPartialReason, unitOutcome,
     });
@@ -2552,7 +2738,8 @@ function holdCapture(sessionId, commitHash, { abort = null } = {}) {
 // `run` is the launch-time context a live run has in scope and a harvest
 // reads back from the check_runs manifest: the session, app, commit and
 // trigger; the capture geometry (media, targets, capturePaths, pathDefaulted,
-// prodRunning, stagingOrigin); the dispatch (testsCount, dispatched,
+// captureRouteSource, visualScenarios, prodRunning,
+// stagingOrigin); the dispatch (testsCount, dispatched,
 // ceilingDropped); the admission (shotsOnly, admissionReason); the output
 // (stdout, runPartial, runPartialReason); and the unit-suite outcome, already
 // awaited. `send`, `operation` and `traceStep` are the live run's; a
@@ -2564,7 +2751,8 @@ async function settleCaptureRun(config, pool, run) {
     session, app, commitHash, trigger = null, send = null, operation = null,
     traceStep = () => {}, runStartedAt = Date.now(),
     shotsOnly = false, admissionReason = null,
-    media, capturePaths, pathDefaulted, prodRunning, stagingOrigin, targets,
+    media, capturePaths, pathDefaulted, captureRouteSource = null,
+    visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, runPartial = false, runPartialReason = '', unitOutcome = null,
   } = run;
@@ -2619,11 +2807,13 @@ async function settleCaptureRun(config, pool, run) {
     }
     const dropped = [];
     const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
-    const captureState = !media ? 'console_only'
+    const captureState = !media
+      ? 'console_only'
       : (!stored ? 'failed'
         : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
     await storeCaptureOutcome(pool, session.id, captureState, {
-      media, pathDefaulted, prodRunning, paths: capturePaths,
+      media, pathDefaulted, routeSource: captureRouteSource,
+      scenarios: visualScenarios, prodRunning, paths: capturePaths,
       failures: failures.slice(0, 20), droppedOverCap: dropped.slice(0, 20),
       runCutShort: runPartial ? (runPartialReason || true) : false,
       deferred: true,
@@ -2635,6 +2825,7 @@ async function settleCaptureRun(config, pool, run) {
       });
     });
     if (stored) {
+      await operation?.check();
       if (session.pr_number && repoOwner && repoName && github.isEnabled()) {
         try {
           await patchPrBody(pool, session, repoOwner, repoName,
@@ -2645,8 +2836,11 @@ async function settleCaptureRun(config, pool, run) {
           });
         }
       }
-      await operation?.check();
       notifyVisualsReady(session.id, stored, send);
+    } else {
+      // A previous commit's marker-delimited block is otherwise still live
+      // on GitHub even though every in-app reader now hides its artifacts.
+      await clearPrVisuals(pool, session, repoOwner, repoName);
     }
     log.info('visuals', 'Capture complete; verdict deferred', {
       sessionId: session.id, artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
@@ -2855,6 +3049,8 @@ async function settleCaptureRun(config, pool, run) {
   const captureDetail = {
     media,
     pathDefaulted,
+    routeSource: captureRouteSource,
+    scenarios: visualScenarios,
     prodRunning,
     paths: capturePaths,
     failures: failures.slice(0, 20),
@@ -2877,6 +3073,8 @@ async function settleCaptureRun(config, pool, run) {
   });
 
   if (!stored) {
+    await operation?.check();
+    await clearPrVisuals(pool, session, repoOwner, repoName);
     if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
     return { traceStatus, result: { state: checksResult.state } };
   }
@@ -2884,6 +3082,7 @@ async function settleCaptureRun(config, pool, run) {
   // Interactive ordering: a PR already exists, so patch its body now.
   // (Headless → lazy-PR ordering is covered by applyPrMetadata's suffix
   // assembly reading session_visuals at promote time.)
+  await operation?.check();
   if (session.pr_number && repoOwner && repoName && github.isEnabled()) {
     const block = prMetadata.buildVisualsBlock(stored, caddy.USERNODE_DOMAIN);
     try {
@@ -3379,6 +3578,7 @@ module.exports = {
   usableRuntimeName,
   hasInFlightCapture,
   storeArtifacts,
+  resetVisualEvidence,
   getForSession,
   shapeAgg,
   storeCaptureOutcome,
@@ -3417,6 +3617,10 @@ module.exports = {
   sessionGitRef,
   isFrontendFile,
   isUiAffecting,
+  shouldCaptureMedia,
+  visualImpactMatches,
+  selectVisualScenarios,
+  deriveCapturePlan,
   parseShots,
   withToken,
   mintCaptureToken,

@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const visuals = require('../services/visuals');
 const galleryDemo = require('../services/gallery-demo');
+const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 // Admin gallery API — read-only, behind an isAdmin guard (any admin, full
 // or view-only; this is diagnostics, so no requireAdminWrite gate). Backs
@@ -167,12 +168,17 @@ function galleryRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
                 cs.capture_state, cs.capture_detail, cs.captured_at,
+                cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
+                cs.checks_commit_sha, cs.handoff_head_sha,
                 cs.app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT jsonb_agg(jsonb_build_object(
                           'id', v.id, 'kind', v.kind, 'media', v.media,
                           'capture_index', v.capture_index,
                           'captured_path', v.captured_path,
                           'captured_viewport', v.captured_viewport,
+                          'commit_hash', v.commit_hash,
+                          'scenario_id', v.scenario_id,
+                          'scenario_fingerprint', v.scenario_fingerprint,
                           'before_fell_back', v.before_fell_back,
                           'shot_status', v.shot_status)
                         ORDER BY v.capture_index, v.kind, v.media)
@@ -192,7 +198,9 @@ function galleryRoutes(config) {
       // groupRows — the SAME implementation the proposal cards and PR bodies
       // use — so the client just renders and nothing can drift.
       const proposals = rows.map((r) => {
-        const grouped = visuals.groupRows(Array.isArray(r.artifacts) ? r.artifacts : []);
+        const grouped = visuals.groupRows(
+          Array.isArray(r.artifacts) ? r.artifacts : [], visualHeadForSession(r)
+        );
         return {
           id: r.id,
           mergedAt: r.merged_at,

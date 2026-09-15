@@ -764,10 +764,23 @@
       "expectText": "Vote"
     },
     {
+      "id": "dev-board.proposal-preview",
       "name": "Dev board: Preview is a labelled pill at the band's right end, just before the hamburger that closes it",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:not(.gc-vote-btn-icon) + .dev-card-menu-btn[data-card-menu]:last-child, #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:not(.gc-vote-btn-icon)",
-      "expectText": "Preview"
+      "expectText": "Preview",
+      "visual": true,
+      "impact": [
+        "src/services/visuals.js",
+        "capture/**",
+        "src/routes/sessions.js",
+        "src/routes/votes.js",
+        "src/services/pr-metadata.js",
+        "frontend/src/features/dev-board/**",
+        "frontend/src/features/dev-chat/**",
+        "public/js/app.js",
+        "public/js/app-view.js"
+      ]
     },
     {
       "name": "Dev board: every folded row wears the fold mark, closed — two chevrons apart, the bar between them drawn but scaled away",

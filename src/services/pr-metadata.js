@@ -6,6 +6,7 @@ const limits = require('./limits');
 const github = require('./github');
 const turnEffects = require('./turn-effects');
 const sessionTitles = require('./session-title');
+const { visualHeadForSession } = require('./pr-vote-revision');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
 // ascending list of positive integers (#75). Defensive against malformed
@@ -438,7 +439,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       const { rows: liveRows } = await pool.query(
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
                 testing_md, testing_path, pr_testing_applied,
-                pr_visuals_applied, pr_summary_md
+                pr_visuals_applied, pr_summary_md, source,
+                imported_pr_head_sha, reviewed_head_sha,
+                checks_commit_sha, handoff_head_sha
            FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
@@ -458,9 +461,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       ctx.testingPath = (liveRows[0] && liveRows[0].testing_path) || null;
       ctx.appliedTesting = (liveRows[0] && liveRows[0].pr_testing_applied) || null;
 
-      // Stored capture artifacts (#195) — read directly here (not via
-      // services/visuals.js) so this module stays free of a circular
-      // require; visuals.js depends on pr-metadata for the block builder.
+      // The last visuals block written to the pull request (#195). This is
+      // the drift marker, not evidence that its artifact rows still describe
+      // the proposal's current head; that check happens below.
       ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
 
       // Plain-language summary last written to pr_summary_md (the in-app
@@ -468,39 +471,13 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       // can push a revised summary to GitHub on a title-unchanged turn.
       ctx.appliedSummary = (liveRows[0] && liveRows[0].pr_summary_md) || null;
       try {
-        // #270: group by capture_index (ascending) into the same ordered
-        // { captures: [ { index, path, before, after } ] } shape
-        // buildVisualsBlock consumes, using captured_path as each group's
-        // label. Pre-#270 rows all carry capture_index 0 → a single group.
-        const { rows: visRows } = await pool.query(
-          `SELECT id, kind, media, captured_path, capture_index, captured_viewport, before_fell_back
-             FROM session_visuals WHERE session_id = $1`,
-          [sessionId]
+        // Lazy require avoids the top-level visuals → pr-metadata cycle.
+        // getForSession owns both grouping and the exact-head provenance
+        // gate, so lazy PR creation cannot resurrect screenshots from the
+        // proposal's previous commit.
+        ctx.visuals = await require('./visuals').getForSession(
+          pool, sessionId, visualHeadForSession(liveRows[0])
         );
-        if (visRows.length) {
-          const byIndex = new Map();
-          for (const v of visRows) {
-            const idx = parseInt(v.capture_index, 10) || 0;
-            let g = byIndex.get(idx);
-            if (!g) { g = { index: idx, path: null, viewport: null }; byIndex.set(idx, g); }
-            if (!g[v.kind]) g[v.kind] = {};
-            g[v.kind][v.media] = v.id;
-            if (v.captured_path && !g.path) g.path = v.captured_path;
-            if (v.captured_viewport && !g.viewport) g.viewport = v.captured_viewport;
-            if (v.kind === 'before' && v.before_fell_back) g.beforeFellBack = true;
-          }
-          const captures = Array.from(byIndex.keys())
-            .sort((a, b) => a - b)
-            .map((idx) => {
-              const g = byIndex.get(idx);
-              return {
-                index: g.index, path: g.path || '/', viewport: g.viewport || null,
-                before: g.before || null, after: g.after || null,
-                ...(g.beforeFellBack ? { beforeFellBack: true } : {}),
-              };
-            });
-          ctx.visuals = { captures };
-        }
       } catch (err) {
         log.warn('pr-metadata', 'Failed to gather session visuals', { err: err.message, sessionId });
       }

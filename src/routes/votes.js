@@ -24,6 +24,7 @@ const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
 const {
   reviewedHeadForSession,
+  visualHeadForSession,
   currentVotePredicateSql,
   sameSha,
 } = require('../services/pr-vote-revision');
@@ -3338,6 +3339,9 @@ function voteRoutes(config) {
                        'id', sv.id,
                        'path', sv.captured_path,
                        'viewport', sv.captured_viewport,
+                       'commit', sv.commit_hash,
+                       'scenarioId', sv.scenario_id,
+                       'scenarioFingerprint', sv.scenario_fingerprint,
                        'fellBack', sv.before_fell_back))
               FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
@@ -3351,7 +3355,9 @@ function voteRoutes(config) {
       const visualsService = require('../services/visuals');
       const stagingService = require('../services/staging');
       for (const row of rows) {
-        row.visuals = visualsService.shapeAgg(row.visuals_agg);
+        row.visuals = visualsService.shapeAgg(
+          row.visuals_agg, visualHeadForSession(row)
+        );
         delete row.visuals_agg;
         // #866: three-state Preview affordance. An imported PR is promoted
         // before its preview finishes building, so `staging_url IS NULL`

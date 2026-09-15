@@ -64,7 +64,8 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
-            cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.external_agent,
+            cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.handoff_head_sha,
+            cs.external_agent,
             cs.merge_conflict_state, cs.behind_main, cs.conflict_files,
             cs.conflict_checked_at, cs.console_check_state, cs.console_errors,
             cs.console_checked_at, cs.check_state, cs.test_results,
@@ -83,6 +84,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
                         'id', sv.id,
                         'path', sv.captured_path,
                         'viewport', sv.captured_viewport,
+                        'commit', sv.commit_hash,
+                        'scenarioId', sv.scenario_id,
+                        'scenarioFingerprint', sv.scenario_fingerprint,
                         'fellBack', sv.before_fell_back))
                FROM session_visuals sv WHERE sv.session_id = cs.id) AS visuals_agg
        FROM chat_sessions cs
@@ -117,7 +121,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
     const attrs = attrsById.get(row.id) || topicAttrs.emptySummary();
     const detail = {
       ...row,
-      visuals: visuals.shapeAgg(row.visuals_agg),
+      visuals: visuals.shapeAgg(row.visuals_agg, visualHeadForSession(row)),
       ...staging.previewDisplayState(row),
       priority: attrs.priority,
       assignee: attrs.assignee,
@@ -183,6 +187,7 @@ const issueAnnounce = require('../services/issue-announce');
 const issueDraft = require('../services/issue-draft');
 const {
   reviewedHeadForSession,
+  visualHeadForSession,
   currentVotePredicateSql,
 } = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
@@ -3100,7 +3105,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           .publicSessionStatus(session).state;
       }
       try {
-        session.visuals = await visuals.getForSession(pool, session.id);
+        session.visuals = await visuals.getForSession(
+          pool, session.id, visualHeadForSession(session)
+        );
       } catch { session.visuals = null; }
 
       // #940: the session's saved drafts ride along so opening a session
@@ -12929,15 +12936,13 @@ path: /another/changed/view
     this change" button) at the route where the change is visible. Each
     must be a RELATIVE path within the app (starts with "/", no scheme or
     host).
-  - REQUIRED for user-visible changes: you MUST include at least one
-    "path:" line pointing at the SPECIFIC screen where the change is
-    actually VISIBLE — a deep route (with whatever query/hash params it
-    takes), not a reflexive "path: /". Omitting it makes the screenshots
-    default to the home page and show a screen your change never touched;
-    the platform records that default as a capture defect on the
-    proposal, so treat a missing "path:" as a bug in your reply, not a
-    shortcut. Omit "path:" only when the change genuinely renders on "/"
-    as the page loads.
+  - For user-visible changes, include at least one "path:" line pointing
+    at the SPECIFIC screen where the change is VISIBLE, unless the same
+    commit adds a named visual scenario to its dapp.json check. Explicit
+    paths are the most precise choice and also drive "Test this change".
+    Without either one, Homeroom falls back to the home page and records that
+    default so a wrong screenshot can be reported. Use "path: /" only when
+    the change genuinely renders there as the page loads.
   - The screenshots and the button can only NAVIGATE — they never click,
     play, or fill anything in. If no URL reaches the changed screen
     (in-game state, a modal/sheet, a wizard step), ADD one: a

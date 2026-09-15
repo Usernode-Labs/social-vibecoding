@@ -348,16 +348,16 @@
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "3311c7cc823a3daaef67",
+      "fingerprint": "6f9879190eeee3449e50",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.app_id, a.slug AS a"
+      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
     },
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "6f9879190eeee3449e50",
+      "fingerprint": "833e3444d61ff7d2ffa2",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
+      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.source, cs.imported"
     },
     {
       "source": "src/routes/home-panels.js",
@@ -712,16 +712,16 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "61a5b0d7edd56fa67c61",
+      "fingerprint": "543a15b0ec2c046015be",
       "count": 1,
-      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "6b86091f5fe42466cbc1",
+      "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
+      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
     },
     {
       "source": "src/routes/votes.js",
