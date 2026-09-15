@@ -60,7 +60,7 @@
 // Every class below is a complete literal: Tailwind's extractor is a regex
 // over source text, so a computed class name never compiles.
 
-import type { HTMLAttributes, ReactNode } from 'react';
+import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
 import { CheckIcon } from '@/components/ui/icons';
@@ -216,13 +216,36 @@ const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-2xl bord
 // rail, not to the illustration beside it. With a meta line the group is 88px
 // against the 80px tile, without one 68px, at every width — nothing in it
 // wraps.
-export function ChallengeCard({ view, className, ...rest }: {
+//
+// A card that opens something IS a button (#1918): role="button", in the tab
+// order, and Enter/Space open it like a click. The role is also what gives a
+// tap its feedback — the native kit scales and dims every [role="button"] on
+// press, the same press the Dev board's rows and the session rows give — so
+// the card no longer sits unchanged under a finger until the page swaps. On
+// touch that press waits a beat (app.css), so a scroll that starts on a card
+// does not flash it. A card with no onClick stays a plain, inert div.
+export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: {
   view: ChallengeCardView;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
   const reward = view.earned || view.reward;
+  const pressable = onClick
+    ? {
+      role: 'button',
+      tabIndex: 0,
+      onClick,
+      onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented || e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.currentTarget.click();
+        }
+      },
+    }
+    : { onKeyDown };
   return (
-    <div className={className ? `${className} ${CARD}` : CARD} {...rest}>
+    <div className={className ? `${className} ${CARD}` : CARD} {...pressable} {...rest}>
       <ChallengeTile icon={view.icon} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="min-w-0">

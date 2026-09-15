@@ -13505,6 +13505,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
+/* #1918: the challenge cards (the Challenges tab's grid and Home's
+   Challenges block) are role="button" now, so the kit's scale + dim press
+   reaches them. They sit in scrolled lists too, so on touch they take the
+   same 120ms hold-back as the Dev board above. */
+@media (hover: none) {
+  .tc-se-card[role="button"]:active,
+  .home-challenge-card[role="button"]:active {
+    transition: transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
+.tc-se-card[role="button"]:focus-visible,
+.home-challenge-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
