@@ -276,6 +276,28 @@ test('late full refresh cannot replace another app’s data', async () => {
   assert.deepEqual(plain(av._merged.map(r => r.id)), [500]);
 });
 
+test('a delayed category response from a previous visit cannot overwrite the new app vocabulary', async () => {
+  const { av, state, load } = fixture();
+  const started = deferred(), finish = deferred();
+  state.beforeResponse = async url => {
+    if (url.pathname === '/api/apps/demo/topic-categories') {
+      started.resolve(); await finish.promise;
+      return { ok: true, json: async () => ({ categories: [{ value: 'old' }] }) };
+    }
+    if (url.pathname === '/api/apps/other/topic-categories') {
+      return { ok: true, json: async () => ({ categories: [{ value: 'new' }] }) };
+    }
+  };
+  const old = av._loadDevData();
+  await started.promise;
+  av._resetMergedPagination();
+  av.appData = { slug: 'other' };
+  await load();
+  finish.resolve();
+  assert.equal(await old, null);
+  assert.deepEqual(plain(av._appCategories), [{ value: 'new' }]);
+});
+
 test('a nonadvancing page stays retryable instead of discarding the loaded history', async () => {
   const { av, state, load } = fixture();
   await load();
