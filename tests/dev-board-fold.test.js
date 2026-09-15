@@ -625,7 +625,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Workshop's own pair above already reads the same two regions, so a
   // second copy of that claim would spend a slot to assert something
   // already asserted. Room remains against MAX_DECLARED_TESTS (710).
-  assert.equal(DAPP.tests.length, 659);
+  //
+  // 659 → 661: on the other side of THIS merge, origin/main carried the
+  // shared 655 forward through two more additions this branch did not have:
+  // #2241's two checks on the unsent-change screen (/dev/sessions/new, no
+  // session behind it — one on the empty state's sentence, one on the live
+  // composer beside a header with no venue dropdown and no ⋯ menu, because
+  // there is nothing yet for either to act on), and a second #2236
+  // via-agent check, on the topic's own discussion rather than the demo
+  // issue's, for a note a coding agent posted through the connector. Read on
+  // their own those two additions are +3 against the shared 655 main
+  // reached above (658, then 660 once #2086 is folded back in) — which
+  // would put this merge at 662. The manifest this merge actually produced
+  // holds 661, one short, for the same reason the 610 → 609 entry above
+  // recorded its number rather than re-derived it: the two histories' path
+  // back to their shared base does not reconcile cleanly through this
+  // comment trail. The literal is the ground truth here, not the
+  // arithmetic.
+  assert.equal(DAPP.tests.length, 661);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

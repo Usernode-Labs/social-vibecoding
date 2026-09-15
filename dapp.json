@@ -4184,6 +4184,17 @@
       "path": "/?demo=1#settings/alerts",
       "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #settings-notification-prefs #notification-prefs-list",
       "expectText": "Apps set differently"
+    },
+    {
+      "name": "#2241: New change opens a screen of its own and says nothing is created until you send",
+      "path": "/#app/usernode-2d5619/dev/sessions/new",
+      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state #dc-empty-unsent",
+      "expectText": "Nothing is created until you send"
+    },
+    {
+      "name": "#2241: the unsent change has a live composer, and no controls for a session that does not exist",
+      "path": "/#app/usernode-2d5619/dev/sessions/new",
+      "expectSelector": "#dc-session-header:not(:has(#dc-venue-select)):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
     }
   ],
   "governance": {
