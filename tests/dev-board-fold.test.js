@@ -547,11 +547,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
   // one for the rows and one for the copy that must NOT promise a revoke
   // lands while the app is still open.
-  // 646 → 649: #1374's three. Two photograph the per-app Notifications
-  // dialog through `?shot=app-notifications` — it is otherwise two taps
-  // inside a tile menu, which no route can reach — and one reads the
-  // Settings roll-up. Counted directly off the merged manifest, as above.
-  assert.equal(DAPP.tests.length, 649);
+  // 646 → 648: #1911 adds two checks on the create-app dialog's steps, the
+  // start step's two choices on /#create and the access step through
+  // `?shot=create-access`; the #1910 name-card check moved to
+  // `?shot=create-details`, where that field is on screen.
+  // 646 → 647: independently on main, #838 adds one check on Spend limits,
+  // pinning the three per-tier weekly cap fields (unverified, GitHub and X,
+  // zkPassport).
+  // 648 → 649, 647 → 649: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 646 → 648
+  // alone, with the #1911 checks above; main independently took the SAME
+  // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
+  // 646 is 649.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
+  assert.equal(DAPP.tests.length, 652);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
