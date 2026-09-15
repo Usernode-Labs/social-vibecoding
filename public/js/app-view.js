@@ -2194,6 +2194,37 @@ const AppView = {
     App._setScreenVisible('app-view', true);
   },
 
+  // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light`. A running app whose
+  // page is that tone, so the header strip above it can be captured taking
+  // the tone rather than the shell's theme. Synthesised the same way as
+  // showSettledLaunchShot: a fully restricted pending frame with no document
+  // behind it, so no same-origin document ever enters #app-iframe. The page
+  // colour is what the app's bridge would have reported for a document of
+  // that tone — the platform's own two grounds — set through the same
+  // `setBackground` the bridge message handler uses, so everything from the
+  // store onward is the production path (features/app-frame/app-tone.js).
+  showAppToneShot(tone) {
+    const dark = tone === 'dark';
+    const slug = dark ? 'staging-demo-dark-app' : 'staging-demo-light-app';
+    AppView.appData = {
+      slug,
+      name: dark ? 'Staging demo dark app' : 'Staging demo light app',
+      icon_emoji: dark ? '🌙' : '☀️',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    const frame = AppView._appFrame();
+    frame.mount({ slug, faded: false });
+    frame.setBackground?.(dark ? '#0b0d1b' : '#f4f2e4');
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+  },
+
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
   // (#487 follow-up): the two outcomes of the offline App tab — an app whose
   // own service worker can serve its document gets its frame mounted, one
@@ -6259,6 +6290,38 @@ const AppView = {
     return theme ? theme.name : 'Category';
   },
 
+  // #1933: the auto-drafted category a card is in, as a chip for its meta
+  // line. The themes are the Workshop's grouping (the "By category" pane
+  // draws a heading per theme), but the Board's columns and the stage pane
+  // sort by state, and on those a card said nothing about which category
+  // the model had placed it in: the reader had to switch panes to find out.
+  // The chip is the same name the heading carries, looked up by the key the
+  // server placed the card under (_workshopItemKey), and it is a plain meta
+  // chip rather than an `attr` chip on purpose: the priority / assignee /
+  // category tags are VOTED values with a popover behind them, and a name
+  // the model wrote is neither. Nothing is drawn until the themes arrive
+  // (null), for a card they do not name (null), or for a card the placer
+  // declined, which is simply not in any list. Tinted through the same
+  // deterministic hash the custom category chips use, so one category is one
+  // colour across every card, and every class in the pair is a literal in
+  // CATEGORY_CUSTOM_TINTS.
+  _workshopThemeChipSpec(kind, item) {
+    const t = AppView._workshopThemeData();
+    if (!t) return null;
+    const key = AppView._workshopItemKey(kind, item);
+    if (!key) return null;
+    const theme = (t.themes || []).find((x) => Array.isArray(x.items) && x.items.indexOf(key) !== -1);
+    if (!theme || !theme.name) return null;
+    const name = String(theme.name);
+    return {
+      t: 'chip', key: 'theme', meta: true,
+      cls: `dev-badge ${AppView._categoryTint(theme.id).cls}`,
+      label: name,
+      title: `Category: ${name}. Placed automatically, so it can move on the next re-draft.`,
+      data: { 'data-theme-chip': String(theme.id) },
+    };
+  },
+
   // While a regeneration is pending server-side, the re-fetch schedule in
   // ms: a model drafting a full board takes tens of seconds, and the first
   // version of this gave up after four polls six seconds apart — which left
@@ -6463,7 +6526,11 @@ const AppView = {
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
     AppView._workshopThemes = next;
-    if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
+    // Every surface, not only the Workshop pane: the Board's cards carry the
+    // category chip (#1933, _workshopThemeChipSpec), so the columns have to
+    // repaint when the themes land too. _repaintBoardSurface is mode-aware
+    // and the kanban repaint no-ops with no board mounted.
+    AppView._repaintBoardSurface();
     if (next.pending && n < AppView.WORKSHOP_POLL_MS.length) {
       AppView._workshopPollTimer = setTimeout(() => {
         AppView._workshopPollTimer = null;
@@ -6649,10 +6716,19 @@ const AppView = {
       return ts(it.shared_at || it.created_at);
     };
     const entries = [];
+    // #1933: under the "By category" pane every row sits beneath the heading
+    // that names its category, so the card's own category chip would repeat
+    // the heading on every line. It is dropped from the rows this pane draws
+    // and kept everywhere else: the stage pane's columns, the Board, and the
+    // vote and own-work strips, which are not grouped by category.
+    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
     const add = (kind, item, lane, build) => {
       if (!match(kind, item)) return;
-      const card = build();
+      let card = build();
       if (!card) return;
+      if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'theme')) {
+        card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'theme')) };
+      }
       const row = { t: 'card', key: card.key, card };
       const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
       if (th) row.thread = th;
@@ -8742,6 +8818,7 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: true })
           : []),
+        AppView._workshopThemeChipSpec('my-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         AppView._sessionVenueChipSpec(s),
@@ -8804,6 +8881,7 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: !noNav })
           : []),
+        AppView._workshopThemeChipSpec('shared-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         ...AppView.issueChipSpecs(s.linked_issues),
@@ -9586,7 +9664,8 @@ const AppView = {
     const badges = [
       ...AppView.statusTagSpecs(pr, {}),
       ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
-    ];
+      AppView._workshopThemeChipSpec('proposal', pr),
+    ].filter(Boolean);
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
@@ -12033,7 +12112,10 @@ const AppView = {
       meta,
       pill,
       linked: [],
-      badges: [AppView._govApplyBadgeSpec(applyState)].filter(Boolean),
+      badges: [
+        AppView._govApplyBadgeSpec(applyState),
+        AppView._workshopThemeChipSpec('gov', issue),
+      ].filter(Boolean),
       chatCount: parseInt(issue.chat_count) || 0,
       actions,
       actionPreview: null,
@@ -13299,6 +13381,7 @@ const AppView = {
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
+      AppView._workshopThemeChipSpec('issue', issue),
     ].filter(Boolean);
 
     // ── Actions: the state-driven primary + the claim toggle ──
@@ -13863,7 +13946,10 @@ const AppView = {
       meta,
       pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
       linked: AppView.closesPillSpecs(pr),
-      badges: AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
+      badges: [
+        ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
+        AppView._workshopThemeChipSpec('merged', pr),
+      ].filter(Boolean),
       chatCount: parseInt(pr.chat_count) || 0,
       actions: hasKudos ? [{ key: 'kudos', label: '', kudos: pr.id }] : [],
       actionPreview: null,

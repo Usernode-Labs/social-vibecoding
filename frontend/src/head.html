@@ -88,9 +88,18 @@
       // way to press the drawer's theme segment, so without this every
       // screenshot of a dark-mode change shows the light shell. Read here
       // rather than in apply() so the drawer's segments agree with the page.
+      // `?theme=dark` / `?theme=light` pins the same way, for a route whose
+      // `shot` names another state (#1945's `?shot=app-tone-light&theme=dark`
+      // is a light app under the DARK shell: the state is the pair).
       let shot = null;
-      try { shot = new URLSearchParams(window.location.search).get('shot'); } catch {}
-      const PINNED = (shot === 'dark' || shot === 'light') ? shot : null;
+      let themeParam = null;
+      try {
+        const params = new URLSearchParams(window.location.search);
+        shot = params.get('shot');
+        themeParam = params.get('theme');
+      } catch {}
+      const PINNED = (shot === 'dark' || shot === 'light') ? shot
+        : (themeParam === 'dark' || themeParam === 'light') ? themeParam : null;
 
       function get() {
         if (PINNED) return PINNED;
