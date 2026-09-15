@@ -559,7 +559,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  assert.equal(DAPP.tests.length, 649);
+  // 649 → 650: #2240 adds one check on the since-list's Clear in the state
+  // it was dead in — a reader with nothing new who walked `Show older` down
+  // past the baseline — reached through `?shot=since-seen`, which seeds the
+  // line at now and then presses the walk across it.
+  assert.equal(DAPP.tests.length, 650);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
