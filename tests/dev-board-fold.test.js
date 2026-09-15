@@ -499,9 +499,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the #2161 check above; main independently took the SAME 621 to 625 with
   // the four entries listed above it. One +1 and one +4 against a shared 621
   // is 626.
-  // 626 → 627: #1933 adds one board check that an issue card names the
+  // 626 → 627: challenge illustrations, one check that a Home challenge card
+  // whose template names an artwork draws it (the demo rows carry slugs).
+  // 627 → 628: #1933 adds one board check that an issue card names the
   // auto-drafted category the demo themes placed it in.
-  assert.equal(DAPP.tests.length, 627);
+  assert.equal(DAPP.tests.length, 628);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
