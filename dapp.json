@@ -590,15 +590,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "The Improve panel shows a change's title, not its dev name (#971, Streamlined Concept)",
+      "name": "The Improve panel shows a change's title, and an idle row wears no status dot (#971, #1946)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel #improve-sessions a[href$=\"/sessions/990101\"]",
+      "expectSelector": "#improve-panel #improve-sessions a[href$=\"/sessions/990101\"]:not(:has(.h-3.w-3.rounded-full))",
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "The Improve panel: a busy change row spins the standard arc from live state (#1038, #1597)",
+      "name": "The Improve panel: a busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
+      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -987,6 +987,11 @@
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
       "expectText": "Opening…"
+    },
+    {
+      "name": "A newly started app replaces its spinner when terminal status beats its detail response (#2154)",
+      "path": "/?shot=app-launching&settle=1",
+      "expectSelector": "#app-iframe[sandbox=\"\"]:not([src])"
     },
     {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
@@ -1977,6 +1982,11 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
+      "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
+      "path": "/?demo=1&cards=open&q=viewport#app/usernode-2d5619/board",
+      "expectSelector": "#dev-body [data-issue-row=\"900003\"]"
+    },
+    {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
@@ -2104,15 +2114,16 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The model picker opens a sheet, like the venue control above it",
+      "name": "The in-composer selector names the Anthropic key for a direct model (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "button#dc-model-select[aria-haspopup=\"menu\"] .dc-model-name",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"] optgroup[label=\"Anthropic key\"] option[value=\"anthropic:claude-opus-5\"]:checked",
+      "expectText": "Anthropic key · Opus 5"
     },
     {
-      "name": "…so no native dropdown is left in the composer (#1589 still holds)",
+      "name": "The first group can open the full OpenRouter catalog (#2117)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-composer-controls:not(:has(select))"
+      "expectSelector": "select#dc-model-select > optgroup:first-child[label=\"OpenRouter key\"] option[value=\"openrouter:__add_more__\"]",
+      "expectText": "Add more OpenRouter models…"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
@@ -2443,6 +2454,11 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
     },
     {
+      "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
+      "path": "/?demo=1#messages/910002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
+    },
+    {
       "name": "The notifications strip reads Unread, Messages, All — and opens on Unread",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all"
@@ -2495,6 +2511,12 @@
       "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
       "path": "/?demo=1#messages/910001",
       "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
+    },
+    {
+      "name": "The app menu lists Challenges under Discover (#1823)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-discover + #switcher-row-challenges[href=\"#leaderboard/challenges\"]",
+      "expectText": "Challenges"
     },
     {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
@@ -3303,6 +3325,18 @@
       "expectText": "Turn on Developer mode."
     },
     {
+      "name": "Connector setup covers the Codex CLI with a copyable config.toml entry (#1892)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-codex pre#connector-codex-config",
+      "expectText": "[mcp_servers.homeroom]"
+    },
+    {
+      "name": "Connector setup has a generic walkthrough for any other MCP client (#1892)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-generic ol",
+      "expectText": "Any other MCP client or agent"
+    },
+    {
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
@@ -3408,10 +3442,10 @@
       "expectText": "Homeroom · Claude"
     },
     {
-      "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
+      "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail #dc-openrouter-model-change",
-      "expectText": "openai/gpt-5.3-codex"
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
+      "expectText": "OpenRouter key"
     },
     {
       "name": "An OpenRouter session's composer says what is left on its key (#2118)",

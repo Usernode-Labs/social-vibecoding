@@ -637,6 +637,48 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
   TOKEN_REQUEST_TIMEOUT_MS: 15000,
 
+  // A newly-created app can finish while its first /api/apps/:slug detail
+  // request is still in flight. `app_status` is newer than that request's
+  // snapshot, but App.handleAppStatusUpdate cannot apply it until appData
+  // exists; dropping it leaves the stale `creating` snapshot on screen until
+  // a full-page refresh. Keep just the latest terminal event per slug across
+  // that narrow gap. A later `creating` phase means a retry started, so it
+  // invalidates any terminal event from the previous attempt.
+  _pendingAppStatus: Object.create(null),
+
+  _rememberPendingAppStatus(data) {
+    if (!data || !data.slug) return;
+    if (data.status === 'creating') {
+      delete AppView._pendingAppStatus[data.slug];
+      return;
+    }
+    if (!['running', 'error', 'awaiting_secrets'].includes(data.status)) return;
+    AppView._pendingAppStatus[data.slug] = {
+      status: data.status,
+      url: data.url || null,
+      errorReason: data.errorReason || null,
+      missingSecrets: Array.isArray(data.missingSecrets) ? [...data.missingSecrets] : null,
+    };
+  },
+
+  _applyPendingAppStatus(appData) {
+    const slug = appData && appData.slug;
+    if (!slug) return appData;
+    const pending = AppView._pendingAppStatus[slug];
+    delete AppView._pendingAppStatus[slug];
+    if (!pending) return appData;
+
+    const reconciled = { ...appData, status: pending.status };
+    if (pending.status === 'running' && pending.url) reconciled.url = pending.url;
+    if (pending.status === 'error' && pending.errorReason) {
+      reconciled.errorReason = pending.errorReason;
+    }
+    if (pending.status === 'awaiting_secrets' && pending.missingSecrets) {
+      reconciled.missingSecrets = pending.missingSecrets;
+    }
+    return reconciled;
+  },
+
   /**
    * Load an app's record and stand its view up.
    *
@@ -667,7 +709,11 @@ const AppView = {
       AppView._teardownLaunch();
       return;
     }
-    const { app: appData } = await res.json();
+    const { app: fetchedAppData } = await res.json();
+    // A terminal WS event may have landed after this request began but before
+    // its older snapshot came back. It is the later fact, so reconcile it
+    // before any consumer can paint the stale spinning-up state.
+    const appData = AppView._applyPendingAppStatus(fetchedAppData);
     // #1010: local "being applied" state is per-app and per-page-visit —
     // proposal ids are global, but a stale entry carried into another app
     // would spin a card whose apply this client never started. Cleared on
@@ -1363,11 +1409,12 @@ const AppView = {
       url = new URL(AppView.pendingInnerPath || '/', appUrl);
       if (url.origin !== new URL(appUrl).origin) url = new URL(appUrl);
     } catch {
-      try { url = new URL(appUrl); } catch { return appUrl; }
+      try { url = new URL(appUrl); } catch { return null; }
     }
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
     if (token) url.searchParams.set('token', token);
-    return url.toString();
+    const src = url.toString();
+    return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
 
   startTokenRefresh() {
@@ -1549,21 +1596,43 @@ const AppView = {
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
     if (rec.status !== 'running' || !rec.url) return false;
+    if (!AppView._isSafeAppIframeSrc(resolveDevHost(rec.url))) return false;
     return true;
   },
 
-  // The one place the sandboxed-iframe attribute contract is written.
-  // NOTE: when `src` is null the attribute is OMITTED entirely — `src=""`
-  // resolves against the parent document, which would load the platform
-  // shell inside its own app frame.
-  _appIframeHtml({ src = null, hidden = false } = {}) {
-    const srcAttr = src ? `\n        src="${src}"` : '';
+  // A production app receives this sandbox only after its URL passes the
+  // cross-origin policy below. Until then the blank frame renders sandbox="":
+  // no permission is granted to the same-origin initial document, so browsers
+  // have no escapable allow-scripts + allow-same-origin pair to warn about.
+  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+
+  // Absolute HTTP(S), and never the platform's own origin. App URLs are built
+  // server-side, but this is the last boundary before untrusted app code enters
+  // the shell; a proxy or deployment regression must fail closed here.
+  _isSafeAppIframeSrc(src, platformOrigin = location.origin) {
+    if (!src || !platformOrigin) return false;
+    try {
+      const target = new URL(src);
+      const platform = new URL(platformOrigin);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+      if (platform.protocol !== 'http:' && platform.protocol !== 'https:') return false;
+      return target.origin !== platform.origin;
+    } catch {
+      return false;
+    }
+  },
+
+  // The DOM-only fallback mounts the same fully restricted pending frame as
+  // React. setSrc applies _appIframeSandbox immediately before a safe
+  // navigation. There is deliberately no src option here: src="" would load
+  // the platform shell inside its own app frame.
+  _appIframeHtml({ hidden = false } = {}) {
     const styleAttr = hidden ? '\n        style="opacity:0"' : '';
     return `
       <iframe
-        id="app-iframe"${srcAttr}${styleAttr}
+        id="app-iframe"${styleAttr}
         class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        sandbox=""
         allow="clipboard-write; pointer-lock; geolocation"
       ></iframe>`;
   },
@@ -1658,7 +1727,8 @@ const AppView = {
     },
     setSrc(src) {
       const el = AppView._appFrameDom._el('app-iframe');
-      if (!el || !src) return false;
+      if (!el || !AppView._isSafeAppIframeSrc(src)) return false;
+      el.setAttribute('sandbox', AppView._appIframeSandbox);
       el.src = src;
       return true;
     },
@@ -1924,6 +1994,12 @@ const AppView = {
     const coverId = 'app-viewer-cover';
     document.getElementById(coverId)?.remove();
     iframe.style.opacity = '0';
+    // #1909: this is the one point where an app's document starts loading in
+    // the landing viewer, so it is where the shell records WHICH app that
+    // frame is showing. The bridge relays need it because `AppView.appData`
+    // belongs to the App tab and is null on this screen — see
+    // `appSlugForFrame`, which is what reads this back.
+    AppView._viewerApp = { frame: iframe, slug: (record && record.slug) || '' };
     // insertAdjacentHTML, not innerHTML: the frame is a long-lived element
     // in the document — replacing the host's children would destroy it.
     host.insertAdjacentHTML('beforeend', AppView._launchCoverHtml(record, { id: coverId }));
@@ -1984,6 +2060,40 @@ const AppView = {
     // away on its next render anyway, so it was a write with no reader.
   },
 
+  // #2154: the resolved half of `?shot=app-launching&settle=1`. Reproduce
+  // the first-open ordering without a real deployment: the terminal status
+  // lands while appData is absent, then an older `creating` detail snapshot
+  // returns. The same reconciliation used by open() must turn that pair into
+  // a running app before renderAppTab paints anything.
+  showSettledLaunchShot() {
+    const slug = 'staging-demo-status-race';
+    AppView.appData = null;
+    AppView._rememberPendingAppStatus({
+      slug,
+      status: 'running',
+      url: location.origin,
+    });
+    AppView.appData = AppView._applyPendingAppStatus({
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '🚀',
+      status: 'creating',
+      url: null,
+      self_hosted: false,
+    });
+    // The assertion is about replacing the placeholder with a frame, not
+    // about depending on a live user app. Mount the fully restricted pending
+    // frame directly so this synthetic state preserves the production rule:
+    // no same-origin document ever enters #app-iframe.
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    AppView._appFrame().mount({ slug, faded: false });
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+  },
+
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
   // (#487 follow-up): the two outcomes of the offline App tab — an app whose
   // own service worker can serve its document gets its frame mounted, one
@@ -2012,11 +2122,20 @@ const AppView = {
       url: location.origin,
       self_hosted: false,
     };
-    // buildAppIframeSrc resolves the inner path against the app origin, so
-    // this is what keeps the frame off the shell's own SPA root — which would
-    // otherwise load the whole platform inside itself.
+    // The old fixture navigated the production frame to same-origin /health.
+    // A ready shot now mounts the fully restricted pending frame directly:
+    // the visual contract is "a frame exists", and no synthetic document has
+    // to weaken the real app-origin invariant to demonstrate it.
     AppView.pendingInnerPath = '/health';
-    AppView.renderAppTab();
+    if (ready) {
+      AppView._teardownDevRoots();
+      AppView._teardownLaunch();
+      AppView._issueStateSource = null;
+      AppView._appFrame().mount({ slug, faded: false });
+      AppView._setSurface('app');
+    } else {
+      AppView.renderAppTab();
+    }
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
     // The back slot is setBackIcon's alone now (see App.setBackIcon and
@@ -2171,6 +2290,22 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
     const frame = AppView._appFrame();
+
+    // A production app must never share the shell's origin. Refuse before a
+    // frame is mounted, and make a bad deployment actionable instead of
+    // leaving a blank frame under the launch cover.
+    if (!iframeSrc) {
+      AppView._teardownLaunch();
+      AppView._unmountAppFrame();
+      AppView._paintAppStatus(content, {
+        dot: 'error',
+        message: 'This app cannot open safely.',
+        detail: 'Its address is not isolated from Homeroom.',
+        action: null,
+      });
+      AppView._setSurface('platform');
+      return;
+    }
 
     // Offline (or a mint that failed) leaves the src token-less — see
     // _armTokenlessReconnect. Armed BEFORE the keeps() early return below,
@@ -4473,6 +4608,11 @@ const AppView = {
         AppView.openImportPrModal();
       }, { signal });
     }
+    const appSettingsBtn = menu.querySelector('[data-plus="app-settings"]');
+    appSettingsBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
@@ -4811,10 +4951,14 @@ const AppView = {
     // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
     // inserts a newline (default). On touch the on-screen return key
     // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. Bubble phase, so the autocomplete's
-    // capture-phase keydown still owns Enter while its dropdown is open.
+    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
+    // included: the chord every other composer on the platform answers to,
+    // and the one way to send from a hardware keyboard on a touch screen.
+    // Bubble phase, so the autocomplete's capture-phase keydown still owns
+    // Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+      if (e.key !== 'Enter') return;
+      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
         e.preventDefault();
         submitGeneral();
       }
@@ -6190,7 +6334,7 @@ const AppView = {
       mySessions: AppView._mySessions || [],
       sharedSessions: AppView._sharedSessions || [],
     });
-    const f = AppView._kanbanFilters || {};
+    const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
     const match = (kind, item) => !filtering || AppView._devCardMatches(matchKind(kind), item, f);
@@ -7204,6 +7348,38 @@ const AppView = {
     return it.username || '';
   },
 
+  // #2089: the longer text a card carries beyond its title — what the
+  // search reads in addition to title, author and number. Issues and
+  // governance rows carry `body`; promoted and merged proposals carry the
+  // summary and the pull-request body the /promoted and /merged payloads
+  // already ship. Sessions contribute nothing: their spec never travels
+  // with the list (has_spec is a boolean by design, #894).
+  _devCardSearchText(kind, item) {
+    const it = item || {};
+    let parts;
+    if (kind === 'issue' || kind === 'gov') parts = [it.body];
+    else if (kind === 'session') parts = [];
+    else parts = [it.pr_summary_md, it.pr_body]; // proposal | merged
+    return parts.filter((p) => typeof p === 'string' && p !== '').join('\n').toLowerCase();
+  },
+
+  // #2089: whether a card's discussion matched the search. `hits` is the
+  // server's answer for one exact query — { issues: [GitHub numbers],
+  // sessions: [chat_sessions ids], gov: [issues ids] } — so a card is looked
+  // up by the key its thread is filed under, mirroring the
+  // thread_type / thread_ref pairs chat.js writes.
+  _devCardInCommentHits(kind, item, hits) {
+    const it = item || {};
+    const h = hits || {};
+    const has = (list, v) => v != null && Array.isArray(list)
+      && list.some((x) => String(x) === String(v));
+    if (kind === 'issue') return has(h.issues, it.number);
+    if (kind === 'gov') return has(h.gov, it.id);
+    if (kind === 'merged' && it.row_type === 'close_issue') return has(h.gov, it.id);
+    // proposal | merged PR | session — all chat_sessions rows.
+    return has(h.sessions, it.id);
+  },
+
   _devCardMatches(kind, item, filters) {
     const f = filters || {};
     const it = item || {};
@@ -7235,17 +7411,24 @@ const AppView = {
         num = it.pr_number != null ? it.pr_number : it.id;
       }
       const author = AppView._devCardAuthor(kind, it);
+      // #2089: the search reads past the title — an issue's description, a
+      // proposal's summary and pull-request body (_devCardSearchText), and
+      // the discussion under any card, which arrives as `commentHits`: the
+      // server's answer for this exact query (see _syncKanbanCommentHits).
+      const text = AppView._devCardSearchText(kind, it);
       // A leading '#' targets the issue/PR number ("#482" and "482" both
       // match); the number check is substring-based like the text checks.
       const qNum = q.replace(/^#/, '');
       let hit = String(title).toLowerCase().includes(q)
         || String(author).toLowerCase().includes(q)
+        || (text !== '' && text.includes(q))
         || (qNum !== '' && num != null && String(num).includes(qNum));
       // A session has no number of its own worth searching, but it does
       // carry the issue numbers it's working on.
       if (!hit && kind === 'session' && qNum !== '' && Array.isArray(it.linked_issues)) {
         hit = it.linked_issues.some((v) => String(v).includes(qNum));
       }
+      if (!hit && f.commentHits) hit = AppView._devCardInCommentHits(kind, it, f.commentHits);
       if (!hit) return false;
     }
     // The Workshop's theme, matched on the same key the themes name cards by.
@@ -7449,6 +7632,79 @@ const AppView = {
     }, 150);
   },
 
+  // #2089: comments live on the server. Bodies ride the board payload, so
+  // they filter in place; a discussion does not (a thread loads when its
+  // card opens), so the search asks /board-search which threads on this app
+  // contain the query and folds the answer in as `commentHits` on the next
+  // paint. One outstanding query at a time: a stale answer is dropped, and
+  // an answer for the query still in the box repaints the surface it
+  // arrived for — only when it names a card, since an empty answer changes
+  // nothing the board already shows. Under two characters nothing is asked:
+  // a one-letter search would match every thread and buy only a round trip.
+  KANBAN_COMMENT_SEARCH_MIN: 2,
+  _kanbanCommentHits: null,
+  _kanbanCommentHitsSeq: 0,
+  _kanbanCommentHitsPending: null,
+
+  // The hits for `q`, or null when the answer is for another query, another
+  // app, or has not arrived.
+  _kanbanCommentHitsFor(q) {
+    const h = AppView._kanbanCommentHits;
+    const want = String(q || '').trim().toLowerCase();
+    return h && h.slug === App.currentApp && h.q === want ? h : null;
+  },
+
+  // The filter object the predicate sees: the stored filters plus the
+  // comment hits for the query in the box. Every surface repaint builds its
+  // filters through here, which is also what keeps the hits current.
+  _kanbanMatchFilters() {
+    AppView._syncKanbanCommentHits();
+    const f = AppView._kanbanFilters || {};
+    return { ...f, commentHits: AppView._kanbanCommentHitsFor(f.q) };
+  },
+
+  _syncKanbanCommentHits() {
+    const slug = App.currentApp;
+    const q = String((AppView._kanbanFilters || {}).q || '').trim().toLowerCase();
+    if (!slug || q.length < AppView.KANBAN_COMMENT_SEARCH_MIN) {
+      AppView._kanbanCommentHitsSeq += 1; // drops an answer still in flight
+      AppView._kanbanCommentHits = null;
+      return;
+    }
+    if (AppView._kanbanCommentHitsFor(q)) return;
+    // Asked already and still waiting: a second paint does not ask again.
+    const pending = AppView._kanbanCommentHitsPending;
+    if (pending && pending.slug === slug && pending.q === q) return;
+    const seq = ++AppView._kanbanCommentHitsSeq;
+    AppView._kanbanCommentHitsPending = { slug, q };
+    // An assist, not the search: a paint never fails because the request
+    // could not be made (the board still filters on what it holds).
+    let request;
+    try {
+      const demo = String(AppView._demoQS() || '').replace(/^\?/, '');
+      const url = `/api/apps/${encodeURIComponent(slug)}/board-search?q=${encodeURIComponent(q)}`
+        + (demo ? `&${demo}` : '');
+      request = fetch(url, { credentials: 'same-origin' });
+    } catch { AppView._kanbanCommentHitsPending = null; return; }
+    const settle = () => {
+      if (seq === AppView._kanbanCommentHitsSeq) AppView._kanbanCommentHitsPending = null;
+    };
+    Promise.resolve(request)
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((j) => {
+        settle();
+        if (seq !== AppView._kanbanCommentHitsSeq || !j) return;
+        const list = (v) => (Array.isArray(v) ? v : []);
+        const hits = { slug, q, issues: list(j.issues), sessions: list(j.sessions), gov: list(j.gov) };
+        AppView._kanbanCommentHits = hits;
+        if (App.currentApp !== slug) return;
+        if (hits.issues.length || hits.sessions.length || hits.gov.length) {
+          AppView._repaintBoardSurface();
+        }
+      })
+      .catch(settle);
+  },
+
   _kanbanFilterSeq: 0,
 
   // A chip's × — remove exactly one filter. The dialog-owned keys just null
@@ -7619,7 +7875,7 @@ const AppView = {
     // card's lifecycle placement stays identical to the unfiltered board —
     // filtering the inputs instead would let a hidden proposal change
     // which column its issue lands in.
-    const f = AppView._kanbanFilters || {};
+    const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const kIssues = filtering
       ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))
@@ -9577,9 +9833,15 @@ const AppView = {
       const total = v.failures.length + v.passes.length;
       const row = {
         key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
-        sub: v.failing
-          ? `${v.failures.length} of ${total} failing`
-          : `${total} passed`,
+        // The count, then — while the row still carries it (#2170) — how
+        // long the preview and the checks took, on the sub line the run
+        // narrated itself through while it was live ("build: cloning the
+        // database", "12 of 523 run · 11 passed"), so the cost stays where
+        // a reviewer watched it accrue.
+        sub: [
+          v.failing ? `${v.failures.length} of ${total} failing` : `${total} passed`,
+          v.timings,
+        ].filter(Boolean).join(' · '),
         text: [strip(v.heading)],
         foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
         // Kept apart as well as flattened: when this row is demoted to a
@@ -10377,8 +10639,9 @@ const AppView = {
 
   // The build half, step by step: fetch the branch, build the image, clone
   // the database, start the preview. Live while "Preview building…" (the
-  // current step is named, the finished ones carry their time) and kept
-  // through the testing half as one line saying what the build cost.
+  // current step is named, the finished ones carry their time), kept
+  // through the testing half as one line saying what the build cost, and
+  // — as its total alone — past the verdict (_checksTimingsLine, #2170).
   BUILD_STEP_COPY: {
     source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
     image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
@@ -10467,6 +10730,25 @@ const AppView = {
       sub = `build: ${doing}`;
     }
     return { steps, sentence, sub, done, current, image };
+  },
+
+  // #2170: what the run cost, kept on the row past the verdict. storeChecks
+  // reduces the live snapshot to `{ build, checksMs }` — the finished build
+  // block and the testing half's wall clock — instead of dropping it, so a
+  // reviewer can still see how long the preview and the checks took once
+  // the verdict is in. One compact line in the sub line's own idiom,
+  // "built in 20s · checked in 9m 40s"; either half alone when that is all
+  // the row has (a re-check against a live preview builds nothing), and
+  // null when it has neither — a verdict older than this change, or a row
+  // whose next run has since cleared it — so those rows read as they did.
+  _checksTimingsLine(pr) {
+    const p = pr && pr.checks_progress;
+    if (!p || typeof p !== 'object') return null;
+    const bits = [];
+    const build = AppView._buildProgressView(p.build);
+    if (build && build.done) bits.push(build.sub);
+    if (Number.isFinite(p.checksMs)) bits.push(`checked in ${AppView._fmtMs(p.checksMs)}`);
+    return bits.length ? bits.join(' · ') : null;
   },
 
   // Inside the "build image" step. On the cluster the image is a buildpack
@@ -10808,6 +11090,8 @@ const AppView = {
         ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
+      // #2170 — what the run cost, when the row still carries it.
+      timings: AppView._checksTimingsLine(pr),
       // #1442 — WHICH main the verdict is a statement about. `stale` above
       // answers the other axis (has the proposal's own head moved since);
       // this one answers "green against what?", and green against a main
@@ -13764,6 +14048,11 @@ const AppView = {
       options,
       preselect: preselect || (options[0] && options[0].id) || '',
       openRouter,
+      // A managed/company key inherits the platform account policy. Only a
+      // personal key needs a reminder that its key-visible catalog follows
+      // settings controlled in the user's own OpenRouter account.
+      personalOpenRouterKey: openRouter
+        && modalOptions.openrouterCredentialSource === 'personal',
     });
 
     return new Promise((resolve) => {
@@ -17110,6 +17399,55 @@ const AppView = {
   // Every frame this shell owns and forwards insets to.
   SAFE_AREA_FRAME_IDS: ['app-iframe', 'app-viewer-frame', 'staging-iframe'],
 
+  // ── Which owned frame is asking, and for which app (#1909) ──────────
+  //
+  // A bridge relay has to answer both before it can act, and the AI-consent
+  // family used to answer the first with a two-entry allow-list of its own —
+  // which silently dropped every request from the THIRD frame in the list
+  // above, the landing viewer. A waiting-room session browses the landing
+  // directory with a real session cookie, so an app it opens there can be
+  // granted AI access like any other; its `requestLlmAccess()` simply never
+  // reached the shell, and the bridge rejected it 15 seconds later as "no
+  // platform shell". Reading the one list means a frame cannot be forgotten
+  // again. Deliberately not applied to the storage / directory / locale
+  // relays in the same pass: each is its own decision about what an
+  // anonymous visitor's app may reach, and #1909 is about this one.
+
+  /** Which frame this shell owns posted `source`, or null for anything else. */
+  ownedFrameFor(source) {
+    if (typeof document === 'undefined' || !source) return null;
+    return AppView.SAFE_AREA_FRAME_IDS.find((id) => {
+      const frame = document.getElementById(id);
+      return frame && source === frame.contentWindow;
+    }) || null;
+  },
+
+  /**
+   * The app the landing viewer is showing, recorded by `mountViewerCover`.
+   *
+   * Keyed to the frame ELEMENT rather than cleared on close, because the
+   * landing teardown REPLACES that element (#1028): a record whose frame is
+   * no longer the one in the document belongs to an app that has already
+   * been closed, which is the same answer "cleared" would give.
+   */
+  _viewerApp: null,
+
+  /**
+   * The slug of the app running in `frameId`, or null when the shell cannot
+   * name it. `AppView.appData` is the App tab's record — it covers
+   * #app-iframe and the staging preview opened from that app's Dev screen,
+   * and is null on the landing screen, which has its own record above.
+   */
+  appSlugForFrame(frameId) {
+    if (frameId === 'app-viewer-frame') {
+      const rec = AppView._viewerApp;
+      const frame = document.getElementById(frameId);
+      if (!rec || !frame || rec.frame !== frame) return null;
+      return rec.slug || null;
+    }
+    return (AppView.appData && AppView.appData.slug) || null;
+  },
+
   // Last value posted per frame id, so an unchanged recompute posts
   // nothing (a rotation is one message per frame, not a stream).
   _safeAreaSent: {},
@@ -17241,17 +17579,13 @@ const AppView = {
     const type = data.__usernode_llm;
     if (type !== 'request-access' && type !== 'get-access' && type !== 'get-usage') return;
 
-    // Only the app iframes this shell owns may ask. The staging
-    // preview iframe is accepted too so AI-consent flows are
-    // exercisable in PR previews (the staging proxy path itself is
-    // disabled server-side — staging containers hold no proxy token).
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-    const slug = AppView.appData?.slug;
-    if (!slug) return;
+    // Only the app frames this shell owns may ask — all three of them
+    // (`ownedFrameFor`). The staging preview is in that list so AI-consent
+    // flows are exercisable in PR previews (the staging proxy path itself
+    // is disabled server-side — staging containers hold no proxy token),
+    // and the landing viewer is in it because an app runs there too (#1909).
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!frameId) return;
 
     const reply = (value, error) => {
       try {
@@ -17262,16 +17596,31 @@ const AppView = {
       } catch {}
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
-    // the user may take minutes on the dialog below.
+    // the user may take minutes on the dialog below. Before anything that
+    // can decline to answer, too: the shell has RECOGNISED this request, so
+    // every path from here owes the app a reply rather than the silence that
+    // leaves it waiting out the bridge's 15s "there is no shell" timeout.
     try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+
+    const slug = AppView.appSlugForFrame(frameId);
+    if (!slug) {
+      reply(null, 'This app could not be identified. Reopen it and try again.');
+      return;
+    }
 
     let info;
     try {
       const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      // The bootstrap is session-authenticated, and the landing viewer is the
+      // one owned frame a SIGNED-OUT visitor can reach. Say so, rather than
+      // reporting the sign-in wall as a failure the user can do nothing about.
+      if (r.status === 401) throw new Error('signed-out');
       if (!r.ok) throw new Error(`status ${r.status}`);
       info = await r.json();
     } catch (err) {
-      reply(null, 'Failed to load AI permission state.');
+      reply(null, err && err.message === 'signed-out'
+        ? 'Sign in to Homeroom to give an app access to AI.'
+        : 'Failed to load AI permission state.');
       return;
     }
 

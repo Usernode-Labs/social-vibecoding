@@ -966,12 +966,16 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
 -- Live progress of the run in flight: `{ ran, passed, failed, expected,
--- updatedAt, unit }`, written as the capture container's per-check frames
--- stream in and cleared with the verdict. `unit` is the repo unit suite's
--- own `{ phase, ran, passed, failed, skipped, expected, done }`, read off
--- its TAP output the same way. NULL outside a run. The verdict itself
--- stays in test_results; this is only what "checks running" has to say
--- between the start and the end, which used to be nothing.
+-- updatedAt, unit, build }`, written as the capture container's per-check
+-- frames stream in. `unit` is the repo unit suite's own `{ phase, ran,
+-- passed, failed, skipped, expected, done }`, read off its TAP output the
+-- same way; `build` is the staging build's steps and their times. The
+-- verdict itself stays in test_results; this is what "checks running" has
+-- to say between the start and the end, which used to be nothing. With
+-- the verdict (#2170) the snapshot is reduced to what the run cost —
+-- `{ build, checksMs }`, the finished build and the checks' wall clock —
+-- so the card can still say how long both took; the next run's start
+-- clears it. NULL before a run has reported.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
 -- The unit suite's size from its last completed run (`# tests`), so the
 -- next run's live bar has a denominator before the suite finishes.

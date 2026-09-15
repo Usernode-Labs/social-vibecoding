@@ -98,6 +98,7 @@ function makeDom() {
       onload: null,
       onerror: null,
       _src: attrs.src === undefined ? null : attrs.src,
+      _attrs: { sandbox: attrs.sandbox === undefined ? null : attrs.sandbox },
       _text: '',
       _html: '',
       htmlWrites: 0,
@@ -105,10 +106,10 @@ function makeDom() {
       set src(v) { el._src = String(v); },
       getAttribute(name) {
         if (name === 'src') return el._src;
-        return null;
+        return Object.prototype.hasOwnProperty.call(el._attrs, name) ? el._attrs[name] : null;
       },
-      setAttribute() {},
-      removeAttribute() {},
+      setAttribute(name, value) { el._attrs[name] = String(value); },
+      removeAttribute(name) { delete el._attrs[name]; },
       set textContent(v) { el._text = String(v); },
       get textContent() { return el._text; },
       set innerHTML(v) {
@@ -152,11 +153,13 @@ function makeDom() {
       }
       const classM = /\bclass="([^"]*)"/.exec(attrs);
       const srcM = /\bsrc="([^"]*)"/.exec(attrs);
+      const sandboxM = /\bsandbox="([^"]*)"/.exec(attrs);
       mkEl(idM[1], {
         tagName,
         dataset,
         class: classM ? classM[1] : '',
         src: srcM ? srcM[1] : undefined,
+        sandbox: sandboxM ? sandboxM[1] : undefined,
       });
     }
   }
@@ -584,11 +587,14 @@ test('a render whose src differs (deep link) rebuilds rather than adopting', () 
 });
 
 test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
-  const { AppView, content } = launchThenRender();
+  const { AppView, content, dom } = launchThenRender();
   AppView.renderAppTab();
   AppView.renderAppTab();
-  assert.match(content.innerHTML,
-    /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"/);
+  assert.match(content.innerHTML, /sandbox=""/,
+    'the source-less blank frame starts fully restricted');
+  assert.equal(dom.els.get('app-iframe').getAttribute('sandbox'),
+    'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+    'the app sandbox is installed immediately before its safe navigation');
   assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation"/);
 });
 

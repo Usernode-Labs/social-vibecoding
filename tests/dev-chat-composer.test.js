@@ -6,7 +6,7 @@
 //
 //   - `_setStreamingUI` wrote the send button's `disabled`, three state
 //     classes, its `aria-label`, its `title` and its `innerHTML`; the
-//     textarea's `placeholder`; and the OpenRouter row's `disabled`.
+//     textarea's `placeholder`; and the model selector's `disabled`.
 //   - `_syncSaveDraftBtn` wrote `hidden`, `disabled` and `title` on the save
 //     icon, and called `_syncShortcutHint`, which wrote the hint's innerHTML.
 //   - `_renderSavedDrafts` rebuilt `#dc-drafts` and toggled its active class.
@@ -204,33 +204,39 @@ test('the four strips inside it lost their hosts, not their stores', () => {
   assert.doesNotMatch(DEV_CHAT_SRC, /classList\.toggle\('dc-(attach-strip|quick-replies)-active'/);
 });
 
-// ── 5. The provider split, as nullable fields ──────────────────────────
+// ── 5. The grouped provider selector ───────────────────────────────────
 
-test('each venue gets its own model control, and the others get none', () => {
+test('both in-chat venues share one grouped selector, and off-platform venues get none', () => {
   const { DevChat, view } = makeDevChat();
   DevChat.MODELS = { 'claude-opus-5': { label: 'Opus 5' } };
   DevChat.selectedModel = 'claude-opus-5';
   assert.deepEqual(view().models, {
-    // `blurb` is the sheet row's second half; '' when the server sends no
-    // changeSize. `selectedLabel` is the closed control, which is a button
-    // naming the model rather than a <select> now.
-    options: [{ id: 'claude-opus-5', label: 'Opus 5', blurb: '' }],
-    selected: 'claude-opus-5',
-    selectedLabel: 'Opus 5',
+    groups: [
+      {
+        id: 'openrouter', label: 'OpenRouter key',
+        options: [{
+          value: 'openrouter:__add_more__', label: 'Add more OpenRouter models…',
+        }],
+      },
+      {
+        id: 'anthropic', label: 'Anthropic key',
+        options: [{ value: 'anthropic:claude-opus-5', label: 'Anthropic key · Opus 5' }],
+      },
+    ],
+    selected: 'anthropic:claude-opus-5',
+    changeDisabled: false,
   });
-  assert.equal(view().openRouter, null);
 
   DevChat._currentVenueId = () => 'usernode-openrouter';
-  DevChat.currentSession = { id: 7, status: 'active', agent_model: 'x/y-flash' };
-  assert.equal(view().models, null, 'no platform picker on a pinned session');
-  assert.equal(view().openRouter.model, 'x/y-flash');
-
-  DevChat.currentSession = { id: 7, status: 'active' };
-  assert.equal(view().openRouter.model, 'No model is pinned');
+  DevChat.currentSession = {
+    id: 7, status: 'active', agent_backend: 'codex_openrouter', agent_model: 'x/y-flash',
+  };
+  assert.equal(view().models.selected, 'openrouter:x/y-flash');
+  assert.equal(view().models.groups[0].options[0].label, 'OpenRouter key · x/y-flash');
+  assert.equal(view().models.groups[1].options[0].label, 'Anthropic key · Opus 5');
 
   DevChat._currentVenueId = () => 'own-tools-pr';
   assert.equal(view().models, null);
-  assert.equal(view().openRouter, null, 'a hand-off venue has no model control at all');
 });
 
 test('#800: an allowlist change reaches an open composer without losing the pick', () => {
@@ -238,8 +244,11 @@ test('#800: an allowlist change reaches an open composer without losing the pick
   DevChat.MODELS = { a: { label: 'A' }, b: { label: 'B' } };
   DevChat.selectedModel = 'b';
   DevChat._refreshModelSelect();
-  assert.deepEqual(view().models.options.map((o) => o.id), ['a', 'b']);
-  assert.equal(view().models.selected, 'b', 'the selection is a field, so it cannot be lost');
+  assert.deepEqual(view().models.groups[1].options.map((o) => o.value), [
+    'anthropic:a', 'anthropic:b',
+  ]);
+  assert.equal(view().models.selected, 'anthropic:b',
+    'the selection is a field, so it cannot be lost');
 });
 
 // ── 6. The venue sentence's latch ──────────────────────────────────────
@@ -263,7 +272,7 @@ test('the venue note survives a republish but not the next full render', () => {
 
 test('the empty slots collapse, which is what their :empty rules need', () => {
   const html = composerHtml({
-    venueNoteHtml: '', hidden: false, models: null, openRouter: null,
+    venueNoteHtml: '', hidden: false, models: null,
     drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
     saveDraft: { hidden: true, disabled: true, title: '' },
     send: { kind: 'send' }, shortcutHintHtml: '',

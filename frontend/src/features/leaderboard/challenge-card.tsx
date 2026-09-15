@@ -189,7 +189,7 @@ export function ChallengeMeta({ deadline = null, text = null, earned = false, si
 // serves both themes, on the tone's dark surface; there is no dark copy.
 //
 // Anything else is the tile as it was: a neutral face holding the challenge
-// kind's icon when the payload carries one (Home's does, from
+// kind's icon when the payload carries one (both surfaces do, from
 // `challenge_kinds.icon`) and empty otherwise. That includes artwork that
 // fails to load. The service worker leaves /illustrations/ to the network, so
 // offline the image errors, and the error puts back the tile it replaced

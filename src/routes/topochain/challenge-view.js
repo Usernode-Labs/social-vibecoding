@@ -171,6 +171,11 @@ function buildChallengeListItem(r) {
       goal: effective.goal,
       task: effective.task,
       reward: effective.reward,
+      // #1914: the kind's icon, when the caller's query joined it. Home's
+      // panel has always had one; the public challenge list did not, so the
+      // Challenges screen drew an empty tile for every card. Callers that do
+      // not select `kind_icon` (the admin index routes) simply get null.
+      icon: r.kind_icon || null,
       // The TEMPLATE's artwork slug, never overridden: a challenge row has no
       // illustration of its own, so it is not in OVERRIDE_KEYS. Null when the
       // template has none, and when the challenge has no template at all.

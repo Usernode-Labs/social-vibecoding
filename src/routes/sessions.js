@@ -1644,9 +1644,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
-                cs.test_results,
+                cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
+                lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
                 CASE WHEN a.icon_image_id IS NOT NULL
@@ -1658,6 +1659,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            FROM chat_session_messages
            WHERE session_id = cs.id
          ) m ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT role,
+                  jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0 AS asks
+           FROM chat_session_messages
+           WHERE session_id = cs.id AND role IN ('user', 'assistant')
+           ORDER BY id DESC
+           LIMIT 1
+         ) lt ON TRUE
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
@@ -1672,10 +1681,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         : null;
       let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
+        // #1959: the three columns selected for sessionAwaitsInput stop here.
+        // The verdict is one boolean; the spec body is the thing the per-app
+        // list refuses to put in a list payload (#894), and the last-turn
+        // pair is meaningless without the rule that reads it.
+        const {
+          spec_md: specMd, last_turn_role: lastTurnRole, last_turn_asks: lastTurnAsks, ...row
+        } = s;
         return {
-          ...s,
+          ...row,
           ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
           busy: isSessionBusy(s.id),
+          awaiting_input: sessionAwaitsInput({
+            lastTurnRole, lastTurnAsks, prNumber: s.pr_number, specMd,
+          }),
           // Keep the pinned snake_case fields untouched. Camel-case fields
           // describe the runtime actually producing progress right now, so a
           // Codex-pinned session delegated to local Claude has an honest busy
@@ -1715,6 +1734,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
+            // #1959: this one is WAITING ON ITS OWNER — a spec that ended
+            // with open questions — so the Improve panel's "Ready for your
+            // input" pill is reviewable in a preview, right under the busy
+            // row's "Working"; every other idle mock row reads plain
+            // "Ready". Hand-set, like `busy` on 990102: the mocks are
+            // appended after the map that computes the real verdict.
+            awaiting_input: true,
           },
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
@@ -7947,6 +7973,38 @@ function questionsBodyHasContent(body) {
   if (!cleaned) return false;
   if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
   return true;
+}
+
+// #1959: is a session WAITING ON ITS OWNER? The one verdict behind the
+// Improve panel's "Ready for your input" pill (GET /api/me/active-sessions
+// ships it as `awaiting_input`), so the panel never claims a session needs
+// input when nothing in it is asking.
+//
+// The transcript already knows. Two things in it are a question the user
+// has not answered, and the row ends up here only if the LAST conversational
+// row (user or assistant — the same rows DevChat._qaCurrentGroups walks) is
+// the assistant's: once the owner has replied it is their turn that is
+// pending, not the assistant's question.
+//
+//   1. ANSWER CHIPS. The assistant asked with suggest_answers (#32) and the
+//      chips are still on screen — `metadata.suggestions` on that last row,
+//      the same key the clone path forwards. This is what an auto session
+//      that ended in a question looks like once it is cloned.
+//   2. A SPEC WITH OPEN QUESTIONS. The scout drafted a spec whose Questions
+//      section still has content (specHasBlockingQuestions — the parser the
+//      headless path uses to refuse a build). Only while nothing has been
+//      built from it: a session with a pull request is past its spec, which
+//      is the precedence fallbackKindForTurn already gives a PR over a spec,
+//      and without it a spec built despite its questions would read as
+//      waiting for the rest of the session's life.
+//
+// A turn in flight is never waiting on anyone; the client gates on its live
+// busy state, so this only has to be right for an idle row.
+function sessionAwaitsInput({ lastTurnRole, lastTurnAsks, prNumber, specMd }) {
+  if (lastTurnRole !== 'assistant') return false;
+  if (lastTurnAsks === true) return true;
+  if (prNumber) return false;
+  return specHasBlockingQuestions(specMd);
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\nPosted by this issue\'s proposal session. '

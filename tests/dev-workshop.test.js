@@ -1518,9 +1518,10 @@ test('the open card collapses on a click at the card, not at what it opened', ()
   // list open under the card there is a lot of prose to land on, and
   // collapsing the item because somebody selected a word in it loses their
   // place — so the three regions below the card are excluded alongside the
-  // controls.
+  // controls. `details` is the merge-requirements checklist (#2128): a
+  // disclosure the reader taps open, not a place to fold from.
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
-  for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form',
+  for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form', 'details',
     '\\[data-attr-chip\\]', '\\[data-issue-chip\\]',
     '\\.dev-ws-detail', '\\.dev-feed-thread', '\\.dev-feed-comments']) {
     assert.match(view, new RegExp(sel), `the guard excludes ${sel}`);

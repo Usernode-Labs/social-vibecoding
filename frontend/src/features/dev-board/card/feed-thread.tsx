@@ -43,6 +43,7 @@ import {
   threadKey,
   type FeedThreadMessage,
 } from './feed-thread-store';
+import { FeedMentionMenu, useMentionTypeahead } from './mention-typeahead';
 
 /** Two, matching the GitHub preview's FEED_COMMENT_PREVIEW above it. */
 const PREVIEW = 2;
@@ -131,11 +132,19 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
  * It stays separate from FeedThread's loading/posting state so the two pieces
  * that make #1584 visible are executable in isolation: the controlled value
  * grows a textarea, and an always-present arrow sends it. Plain Enter is not
- * intercepted — it adds a line; submission belongs to the adjacent arrow.
+ * intercepted — it adds a line; submission belongs to the adjacent arrow and,
+ * since #2145, to ⌘/Ctrl+Enter, the chord the dev chat, Close issue and Send
+ * feedback already answer to.
+ *
+ * Typing `@` opens the people list (./mention-typeahead.tsx): the group
+ * chat's candidates and rows, as a sibling of the field inside this form.
+ * While it is open the arrows, Enter, Tab and Escape are its; otherwise every
+ * key is the textarea's.
  */
 export function FeedReplyComposer({
-  draft, posting, onDraftChange, onSubmit,
+  slug, draft, posting, onDraftChange, onSubmit,
 }: {
+  slug: string;
   draft: string;
   posting: boolean;
   onDraftChange: (value: string) => void;
@@ -143,10 +152,12 @@ export function FeedReplyComposer({
 }): ReactNode {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(inputRef, draft);
+  const mention = useMentionTypeahead({ slug, inputRef, value: draft, onChange: onDraftChange });
 
   return (
     <form
-      className="flex items-end gap-2 pt-0.5"
+      // `relative`: the suggestion list is positioned against this form.
+      className="relative flex items-end gap-2 pt-0.5"
       onSubmit={(e) => { e.preventDefault(); void onSubmit(); }}
       // The row is inside #dev-body's delegated click handler, which opens
       // the topic for a click anywhere on a card. Every part of this composer
@@ -165,7 +176,25 @@ export function FeedReplyComposer({
         aria-label="Reply to this item"
         value={draft}
         disabled={posting}
-        onChange={(e) => onDraftChange(e.target.value)}
+        onChange={(e) => { onDraftChange(e.target.value); mention.sync(); }}
+        // The caret moving without the text changing (a click, an arrow) can
+        // land on or leave an `@token` just the same.
+        onSelect={mention.sync}
+        onFocus={mention.warm}
+        onBlur={mention.close}
+        onCompositionStart={mention.onCompositionStart}
+        onCompositionEnd={mention.onCompositionEnd}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing) return;
+          // An open suggestion list owns the arrows, Enter, Tab and Escape.
+          if (mention.onKeyDown(e)) return;
+          if (!isSendChord(e)) return;
+          // preventDefault is unconditional for the chord, including the
+          // nothing-to-do case (#920): the keystroke must never leave a stray
+          // newline in the box as its only visible effect.
+          e.preventDefault();
+          if (!posting && draft.trim()) void onSubmit();
+        }}
       />
       {/* The dev session's send disc: a 36px filled accent circle with the
           up-arrow (app.css `.dev-feed-send`), so every "send" on the platform
@@ -183,8 +212,20 @@ export function FeedReplyComposer({
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>
+      <FeedMentionMenu
+        items={mention.items}
+        active={mention.active}
+        below={mention.below}
+        menuRef={mention.menuRef}
+        onPick={mention.accept}
+      />
     </form>
   );
+}
+
+/** ⌘/Ctrl+Enter sends; any other Enter is the textarea's (it adds a line). */
+export function isSendChord(e: { key: string; metaKey: boolean; ctrlKey: boolean }): boolean {
+  return e.key === 'Enter' && (e.metaKey || e.ctrlKey);
 }
 
 export function FeedThread({
@@ -292,6 +333,7 @@ export function FeedThread({
       ) : null}
       {canPost ? (
         <FeedReplyComposer
+          slug={slug}
           draft={draft}
           posting={state.posting}
           onDraftChange={setDraft}

@@ -1013,11 +1013,28 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // A real verdict ('passing' / 'failing'): clear the failure streak so a
   // later transient error starts its backoff fresh, and drop the now-stale
   // error detail / retry schedule / notify stamp.
+  //
+  // #2170: the live progress is REDUCED here rather than dropped. What the
+  // card can still use once the verdict stands is what the run cost — the
+  // finished build block (kept only once it reads 'done'; a step still
+  // 'now' would draw a live pipeline under a verdict) and how long the
+  // checks took — so a reviewer sees "built in 20s · checked in 9m 40s"
+  // after the run as well as during it. The checking time needs no new
+  // column: checks_checked_at at this point is the stamp the testing half
+  // opened with (captureForSession → setChecksPending 'testing'), and an
+  // UPDATE reads the row's old value on its right-hand side, so it is
+  // NOW() minus that even though the same statement overwrites it. The
+  // counts are not kept — test_results carries the verdict — and the next
+  // run's setChecksPending clears the whole thing, as it always did.
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
-           checks_progress = NULL,
+           checks_progress = NULLIF(jsonb_strip_nulls(jsonb_build_object(
+             'build', CASE WHEN checks_progress #>> '{build,step}' = 'done'
+                           THEN checks_progress -> 'build' END,
+             'checksMs', ROUND(EXTRACT(EPOCH FROM (NOW() - checks_checked_at)) * 1000)::bigint
+           )), '{}'::jsonb),
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -3390,6 +3407,9 @@ module.exports = {
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,
+  // The phases a pending run can be in, exported so the connector's output
+  // schema can be held to the same vocabulary (tests/mcp-tools.test.js, #2137).
+  CHECK_PHASES,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,

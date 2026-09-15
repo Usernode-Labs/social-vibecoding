@@ -88,7 +88,7 @@ test('each state has its own rail tone, and only the accent/emerald/zinc scales'
 // A template's illustration draws on its pale tone when the registry
 // (frontend/src/lib/challenge-illustrations.ts) has the slug. Anything else —
 // no slug, or one the registry does not know — is exactly the tile it was: a
-// neutral face holding Home's kind icon, or nothing on the tab.
+// neutral face holding the kind's icon when the payload has one, else nothing.
 const tile = (props) => renderToHtml(createElement(Card.ChallengeTile, props));
 const NEUTRAL = 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100';
 const KIND_ICON = '<span class="text-[2.5rem] leading-none">🧪</span>';
@@ -101,7 +101,7 @@ test('with no illustration the tile is the neutral face: the group headings carr
   assert.doesNotMatch(html, /<span|<img/, 'no category text and no artwork inside it');
   assert.equal(tile({ illustration: null }), html, 'a null slug is the same tile');
   const home = tile({ icon: '🧪' });
-  assert.ok(home.includes(NEUTRAL) && home.includes(KIND_ICON), 'Home keeps its kind icon on the neutral face');
+  assert.ok(home.includes(NEUTRAL) && home.includes(KIND_ICON), 'the kind icon stays on the neutral face');
 });
 
 test('a registry illustration draws in the tile, on its pale tone in both themes', () => {
@@ -124,8 +124,8 @@ test('a registry illustration draws in the tile, on its pale tone in both themes
 
 test('a slug the registry does not have is the tile it was, never a guessed path', () => {
   for (const illustration of ['not-in-the-registry', '../icons/x', 'Try-Three-Apps', '', 42]) {
-    assert.equal(tile({ illustration }), tile({}), `${String(illustration)}: the tab’s empty face`);
-    assert.equal(tile({ icon: '🧪', illustration }), tile({ icon: '🧪' }), `${String(illustration)}: Home’s kind icon`);
+    assert.equal(tile({ illustration }), tile({}), `${String(illustration)}: the empty face`);
+    assert.equal(tile({ icon: '🧪', illustration }), tile({ icon: '🧪' }), `${String(illustration)}: the kind icon`);
   }
 });
 
