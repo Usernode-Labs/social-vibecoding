@@ -29,6 +29,7 @@ import { flushSync } from 'react-dom';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore } from './app-frame-store.js';
+import { publishAppTone } from './app-tone.js';
 import { AppStatus, type AppStatusView } from './app-status';
 import { appStatusStore } from './app-status-store.js';
 
@@ -78,4 +79,14 @@ if (typeof window !== 'undefined') {
   const bridge = (host.UsernodeReact ||= {});
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
+
+  // #1945: the head's theme module rewrites the theme-color meta from the
+  // shell's own mode on every theme change (Theme.set, an OS flip, another
+  // tab). While an app is on screen the meta carries the APP's tone, so put
+  // it back on top after each of those — `force`, because the tone itself has
+  // not changed and the publish would otherwise be a no-op.
+  const themed = window as unknown as { Theme?: { onChange?: (fn: () => void) => void } };
+  themed.Theme?.onChange?.(() => {
+    publishAppTone(document, appFrameStore.get(), window, true);
+  });
 }

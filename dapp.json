@@ -1001,6 +1001,16 @@
       "expectSelector": "#app-iframe[sandbox=\"\"]:not([src])"
     },
     {
+      "name": "Inside a dark app the bar takes the app's tone: night ground under the light shell (#1945)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",

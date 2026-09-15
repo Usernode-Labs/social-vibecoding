@@ -90,10 +90,11 @@ test('every #app-content mount point declares its surface', () => {
 
   const appCalls = APP_VIEW.match(/_setSurface\('app'\)/g) || [];
   const platformCalls = APP_VIEW.match(/_setSurface\('platform'\)/g) || [];
-  // app: beginLaunch, showLaunchCoverShot, the source-less settled-launch and
-  // offline screenshots, renderAppTab's adopt early-exit, and its iframe path.
-  assert.equal(appCalls.length, 6,
-    `expected 6 app-surface call sites, found ${appCalls.length}`);
+  // app: beginLaunch, showLaunchCoverShot, the source-less settled-launch,
+  // app-tone (#1945) and offline screenshots, renderAppTab's adopt
+  // early-exit, and its iframe path.
+  assert.equal(appCalls.length, 7,
+    `expected 7 app-surface call sites, found ${appCalls.length}`);
   // platform: renderAppTab's status, offline and unsafe-origin branches, plus
   // renderDevView.
   assert.equal(platformCalls.length, 4,
