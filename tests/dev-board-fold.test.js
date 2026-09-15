@@ -499,7 +499,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the #2161 check above; main independently took the SAME 621 to 625 with
   // the four entries listed above it. One +1 and one +4 against a shared 621
   // is 626.
-  assert.equal(DAPP.tests.length, 626);
+  // 626 → 628: #1910 adds two checks on the restyled create-app dialog: the
+  // form view on `/#create` (the name card and the segmented rail) and the
+  // import view reached through `?shot=create-import`.
+  assert.equal(DAPP.tests.length, 628);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
