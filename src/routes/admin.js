@@ -21,6 +21,7 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
+const appStorageCap = require('../services/app-storage-cap');
 const {
   accountRecovery,
   withTransaction,
@@ -878,6 +879,92 @@ function adminRoutes(config) {
       res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── App storage (#2253) ────────────────────────────────────
+  //
+  // The per-app database cap: what each app's database measures against
+  // its cap, the two levers that undo a freeze, and a manual run of the
+  // leader's sweep. The read is open to view-only admins (same stance as
+  // /limits: the figures are the point of the screen); both mutations and
+  // the sweep chain requireAdminWrite, because they change what a real
+  // Postgres role may do.
+  //
+  // Slugs are checked against the shape apps.slug takes before they reach
+  // the service. The service parameterises them, so this is a 400 for
+  // garbage instead of a 404, not a safety measure.
+  const STORAGE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+
+  router.get('/api/admin/storage', async (req, res) => {
+    // Staging mock data: a preview's cloned apps table may carry no
+    // figures, and nothing is ever frozen from a preview, so ?demo=1
+    // answers with fixed rows that show every state. Read-path only,
+    // obviously fake, strict no-op in production.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json(appStorageCap.demoAdminPayload());
+    }
+    try {
+      res.json(await appStorageCap.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read app storage failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/storage/:slug', requireAdminWrite, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    if (!STORAGE_SLUG_RE.test(slug)) return res.status(400).json({ error: 'Invalid app slug' });
+    const { capBytes, graceMinutes } = req.body || {};
+    if (capBytes === undefined && graceMinutes === undefined) {
+      return res.status(400).json({
+        error: 'Provide capBytes (a number of bytes, or null for the default) and/or graceMinutes',
+      });
+    }
+    if (capBytes !== undefined && capBytes !== null
+        && !(Number.isInteger(capBytes) && capBytes >= 0)) {
+      return res.status(400).json({
+        error: 'capBytes must be a non-negative integer number of bytes, or null for the default',
+      });
+    }
+    if (graceMinutes !== undefined
+        && !(Number.isInteger(graceMinutes) && graceMinutes >= 1
+          && graceMinutes <= appStorageCap.MAX_GRACE_MINUTES)) {
+      return res.status(400).json({
+        error: `graceMinutes must be an integer between 1 and ${appStorageCap.MAX_GRACE_MINUTES}`,
+      });
+    }
+    try {
+      let row = null;
+      if (capBytes !== undefined) {
+        row = await appStorageCap.setCapOverride(pool, slug, capBytes);
+        if (!row) return res.status(404).json({ error: 'App not found' });
+      }
+      if (graceMinutes !== undefined) {
+        row = await appStorageCap.grantGrace(pool, slug, graceMinutes);
+        if (!row) return res.status(404).json({ error: 'App not found' });
+      }
+      log.info('admin', 'App storage settings updated', {
+        by: req.user.username, slug, capBytes, graceMinutes,
+      });
+      res.json(row);
+    } catch (err) {
+      log.error('admin', 'Update app storage failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/storage/sweep', requireAdminWrite, async (req, res) => {
+    try {
+      const sweep = await appStorageCap.sweep(pool);
+      log.info('admin', 'App storage sweep run from the console', {
+        by: req.user.username, measured: sweep.measured, frozen: sweep.frozen,
+        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: sweep.errors.length,
+      });
+      res.json({ sweep });
+    } catch (err) {
+      log.error('admin', 'App storage sweep failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

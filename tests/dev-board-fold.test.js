@@ -645,7 +645,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // #2260 adds one deterministic check for the verified-account replacement
   // confirmation state in Connectors. That makes the reviewed total 663.
-  assert.equal(DAPP.tests.length, 663);
+  // 663 → 664: #2253 adds one check on the admin console's App storage
+  // section, read through `?demo=1#admin/storage` so the preview shows the
+  // fixed demo rows (one frozen, one nearly full) rather than a cloned apps
+  // table with no figures in it. Main took 661 → 663 independently.
+  assert.equal(DAPP.tests.length, 664);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

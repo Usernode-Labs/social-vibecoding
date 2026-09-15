@@ -1,5 +1,5 @@
 /**
- * The twenty admin section modules, in one lazily-imported barrel.
+ * The twenty-one admin section modules, in one lazily-imported barrel.
  *
  * Each of these is a side-effect import: the module publishes itself on
  * `window.<Name>` and AdminConsole._renderModule looks it up there by the
@@ -24,6 +24,7 @@ import './admin-overview.tsx';
 import './admin-codes.tsx';
 import './admin-featured-apps.tsx';
 import './admin-db-export.tsx';
+import './admin-storage.tsx';
 import './admin-features.tsx';
 import './admin-limits.tsx';
 import './admin-users.tsx';

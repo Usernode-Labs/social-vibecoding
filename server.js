@@ -1155,6 +1155,10 @@ async function becomeLeader() {
   // anything changed, or sooner when a tenth of the board did.
   startWorkshopThemeSweeper(config);
 
+  // #2253: measure every app's database against the per-app storage cap,
+  // warn its admins on the way up and freeze it read-only at the top.
+  startAppStorageCapSweeper(config);
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -5210,6 +5214,49 @@ function startWorkshopThemeSweeper(config) {
   }, config.workshopSweepIntervalMs).unref();
 }
 
+// #2253: the per-app database storage cap. Every APP_DB_STORAGE_SWEEP_INTERVAL_MS
+// the leader measures each app's Postgres database
+// (services/app-storage-cap.js), records the figure on the app row, warns the
+// app's admins past the warning line and flips its owner role read-only at
+// the cap. Leader-only because a freeze mutates shared Postgres roles and
+// sends notifications: two colors doing it would race the same transitions.
+// The first run waits half a minute so it lands after the boot-time
+// migrations that add its columns and after the role bootstraps above, not
+// in the middle of them. Errors are logged and never thrown; the sweep
+// records its own outcome for the admin console.
+let appStorageCapSweeperHandle = null;
+let appStorageCapFirstRunHandle = null;
+
+function startAppStorageCapSweeper(config) {
+  if (appStorageCapSweeperHandle) return;
+  const pool = getPool(config);
+  const appStorageCap = require('./src/services/app-storage-cap');
+  const { capBytes, warnPercent, sweepIntervalMs } = appStorageCap.config();
+  log.info('server', 'App storage cap sweeper started', { capBytes, warnPercent, sweepIntervalMs });
+  let running = false;
+  const run = async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      const out = await appStorageCap.sweep(pool);
+      if (out.frozen || out.unfrozen || out.warned || out.errors.length) {
+        log.info('app-storage-cap', 'sweep done', {
+          measured: out.measured, frozen: out.frozen, unfrozen: out.unfrozen,
+          warned: out.warned, cleared: out.cleared, errors: out.errors.length,
+        });
+      }
+    } catch (err) {
+      log.warn('server', 'App storage sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  };
+  appStorageCapFirstRunHandle = setTimeout(run, 30 * 1000);
+  appStorageCapFirstRunHandle.unref?.();
+  appStorageCapSweeperHandle = setInterval(run, sweepIntervalMs);
+  appStorageCapSweeperHandle.unref?.();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -5299,6 +5346,14 @@ async function cleanup() {
   if (workshopThemeSweeperHandle) {
     clearInterval(workshopThemeSweeperHandle);
     workshopThemeSweeperHandle = null;
+  }
+  if (appStorageCapFirstRunHandle) {
+    clearTimeout(appStorageCapFirstRunHandle);
+    appStorageCapFirstRunHandle = null;
+  }
+  if (appStorageCapSweeperHandle) {
+    clearInterval(appStorageCapSweeperHandle);
+    appStorageCapSweeperHandle = null;
   }
   if (governanceApplyTickerHandle) {
     clearInterval(governanceApplyTickerHandle);
