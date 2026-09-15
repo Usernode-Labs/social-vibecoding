@@ -1072,6 +1072,10 @@ async function becomeLeader() {
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
   // comparison can't afford. See services/estimate-backfill.js.
   require('./src/services/estimate-backfill').start(config);
+  // #1374: the once-a-day "what needs your vote" digest. Hourly sweep,
+  // advisory-locked so only one instance sends, and the counterweight to
+  // new-proposal notifications now defaulting off.
+  require('./src/services/vote-digest').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These

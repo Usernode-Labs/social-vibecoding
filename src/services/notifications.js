@@ -19,6 +19,7 @@
 const log = require('./logger');
 const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
+const notificationPreferences = require('./notification-preferences');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -171,6 +172,174 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
   return rows;
 }
 
+// ── #1374's four new notifications ───────────────────────────────────
+//
+// Each of these was a silence before this change. A new issue notified
+// nobody, a proposal MERGING notified nobody, a vote on your own proposal
+// notified nobody, and a failed deploy notified nobody. The per-app
+// preference screen would have been three switches over two real
+// notifications without them.
+//
+// All four gate through services/notification-preferences.js, which is what
+// makes one switch govern the on-platform row and the phone push together:
+// mobile_push_deliveries references notifications(id), so a row that is
+// never created can never be pushed.
+
+// A new issue on an app, to that app's stakeholders.
+//
+// The audience is deliberately the SAME one createPrProposedNotifications
+// computes — active users, the creator and favoriters, minus the author,
+// narrowed to collaborators on a collab-private app — because "who cares
+// about this app" should not have two different answers depending on which
+// kind of thing just happened. The self-app exception is here for the same
+// reason too: everyone active on any app counts as active on the platform
+// app, so without it filing an issue here would ping the entire user base.
+//
+// The issue NUMBER rides in `detail` rather than a column of its own.
+// notifications has app_id, session_id, chat_message_id and conversation_id,
+// and an issue is none of those; `detail` is the generic slot the schema
+// already keeps for exactly this ("a notification kind that needs a small
+// extra string"), and app_id + number is enough for the drawer to link.
+async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId }) {
+  if (!appId || !issueNumber) return [];
+
+  const { rows: appRows } = await pool.query(
+    'SELECT self_hosted FROM apps WHERE id = $1',
+    [appId]
+  );
+  const selfHosted = !!appRows[0]?.self_hosted;
+  const activeIds = selfHosted ? [] : await listActiveUserIds(pool, appId);
+
+  const { rows: extraRows } = await pool.query(
+    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
+     UNION
+     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+    [appId]
+  );
+
+  let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
+  recipientIds.delete(authorId);
+  recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
+  if (!recipientIds.size) return [];
+
+  recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: [...recipientIds],
+    appId,
+    categoryKey: 'new_issues',
+  }));
+  if (!recipientIds.size) return [];
+
+  // NOT EXISTS rather than a read-then-write, matching pr_proposed: two
+  // concurrent creates of the same issue must not double-notify.
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT u, $2, $3, 'issue_opened', $4
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = u AND n.app_id = $2
+          AND n.kind = 'issue_opened' AND n.detail = $4
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [[...recipientIds], appId, authorId || null, String(issueNumber)]
+  );
+  return rows;
+}
+
+// Your proposal merged. Addressed to its author, and the one notification in
+// this set that is unambiguously good news rather than a request to act.
+//
+// System-generated, so source_user_id stays null: a merge is the group's
+// decision arriving, not a person doing something to you. `force` rides in
+// `detail` so the drawer can tell an admin override apart from a vote that
+// carried, which are the same event with very different meanings to the
+// person who wrote the change.
+async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false }) {
+  if (!userId || !sessionId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'pr_merged', $4
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, forced ? 'forced' : null]
+  );
+  return rows;
+}
+
+// Somebody voted on a proposal of yours.
+//
+// NOT de-duplicated per session, unlike its neighbours: a vote is a discrete
+// event and the second one is news, where a second "checks failed" for the
+// same proposal is noise. It IS de-duplicated per (voter, session) though,
+// because flipping a vote back and forth must not be a way to ping somebody
+// repeatedly. The direction rides in `detail`.
+async function createProposalVoteNotification(pool, { userId, appId, sessionId, voterId, vote }) {
+  if (!userId || !sessionId || !voterId) return [];
+  // Voting on your own proposal is allowed; notifying yourself about it is
+  // not useful.
+  if (userId === voterId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'proposal_vote' })) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, $4, 'proposal_vote', $5
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'proposal_vote' AND n.source_user_id = $4
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, voterId, vote === 'no' ? 'no' : 'yes']
+  );
+  return rows;
+}
+
+// The app is unwell: a deploy failed, or it stopped running.
+//
+// Addressed to the people who can actually do something about it, which is
+// the creator and the app's admins. That is also why `app_health` is the one
+// preference category marked adminOnly: offering the switch to everybody
+// else would be offering to mute something they were never going to get.
+//
+// De-duplicated on UNREAD rather than ever: a failure that is still unread
+// should not stack, but once you have seen and cleared one, the NEXT failure
+// is news again. Same rule check_failed uses.
+async function createAppHealthNotification(pool, { appId, detail }) {
+  if (!appId) return [];
+  const { rows: recipientRows } = await pool.query(
+    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
+     UNION
+     SELECT user_id AS id FROM app_admins WHERE app_id = $1`,
+    [appId]
+  );
+  const ids = [...new Set(recipientRows.map((r) => r.id).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids,
+    appId,
+    categoryKey: 'app_health',
+  });
+  if (!allowed.length) return [];
+
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT u, $2, NULL, 'app_health', $3
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = u AND n.app_id = $2
+          AND n.kind = 'app_health' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [allowed, appId, (detail || '').slice(0, 200) || null]
+  );
+  return rows;
+}
+
 // #25: reaction notification. Fired when a user adds an emoji reaction to
 // someone else's message. `messageId` is the reacted message (so clicking
 // lands on the app's group chat); `emoji` rides in the `detail` column.
@@ -194,6 +363,7 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
 // the session so the dropdown can render the PR title + a deep link.
 async function createStalePrNotification(pool, { userId, appId, sessionId }) {
   if (!userId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'stale_pr' })) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      VALUES ($1, $2, $3, NULL, 'stale_pr')
@@ -212,6 +382,10 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
 // failure streak; the dedup is belt-and-suspenders against re-fires.
 async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
   if (!userId || !sessionId) return [];
+  // #1374. allowsKind fails OPEN on a read error: the quiet failure mode of
+  // this whole feature is a notification silently not arriving, and this one
+  // is telling somebody their proposal cannot merge.
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'check_failed' })) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT $1, $2, $3, NULL, 'check_failed'
@@ -482,6 +656,22 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
   // nudged (a favoriter of a view-public/collab-private app would
   // otherwise be asked to vote on a PR they can't act on).
   recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
+  if (!recipientIds.size) return [];
+
+  // #1374: drop the recipients who have muted new proposals for this app.
+  // ONE query for the whole fan-out rather than one per recipient — this
+  // list can be every active user of a busy app, and asking per person would
+  // turn a single insert into hundreds of round trips.
+  //
+  // This category defaults OFF, so on a platform with no stored preferences
+  // this returns nobody and the notification stops being sent at all. That
+  // is the intended change, and the daily digest (services/vote-digest.js)
+  // is what keeps the group's voting turnout from going with it.
+  recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: [...recipientIds],
+    appId,
+    categoryKey: 'new_proposals',
+  }));
   if (!recipientIds.size) return [];
 
   // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
@@ -1015,6 +1205,10 @@ module.exports = {
   createReplyNotification,
   createReactionNotification,
   createStalePrNotification,
+  createIssueOpenedNotifications,
+  createPrMergedNotification,
+  createProposalVoteNotification,
+  createAppHealthNotification,
   createCheckFailedNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,

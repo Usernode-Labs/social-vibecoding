@@ -4106,6 +4106,24 @@
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
       "expectText": "the next time it opens"
+    },
+    {
+      "name": "#1374: per-app notification settings are reachable and name both places they apply",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "the bell here and a notification on your phone"
+    },
+    {
+      "name": "#1374: muting is described honestly as stopping the notification, not the thing",
+      "path": "/?shot=app-notifications#app/usernode-2d5619",
+      "expectSelector": "#app-notifications-modal:not(.hidden)",
+      "expectText": "still appear on this app's board"
+    },
+    {
+      "name": "#1374: Settings rolls up your notification defaults and the apps set differently",
+      "path": "/?demo=1#settings/alerts",
+      "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #settings-notification-prefs #notification-prefs-list",
+      "expectText": "Apps set differently"
     }
   ],
   "governance": {

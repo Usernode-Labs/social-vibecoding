@@ -1,4 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
+
+import { NotificationPrefsList } from '../notification-prefs-list';
 import { SwitchRow } from '@/components/ui/switch';
 
 /**
@@ -95,7 +97,14 @@ export function AlertsSection() {
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal alerts</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Proposals needing attention, failed previews, and new proposals ready for voting.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Proposals needing attention, failed previews, new proposals ready for voting, and votes or merges on your own.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="app_alerts">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App alerts</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">New issues filed on your apps, and apps that stop working.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
@@ -110,6 +119,18 @@ export function AlertsSection() {
           <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
             Loading mobile push preferences…
           </p>
+        </div>
+        <div
+          id="settings-notification-prefs"
+          className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800"
+        >
+          <SectionHeading title="What apps tell you about" blurbClassName="leading-relaxed">
+            Your default for every app, and the apps you have set differently. Each of these covers the bell here and a notification on your phone, together. Change one app from its Notifications entry in the app menu.
+          </SectionHeading>
+          <div id="notification-prefs-list">
+            <NotificationPrefsList />
+          </div>
+          <StatusLine id="notification-prefs-status" />
         </div>
       </div>
     </div>

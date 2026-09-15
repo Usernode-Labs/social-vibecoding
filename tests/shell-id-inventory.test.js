@@ -274,6 +274,15 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1374: per-app notification settings ─────────────────────────
+  // One switch per category governs the bell here AND the phone push,
+  // because the preference gates whether the notification is CREATED and
+  // mobile_push_deliveries references notifications(id).
+  'app-notifications-modal': '#1374: the per-app Notifications dialog, opened from the app tile\'s "..." menu. Its own root rather than a section of #app-settings-modal, because that dialog is offered only to admins and the creator while these switches belong to everybody who uses the app.',
+  'app-notifications-done': '#1374: that dialog\'s only footer control. Each switch saves on change, so there is nothing to confirm and no Cancel that could mean anything.',
+  'settings-notification-prefs': '#1374: the Settings roll-up under Notifications & alerts — your account-wide defaults plus every app you have set differently. Without it a muted app can only be found by opening its tile menu and looking.',
+  'notification-prefs-list': '#1374: the roll-up\'s rows host, React-owned end to end (features/settings/notification-prefs-list.tsx). Ships EMPTY, like #llm-grants-list and #app-permissions-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
+  'notification-prefs-status': '#1374: that section\'s status line, written by Settings._setNotificationPrefsStatus after a default change or an app reset. Same controller-host contract as #llm-grants-status.',
   // ── #2219: App device permissions ────────────────────────────────
   // The Settings sibling of the App AI permissions section. It exists
   // because a permission the platform asks for has to be one a person can

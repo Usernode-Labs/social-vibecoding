@@ -48,9 +48,32 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'proposal_alerts',
     label: 'Proposal alerts',
-    description: 'Proposals needing attention, failed previews, and new proposals ready for voting.',
+    description: 'Proposals needing attention, failed previews, new proposals ready for voting, and votes or merges on your own.',
     defaultEnabled: true,
-    kinds: Object.freeze(['stale_pr', 'check_failed', 'pr_proposed']),
+    // #1374 adds three: a vote on your proposal, your proposal merging, and
+    // the daily "what needs your vote" summary. All three are proposal
+    // lifecycle, which is exactly what this category's description already
+    // promises, so they join it rather than getting one of their own —
+    // somebody who turned proposal pushes off does not want these either.
+    kinds: Object.freeze([
+      'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
+    ]),
+  }),
+  Object.freeze({
+    key: 'app_alerts',
+    label: 'App alerts',
+    description: 'New issues filed on your apps, and apps that stop working.',
+    defaultEnabled: true,
+    // #1374's two that are NOT proposal lifecycle. They share a category
+    // because they share an audience and a moment: both are "something
+    // happened to an app you look after". Splitting them would be two
+    // switches where nobody has a reason to set them differently.
+    //
+    // NOTE the second gate. `issue_opened` defaults OFF in
+    // services/notification-preferences.js, so this being on by default
+    // does not make it noisy: no notification is created in the first
+    // place unless somebody opted the app in.
+    kinds: Object.freeze(['issue_opened', 'app_health']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

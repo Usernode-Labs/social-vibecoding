@@ -844,6 +844,20 @@ const AppView = {
           }
         }, 300);
       }
+      // #1374: `?shot=app-notifications` opens the per-app Notifications
+      // dialog. It is otherwise two taps inside a tile menu, which neither
+      // the capture pipeline nor a dapp.json check can reach — the same
+      // reason the secrets and app-settings links above exist. Reads the
+      // viewer's own preferences and writes nothing until a switch is
+      // touched, so it is safe on any environment. Same slug guard: a fast
+      // navigate-away must not pop a dialog onto another screen.
+      if (shot === 'app-notifications') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appNotifications?.open({ slug });
+          }
+        }, 300);
+      }
       // #816: the preview loader is the screen this change is about, and it
       // only exists mid-click on a Preview button — no URL reaches it, so
       // the before/after captures would show the dev board instead. These

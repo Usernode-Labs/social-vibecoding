@@ -547,7 +547,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
   // one for the rows and one for the copy that must NOT promise a revoke
   // lands while the app is still open.
-  assert.equal(DAPP.tests.length, 646);
+  // 646 → 649: #1374's three. Two photograph the per-app Notifications
+  // dialog through `?shot=app-notifications` — it is otherwise two taps
+  // inside a tile menu, which no route can reach — and one reads the
+  // Settings roll-up. Counted directly off the merged manifest, as above.
+  assert.equal(DAPP.tests.length, 649);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
