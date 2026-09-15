@@ -23,14 +23,14 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view
 let api = null;
 const mod = () => (api || (api = loadTsx('tests/fixtures/app-status-api.ts')));
 
-function makeAppView() {
+function makeAppView({ fetchImpl, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout } = {}) {
   const opened = [];
   const sandbox = {
     console,
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
-    App: { user: { id: 1 } },
+    App: { user: { id: 1 }, currentApp: null, currentTab: null },
     Secrets: { open: (slug) => opened.push(['secrets', slug]) },
     BuildLog: { open: (slug) => opened.push(['buildLog', slug]) },
     document: {
@@ -41,8 +41,10 @@ function makeAppView() {
       createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
       body: { appendChild() {} },
     },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch: (...args) => (fetchImpl
+      ? fetchImpl(...args)
+      : Promise.resolve({ ok: true, json: async () => ({}) })),
+    setTimeout: setTimeoutImpl, clearTimeout: clearTimeoutImpl, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
   };
@@ -69,6 +71,103 @@ test('spinning up: the amber dot and nothing to act on', () => {
   assert.match(out, /class="status-dot creating"/);
   assert.match(out, /App is spinning up\.\.\./);
   assert.doesNotMatch(out, /<button/);
+});
+
+test('#1883: HTTP reconciliation clears a stale creating placeholder without a WebSocket event', async () => {
+  const running = {
+    slug: 'recipebot', name: 'Recipebot', status: 'running',
+    url: 'https://recipebot.example.test',
+  };
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ app: running }) }),
+  });
+  const creating = { slug: 'recipebot', name: 'Recipebot', status: 'creating', url: null };
+  sandbox.App.currentApp = creating.slug;
+  sandbox.App.currentTab = 'app';
+  AppView.appData = creating;
+
+  const tokens = [];
+  let renders = 0;
+  AppView.refreshToken = async (slug) => { tokens.push(slug); };
+  AppView.renderAppTab = () => { renders += 1; };
+
+  await AppView.pollStatus(creating);
+
+  assert.equal(AppView.appData.status, 'running');
+  assert.equal(AppView.appData.url, running.url);
+  assert.deepEqual(tokens, ['recipebot'], 'the running frame gets a fresh app-scoped token first');
+  assert.equal(renders, 1, 'the terminal state replaces the placeholder immediately');
+  assert.equal(AppView._statusPollTimer, null, 'no poll survives a terminal record');
+});
+
+test('#1883: repeated paints keep exactly one status recheck scheduled', () => {
+  let seq = 0;
+  const active = new Set();
+  const { AppView, sandbox } = makeAppView({
+    setTimeoutImpl: () => { const id = ++seq; active.add(id); return id; },
+    clearTimeoutImpl: (id) => active.delete(id),
+  });
+  const creating = { slug: 'recipebot', status: 'creating' };
+  sandbox.App.currentApp = creating.slug;
+  sandbox.App.currentTab = 'app';
+  AppView.appData = creating;
+
+  AppView._watchCreatingStatus(creating);
+  const first = AppView._statusPollTimer;
+  AppView._watchCreatingStatus(creating);
+  AppView._watchCreatingStatus(creating);
+
+  assert.equal(AppView._statusPollTimer, first);
+  assert.equal(active.size, 1, 're-renders do not create parallel polling loops');
+  AppView._stopStatusPolling();
+  assert.equal(active.size, 0);
+});
+
+test('#1883: a transient status-read failure re-arms the same placeholder', async () => {
+  let seq = 0;
+  const active = new Set();
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: async () => { throw new Error('temporary network failure'); },
+    setTimeoutImpl: () => { const id = ++seq; active.add(id); return id; },
+    clearTimeoutImpl: (id) => active.delete(id),
+  });
+  const creating = { slug: 'recipebot', status: 'creating' };
+  sandbox.App.currentApp = creating.slug;
+  sandbox.App.currentTab = 'app';
+  AppView.appData = creating;
+
+  await AppView.pollStatus(creating);
+
+  assert.equal(AppView.appData, creating, 'a failed read does not change the visible state');
+  assert.equal(active.size, 1, 'recovery continues after a transient failure');
+  AppView._stopStatusPolling();
+});
+
+test('#1883: a late status response cannot overwrite a later navigation', async () => {
+  let release;
+  const response = new Promise((resolve) => { release = resolve; });
+  const { AppView, sandbox } = makeAppView({ fetchImpl: () => response });
+  const creating = { slug: 'recipebot', status: 'creating' };
+  sandbox.App.currentApp = creating.slug;
+  sandbox.App.currentTab = 'app';
+  AppView.appData = creating;
+  let renders = 0;
+  AppView.renderAppTab = () => { renders += 1; };
+
+  const polling = AppView.pollStatus(creating);
+  const later = { slug: 'notes', status: 'running', url: 'https://notes.example.test' };
+  sandbox.App.currentApp = later.slug;
+  AppView.appData = later;
+  release({
+    ok: true,
+    json: async () => ({
+      app: { slug: 'recipebot', status: 'running', url: 'https://recipebot.example.test' },
+    }),
+  });
+  await polling;
+
+  assert.equal(AppView.appData, later, 'the newer app remains authoritative');
+  assert.equal(renders, 0);
 });
 
 test('awaiting secrets: the missing names, and a way to set them', () => {

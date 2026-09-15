@@ -597,6 +597,8 @@ test('serving a stale boot read is only safe because the page is told', () => {
   // slicing at that cut the last two branches (home's among them) off.
   const loader = app.slice(app.indexOf('refreshActiveScreen()'),
     app.indexOf('_refreshLeaderboard() {'));
+  assert.match(loader, /AppView\._watchCreatingStatus\(AppView\.appData, \{ immediate: true \}\)/,
+    'and a corrected creating record revalidates the open App tab');
   assert.match(loader, /AppView\.refreshDevData\('api-update'\)/, 'the board repaints');
   assert.match(loader, /Home\.load\(\)/, 'and so does home');
 });
