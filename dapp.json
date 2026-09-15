@@ -4123,6 +4123,18 @@
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
       "expectText": "the next time it opens"
+    },
+    {
+      "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-messages .gc-msg[data-posted-via=\"agent\"][data-username=\"staging-demo-agent\"] .gc-posted-via",
+      "expectText": "via agent"
+    },
+    {
+      "name": "#2236: the Activity feed's reply preview marks the same agent-posted note",
+      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-feed-thread .dev-feed-msg[data-posted-via=\"agent\"] .gc-posted-via",
+      "expectText": "via agent"
     }
   ],
   "governance": {

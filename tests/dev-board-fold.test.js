@@ -559,7 +559,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  assert.equal(DAPP.tests.length, 649);
+  // 649 → 651: #2236 adds two checks for the "via agent" chip a note wears
+  // when a coding agent posted it through the connector on the author's
+  // behalf, one on the demo issue's discussion and one on the Activity
+  // feed's reply preview. Both read the mock agent row the staging chat
+  // endpoint returns under `?demo=1`, so they run against an empty database.
+  assert.equal(DAPP.tests.length, 651);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
