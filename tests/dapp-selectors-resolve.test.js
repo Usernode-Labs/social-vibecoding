@@ -101,6 +101,58 @@ test('dapp.json still declares its full test suite', () => {
   }
 });
 
+/**
+ * Does this selector nest `:has()` inside another `:has()`?
+ *
+ * Selectors-4 forbids it outright, so `document.querySelector` throws a
+ * SyntaxError — and the two runners that evaluate these selectors
+ * (capture/capture.js and worker/usernode-run-checks) both wrap that call in
+ * a `try`/`catch` that reports a throw as "was not found". An invalid
+ * selector therefore fails a check without ever saying it was invalid.
+ *
+ * `:not(:has(…))` is fine and several declared checks use it; what is not is
+ * a `:has()` reached from INSIDE another `:has()`'s argument, however deeply
+ * — `:has(x:not(:has(y)))` is the shape that got here.
+ */
+function nestsHas(selector) {
+  const s = String(selector);
+  let depth = 0;      // parenthesis depth
+  let hasAt = -1;     // depth at which the innermost open `:has(` sits
+  for (let i = 0; i < s.length; i += 1) {
+    if (s.startsWith(':has(', i)) {
+      if (hasAt >= 0) return true;
+      hasAt = depth;
+      depth += 1;
+      i += 4;
+      continue;
+    }
+    if (s[i] === '(') depth += 1;
+    else if (s[i] === ')') {
+      depth -= 1;
+      if (hasAt >= 0 && depth <= hasAt) hasAt = -1;
+    }
+  }
+  return false;
+}
+
+test('every dapp.json selector is CSS a browser will actually parse', () => {
+  // Written after #2241 shipped `#dc-view:has(#dc-session-header:not(:has(…)))`
+  // — valid to Playwright's OWN selector engine, which is what a local smoke
+  // test drives, and a SyntaxError to the browser's, which is what the
+  // capture container drives. The check failed with "was not found" against a
+  // screen that was rendering perfectly, and cost a build to diagnose.
+  const invalid = declared
+    .filter((t) => t.expectSelector && nestsHas(t.expectSelector))
+    .map((t) => `${t.expectSelector} — "${t.name}"`);
+  assert.deepEqual(
+    invalid, [],
+    'dapp.json declares selectors with a :has() nested inside another :has(). '
+    + 'That is invalid CSS: document.querySelector throws, and both check runners '
+    + 'report a throw as "was not found", so these fail on staging and block the '
+    + 'merge while looking like a missing element:\n  ' + invalid.join('\n  '),
+  );
+});
+
 test('every id a dapp.json selector anchors on is still in the shipped markup', () => {
   // Ids that legitimately do not exist in the static document because
   // public/js/** (or, now, a React island's effect) creates them at runtime.
