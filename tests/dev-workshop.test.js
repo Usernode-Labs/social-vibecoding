@@ -1572,6 +1572,27 @@ test('an item names its kind; no sentence counts what is owed', () => {
   assert.ok(!/1 proposal needs your vote</.test(html), 'the sentence that counted the debt is gone');
 });
 
+test('with nothing of yours in flight, the pane stays and says so (#2182)', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [];
+  AppView._proposals = [];
+  const v = AppView._workshopView();
+  assert.equal(v.mine.count, 0);
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-mine=""/, 'the pane is still there');
+  assert.match(html, /What you are working on/);
+  assert.match(html, /data-ws-mine-none="">\s*You have no work going on right now\./);
+  assert.doesNotMatch(html, /data-ws-lane="mine"/, 'and no empty lane under it');
+
+  // Signed out there is no "you" to be working on anything.
+  const anon = makeAppView({ globals: { App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } } });
+  seed(anon);
+  anon._mySessions = [];
+  anon._proposals = [];
+  assert.doesNotMatch(workshopHtml(anon), /data-ws-mine=""/);
+});
+
 test('the viewer\u2019s own work in flight leads the lander', () => {
   const AppView = makeAppView();
   seed(AppView);

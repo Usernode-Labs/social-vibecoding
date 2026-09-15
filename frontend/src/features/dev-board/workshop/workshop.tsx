@@ -2258,11 +2258,21 @@ export function DevWorkshop(): ReactNode {
           doing, what the group needs, what nobody has picked up. A
           half-finished session of theirs was somewhere down inside a theme,
           under a heading about the theme. */}
-      {v.mine && v.mine.rows.length ? (
+      {/* #2182: the pane stays for a signed-in viewer with nothing going on,
+          and says so — a heading that vanishes reads as "this section went
+          away", not as "you are free". The lane is never filtered (see
+          _workshopView), so an empty one really does mean none. */}
+      {v.mine && (v.mine.rows.length || v.viewerId) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What you are working on</span>
           </div>
+          {v.mine.rows.length ? null : (
+            <p className="dev-ws-week-note" data-ws-mine-none="">
+              You have no work going on right now.
+            </p>
+          )}
+          {v.mine.rows.length ? (
           <div className="dev-ws-lane" data-ws-lane="mine">
             {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
               <CardRowView
@@ -2286,6 +2296,7 @@ export function DevWorkshop(): ReactNode {
               </button>
             ) : null}
           </div>
+          ) : null}
         </section>
       ) : null}
 
