@@ -126,6 +126,35 @@ test('platform always builds without consulting the reuse registry', t => {
   }
 });
 
+test('a scheduled dependency refresh reuses the platform image for the exact source revision', t => {
+  const repo = repository(t);
+  let inspectedTag;
+  const result = resolve(repo, {
+    component: 'platform', reuseCurrentPlatform: true,
+  }, tag => {
+    inspectedTag = tag;
+    return JSON.stringify(manifest);
+  });
+  assert.match(inspectedTag,
+    /^ghcr\.io\/usernode-labs\/social-vibecoding-platform:sha-[a-f0-9]{40}$/);
+  assert.equal(result.reuse_tag, inspectedTag);
+  assert.equal(result.digest, digest);
+  assert.equal(result.refresh, 'false');
+  assert.equal(result.reason, 'current-source-release');
+});
+
+test('a scheduled dependency refresh fails closed when its platform release is missing', t => {
+  const repo = repository(t);
+  assert.throws(() => resolve(repo, {
+    component: 'platform', reuseCurrentPlatform: true,
+  }, () => {
+    throw Object.assign(new Error('missing'), { stderr: 'manifest unknown' });
+  }), /Current platform image is missing/);
+  assert.throws(() => resolve(repo, {
+    component: 'platform', reuseCurrentPlatform: true, forceRebuild: 'all',
+  }), /cannot force-rebuild the platform/);
+});
+
 test('manual refresh bypasses reuse only for selected components', t => {
   const repo = repository(t);
   for (const component of ['worker', 'capture']) {
@@ -174,7 +203,8 @@ test('invalid workflow inputs fail before consulting the registry', t => {
   for (const options of [{ component: '../worker' }, { revision: 'main' }, { owner: 'owner\ninjected=x' },
     { ref: 'refs/tags/v1' }, { forceRebuild: 'yes' }, { claudeCodeVersion: undefined },
     { claudeCodeVersion: '' },
-    { claudeCodeVersion: 'latest' }, { claudeCodeVersion: '2.1.251; echo unsafe' }]) {
+    { claudeCodeVersion: 'latest' }, { claudeCodeVersion: '2.1.251; echo unsafe' },
+    { reuseCurrentPlatform: true }]) {
     assert.throws(() => resolve(repo, options, () => assert.fail('unexpected lookup')));
   }
 });

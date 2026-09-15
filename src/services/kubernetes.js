@@ -1118,14 +1118,28 @@ async function inspectWorkerTermination(config, runtimeName, { since, timeoutMs 
 }
 
 async function getWorkerContractVersion(config, runtimeName) {
+  return (await getWorkerRuntimeMetadata(config, runtimeName)).contractVersion;
+}
+
+// Read the desired Deployment identity rather than a transient Pod. Worker
+// images are immutable digest references, so this lets the host distinguish a
+// healthy-but-old warm worker from one already reconciled to the current
+// atomic platform release without depending on container runtime image IDs.
+async function getWorkerRuntimeMetadata(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({
       name: runtimeName,
       namespace: config.kubernetes.workerNamespace,
     });
-    return deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null;
+    const worker = deployment.spec?.template?.spec?.containers?.find(
+      container => container.name === 'worker'
+    );
+    return {
+      contractVersion: deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null,
+      imageRef: worker?.image || null,
+    };
   } catch (err) {
-    if (isNotFound(err)) return null;
+    if (isNotFound(err)) return { contractVersion: null, imageRef: null };
     throw err;
   }
 }
@@ -1963,7 +1977,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
