@@ -434,7 +434,7 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false },
   // Which app's filters `_kanbanFilters` currently holds. The persisted set
   // is per slug, so this is what tells a repaint whether it is looking at a
   // stale app's narrowing (restore) or at the viewer's own unsaved edit
@@ -444,7 +444,9 @@ const AppView = {
   // Workshop's: "Open on Board" from a theme narrows the board to that
   // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
+    // #1935: `assignedToMe` / `createdByMe` are the strip's two quick
+    // toggles — one tap, no dialog — for the viewer's own board.
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
   },
   // `?q=<text>` — a deep link to a surface already narrowed to a search, the
   // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
@@ -7527,6 +7529,10 @@ const AppView = {
       // session is not an assignable board item.
       if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
         && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
+      // #1935: a session is nobody's to assign, so it is "yours" on both
+      // quick toggles exactly when you started it — the same reading the
+      // named-person filter above gives it.
+      if ((f.assignedToMe || f.createdByMe) && !AppView._devCardIsMine(kind, it)) return false;
       return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
@@ -7548,6 +7554,22 @@ const AppView = {
       const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
       if (!assignedToUser && !authoredByUser) return false;
     }
+    // #1935: the strip's quick toggles. "Created by you" is authorship on
+    // every kind. "Assigned to you" is the community-voted assignee on the
+    // kinds that carry one (issues); a proposal or merged change carries no
+    // assignee — whoever opened it is the one doing it — so there it reads
+    // as authorship too. Governance rows are never assigned, so they drop
+    // out of "Assigned to you" rather than all matching it.
+    if (f.createdByMe && !AppView._devCardIsMine(kind, it)) return false;
+    if (f.assignedToMe) {
+      const me = AppView._viewerUsername();
+      if (!me || kind === 'gov') return false;
+      if (kind === 'issue') {
+        if (!(it.assignee && it.assignee.top === me)) return false;
+      } else if (!AppView._devCardIsMine(kind, it)) {
+        return false;
+      }
+    }
     if (f.needsVote) {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted).
@@ -7563,7 +7585,27 @@ const AppView = {
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
+      || f.assignedToMe || f.createdByMe);
+  },
+
+  // #1935: the signed-in viewer's handle, as the board's person fields spell
+  // it (assignee.top, created_by_username, username). Null when signed out —
+  // the quick toggles do not render then, and a stale persisted one matches
+  // nothing rather than everything.
+  _viewerUsername() {
+    return (typeof App !== 'undefined' && App.user && App.user.username) || null;
+  },
+  _devCardIsMine(kind, item) {
+    const me = AppView._viewerUsername();
+    return !!me && AppView._devCardAuthor(kind, item) === me;
+  },
+  // A quick toggle's tap: flip it and repaint. Persistence rides the repaint,
+  // as it does for every other filter change.
+  _toggleKanbanQuickFilter(key) {
+    if (key !== 'assignedToMe' && key !== 'createdByMe') return;
+    AppView._kanbanFilters[key] = !AppView._kanbanFilters[key];
+    AppView._repaintBoardSurface();
   },
 
   // Person dropdown options: the union of top-voted assignees and authors
@@ -7674,6 +7716,10 @@ const AppView = {
       seq: AppView._kanbanFilterSeq,
       count: AppView._kanbanFilterCount(),
       chips: AppView._kanbanActiveChips(),
+      // #1935: the two quick toggles, only for someone who has a "you".
+      quick: AppView._viewerUsername()
+        ? { assignedToMe: !!f.assignedToMe, createdByMe: !!f.createdByMe }
+        : null,
     };
   },
 
