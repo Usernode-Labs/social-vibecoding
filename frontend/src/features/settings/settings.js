@@ -4677,7 +4677,6 @@
 
     DEMO_USERNODE_STATE: {
       buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
-      nodeSleepEnabled: true,
       debugMode: false,
       facematchStrict: true,
       authStatus: 'authenticated',
@@ -5602,11 +5601,6 @@
         belowDemoCut: !demo,
         socialPush: this._socialPushView(),
         blockProduction: this._bpView(),
-        nodeSleep: s ? {
-          label: 'Node sleep on inactivity',
-          checked: s.nodeSleepEnabled !== false,
-          action: '_setNodeSleep',
-        } : null,
         privacy: s ? {
           facematch: {
             label: 'Strict facematch',
@@ -5966,7 +5960,6 @@
 
     _openBatterySettings() { return window.usernode.openBatterySettings(); },
     _openNotifSettings() { return window.usernode.openNotificationSettings(); },
-    _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
     _openZkIdentityScreen() {

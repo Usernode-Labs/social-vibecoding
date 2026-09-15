@@ -137,7 +137,6 @@ export interface UsernodeSectionState {
   socialPush: UnSocialPush;
   /** Everything below the demo cut — a browser link renders permissions only. */
   belowDemoCut: boolean;
-  nodeSleep: UnToggle | null;
   blockProduction: UnBlockProduction;
   privacy: { facematch: UnToggle; open: UnAction | null; reset: UnAction } | null;
   widgetIcons: UnWidgetIcons | null;
@@ -152,7 +151,6 @@ export const USERNODE_EMPTY: UsernodeSectionState = {
   body: null,
   socialPush: { kind: 'absent' },
   belowDemoCut: false,
-  nodeSleep: null,
   blockProduction: { kind: 'checking' },
   privacy: null,
   widgetIcons: null,

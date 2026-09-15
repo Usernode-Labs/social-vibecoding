@@ -1128,7 +1128,7 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
 
   // These read the snapshot, so every one of them must be guarded.
   for (const guarded of [
-    's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
+    's.facematchStrict', 's.debugMode', 's.authStatus',
   ]) {
     const at = view.indexOf(guarded);
     assert.ok(at > -1, `${guarded} still drives its control`);
