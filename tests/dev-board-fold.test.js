@@ -559,7 +559,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #1911 checks above; main independently took the SAME
   // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
   // 646 is 649.
-  assert.equal(DAPP.tests.length, 649);
+  // 649 → 651: #2086 makes a featured-illustration change a governance
+  // proposal, and adds two checks on its card via the ?demo=1 mock row
+  // 9100008: the proposed-beside-current preview on the open board card,
+  // and the same preview on the proposal's own discussion page.
+  assert.equal(DAPP.tests.length, 651);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
