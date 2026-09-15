@@ -664,7 +664,9 @@ function topochainPublicRoutes(config) {
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
-      const data = visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+      const listed = rows.filter((r) => r.t_id != null);
+      const visible = visibleChallenges(listed, onboarding);
+      const data = visible
         .map((r) => {
           const item = buildChallengeListItem(r);
           item.metric = metricOf(r);
@@ -675,9 +677,15 @@ function topochainPublicRoutes(config) {
           return item;
         });
 
-      // This list now carries the signed-in viewer's onboarding state.
+      // This list now carries the signed-in viewer's onboarding state. While
+      // the gate is closed it also says how many of THIS event's challenges
+      // it hides (additive `hidden_count`, the tab's "N challenges locked"
+      // placeholder); unlocked, the summary is exactly what it was.
+      const summary = onboarding && !onboarding.summary.unlocked
+        ? { ...onboarding.summary, hidden_count: listed.length - visible.length }
+        : onboarding?.summary;
       res.set('Cache-Control', 'private, no-store');
-      return ok(res, { data, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
+      return ok(res, { data, ...(summary ? { onboarding: summary } : {}) });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

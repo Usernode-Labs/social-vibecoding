@@ -7,7 +7,7 @@
  * Challenges tab draw this one component, so the same season reads the same
  * figure, words and bar on both. The board's rule is that progress has a scope
  * ("Setup is 2 steps; the season is 9"), so the caller names it in `caption`
- * ("done in Season 2", "done in Get started") and this file decides nothing
+ * ("done in Season 2", "done in Setup") and this file decides nothing
  * about which challenges count.
  *
  * One segment per challenge is only legible while there are few. Past

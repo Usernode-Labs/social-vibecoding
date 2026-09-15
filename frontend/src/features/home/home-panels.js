@@ -402,6 +402,7 @@ const HomePanels = {
         expandable: false,
         expanded: false,
         rows: [],
+        groups: [],
       };
     }
     const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
@@ -418,6 +419,8 @@ const HomePanels = {
     );
     const expandable = expanded || rows.length < allTotal;
     const season = HomePanels.seasonView(panel);
+    const views = rows.map((c) => HomePanels.challengeRowView(c, panel));
+    const groups = HomePanels.challengeGroups(rows, views, panel);
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
@@ -432,12 +435,94 @@ const HomePanels = {
           ? 'Persistent and weekly challenges are unlocked.'
           : 'Finish these to unlock persistent and weekly challenges.')
         : null,
+      // How many challenges setup still hides, for the dashed "6 challenges
+      // locked" placeholder under the setup cards. Only while the gate is
+      // closed; a payload without the count (an older server) draws none, and
+      // the block keeps the unlock note under its cards instead.
+      lockedCount: panel.onboarding && !panel.onboarding.unlocked
+        ? (Number(panel.onboarding.hidden_count) || 0)
+        : 0,
       total,
       allTotal,
       expandable,
       expanded,
-      rows: rows.map((c) => HomePanels.challengeRowView(c, panel)),
+      // The rows in orderRows' sequence, as they always were: `data-rows`
+      // counts them and the tests read them. `groups` holds the SAME row
+      // objects under their headers, so a deadline a header took off a card
+      // is gone from both.
+      rows: views,
+      groups,
     };
+  },
+
+  // ── The groups ─────────────────────────────────────────────────────
+  //
+  // The ITERATION 03 board sorts challenges into groups by category: Setup,
+  // This week, Always open, and the season's other challenges last. The
+  // Challenges tab's controller (TopochainChallenges) holds the same table;
+  // two classic scripts cannot import one another, so both spell it out.
+  CHALLENGE_GROUPS: {
+    ONBOARDING: { key: 'setup', heading: 'Setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+  },
+  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+
+  // A challenge's group, from its label: the category, trimmed and uppercased.
+  groupOf(c) {
+    const category = String(c && c.label != null ? c.label : '').trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(HomePanels.CHALLENGE_GROUPS, category)
+      ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
+  },
+
+  // The block's rows under the board's group headers: contiguous, in group
+  // order, and in orderRows' sequence inside a group.
+  //
+  // Home's headers carry NO counts and do not collapse. The server sends at
+  // most four open cards chosen across categories, so "1/2" over two of them
+  // would be a guess at the group's size; the Challenges tab, which has every
+  // card, counts and collapses.
+  //
+  // Cards from ONE group draw no header: a heading over the whole list says
+  // nothing, so the rows stay exactly as they were, each with its deadline.
+  // From two or more, every group is headed and the header owns the clock:
+  // This week and the season's other challenges say when their soonest open,
+  // unfinished card ends (the card's own `ends_at`, else the season's, as
+  // challengeRowView reads it), Always open says it has no deadline, and
+  // their cards drop theirs. Setup has no clock, so its cards keep their own.
+  // `views` are changed in place, which is what keeps `rows` in agreement.
+  challengeGroups(rows, views, panel) {
+    const buckets = [];
+    rows.forEach((c, i) => {
+      const group = HomePanels.groupOf(c);
+      let bucket = buckets.find((b) => b.group === group);
+      if (!bucket) buckets.push(bucket = { group, members: [] });
+      bucket.members.push({ c, view: views[i] });
+    });
+    buckets.sort((a, b) => a.group.order - b.group.order);
+    if (buckets.length < 2) {
+      return buckets.map(({ group }) => ({ key: group.key, heading: null, meta: null, rows: views }));
+    }
+    const seasonEnd = panel && panel.season && panel.season.ends_at;
+    return buckets.map(({ group, members }) => {
+      let meta = null;
+      if (group.key === 'always') {
+        meta = 'no deadline';
+      } else if (group.key !== 'setup') {
+        let soonest = null;
+        for (const { c } of members) {
+          if (c.open === false || (c.progress && c.progress.done)) continue;
+          const ends = c.ends_at || seasonEnd;
+          if (!HomePanels.timeLeft(ends)) continue;
+          if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
+        }
+        meta = HomePanels.timeLeft(soonest);
+      }
+      if (group.key !== 'setup') {
+        for (const { view } of members) view.deadline = null;
+      }
+      return { key: group.key, heading: group.heading, meta, rows: members.map((m) => m.view) };
+    });
   },
 
   // `renderChallengesPanel` and `_countFillRows` lived here. The first is
@@ -607,8 +692,10 @@ const HomePanels = {
   //
   // The DEADLINE is the row's `ends_at` — its own schedule_end, else its
   // event's end, the same date the Challenges tab uses — else the season's
-  // end; none on a finished or not-open challenge. It stays on every open card
-  // until deadline bands group the challenges by when they end.
+  // end; none on a finished or not-open challenge. `group` is the card's key in
+  // the board's group table (groupOf). When the block's cards span more than
+  // one group, challengeGroups hands the clock to the group headers and takes
+  // it off every card but Setup's.
   challengeRowView(c, panel) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
@@ -638,6 +725,8 @@ const HomePanels = {
       // The event the challenge belongs to, for the card's deep link to its
       // page on the Challenges tab (goToChallenge); null without one.
       eventId: Number.isSafeInteger(eventId) && eventId > 0 ? eventId : null,
+      // Which group header the card sits under: setup, week, always or other.
+      group: HomePanels.groupOf(c).key,
       // The kind's icon (challenge_kinds.icon — one setting gives every
       // challenge of a kind the same face), the tile's fallback when the
       // template names no illustration the registry resolves or its artwork fails
@@ -675,9 +764,9 @@ const HomePanels = {
   //
   // The scope is the season (the payload's own `done` of `total`), except
   // while setup gates the rest: the block then holds only the setup
-  // challenges, so the progress is setup's ("done in Get started"), the
-  // board's "progress has a scope" rule. Deadlines and points stay on the
-  // cards.
+  // challenges, so the progress is setup's ("done in Setup", the tab's word), the
+  // board's "progress has a scope" rule. Deadlines stay on the cards or their
+  // group headers, and points on the cards.
   seasonView(panel) {
     const total = Number(panel && panel.total) || 0;
     if (!total) return null;
@@ -687,7 +776,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in Get started',
+        caption: 'done in Setup',
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'
@@ -749,8 +838,8 @@ const HomePanels = {
 
   // `_wire(section)` lived here: eight `querySelectorAll` sweeps re-run after
   // every paint, because the paint had just destroyed the nodes they were on.
-  // Every one of them is a prop in ./panels/ now — the challenge rows and the
-  // footer's Open button (Challenges), the heading's leaderboard link, the
+  // Every one of them is a prop in ./panels/ now — the challenge rows, the
+  // heading's leaderboard link, the
   // expand toggle, the ⋮, Discover's browse control, and the create tile's two
   // branches.
   //

@@ -275,12 +275,11 @@ async function buildChallengesPanel(pool, user, opts) {
   const locked = onboarding && !onboarding.summary.unlocked;
   // The totals query counts the EXPANDED scope and narrows to the collapsed
   // one with a FILTER, so both counts come from one statement. The locked
-  // onboarding restriction is part of the scope either way.
-  let totalsWhere = ALL_CHALLENGE_WHERE;
-  if (locked) {
-    scopeWhere += ' AND c.id = ANY($4::bigint[])';
-    totalsWhere += ' AND c.id = ANY($4::bigint[])';
-  }
+  // onboarding restriction is part of the row query's scope; the totals
+  // statement applies it per aggregate instead (below), which is what lets
+  // the same statement count the challenges the gate hides.
+  const gate = 'c.id = ANY($4::bigint[])';
+  if (locked) scopeWhere += ` AND ${gate}`;
   // Keep the ring, sorting and remaining rewards in sync with lifetime
   // onboarding progress, including credits earned in a previous season.
   const doneExpr = onboarding
@@ -340,10 +339,24 @@ async function buildChallengesPanel(pool, user, opts) {
   // (#1824), rather than a "See all 3 challenges" beside three challenges.
   // `scopeFilter` narrows every OTHER aggregate back to the rows above, so
   // `total`, `done` and `open_rewards` keep the exact meaning they had.
-  const scopeFilter = expanded ? 'TRUE' : `(${OPEN_ONLY_WHERE})`;
+  //
+  // While the onboarding gate is closed the outer WHERE stays the
+  // UNRESTRICTED season scope and the gate joins every FILTER, so the counts
+  // above are unchanged and `hidden_count` can count what the gate hides:
+  // the OPEN challenges (the collapsed scope `total` is counted in, even when
+  // expanded) whose id is not an onboarding step. It is the Home card's
+  // "N challenges locked" placeholder, and it is not bounded by the row
+  // LIMIT. Unlocked, this statement is exactly what it was.
+  const openScope = `(${OPEN_ONLY_WHERE})`;
+  const gateFilter = locked ? totalSql(gate) : null;
+  const scopeFilter = [expanded ? null : openScope, gateFilter].filter(Boolean).join(' AND ') || 'TRUE';
+  const allTotalSql = gateFilter ? `COUNT(*) FILTER (WHERE ${gateFilter})::int` : 'COUNT(*)::int';
+  const hiddenCountSql = gateFilter
+    ? `,\n            COUNT(*) FILTER (WHERE ${openScope} AND NOT (${gateFilter}))::int AS hidden_count`
+    : '';
   const { rows: totalRows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total,
-            COUNT(*)::int AS all_total,
+            ${allTotalSql} AS all_total,
             COUNT(*) FILTER (
               WHERE ${scopeFilter} AND (${totalSql(doneExpr)})
             )::int AS done,
@@ -352,11 +365,11 @@ async function buildChallengesPanel(pool, user, opts) {
                 WHERE ${scopeFilter} AND NOT (${totalSql(doneExpr)})
               ),
               '{}'
-            ) AS open_rewards
+            ) AS open_rewards${hiddenCountSql}
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-      WHERE se.season_id = $2 AND ${totalSql(totalsWhere)}`,
+      WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
     [user.id, season.id, ...onboardingParams]
   );
 
@@ -393,7 +406,12 @@ async function buildChallengesPanel(pool, user, opts) {
     all_total: totalRows[0]?.all_total ?? totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
-    ...(onboarding ? { onboarding: onboarding.summary } : {}),
+    // `hidden_count` is additive and rides only while the gate is closed.
+    ...(onboarding ? {
+      onboarding: locked
+        ? { ...onboarding.summary, hidden_count: Number(totalRows[0]?.hidden_count) || 0 }
+        : onboarding.summary,
+    } : {}),
     challenges,
     expanded,
   };
@@ -424,10 +442,16 @@ function demoChallengesPanel(opts) {
       demo: true,
     };
   }
+  // The labels are the board's categories, WEEKLY and PERSISTENT, so the four
+  // collapsed rows (and the `few` pair) span two groups and the preview draws
+  // the client's group headers. Both DONE rows are PERSISTENT, so Always open
+  // holds them together and they stay side by side under one header (see
+  // below). The finished rows stay in other categories, so an expansion shows
+  // the third, catch-all group as well.
   const rows = [
     {
       id: 900512,
-      label: 'ONCHAIN',
+      label: 'WEEKLY',
       goal: 'Staging demo challenge — test the demo dApps',
       icon: '🧪',
       illustration: 'try-three-apps',
@@ -441,7 +465,7 @@ function demoChallengesPanel(opts) {
     },
     {
       id: 900510,
-      label: 'BUG',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — report a reproducible bug',
       icon: '🐞',
       illustration: 'useful-feedback',
@@ -453,14 +477,14 @@ function demoChallengesPanel(opts) {
       earned_points: 0,
     },
     // The two DONE rows come last (the client's orderRows puts them there
-    // anyway) and deliberately sit next to each other: one binary, one
-    // numeric at full target. Seeing both kinds of "done" side by side —
-    // a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
+    // anyway) and deliberately sit next to each other, in one group: one
+    // binary, one numeric at full target. Seeing both kinds of "done" side
+    // by side — a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
     // reason the numeric one exists here, and the collapsed block only has
     // four slots to spend.
     {
       id: 900511,
-      label: 'SOCIAL',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — share the season announcement',
       icon: '📣',
       // No artwork on purpose: one of the four collapsed rows keeps the
@@ -475,7 +499,7 @@ function demoChallengesPanel(opts) {
     },
     {
       id: 900516,
-      label: 'COMMUNITY',
+      label: 'PERSISTENT',
       goal: 'Staging demo challenge — vote on five proposals',
       icon: '🗳️',
       illustration: 'make-a-proposal',
@@ -493,7 +517,7 @@ function demoChallengesPanel(opts) {
   const overflow = [
     {
       id: 900513,
-      label: 'COMMUNITY',
+      label: 'WEEKLY',
       goal: 'Staging demo challenge — give kudos to five builders',
       icon: '👏',
       illustration: 'proposal-accepted',

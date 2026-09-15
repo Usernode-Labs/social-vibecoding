@@ -136,14 +136,19 @@ function makeApp(counts = [0, 0, 0]) {
       // The totals statement counts the open scope and the whole catalog in one
       // pass (#1824), so `AS all_total` is what identifies it now. Nothing here
       // models completion or scheduling windows, so both counts are the same.
+      // The row query narrows its WHERE by the gate ($4); the totals statement
+      // gates each aggregate ($3) and, only while locked, adds `hidden_count`.
       if (sql.includes('my_activity_count') || sql.includes('AS all_total')) {
         const totals = sql.includes('AS all_total');
-        const allowed = sql.includes('AND c.id = ANY') ? params[totals ? 2 : 3] : null;
+        const allowed = totals
+          ? (sql.includes('AS hidden_count') ? params[2] : null)
+          : (sql.includes('AND c.id = ANY') ? params[3] : null);
         const selected = rows.filter((r) => !allowed || allowed.includes(r.id));
         if (totals) return { rows: [{
           total: selected.length, all_total: selected.length,
           done: selected.filter((r) => done(r.id)).length,
           open_rewards: selected.filter((r) => !done(r.id)).map((r) => r.t_reward),
+          ...(allowed ? { hidden_count: rows.length - selected.length } : {}),
         }] };
         return { rows: [...selected].sort((a, b) => Number(done(a.id)) - Number(done(b.id)))
           .slice(0, params[2]).map((r) => ({ ...r, my_done: done(r.id), my_activity_count: 0 })) };
@@ -203,12 +208,22 @@ test('public, web-session, and mobile lists unlock on the third completion', asy
       assert.deepEqual(locked.data.map((c) => c.id), [1, 2, 3]);
       assert.equal(locked.onboarding.completed, 2);
       assert.equal(locked.data[0].progress.done, false);
+      // The web's event list says how many of its challenges the gate hides
+      // (the "6 challenges locked" placeholder). The native lists keep their
+      // exact summary shape.
+      if (path.startsWith('/api/v4/season-events/')) assert.equal(locked.onboarding.hidden_count, 6);
+      else assert.equal('hidden_count' in locked.onboarding, false, path);
     }
+    // Scoped to THIS event: event 11 lists four weekly challenges, all hidden.
+    const weekly = await get('/api/v4/season-events/11/challenges');
+    assert.deepEqual(weekly.data, []);
+    assert.equal(weekly.onboarding.hidden_count, 4);
     state.counts = [3, 1, 1];
     for (const path of ['/api/v4/season-events/10/challenges', '/api/v4/mobile/challenges?season_id=2']) {
       const unlocked = await get(path);
       assert.equal(unlocked.data.length, 9);
       assert.equal(unlocked.onboarding.unlocked, true);
+      assert.equal('hidden_count' in unlocked.onboarding, false, path);
       const identity = unlocked.data.find((c) => c.id === 4);
       assert.equal(identity.category || identity.activity_type.category, 'PERSISTENT');
       assert.equal(unlocked.data[0].progress.done, true);
@@ -241,12 +256,14 @@ test('home counts and expanded lists respect the same gate and existing lifetime
       assert.equal(panel.done, 2);
       assert.equal(panel.points_remaining, 500);
       assert.deepEqual(panel.challenges.map((c) => c.id).sort(), [1, 2, 3]);
+      assert.equal(panel.onboarding.hidden_count, 6, path);
     }
     state.counts = [3, 1, 1];
     const panel = (await get('/api/home-panels?expand=challenges')).panels.find((p) => p.key === 'challenges');
     assert.equal(panel.total, 9);
     assert.equal(panel.done, 3);
     assert.equal(panel.onboarding.unlocked, true);
+    assert.equal('hidden_count' in panel.onboarding, false);
     assert.equal(panel.challenges.find((c) => c.id === 4).label, 'PERSISTENT');
     assert.equal(panel.challenges.find((c) => c.id === 1).progress.done, true);
   });

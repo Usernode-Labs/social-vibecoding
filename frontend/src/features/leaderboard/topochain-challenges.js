@@ -106,6 +106,12 @@ const TopochainChallenges = {
   // the grid renders identically, just without the "you" decorations.
   _mine: new Map(),
   _onboarding: null,
+  // The challenge groups the viewer opened or closed on this visit, as group
+  // key ('setup', 'week', 'always', 'other') -> collapsed. A group absent here
+  // takes the board's default (see _groupedGridView). Reset by open() and by a
+  // change of event; the detail page leaves it alone, so going back up to the
+  // grid keeps the viewer's toggles.
+  _collapsed: {},
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
   // The event id `_challenges` was last loaded for. `undefined` until the
@@ -231,6 +237,8 @@ const TopochainChallenges = {
 
   open() {
     TopochainChallenges._open = true;
+    // Every visit starts the groups from the board's defaults.
+    TopochainChallenges._collapsed = {};
     TopochainChallenges._renderShell();
     // The event bar owns the selection; re-render whenever it CHANGES.
     // Not on every notification: the bar also notifies once at the end of
@@ -312,6 +320,9 @@ const TopochainChallenges = {
 
   async loadChallenges() {
     const eventId = TopochainChallenges._eventId();
+    // A different event starts its groups from the board's defaults; a
+    // refresh of the same one (pull-to-refresh) keeps the viewer's toggles.
+    if (eventId !== TopochainChallenges._loadedEventId) TopochainChallenges._collapsed = {};
     // The event `_challenges` reflects (or is being fetched for). The
     // onChange subscriber above compares against it to tell a real event
     // switch apart from a redundant re-notification.
@@ -390,16 +401,60 @@ const TopochainChallenges = {
     return !!(m && m.completed === true);
   },
 
-  // Unfinished challenges first, then organiser-featured, then display_order
-  // — the retired #challenges screen's ordering with the completed split
-  // added in front of it (#981). The not-completed key comes from the PUBLIC
-  // row, so the split is final on first paint; `featured` still arrives with
-  // the personalization pass, so that lift alone can still re-sort later.
+  // ── Groups (ITERATION 03, "Groups count themselves") ──────────────────
+  //
+  // A challenge's group is its category, the card's label. The same table,
+  // in the same words, is HomePanels' (frontend/src/features/home/home-panels.js):
+  // both files run as import-free classic scripts, so each keeps a copy.
+  // Headings are sentence case; the header uppercases them with CSS, so a
+  // screen reader says the words.
+  GROUPS: {
+    ONBOARDING: { key: 'setup', heading: 'Setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+  },
+  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+
+  _groupOf(c) {
+    const label = c && c.card_preview ? c.card_preview.label : null;
+    const category = String(label == null ? '' : label).trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(TopochainChallenges.GROUPS, category)
+      ? TopochainChallenges.GROUPS[category] : TopochainChallenges.OTHER_GROUP;
+  },
+
+  // GROUPED when the season gates on setup or any challenge carries one of
+  // the board's categories. Otherwise the grid is the ungrouped one it always
+  // was: open cards, then a "Completed" split, each card with its deadline.
+  _grouped() {
+    if (TopochainChallenges._onboarding) return true;
+    const list = TopochainChallenges._challenges;
+    return Array.isArray(list)
+      && list.some((c) => TopochainChallenges._groupOf(c) !== TopochainChallenges.OTHER_GROUP);
+  },
+
+  // The group's place in the board's order; 0 for every card of an
+  // ungrouped grid, so the key changes nothing there.
+  _groupRank(c, grouped = TopochainChallenges._grouped()) {
+    return grouped ? TopochainChallenges._groupOf(c).order : 0;
+  },
+
+  // The group first (Setup, This week, Always open, Season challenges; a
+  // grouped grid only), then unfinished challenges, then organiser-featured,
+  // then display_order — the retired #challenges screen's ordering with the
+  // completed split added in front of it (#981). The group key keeps each
+  // group contiguous, so a grouped grid's "completed split" is inside each
+  // group rather than across the grid. The not-completed key comes from the
+  // PUBLIC row, so the split is final on first paint; `featured` still arrives
+  // with the personalization pass, so that lift alone can still re-sort later.
   _ordered() {
     const mine = TopochainChallenges._mine;
+    const grouped = TopochainChallenges._grouped();
     return TopochainChallenges._challenges
-      .map((c, i) => ({ c, i, m: mine.get(Number(c.id)) || null }))
+      .map((c, i) => ({
+        c, i, m: mine.get(Number(c.id)) || null, g: TopochainChallenges._groupRank(c, grouped),
+      }))
       .sort((a, b) => {
+        if (a.g !== b.g) return a.g - b.g;
         const ad = TopochainChallenges._isDone(a.c) ? 1 : 0;
         const bd = TopochainChallenges._isDone(b.c) ? 1 : 0;
         if (ad !== bd) return ad - bd;
@@ -451,36 +506,10 @@ const TopochainChallenges = {
   // card it was made for. The groups below therefore carry SLICES of the same
   // numbering, not a re-numbering.
   gridView(ordered) {
+    if (TopochainChallenges._grouped()) return TopochainChallenges._groupedGridView(ordered);
     const firstDone = ordered.findIndex((c) => TopochainChallenges._isDone(c));
     const doneCount = firstDone === -1 ? 0 : ordered.length - firstDone;
     const cards = ordered.map((c, i) => TopochainChallenges.cardView(c, i));
-    const onboarding = TopochainChallenges._onboarding;
-    if (onboarding) {
-      const categories = onboarding.unlocked
-        ? [['PERSISTENT', 'Persistent challenges'], ['WEEKLY', 'Weekly challenges'], ['ONBOARDING', 'Onboarding']]
-        : [['ONBOARDING', 'Get started']];
-      const groups = categories.map(([category, heading]) => ({
-        key: category,
-        heading,
-        cards: cards.filter((c) => c.label.toUpperCase() === category),
-      })).filter((group) => group.cards.length);
-      const other = cards.filter((c) => !categories.some(([category]) => c.label.toUpperCase() === category));
-      if (other.length) groups.push({ key: 'other', heading: 'Season challenges', cards: other });
-      return {
-        kind: 'cards',
-        // Setup is its own scope while it gates the rest; once unlocked the
-        // grid is the whole event again, and so is the progress.
-        progress: onboarding.unlocked
-          ? TopochainChallenges._progressView(doneCount, ordered.length)
-          : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
-        notice: onboarding.unlocked
-          ? 'Persistent and weekly challenges are unlocked.'
-          : 'Finish these to unlock persistent and weekly challenges.',
-        onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'ONBOARDING')
-          ? onboarding.event_id : null,
-        groups,
-      };
-    }
 
     // The "Completed" subheading only earns its row when there is something
     // on BOTH sides of it. Every public event in production is currently
@@ -500,6 +529,119 @@ const TopochainChallenges = {
       progress: TopochainChallenges._progressView(doneCount, ordered.length),
       groups,
     };
+  },
+
+  // The GROUPED grid: one group per category present, in the board's order,
+  // each a contiguous slice of the same flat numbering (_ordered sorts by
+  // group first). Each group carries its header, decided here: the heading,
+  // ONE composed meta string, whether it is finished, and whether it starts
+  // collapsed.
+  _groupedGridView(ordered) {
+    const cards = ordered.map((c, i) => TopochainChallenges.cardView(c, i));
+    const slices = [];
+    ordered.forEach((c, i) => {
+      const group = TopochainChallenges._groupOf(c);
+      let slice = slices[slices.length - 1];
+      if (!slice || slice.group !== group) {
+        slice = { group, challenges: [], cards: [] };
+        slices.push(slice);
+      }
+      slice.challenges.push(c);
+      slice.cards.push(cards[i]);
+    });
+    const summaries = slices.map((s) => TopochainChallenges._groupSummary(s.group.key, s.challenges));
+    // A finished group starts collapsed, so the group holding the next action
+    // is what the grid opens on. When every group is finished none collapses,
+    // or the grid would open on nothing but headers.
+    const everyDone = summaries.every((s) => s.allDone);
+    const toggled = TopochainChallenges._collapsed || {};
+    const groups = slices.map((s, n) => ({
+      key: s.group.key,
+      heading: s.group.heading,
+      meta: summaries[n].meta,
+      allDone: summaries[n].allDone,
+      collapsed: Object.prototype.hasOwnProperty.call(toggled, s.group.key)
+        ? toggled[s.group.key] === true
+        : summaries[n].allDone && !everyDone,
+      cards: s.cards,
+    }));
+    const doneCount = ordered.filter((c) => TopochainChallenges._isDone(c)).length;
+    const onboarding = TopochainChallenges._onboarding;
+    if (!onboarding) {
+      return { kind: 'cards', progress: TopochainChallenges._progressView(doneCount, ordered.length), groups };
+    }
+    return {
+      kind: 'cards',
+      // Setup is its own scope while it gates the rest; once unlocked the
+      // grid is the whole event again, and so is the progress.
+      progress: onboarding.unlocked
+        ? TopochainChallenges._progressView(doneCount, ordered.length)
+        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Setup'),
+      notice: onboarding.unlocked
+        ? 'Persistent and weekly challenges are unlocked.'
+        : 'Finish these to unlock persistent and weekly challenges.',
+      onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
+        ? onboarding.event_id : null,
+      // While the gate is closed, how many of this event's challenges it
+      // hides: the server's additive `hidden_count`, which the pane draws as
+      // one locked placeholder after the groups. A payload without the field
+      // (an older server) is 0, which draws nothing. Unlocked, nothing hides.
+      ...(onboarding.unlocked ? {} : { lockedCount: Number(onboarding.hidden_count) || 0 }),
+      groups,
+    };
+  },
+
+  // One group's header, from its challenges: how many are done, whether all
+  // are, the clock, and the meta string composed from them: "2/2 done" for a
+  // finished group, "1/3" for Setup (which has no clock), "1/4 · 3d left" or
+  // "0/2 · no deadline" for the rest. `left` is the time-left words alone, or
+  // null (Setup, a finished group, no deadline); the detail page's eyebrow
+  // reads it.
+  _groupSummary(key, challenges) {
+    const list = Array.isArray(challenges) ? challenges : [];
+    const total = list.length;
+    const done = list.filter((c) => TopochainChallenges._isDone(c)).length;
+    const allDone = total > 0 && done === total;
+    const left = allDone || key === 'setup' ? null : TopochainChallenges._groupTimeLeft(key, list);
+    let meta;
+    if (allDone) meta = `${total}/${total} done`;
+    else if (key === 'setup') meta = `${done}/${total}`;
+    else meta = `${done}/${total} · ${left || 'no deadline'}`;
+    return { done, total, allDone, left, meta };
+  },
+
+  // A group's clock: the earliest end among its open, unfinished challenges,
+  // in _timeLeft's words. A challenge's end is what _deadlineOf reads: its own
+  // `effective.schedule_end`, else the selected event's `ends_at`. Always open
+  // never borrows the event's end; only an organiser's own end date gives that
+  // group a clock. Null when nothing ends in the future.
+  _groupTimeLeft(key, challenges) {
+    const ctx = window.TopochainEventContext;
+    const ev = key !== 'always' && ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    let best = null;
+    for (const c of challenges) {
+      if (TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)) continue;
+      const raw = (c.effective && c.effective.schedule_end) || (ev && ev.ends_at);
+      const left = TopochainChallenges._timeLeft(raw);
+      if (!left) continue;
+      const at = Date.parse(raw);
+      if (!best || at < best.at) best = { at, left };
+    }
+    return best ? best.left : null;
+  },
+
+  // A group header's tap. Flips the group's collapsed state AS DRAWN (the
+  // viewer's own toggle, else the default) and redraws the grid descriptor
+  // alone: _renderGrid would re-run the screenshot and deep-link hooks.
+  _toggleGroup(key) {
+    const store = TopochainChallenges._store;
+    const grid = typeof store?.get === 'function' ? store.get()?.grid : null;
+    if (grid?.kind !== 'cards' || !TopochainChallenges._grouped()) return;
+    const group = TopochainChallenges.gridView(TopochainChallenges._ordered()).groups
+      ?.find((g) => g.key === key);
+    if (!group) return;
+    TopochainChallenges._collapsed = { ...TopochainChallenges._collapsed, [group.key]: !group.collapsed };
+    store.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
   },
 
   _toOnboarding(eventId) {
@@ -533,7 +675,11 @@ const TopochainChallenges = {
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),
       ...TopochainChallenges._stateOf(c),
+      // On a grouped grid the header over This week, Always open and Season
+      // challenges says when the group ends, so those cards leave it out.
+      // Setup's header has no clock, and its cards keep theirs.
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
+        || (TopochainChallenges._grouped() && TopochainChallenges._groupOf(c).key !== 'setup')
         ? null : TopochainChallenges._deadlineOf(c),
     };
   },
@@ -553,9 +699,10 @@ const TopochainChallenges = {
 
   // The deadline on a card's meta line: "5d left". The challenge's own end
   // (`effective.schedule_end`, the organiser's override over the template's)
-  // when one is set, else the selected event's `ends_at`. It stays on every
-  // open card until deadline bands group the grid by when challenges end;
-  // then the band heading says it.
+  // when one is set, else the selected event's `ends_at`. An ungrouped grid
+  // shows it on every open card. A grouped grid shows it only on Setup's
+  // cards; the other groups' headers carry the earliest end instead
+  // (_groupTimeLeft), from the same two sources.
   _deadlineOf(c) {
     const own = c && c.effective && c.effective.schedule_end;
     const ctx = window.TopochainEventContext;
@@ -582,7 +729,7 @@ const TopochainChallenges = {
   // The progress over the grid, as the board's quiet season summary draws it
   // ("3/9 done in Season 2", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("Get started"); otherwise it is the selected event, whose name
+  // of its own ("Setup"); otherwise it is the selected event, whose name
   // can land after the grid does. The onChange redraw in open() fills it in
   // then, and until it has, the caption is plain "done".
   _progressView(done, total, scope) {
@@ -726,10 +873,12 @@ const TopochainChallenges = {
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
   // is interaction-gated, so before/after captures and the declared dapp.json
-  // check can't reach it by URL alone. Opens the first card once, right after
-  // the grid first paints — since #981 that is the first UNFINISHED card when
-  // the event has one, which is the better capture either way. Scoped to that
-  // one param value so a real user's
+  // check can't reach it by URL alone. Opens one card once, right after the
+  // grid first paints: the first UNFINISHED card when the event has one
+  // (#981), which is the better capture either way. That is looked up, not
+  // assumed to be `ordered[0]`: a grouped grid leads with its Setup group,
+  // which stays first when it is finished and starts collapsed. Scoped to
+  // that one param value so a real user's
   // grid never auto-opens an overlay. Pure UI state — no writes, no env gate.
   _maybeShot(ordered) {
     if (TopochainChallenges._shotFired) return;
@@ -740,7 +889,9 @@ const TopochainChallenges = {
     } catch (err) { /* ignore */ }
     if (shot !== 'challenge-detail') return;
     TopochainChallenges._shotFired = true;
-    TopochainChallenges.openChallengeDetail(ordered[0]);
+    TopochainChallenges.openChallengeDetail(
+      ordered.find((c) => !TopochainChallenges._isDone(c)) || ordered[0]
+    );
   },
 
   // ── Challenge deep link (#982) ───────────────────────────────────────
@@ -1071,13 +1222,27 @@ const TopochainChallenges = {
     // does not deliver.
     const remaining = participants - loaded;
 
+    // The eyebrow, uppercase on the page. Ungrouped it is the category label,
+    // and the meta line carries the card's deadline. Grouped it is the
+    // challenge's group with that group's clock ("This week · 3d left"), and
+    // the meta line leaves the deadline to it; Setup has no clock, so its page
+    // keeps the card's deadline.
+    let eyebrow = cp.label ? str(cp.label) : null;
+    let deadline = TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)
+      ? null : TopochainChallenges._deadlineOf(challenge);
+    if (TopochainChallenges._grouped()) {
+      const group = TopochainChallenges._groupOf(challenge);
+      const members = TopochainChallenges._challenges.filter((c) => TopochainChallenges._groupOf(c) === group);
+      const { left } = TopochainChallenges._groupSummary(group.key, members);
+      eyebrow = left ? `${group.heading} · ${left}` : group.heading;
+      if (group.key !== 'setup') deadline = null;
+    }
+
     return {
       key: str(challenge.id),
-      // The category, uppercase on the page, beside the back disc.
-      eyebrow: cp.label ? str(cp.label) : null,
+      eyebrow,
       goal: str(cp.goal || ''),
-      deadline: TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)
-        ? null : TopochainChallenges._deadlineOf(challenge),
+      deadline,
       amount,
       // The card shows only the title, its meta line and the rail, so the page
       // is where the task is read; before ITERATION 03 the card showed it and

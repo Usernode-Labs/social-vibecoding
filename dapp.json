@@ -670,7 +670,7 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season progress leads the plate, above the shared challenge cards",
+      "name": "Challenges: the season progress leads the flat block, above the shared challenge cards",
       "path": "/?demo=1",
       "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
     },
@@ -683,7 +683,7 @@
     {
       "name": "Challenges: a block showing every challenge there is draws no \"see all\" (#1824)",
       "path": "/?demo=1&challenges=few",
-      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer:not(:has(.home-panel-expand)) .home-panel-open"
+      "expectSelector": "#home-challenges-section article.home-panel:not(:has(.home-panel-expand)) > .home-panel-body .home-challenge-card"
     },
     {
       "name": "Challenges: a truncated list still draws the toggle that opens the rest (#1824)",

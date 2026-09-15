@@ -7,8 +7,8 @@
 // #challenges-root: the grid host, and the challenge detail page and profile
 // overlay that sit on top of it. The descriptors come from ./topochain-challenges-store.js,
 // which that module fills; nothing here decides anything. The completed
-// split, the summary tally, the deep-link resolution, the scheme guard on the
-// CTA — all of it stays in the .js, which is both the island rule's
+// split, the groups and their headers' words, the summary tally, the
+// deep-link resolution, the scheme guard on the CTA — all of it stays in the .js, which is both the island rule's
 // "converted markup is like-for-like" and what keeps
 // tests/challenge-deep-link.test.js able to run the real controller in a vm.
 //
@@ -50,6 +50,8 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { GroupHeader } from './group-header';
+import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
@@ -62,6 +64,7 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
+    _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
@@ -97,17 +100,37 @@ type CardView = {
   fill: number | null;
   counted: boolean;
   earned: string | null;
-  // "5d left" (TopochainChallenges._deadlineOf); null when done.
+  // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
+  // under a group header that carries the clock.
   deadline: string | null;
 };
 
-type GroupView = { key: string; heading: string | null; cards: CardView[] };
+// `meta`, `allDone` and `collapsed` are a grouped grid's header
+// (TopochainChallenges._groupedGridView); an ungrouped grid's groups carry
+// only a heading, or none.
+type GroupView = {
+  key: string;
+  heading: string | null;
+  meta?: string | null;
+  allDone?: boolean;
+  collapsed?: boolean;
+  cards: CardView[];
+};
 
 type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; progress: SeasonProgressView; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
+  | {
+    kind: 'cards';
+    progress: SeasonProgressView;
+    notice?: string;
+    onboardingEventId?: number | null;
+    // While setup gates the event: how many challenges it hides (0 = none
+    // to show, and on an older server without the count).
+    lockedCount?: number;
+    groups: GroupView[];
+  };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -236,6 +259,8 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   if (view.kind === 'empty') {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
   }
+  // The card's own threshold, so a count it would not draw never hides the note.
+  const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;
   return (
     <>
       {/*
@@ -244,9 +269,6 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           declared dapp.json check anchors.
       */}
       <SeasonProgress id="tc-se-challenge-summary" view={view.progress} className="mb-4" />
-      {view.notice ? (
-        <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
-      ) : null}
       {view.onboardingEventId != null ? (
         <button
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
@@ -260,15 +282,54 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           between them were siblings in the string this replaces, and a
           container here would take the heading's `mt-6` out of the same
           margin context.
+
+          A group with a `meta` belongs to a grouped grid and gets the board's
+          header, a disclosure over the group's own grid. A collapsed grid
+          keeps its cards, because the header's aria-controls names it, and is
+          hidden twice: the attribute says what it means, and the `hidden`
+          class is what hides it, since `grid` sets a display that outranks
+          the attribute's preflight rule.
       */}
-      {view.groups.map((g) => (
+      {view.groups.map((g) => (g.meta && g.heading ? (
+        <Fragment key={g.key}>
+          <GroupHeader
+            heading={g.heading}
+            meta={g.meta}
+            allDone={!!g.allDone}
+            expanded={!g.collapsed}
+            controlsId={`tc-se-group-${g.key}`}
+            onToggle={() => controller()?._toggleGroup(g.key)}
+            className="mt-3 mb-2 first:mt-0"
+          />
+          <div id={`tc-se-group-${g.key}`} className={g.collapsed ? `hidden ${GRID}` : GRID} hidden={!!g.collapsed}>
+            {g.cards.map((c) => <Card key={c.key} view={c} />)}
+          </div>
+        </Fragment>
+      ) : (
         <Fragment key={g.key}>
           {g.heading ? <div className={GROUP_HEADING}>{g.heading}</div> : null}
           <div className={GRID}>
             {g.cards.map((c) => <Card key={c.key} view={c} />)}
           </div>
         </Fragment>
-      ))}
+      )))}
+      {/*
+          After the challenges, what setup still hides and what opens it: the
+          locked placeholder, whose second line IS the unlock note, so the
+          note paragraph draws only when there is no placeholder (a locked
+          event on a server without the count, or the unlocked notice). Both
+          sit under the last card at the grid's own 12px gap. The placeholder's
+          wrapper is a GRID too, so on a wide pane it takes one column like a
+          card instead of stretching into a banner across all of them.
+      */}
+      {locked ? (
+        <div className={`mt-3 ${GRID}`}>
+          <LockedChallengesCard count={view.lockedCount!} />
+        </div>
+      ) : null}
+      {view.notice && !locked ? (
+        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
+      ) : null}
     </>
   );
 }

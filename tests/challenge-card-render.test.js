@@ -69,9 +69,10 @@ test('the rail is a progressbar; indeterminate rails omit aria-valuenow', () => 
 test('rail copy never wraps: the rail is one full-width row and its label truncates', () => {
   const html = rail({ state: 'progress', label: '180/500 blocks produced this week', fill: 0.36, name: 'x', counted: true });
   const railClass = classOf(html, 'role="progressbar"').split(' ');
-  for (const cls of ['w-full', 'min-w-0', 'overflow-hidden', 'h-9', 'rounded-lg']) {
+  for (const cls of ['w-full', 'min-w-0', 'overflow-hidden', 'h-9', 'rounded-[0.6875rem]']) {
     assert.ok(railClass.includes(cls), `rail has ${cls}`);
   }
+  assert.ok(!railClass.includes('rounded-lg'), 'the card rail takes the tile’s 11px, not the old 8px');
   assert.match(html, /<span class="relative min-w-0 truncate">180\/500 blocks produced this week<\/span>/,
     'the label is a single truncating line');
 });
@@ -96,7 +97,10 @@ const KIND_ICON = '<span class="text-[2.5rem] leading-none">🧪</span>';
 
 test('with no illustration the tile is the neutral face: the group headings carry the category', () => {
   const html = tile({});
-  assert.match(html, /h-20 w-20 rounded-2xl/, 'the xl IconTile');
+  assert.match(html, /h-20 w-20 /, 'the xl IconTile');
+  const plainFace = classOf(html, 'aria-hidden="true"').split(' ');
+  assert.ok(plainFace.includes('rounded-[0.6875rem]'), 'with the card’s concentric 11px corners');
+  assert.ok(!plainFace.includes('rounded-2xl'), 'which displace the size’s own radius rather than layer on it');
   assert.ok(html.includes(NEUTRAL), 'the neutral face');
   assert.match(html, /aria-hidden="true"/, 'decorative');
   assert.doesNotMatch(html, /<span|<img/, 'no category text and no artwork inside it');
@@ -116,6 +120,7 @@ test('a registry illustration draws in the tile, on its pale tone in both themes
   for (const c of ['bg-zinc-100', 'dark:bg-zinc-800']) {
     assert.ok(!face.includes(c), `the neutral ${c} is displaced, not layered under the tone`);
   }
+  assert.ok(face.includes('rounded-[0.6875rem]') && !face.includes('rounded-2xl'), 'the artwork face has the same 11px corners');
   assert.ok(!html.includes('🧪'), 'the artwork takes the kind icon’s place');
   const view = { goal: 'Send feedback', reward: null, icon: null, illustration: 'useful-feedback', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
   const onCard = card(view);
@@ -243,7 +248,7 @@ test('the detail page draws the same rail and meta line at page size', () => {
   for (const c of ['h-10', 'text-[0.9375rem]', 'rounded-[0.75rem]', 'w-full', 'min-w-0', 'overflow-hidden']) {
     assert.ok(lg.includes(c), `lg rail has ${c}`);
   }
-  assert.ok(!lg.includes('h-9') && !lg.includes('rounded-lg'), 'one size, not both');
+  assert.ok(!lg.includes('h-9') && !lg.includes('rounded-[0.6875rem]'), 'one size, not both');
   const meta = renderToHtml(createElement(Card.ChallengeMeta, { deadline: '3d left', text: '720 pts so far', size: 'lg' }));
   assert.equal(meta, `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${DEADLINE('3d left')}${DOT}${REWARD('720 pts so far')}</div>`);
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: 'Earned 900 pts', earned: true })),
@@ -273,4 +278,19 @@ test('Enter and Space open a focused card like a tap (#1918)', () => {
   assert.match(fn, /e\.key === 'Enter' \|\| e\.key === ' '/);
   assert.match(fn, /e\.target !== e\.currentTarget/, 'a key pressed inside the card is left to its own target');
   assert.match(fn, /e\.currentTarget\.click\(\)/);
+});
+
+// ── Corners ───────────────────────────────────────────────────────────
+//
+// Owner decision (2026-09-15, option B): the card is 24px, and the tile and
+// the rail inside it are 11px, which is 24px less the card's 12px padding and
+// 1px border, so the three shapes are concentric.
+test('the card’s corners are 24px and the tile and rail inside it are concentric at 11px', () => {
+  const html = card({ goal: 'Try three apps', reward: '500 pts', state: 'progress', stateLabel: '1/3 tried', fill: 1 / 3, counted: true, earned: null });
+  const root = html.match(/^<div class="([^"]*)"/)[1].split(' ');
+  assert.ok(root.includes('rounded-3xl') && !root.includes('rounded-2xl'), 'the card is rounded-3xl (1.5rem)');
+  const face = classOf(html, 'aria-hidden="true"').split(' ');
+  assert.ok(face.includes('h-20') && face.includes('rounded-[0.6875rem]'), 'the tile is 11px');
+  assert.ok(classOf(html, 'role="progressbar"').split(' ').includes('rounded-[0.6875rem]'), 'the rail is 11px');
+  assert.match(CARD_SRC, /const TILE_RADIUS = 'rounded-\[0\.6875rem\]';/, 'one complete literal the compiler can find');
 });
