@@ -2932,9 +2932,10 @@
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
     },
     {
-      "name": "Settings deep-links the Password section",
-      "path": "/#settings/password",
-      "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"
+      "name": "Settings deep-links the Password section with clear password-creation copy (#2282)",
+      "path": "/?shot=password-create#settings/password",
+      "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save",
+      "expectText": "Don’t have a password? Create one"
     },
     {
       "name": "OpenRouter settings name GLM 5.3 Flash as the preferred coding model (#1592)",

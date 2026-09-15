@@ -41,6 +41,7 @@ const { shellMarkup } = require('./lib/shell-markup');
 const html = shellMarkup();
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
+const passwordTsx = read('frontend/src/features/settings/sections/password.tsx');
 // #1079: #settings-usernode-section's markup moved to a component; its tests
 // read both halves — the DECISIONS here, the SHAPES there.
 const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
@@ -960,6 +961,30 @@ test('dapp.json covers the settings screen and its deep links', () => {
   assert.match(back[0].expectSelector || '',
     new RegExp(`data-settings-section="${DEFAULT_SECTION}"`),
     'and that the traversal landed back on the default section rather than the drilled-in one');
+});
+
+test('the native-only password creation link has a read-only browser review state (#2282)', () => {
+  const checks = (manifest.tests || []).filter((t) =>
+    (t.path || '').includes('shot=password-create'));
+  assert.equal(checks.length, 1,
+    'exactly one declared check drives the password-creation screenshot state');
+  assert.equal(checks[0].path, '/?shot=password-create#settings/password');
+  assert.equal(checks[0].expectText, 'Don’t have a password? Create one');
+  assert.match(passwordTsx, /Don’t have a password\? Create one/,
+    'the component renders the user-facing copy the check expects');
+
+  assert.match(sliceMethod(settingsJs, '_passwordCreateDemo'),
+    /this\._demoParam\('shot'\) === 'password-create'/,
+    'the fixed UI state is selected only by its own screenshot value');
+  assert.match(sliceMethod(settingsJs, '_renderChangePasswordSection'),
+    /this\._passwordCreateDemo\(\)\s*\|\|\s*\(isNative && !!this\.state\.usernodePubkey\)/,
+    'the screenshot state reveals the same link without weakening the real native gate');
+
+  const submit = sliceMethod(settingsJs, 'changePasswordWithWallet');
+  const nativeGate = submit.indexOf("typeof window.signMessage !== 'function'");
+  const firstRequest = submit.indexOf('fetch(');
+  assert.ok(nativeGate > -1 && firstRequest > nativeGate,
+    'a browser using the review state cannot reach the wallet request path');
 });
 
 // ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint

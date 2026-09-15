@@ -3353,15 +3353,24 @@
       paintStatus(el, text, kind);
     },
 
+    // Browser-review state for the native-only password-creation link. It
+    // changes availability only: the wallet submit path still requires the
+    // real native bridge before it can make a request.
+    _passwordCreateDemo() {
+      return this._demoParam('shot') === 'password-create';
+    },
+
     // Decide whether the wallet option is even offered, then default to
-    // the password form. The "Use your wallet instead" link only appears
-    // in the Homeroom native app (signMessage available) AND when the
-    // logged-in account has a linked wallet to prove control of.
+    // the password form. The "Create one" link only appears in the Homeroom
+    // native app (signMessage available) AND when the logged-in account has a
+    // linked wallet to prove control of, except for the read-only screenshot
+    // state that makes this native-only copy reviewable in a browser.
     _renderChangePasswordSection() {
       const section = document.getElementById('change-password-section');
       if (!section) return;
       const isNative = !!(window.usernode && window.usernode.isNative);
-      this._walletChangeAvailable = isNative && !!this.state.usernodePubkey;
+      this._walletChangeAvailable = this._passwordCreateDemo()
+        || (isNative && !!this.state.usernodePubkey);
       // Clear any stale field values / status on each open.
       ['cp-current', 'cp-new', 'cp-confirm'].forEach((id) => {
         const el = document.getElementById(id);
@@ -3375,8 +3384,9 @@
     _setChangePasswordMode(mode) {
       // In password mode (or when wallet isn't available) show the
       // current-password field + the normal submit, and offer the
-      // "use your wallet" link only if it's available. In wallet mode hide
-      // the current-password field, swap the submit, and offer the way back.
+      // password-creation link only if the wallet-backed path is available. In
+      // wallet mode hide the current-password field, swap the submit, and offer
+      // the way back.
       const wallet = mode === 'wallet' && this._walletChangeAvailable;
       const show = (id, on) => {
         const el = document.getElementById(id);
@@ -3385,8 +3395,8 @@
       show('cp-current-row', !wallet);
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
-      // Offer the "switch to wallet" link only in password mode and only
-      // when wallet change is available; offer the way back in wallet mode.
+      // Offer the password-creation link only in password mode and only when
+      // wallet change is available; offer the way back in wallet mode.
       show('cp-wallet-mode', !wallet && this._walletChangeAvailable);
       show('cp-password-mode', wallet);
     },
