@@ -12488,12 +12488,34 @@ const AppView = {
   // `opts.pickFlow` is gone with the picker. It existed for the second "+"
   // row that asked the venue question at creation time; creation asks
   // nothing now.
+  //
+  // #2241: the plain path CREATES NOTHING. It opens
+  // /app/<slug>/dev/sessions/new — the unsent-change screen — and the
+  // session row (and, on the turn it runs, the branch) appears on the first
+  // send. Clicking New change and thinking better of it used to leave a
+  // real row behind: one of the viewer's three active-session slots, a card
+  // in Improve's "changes in progress", and nothing to do about it but
+  // archive it by hand. See DevChat.startPendingSession.
+  //
+  // `opts.flow` is the ONE caller that still creates up front, and for the
+  // reason it exists: it hands the session straight to a web agent, and a
+  // hand-off is recorded ON the session (POST /sessions/:id/build-venue) —
+  // the walkthrough it opens has no meaning without a row to point at.
+  // That user has also already been refused a turn here, so the decision to
+  // start a change is one they have demonstrably made.
   async createProposal(opts) {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
+    const flowAgent = (opts && opts.flow) || null;
+    if (!flowAgent) {
+      AppView._proposalHint = true;
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', DevChat.NEW_SESSION_REF, 'sessions');
+      }
+      return;
+    }
     const session = await DevChat.createSession(AppView.appData.slug);
     if (!session) return; // createSession already alerts (cap reached / error)
     AppView._proposalHint = true;
-    const flowAgent = (opts && opts.flow) || null;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', session.id, 'sessions');
     }
@@ -16667,6 +16689,24 @@ const AppView = {
     }
 
     await Promise.all([DevChat.loadSessions(AppView.appData.slug), AppView._loadDevData()]);
+
+    // #2241: /dev/sessions/new — the change that has not been sent yet.
+    // There is no row to open, so the screen renders against the
+    // placeholder and the first send creates the real one. Everything above
+    // this line still runs: the same shell, the same session list behind
+    // it, the same app data the composer's budget and venue read.
+    if (restoreSessionId === DevChat.NEW_SESSION_REF) {
+      DevChat.startPendingSession(AppView.appData.slug);
+      DevChat.renderChatView();
+      // The one-shot "what a proposal is" hint belongs here more than
+      // anywhere: this screen exists before anything has been created.
+      if (AppView._proposalHint) {
+        AppView._proposalHint = false;
+        if (typeof DevChat.showProposalHint === 'function') DevChat.showProposalHint();
+      }
+      return;
+    }
+
     // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
     // session — from the drawer's completion row, the session list, a
     // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
