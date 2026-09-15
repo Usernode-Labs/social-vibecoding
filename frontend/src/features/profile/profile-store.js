@@ -141,22 +141,36 @@ const CHIP_VIOLET =
   'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 ' +
   'hover:bg-violet-100 dark:hover:bg-violet-900/50';
 
+/** Provider links in both the owner's card and the public card. The server
+ * supplies this `links` object exclusively from OAuth-backed identity rows;
+ * keeping the word Verified in the label makes that boundary visible rather
+ * than asking a reader to infer it from where the link appeared. */
+export function verifiedSocialLinksView(profile) {
+  const links = (profile && profile.links) || {};
+  const rows = [];
+  const add = (key, label, href) => {
+    const safe = safeHref(href);
+    if (safe) {
+      rows.push({
+        key, label, href: safe, external: true, className: CHIP_ZINC,
+      });
+    }
+  };
+  if (typeof links.github === 'string' && links.github) {
+    add('github', `Verified GitHub · ${links.github}`,
+      `https://github.com/${encodeURIComponent(links.github)}`);
+  }
+  if (typeof links.x === 'string' && links.x) {
+    add('x', `Verified X · @${links.x}`,
+      `https://x.com/${encodeURIComponent(links.x)}`);
+  }
+  return rows;
+}
+
 /** The identity card (#982) — who this profile belongs to. */
 export function identityView(state) {
   const u = state.user || {};
-  const chips = [];
-  const links = u.links || {};
-  const addChip = (key, label, href) => {
-    const safe = safeHref(href);
-    if (safe) chips.push({ key, label, href: safe, external: true, className: CHIP_ZINC });
-  };
-  if (links.github) {
-    addChip('github', `GitHub · ${links.github}`,
-      `https://github.com/${encodeURIComponent(links.github)}`);
-  }
-  if (links.x) {
-    addChip('x', `X · @${links.x}`, `https://x.com/${encodeURIComponent(links.x)}`);
-  }
+  const chips = verifiedSocialLinksView(u);
   if (u.username) {
     // In-app link out: the viewer's kudos / proposed-PR history.
     chips.push({

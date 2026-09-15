@@ -196,15 +196,33 @@ test('the bio is a text node, never innerHTML', () => {
 });
 
 test('outbound handle links are scheme-guarded and rel-protected', () => {
-  const fn = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'));
+  const fn = profileStoreJs.slice(
+    profileStoreJs.indexOf('export function verifiedSocialLinksView'),
+    profileStoreJs.indexOf('export function identityView')
+  );
   assert.match(fn, /safeHref\(href\)/,
     'escaping alone would not stop a javascript: href');
   assert.match(fn, /encodeURIComponent\(links\.github\)/);
   assert.match(profileStoreJs, /\^https\?:\\\/\\\//, 'safeHref pins http(s) only');
-  // Only the chips built from a user-supplied handle are external; the
-  // in-app builder link is not, which is why the flag rides on the chip.
+  // Only proof-backed provider chips are external; the in-app builder link is
+  // not, which is why the flag rides on the chip.
   assert.match(fn, /external: true/);
   assert.match(profileViewTsx, /rel: 'noopener noreferrer'/);
+  assert.match(profilePublicTsx, /target="_blank"/);
+  assert.match(profilePublicTsx, /rel="noopener noreferrer"/);
+  assert.match(fn, /Verified GitHub/);
+  assert.match(fn, /Verified X/);
+});
+
+test('social accounts in Edit profile are proof status, not free-text claims', () => {
+  assert.match(profileSheetTsx, /Verified social accounts/);
+  assert.match(profileSheetTsx, /id="profile-edit-github"/);
+  assert.match(profileSheetTsx, /id="profile-edit-x"/);
+  assert.match(profileSheetTsx, /#settings\/connectors/);
+  assert.doesNotMatch(profileSheetTsx, /setGithub|setX/);
+  const save = profileJs.slice(profileJs.indexOf('async _save('));
+  assert.doesNotMatch(save.slice(0, 2500), /github|\bx\b/,
+    'the profile PATCH cannot write a social-account claim');
 });
 
 test('the username is shown read-only, with somewhere to go', () => {
@@ -466,6 +484,12 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
     'a state link that stops rendering must fail checks, not regress silently');
   const mine = live.filter((t) => t.name.includes('#982'));
   assert.equal(mine.length, 2, 'two slots, deliberately — see above');
+  const verifiedSocials = mine.find((t) => t.name.includes('#1939'));
+  assert.ok(verifiedSocials, 'the edit-profile check must cover proof-backed social accounts');
+  assert.match(verifiedSocials.expectSelector, /#profile-edit-github:not\(:has\(input\)\)/);
+  assert.match(verifiedSocials.expectSelector, /#profile-edit-x:not\(:has\(input\)\)/);
+  assert.match(verifiedSocials.expectSelector, /a\[href='#settings\/connectors'\]/);
+  assert.equal(verifiedSocials.expectText, 'Manage social accounts');
 });
 
 test('the profile checks assert on the changed screen, not on "/"', () => {

@@ -569,9 +569,10 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "Edit profile opens with the username read-only (#982)",
+      "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
-      "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
+      "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",
+      "expectText": "Manage social accounts"
     },
     {
       "name": "Edit profile is a scrolling card of inset-grouped rows (#1285)",

@@ -3,7 +3,7 @@
 // Profile customization (issue #982) — the write half of the #profile
 // screen plus the read that backs its "Completed challenges" section.
 //
-//   PATCH  /api/me/profile             display name / bio / github / x
+//   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
@@ -50,6 +50,7 @@ const { sniffImageType } = require('../services/attachments');
 const { profileWriteLimiter, usernameChangeLimiter } = require('../middleware/rate-limits');
 const usernames = require('../services/usernames');
 const accountEmail = require('../services/account-email');
+const socialIdentity = require('../services/social-identity');
 const {
   buildChallengeRow,
   DONE_EXPR,
@@ -67,12 +68,6 @@ const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 // and neither truncates at 40 on a phone.
 const MAX_DISPLAY_NAME = 40;
 const MAX_BIO = 280;
-// One leading '@' is stripped before this runs. Deliberately permissive
-// enough for both GitHub and X handle rules without trying to be either
-// vendor's exact validator — a handle that doesn't exist upstream is a
-// dead link, not a security problem.
-const HANDLE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
-
 // Avatar bytes. The express.raw() limit below must sit ABOVE this so an
 // over-size body gets the friendly 400 from validateAvatarUpload rather
 // than the parser's opaque 413 — same reasoning as the feedback-screenshot
@@ -150,37 +145,22 @@ function parseProfileFields(body) {
     }
   }
 
-  for (const key of ['github', 'x']) {
-    if (!(key in src)) continue;
-    const raw = src[key];
-    if (raw !== null && typeof raw !== 'string') {
-      details[key] = ['Handle must be text.'];
-      continue;
-    }
-    // Strip ONE leading '@' — people paste "@octocat" out of habit.
-    const value = String(raw ?? '').trim().replace(/^@/, '');
-    if (value === '') {
-      fields[key] = null;
-    } else if (!HANDLE_RE.test(value)) {
-      details[key] = ['That doesn’t look like a valid handle.'];
-    } else {
-      fields[key] = value;
-    }
-  }
-
   return { fields, details };
 }
 
 // The profile object echoed by PATCH and embedded in GET /api/auth/me, so
 // both surfaces speak one shape and the client can swap `App.user` wholesale.
-function shapeProfile(row) {
+// Social links are passed separately because their only trusted source is the
+// OAuth-backed user_social_identities table. In particular, never fall back to
+// row.github / row.x: those legacy columns contain self-declared text.
+function shapeProfile(row, verifiedLinks = {}) {
   return {
     displayName: row?.display_name ?? null,
     bio: row?.bio ?? null,
     avatarUrl: row?.avatar_id ? `/avatars/${row.avatar_id}` : null,
     links: {
-      github: row?.github ?? null,
-      x: row?.x ?? null,
+      github: verifiedLinks?.github ?? null,
+      x: verifiedLinks?.x ?? null,
     },
   };
 }
@@ -298,14 +278,17 @@ function profileRoutes(config) {
   // the avatar writes can all echo the post-write truth rather than
   // reconstructing it from the request.
   async function readProfile(userId) {
-    const { rows } = await pool.query(
-      `SELECT u.display_name, u.bio, u.github, u.x, av.id AS avatar_id
-         FROM users u
-         LEFT JOIN user_avatars av ON av.user_id = u.id
-        WHERE u.id = $1`,
-      [userId]
-    );
-    return shapeProfile(rows[0]);
+    const [{ rows }, verifiedLinks] = await Promise.all([
+      pool.query(
+        `SELECT u.display_name, u.bio, av.id AS avatar_id
+           FROM users u
+           LEFT JOIN user_avatars av ON av.user_id = u.id
+          WHERE u.id = $1`,
+        [userId]
+      ),
+      socialIdentity.verifiedProfileLinks(pool, userId),
+    ]);
+    return shapeProfile(rows[0], verifiedLinks);
   }
 
   // ── PATCH /api/me/profile ────────────────────────────────────────────

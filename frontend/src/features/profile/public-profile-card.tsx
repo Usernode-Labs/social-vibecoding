@@ -18,7 +18,7 @@
 
 import { useState, type ReactNode } from 'react';
 
-import { publicAvatarView } from './profile-store.js';
+import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
 import { Profile } from './profile.js';
 
 const REPORT_REASONS: Array<[string, string]> = [
@@ -124,6 +124,7 @@ export function PublicProfileCard({
   profile: any;
   allowReport: boolean;
 }): ReactNode {
+  const socialLinks = verifiedSocialLinksView(profile);
   return (
     <>
       <article
@@ -141,6 +142,21 @@ export function PublicProfileCard({
             </div>
             {profile.bio ? (
               <p className="mt-3 text-sm whitespace-pre-wrap break-words">{profile.bio}</p>
+            ) : null}
+            {socialLinks.length ? (
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                {socialLinks.map((link) => (
+                  <a
+                    key={link.key}
+                    className={link.className}
+                    href={link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </div>
             ) : null}
           </div>
         </div>
