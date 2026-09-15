@@ -2125,6 +2125,37 @@ const AppView = {
     App._setScreenVisible('app-view', true);
   },
 
+  // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light`. A running app whose
+  // page is that tone, so the header strip above it can be captured taking
+  // the tone rather than the shell's theme. Synthesised the same way as
+  // showSettledLaunchShot: a fully restricted pending frame with no document
+  // behind it, so no same-origin document ever enters #app-iframe. The page
+  // colour is what the app's bridge would have reported for a document of
+  // that tone — the platform's own two grounds — set through the same
+  // `setBackground` the bridge message handler uses, so everything from the
+  // store onward is the production path (features/app-frame/app-tone.js).
+  showAppToneShot(tone) {
+    const dark = tone === 'dark';
+    const slug = dark ? 'staging-demo-dark-app' : 'staging-demo-light-app';
+    AppView.appData = {
+      slug,
+      name: dark ? 'Staging demo dark app' : 'Staging demo light app',
+      icon_emoji: dark ? '🌙' : '☀️',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    const frame = AppView._appFrame();
+    frame.mount({ slug, faded: false });
+    frame.setBackground?.(dark ? '#0b0d1b' : '#f4f2e4');
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+  },
+
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
   // (#487 follow-up): the two outcomes of the offline App tab — an app whose
   // own service worker can serve its document gets its frame mounted, one
