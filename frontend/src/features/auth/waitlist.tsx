@@ -1358,8 +1358,7 @@ export function WaitlistScreen() {
                       ? 'Sending\u2026'
                       : 'Send a new code'}
                 </button>
-                {' '}
-                {CODE_CAP_NOTE}
+                {` ${CODE_CAP_NOTE}`}
               </p>
               {/*
                   The resend's own answer. Separate from #waitlist-msg so a

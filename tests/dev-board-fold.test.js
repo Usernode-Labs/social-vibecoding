@@ -531,7 +531,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // de-duplicated them. The number that matters is what the merged manifest
   // actually holds, so this entry counts it directly rather than re-deriving
   // it: 638.
-  assert.equal(DAPP.tests.length, 638);
+  // 638 → 641: #2201's three checks on a confirmed address re-joining the
+  // waitlist — it lands on the settled panel, the copy reads back rather
+  // than congratulating, and it is never asked for a code.
+  assert.equal(DAPP.tests.length, 641);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
