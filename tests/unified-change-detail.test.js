@@ -366,9 +366,14 @@ test('Continue building selects the embedded workspace without navigating away f
   assert.deepEqual(routes, [4073], 'callers outside the card retain the session route');
 });
 
-test('Workshop native underway inline details resolve the owner card key', () => {
+test('the owner\u2019s underway session resolves to a body carrying its change id', () => {
+  // This went through `_workshopCardBody`, the card-key adapter the Workshop's
+  // in-place open used. #1884 round two sends "Open card" to the item's page
+  // on both surfaces, so that adapter is gone and the claim is made where it
+  // always actually lived — `_topicViewFor`, which the page itself builds
+  // from.
   const av = context(); av._mySessions = [failing];
-  assert.equal(av._workshopCardBody('my-session:4073').changeId, 4073);
+  assert.equal(av._topicViewFor('session', av._findItem('session', 4073)).body.changeId, 4073);
 });
 
 

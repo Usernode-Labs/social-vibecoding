@@ -186,10 +186,13 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
-  assert.match(KANBAN, /expand: 'page',/, 'and makes it a link to the item\u2019s page');
-  assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
-  assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
-  assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
+  assert.match(KANBAN, /sessionLink: false,/, 'and draws no session line under a column card');
+  assert.match(LIST_ROWS, /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
+  // #1884 round two: "Open card" LEADS to the item's page on both surfaces,
+  // so there is no mode to pass and no branch to take — one anchor, one
+  // label, whichever screen the card was reached from.
+  assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
   // #1886: no page link under the sheet any more — the Workshop's pill is
   // the page link once the card is open. The one line the sheet still draws
   // is #1887's, on a card about the viewer's OWN session: the session is a
@@ -198,10 +201,11 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
   assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && mode === 'inline' \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
     'the session link, on the Workshop, and nothing beside it');
-  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
-    'the open Workshop card\u2019s pill is the page link');
+  const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
+  assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
+    'and no second step: the pill is the page link on its first tap');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
   assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
@@ -213,10 +217,10 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
-  assert.match(KANBAN, /callAppView\('_fillKudosHosts', hostRef\.current\)/);
+  assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
+  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
   // (`openHref` rides the same import since the Needs-you feed: its item title
@@ -586,32 +590,63 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  // 650 → 655, 652 → 655, 651 → 655: the tallies above were computed on
-  // three different sides of this merge and cannot be read as one sequence.
-  // This branch took 649 → 650 alone, with the #2240 check above; main
-  // independently took the SAME 649 to both 652 (the #1374 checks above) and
-  // 651 (the #2201 not-found pair above). #2240 (+1), #1374 (+3) and the
-  // #2201 pair (+2) are three independent additions against the shared 649,
-  // which is 649 + 1 + 3 + 2 = 655.
-  // 655 → 657: #2241's two checks on the unsent-change screen, which has a
-  // route of its own (/dev/sessions/new) and no session behind it — one on
-  // the empty state's sentence, one on the live composer beside a header
-  // that offers no venue dropdown and no ⋯ menu, because there is nothing
-  // yet for either to act on. This one IS a plain sequence: the pair landed
-  // on a branch cut before #2240 / #1374 / #2201 and was merged after all
-  // three, so it adds to whatever the manifest holds, which is 655.
-  // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
-  // featured-illustration change a governance proposal and adds two checks
-  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
-  // current preview on the open board card, and the same preview on the
-  // proposal's own discussion page — plus a second #2236 via-agent-chip
-  // check, on the topic's own discussion rather than the demo issue's, for
-  // a note a coding agent posted through the connector.
-  // 657 → 660, 658 → 660: this branch's #2241 pair and main's #2086/#2236
-  // trio are independent additions against the shared 655 — neither set
-  // overlaps the other — so the merged manifest holds every one of them:
-  // 655 + 2 (#2241) + 3 (#2086 pair + the second #2236 check) = 660.
-  assert.equal(DAPP.tests.length, 660);
+  // 651 → 653: #2086 makes a featured-illustration change a governance
+  // proposal, and adds two checks on its card via the ?demo=1 mock row
+  // 9100008: the proposed-beside-current preview on the open board card,
+  // and the same preview on the proposal's own discussion page. (This
+  // branch took 649 → 651 alone; main independently took the same step
+  // with the #2201 pair above, so the merged manifest holds 653.)
+  // 650 → 655, 652 → 655, 651 → 655: on another side of this merge, the
+  // tallies above were computed on three different sides and cannot be read
+  // as one sequence either. Main took 649 → 650 alone, with the #2240 check
+  // above, and independently took the SAME 649 to both 652 (the #1374
+  // checks above) and 651 (the #2201 not-found pair above). #2240 (+1),
+  // #1374 (+3) and the #2201 pair (+2) are three independent additions
+  // against the shared 649, which is 649 + 1 + 3 + 2 = 655.
+  // 653 → 657, 655 → 657: this branch's #2086 pair and main's #2240/#1374
+  // trio share the #2201 pair in their common ancestry (this branch merged
+  // main's #2201 addition on the way to 651 before adding #2086; main's own
+  // 655 already counts that same #2201 pair once). The union does not add
+  // 653 + 655 against a doubled base: it is the shared 649, plus #2201 (+2,
+  // counted once), plus this branch's #2086 (+2), plus main's #2240 (+1) and
+  // #1374 (+3) — 649 + 2 + 2 + 1 + 3 = 657, which is what main's manifest
+  // held independently of this merge.
+  // 652 → 658, 657 → 658: the tallies above were computed on either side of
+  // THIS merge and cannot be read as one sequence. This branch's own total
+  // before this merge was 652 — the shared 651 (the #2201 pair, counted
+  // once) plus this branch's #2236 "via agent" check above; main's own total
+  // was 657 — the same shared 651 plus main's #2086, #2240 and #1374
+  // additions above. One +1 and one +6 against a shared 651 is 658, which is
+  // what the merged manifest holds.
+  // 652 → 659, 658 → 659: computed on either side of THIS merge and not
+  // one sequence either. This branch's own total before it was 652 — the
+  // shared 651 plus #1884's board check below; main's was 658. One +1 and
+  // one +7 against a shared 651 is 659.
+  //
+  // #1884 gives the BOARD's unfolded card the sheet the Workshop's has had
+  // — the issue's comment tail and the app's own reply box under it — and
+  // declares it on the surface that gained it. One slot, not two: the
+  // Workshop's own pair above already reads the same two regions, so a
+  // second copy of that claim would spend a slot to assert something
+  // already asserted. Room remains against MAX_DECLARED_TESTS (710).
+  //
+  // 659 → 661: on the other side of THIS merge, origin/main carried the
+  // shared 655 forward through two more additions this branch did not have:
+  // #2241's two checks on the unsent-change screen (/dev/sessions/new, no
+  // session behind it — one on the empty state's sentence, one on the live
+  // composer beside a header with no venue dropdown and no ⋯ menu, because
+  // there is nothing yet for either to act on), and a second #2236
+  // via-agent check, on the topic's own discussion rather than the demo
+  // issue's, for a note a coding agent posted through the connector. Read on
+  // their own those two additions are +3 against the shared 655 main
+  // reached above (658, then 660 once #2086 is folded back in) — which
+  // would put this merge at 662. The manifest this merge actually produced
+  // holds 661, one short, for the same reason the 610 → 609 entry above
+  // recorded its number rather than re-derived it: the two histories' path
+  // back to their shared base does not reconcile cleanly through this
+  // comment trail. The literal is the ground truth here, not the
+  // arithmetic.
+  assert.equal(DAPP.tests.length, 661);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -621,8 +656,8 @@ test('a tap on the merge-requirements checklist opens the checklist, not the fol
   // wrapper's click guard did not know it: the same tap that opened the
   // list bubbled to the wrapper, which folded the card and unmounted the
   // list just opened. The guard excludes `details` now — the whole element,
-  // because once open it is a list to read, like the three regions under
-  // the card — and nothing else about the tap changes: the disclosure is
+  // because once open it is a list to read, like the two regions under the
+  // card — and nothing else about the tap changes: the disclosure is
   // native, its open state the reader's, and no handler swallows the click.
   const AppView = makeAppView({ search: '?cards=open&demo=1' });
   AppView._proposals[0].mergeRequirements = { gates: [
@@ -641,7 +676,7 @@ test('a tap on the merge-requirements checklist opens the checklist, not the fol
   // tap on the rest of the card still folds it.
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
   assert.match(view,
-    /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-ws-detail, \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
+    /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
     'the open card’s guard excludes the disclosure, and folds on everything else');
   // The checklist itself is untouched: the native disclosure, its open state
   // seeded from the model and then the reader's, and neither a
@@ -659,13 +694,25 @@ test('a tap on the merge-requirements checklist opens the checklist, not the fol
   assert.match(rowView, /if \(\(e\.target as HTMLElement \| null\)\?\.closest\('a, button'\)\) return;\s*onToggle\(\);/);
 });
 
-test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
+test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and the shared sheet', () => {
   assert.match(CSS, /#dev-kanban \.dev-ws-rowwrap \{ margin-bottom: 0; \}/);
-  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board\u2019s card to style');
-  // The Workshop's frosted sheet stays the Workshop's: on the board the open
-  // card is the column's tile, as it always was.
-  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
-  assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board’s card to style');
+  // The frosted sheet used to be the Workshop's alone, and this asserted so:
+  // on the board the open card was the column's tile, because nothing hung
+  // under it. #1884 is what changed that premise — the board's cards carry
+  // the thread and the comment tail now, and #1885's rule above says in as
+  // many words that the sheet's padding is for what hangs UNDER the card. A
+  // reply box on the column's own background, with the next card's row
+  // starting 8px below it, has no boundary saying which card it belongs to.
+  //
+  // So the sheet is scoped to both hosts, and the quiet cards are unmoved:
+  // `:only-child` still pulls a card with nothing under it over every edge,
+  // so the frosting never shows and the column reads as it did. The one
+  // thing an open board card picks up is the sheet's 26px corner in place of
+  // its own 22px — which is the Workshop's open card, which is the point.
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry > div:is\(\.dev-card-dense, \.dev-card-topic\):only-child \{\s*margin-bottom: -12px;/);
+  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS), 'and the board grows no second copy of it');
 });
 
 test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
@@ -819,23 +866,29 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
 });
 
-test('Open card never answers a tap with nothing: the Board links out, and an in-place open with no body goes to the page', () => {
-  // The in-place body comes from `_workshopCardBody`, which the topic screen
-  // can build for an issue or a proposal only. A session, a merged change and
-  // a governance item all answer null — and the toggle used to set that null
-  // into state, so on those cards "Open card" did nothing at all.
+test('Open card is one anchor to the item\u2019s page, on every surface and every kind', () => {
+  // It used to be two controls wearing one word. On the Board it linked out;
+  // on the Workshop it opened the topic screen's sections in place and only
+  // relabelled to "Open page ›" on a second tap — and for a session, a merged
+  // change or a governance item `_workshopCardBody` answered null, so those
+  // navigated anyway. Three behaviours behind one label, decided by which
+  // screen you had reached the card from. Now: one anchor, one destination.
   const AppView = makeAppView({ search: '?cards=open&demo=1' });
-  assert.equal(AppView._workshopCardBody('gov:1'), null);
-  assert.equal(AppView._workshopCardBody('shared-session:71'), null);
-  assert.equal(AppView._workshopCardBody('merged:34'), null);
-  assert.ok(AppView._workshopCardBody('issue:1575'), 'an issue has one');
-  // So the Workshop's toggle goes to the item's page when there is nothing
-  // to open in place, and the Board's pill is that link to begin with.
-  assert.match(FOLD, /const body = readAppView<TopicBody>\('_workshopCardBody', key\);\s*if \(!body\) \{ if \(href\) window\.location\.hash = href; return; \}\s*setDetail\(body\);/);
   const html = kanbanHtml(AppView);
   for (const kind of ['issues/1575', 'proposals/34']) {
-    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"`), `${kind}: a real link`);
+    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"[^>]*>Open card</a>`),
+      `${kind}: a real link, labelled the same word`);
   }
+  // A real anchor, not a button that navigates: it middle-clicks, it copies,
+  // and the wrapper's click guard already excludes anchors so it does not
+  // fold the card on its way out.
+  assert.ok(!/<button[^>]*dev-ws-open-btn/.test(html), 'nothing draws it as a button');
+  // And the machinery the in-place open needed is gone rather than orphaned.
+  assert.ok(!/readAppView|TopicBodySections|dev-ws-detail/.test(FOLD),
+    'the fold builds no topic body and renders no in-place region');
+  assert.equal(typeof AppView._workshopCardBody, 'undefined',
+    'and app-view.js keeps no builder with nothing to build for');
+  assert.ok(!/\.dev-ws-detail/.test(CSS), 'nor app.css a rule for a region that never renders');
 });
 
 test('the declared checks follow the two rows and the row’s last line', () => {
@@ -878,7 +931,7 @@ test('a merged card opens whole: the kudos slot is filled before paint, and the 
   // card on open. Both surfaces fill it from a LAYOUT effect now, and the
   // fold measurement watches the band's subtree so it re-folds around the
   // filled slot in the same frame.
-  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*if \(hostRef\.current\) callAppView\('_fillKudosHosts', hostRef\.current\);\s*\}, \[openKey, unfolded\]\);/);
+  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);[\s\S]*?\}, \[openKey, unfolded\]\);/);
   assert.ok(!/\bimport \{[^}]*\buseEffect\b/.test(KANBAN), 'the column has no plain effect left to fill from');
   assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_wireFeedComments', host\);\s*callAppView\('_fillKudosHosts', host\);/);
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');

@@ -15,10 +15,12 @@
  * representation of the card, so opening it swaps it for the card whole
  * rather than growing a hybrid with the row as a head and the card
  * de-chromed under it (#1799 did that; it read as a third object belonging
- * to neither size). The open card carries an "Open card" toggle at the end
- * of its facts line that reveals the topic screen's own sections under it;
- * once open, that same pill is "Open page ›", the item's full-screen route
- * (#1886 — it used to be a second link under the card). A card about the
+ * to neither size). The open card carries an "Open card" pill at the end of
+ * its action band, and that pill is the item's full-screen route — the same
+ * link, with the same label, on both surfaces (#1884 round two). It used to
+ * open the topic screen's sections in place on the Workshop and relabel to
+ * "Open page ›" on a second tap, which meant one word meant two things
+ * depending on which screen you had reached the card from. A card about the
  * viewer's OWN session carries one more link, "Open session", to the dev
  * chat behind it (#1887): the session is a destination inside the open
  * card, never what a tap on the row does — that tap unfolds the card, as
@@ -51,42 +53,22 @@
  * reads the event's composed path instead, which is captured at dispatch.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { FoldMarkIcon } from '@/components/ui/icons';
 
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
-import { TopicBodySections } from '../topic/topic-head';
-import type { TopicBody } from '../topic/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
 /**
- * Where the open card's "Open card" toggle sits. `'facts'`: at the end of
- * the facts line, and the card's own actions move up beside it (the
- * Workshop, on a sheet wide enough). `'actions'`: at the end of the action
- * band, the actions staying where they are (the Board's columns). `false`:
- * no toggle.
+ * Where the open card's "Open card" pill sits. `'actions'`: at the end of
+ * the action band, the card's own actions staying where they are — both
+ * surfaces today. `false`: no pill at all.
  */
 export type DetailPlacement = 'actions' | false;
-/**
- * What "Open card" does: opens the item's sections in place under the card
- * (the Workshop), or goes to the item's own page (the Board).
- */
-export type OpenMode = 'inline' | 'page';
-
-/** Like `callAppView`, but for the calls that answer with a view model. */
-export function readAppView<T>(fn: string, ...args: unknown[]): T | null {
-  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  if (!av || typeof av[fn] !== 'function') return null;
-  try {
-    return av[fn](...args) as T;
-  } catch {
-    return null;
-  }
-}
 
 export function callAppView(fn: string, ...args: unknown[]): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -311,7 +293,7 @@ export function FoldedRow({
 /**
  * The open row: the SAME card the Board draws, at the size the Board draws
  * it, with the comment slot and the thread under it where the row carries
- * them (the Workshop's rows do; the Board's do not).
+ * them — which, since #1884, is every surface that builds a card row.
  *
  * It used to be a hybrid — the compressed row stayed above and this card had
  * its head, meta line and status band hidden so as not to repeat it — which
@@ -320,46 +302,44 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost, detail: placement = 'actions', expand: mode = 'inline', onFold,
+  row, slug, canPost, detail: placement = 'actions', sessionLink = true, onFold,
 }: {
-  row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement; expand?: OpenMode;
+  row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement;
+  /**
+   * Whether the sheet draws #1887's "Open session ›" line under it. The
+   * Workshop does; the Board's columns do not, and have no rule to style it
+   * with — the one surface difference left in this component, and all that
+   * remained of the retired `expand` mode once "Open card" stopped
+   * branching on which screen it was drawn from.
+   */
+  sessionLink?: boolean;
   /** Folds the card back to its row: what the fold mark at the card's top right does. */
   onFold?: () => void;
 }): ReactNode {
-  // ── "Open card" opens it HERE ──────────────────────────────────────
+  // ── "Open card" goes to the item's own page, on both surfaces ───────
   //
-  // It was a link out to the item's own screen, which meant the lander's
-  // whole promise — one item, two sizes, in place — ended at the one control
-  // that had more to show. There is a third size now and it is still the same
-  // object: the card, and under it every section that screen draws (the
-  // ledger, the About sheet with its before/after tiles, the transcript),
-  // from `AppView._topicViewFor` via `_workshopCardBody`.
+  // It used to do two different things under one word. On the Board it was a
+  // link out. On the Workshop it opened a THIRD size in place — the card,
+  // and under it every section the topic screen draws (the ledger, the About
+  // sheet with its before/after tiles, the transcript), built on demand from
+  // `AppView._topicViewFor` via `_workshopCardBody` — and only once that was
+  // open did the same pill become the link, relabelled "Open page ›" (#1886).
   //
-  // Built on demand rather than published with the row: the view model for
-  // one of these is the expensive half of the topic screen, and a lander
-  // showing forty rows would build forty of them to draw none. Held in state
-  // so it survives re-renders, and dropped when the card is closed.
+  // #1884 round two: one control, one action. A reader who learns what "Open
+  // card" does on one screen now knows what it does on the other, which is
+  // the part of that request a shared component could not deliver by itself
+  // — the two surfaces were already drawing the same card, and disagreeing
+  // about what its pill meant. What it costs is reading the ledger and the
+  // transcript without leaving the lander; what it buys is that the word
+  // stops meaning two things two taps apart. The sections did not go
+  // anywhere — they are the item's page, which is where this now lands.
   //
-  // On the Board it does not open here at all: `expand: 'page'` makes the
-  // pill a link to the item's own page. A column is the wrong width for the
-  // ledger and the transcript, and the Board is where the item's page is one
-  // tap away.
-  //
-  // And where the topic screen has no body for the kind — a session, a
-  // merged change, a governance item — the inline open goes to the page too,
-  // rather than doing nothing: `_workshopCardBody` answers null for those,
-  // and a control that answers a tap with nothing reads as broken.
-  const [detail, setDetail] = useState<TopicBody | null>(null);
-  const key = row.card.key;
-  useEffect(() => { setDetail(null); }, [key]);
+  // Two kinds never opened in place anyway: `_workshopCardBody` answers null
+  // for a session, a merged change and a governance item, so those already
+  // went to the page rather than answering a tap with nothing. They were the
+  // exception; this is the rule now.
   const href = openHref(slug, row.card);
   const session = sessionHref(slug, row.card);
-  const toggleDetail = () => {
-    if (detail) { setDetail(null); return; }
-    const body = readAppView<TopicBody>('_workshopCardBody', key);
-    if (!body) { if (href) window.location.hash = href; return; }
-    setDetail(body);
-  };
   // ── Where the toggle sits ──────────────────────────────────────────
   //
   // In the card's action band, after its own pills and before the hamburger
@@ -374,17 +354,17 @@ export function UnfoldedRow({
   // it is the default now and the two surfaces draw one card, which is the
   // point of the fold.
   //
-  // The one thing the fold still cannot do: the item's own page, for a link
-  // somebody wants to share. On the Board "Open card" itself is that link.
-  // On the Workshop it is the SAME control's second step (#1886): "Open
-  // card" opens the card here, and once it is open the pill becomes
-  // "Open page ›", the link out. It used to be a second link under the
-  // sheet — "Open on its own page ›" — beside a pill that also said Open,
-  // which read as the same action twice. Folding the card back is the fold
-  // mark's job, as it is on the Board. A card about the viewer's own
-  // session still carries one link under the sheet, to the session itself
-  // (#1887) — a different destination than the pill's page link, so it is
-  // not folded into that control, and it is the only line drawn there.
+  // The one thing the fold cannot do: the item's own page, for a link
+  // somebody wants to share. "Open card" IS that link, on both surfaces —
+  // one anchor, one destination, and a real one, so it middle-clicks and
+  // copies like any other. It used to be a second line under the sheet on
+  // the Workshop ("Open on its own page ›") beside a pill that also said
+  // Open, which read as the same action twice; #1886 folded the two into
+  // one control and this makes that control mean one thing. Folding the
+  // card back is the fold mark's job. A card about the viewer's own session
+  // still carries one link under the sheet, to the session itself (#1887) —
+  // a different destination than the page link, so it is not folded into
+  // that control, and it is the only line drawn there.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
@@ -392,39 +372,24 @@ export function UnfoldedRow({
   // What both wear instead is the fold mark (`FoldMark`): stretched open
   // here, and the button that folds the card.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
-  const openBtn = !placement ? undefined : mode === 'page' ? (
-    href ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a> : undefined
-  ) : detail && href ? (
-    <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>{'Open page ›'}</a>
-  ) : (
-    <button
-      type="button"
-      className="gc-vote-btn dev-ws-open-btn"
-      aria-expanded={!!detail}
-      data-ws-open-card={row.key}
-      onClick={toggleDetail}
-    >{detail ? 'Close card' : 'Open card'}</button>
-  );
+  const openBtn = placement && href
+    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a>
+    : undefined;
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
       <DevCard model={card} actionEnd={placement ? openBtn : undefined} headEnd={<FoldMark open onClick={onFold} />} />
-      {detail ? (
-        <div className="dev-ws-detail" data-ws-detail={row.key}>
-          <TopicBodySections body={detail} />
-        </div>
-      ) : null}
       {row.commentsFor != null ? (
         <div className="dev-feed-comments" data-comments-for={String(row.commentsFor)}></div>
       ) : null}
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
       ) : null}
-      {session && mode === 'inline' ? (
+      {session && sessionLink ? (
         // The viewer's own session, under the sheet (#1887). A real link, so
         // what a bookmark of it holds is the route this opens; the wrapper's
         // click guard excludes anchors, so it does not fold the card on its
-        // way out. The page link itself rides the pill now (#1886) — this is
-        // the one destination the pill does not cover.
+        // way out. The page link itself rides the pill (#1886) — this is the
+        // one destination the pill does not cover.
         <div className="dev-ws-sheet-actions">
           <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>Open session ›</a>
         </div>
@@ -450,13 +415,13 @@ export function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec
  * nothing left to differ about — and the Board's columns are a sixth caller.
  */
 export function CardRowView({
-  row, slug, canPost, open, onToggle, detail, expand,
+  row, slug, canPost, open, onToggle, detail, sessionLink,
 }: {
   row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void;
-  /** Where "Open card" sits on the open card: the action band (both surfaces today) or the facts line. */
+  /** Where "Open card" sits on the open card: the action band, on both surfaces. */
   detail?: DetailPlacement;
-  /** What "Open card" does: the sections in place (Workshop) or the item's page (Board). */
-  expand?: OpenMode;
+  /** Whether the sheet draws #1887's session link under it (the Workshop does). */
+  sessionLink?: boolean;
 }): ReactNode {
   // EITHER the compressed row OR the card — never both. The two are one item
   // at two sizes, and drawing them together is what made the open state read
@@ -476,11 +441,10 @@ export function CardRowView({
       className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}
       onClick={open ? (e) => {
         const el = e.target as HTMLElement | null;
-        // Controls do their own job. So do the three REGIONS below the card:
-        // with a ledger, a thread and a comment list open under it there is a
-        // lot of prose to land on, and collapsing the whole item because
-        // somebody selected a word in it is not a fold, it is losing their
-        // place.
+        // Controls do their own job. So do the two REGIONS below the card:
+        // with a thread and a comment list open under it there is a lot of
+        // prose to land on, and collapsing the whole item because somebody
+        // selected a word in it is not a fold, it is losing their place.
         //
         // `details` is the merge-requirements checklist (#2061, dev-card.tsx
         // RequirementsRow). Its summary line — "Nothing needs you", "Waiting
@@ -491,13 +455,13 @@ export function CardRowView({
         // regions below.
         if (el && el.closest(
           'a, button, input, textarea, select, form, details, [data-attr-chip], [data-issue-chip],'
-          + ' .dev-ws-detail, .dev-feed-thread, .dev-feed-comments',
+          + ' .dev-feed-thread, .dev-feed-comments',
         )) return;
         onToggle();
       } : undefined}
     >
       {open ? (
-        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} expand={expand} onFold={onToggle} />
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} sessionLink={sessionLink} onFold={onToggle} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}
