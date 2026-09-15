@@ -4,6 +4,20 @@ const kubernetes = require('../src/services/kubernetes');
 
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
+test('only deterministic container setup errors are terminal rollout failures', () => {
+  const pod = reason => ({ metadata: { annotations: { 'social.usernode.io/env-checksum': 'env' } },
+    spec: { containers: [{ name: 'app', image: 'app@sha256:new' }] },
+    status: { containerStatuses: [{ name: 'app', state: { waiting: { reason, message: 'detail' } } }] } });
+  const filter = { imageRef: 'app@sha256:new', environmentChecksum: 'env', container: 'app' };
+  for (const reason of ['CreateContainerConfigError', 'CreateContainerError', 'InvalidImageName', 'ErrImageNeverPull']) {
+    assert.deepEqual(kubernetes._terminalPodFailureDetailsForTest([pod(reason)], filter), [`app: ${reason}: detail`]);
+  }
+  for (const reason of ['ContainerCreating', 'PodInitializing', 'ErrImagePull', 'ImagePullBackOff', 'CrashLoopBackOff']) {
+    assert.deepEqual(kubernetes._terminalPodFailureDetailsForTest([pod(reason)], filter), [],
+      `${reason} may recover or needs the normal startup budget`);
+  }
+});
+
 test('inventory and application inspection report an incomplete rollout despite an old ready replica', async () => {
   const deployment = { metadata: { name: 'demo', generation: 2 }, spec: { replicas: 1 },
     status: { observedGeneration: 2, replicas: 2, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
