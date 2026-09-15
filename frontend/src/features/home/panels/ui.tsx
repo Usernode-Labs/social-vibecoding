@@ -261,29 +261,28 @@ export function PanelShell({
   stamps?: PanelStamps;
   footer?: ReactNode;
   /**
-   * WHAT THE BLOCK SITS ON. Three answers, because the homescreen design
-   * gave the three blocks three different ones and the article is still one
-   * component:
+   * WHAT THE BLOCK SITS ON. Two answers:
    *
-   *   'card'  — the white plate the blocks have always had. Create app.
-   *   'soft'  — a translucent plate (`.home-challenges-plate`). Challenges
-   *             draws its content as tinted cards, and an opaque white
-   *             rectangle behind them would cover the wallpaper exactly
-   *             where the page is tallest.
+   *   'card'  — the white plate the blocks have always had.
    *   'none'  — no plate at all. Discover's cards ARE the surface, and a
    *             box around a row of tinted cards is a second frame around
    *             things that already have one. It is also what lets the rail
-   *             bleed to both screen edges.
+   *             bleed to both screen edges. Challenges draws on the page
+   *             ground too, as the ITERATION 03 board's Home screen does:
+   *             its cards and group headers are surfaces of their own.
+   *
+   * There was a third, 'soft' (a translucent `.home-challenges-plate`), for
+   * Challenges alone. It went when that block went flat.
    *
    * `home-panel-card` rides with 'card' only: it is the name of the plate,
    * and tests/home-panels-render.test.js asserts the pairing.
    */
-  plate?: 'card' | 'soft' | 'none';
+  plate?: 'card' | 'none';
   children: ReactNode;
 }) {
   const plateClass = plate === 'card'
     ? ' home-panel-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden'
-    : (plate === 'soft' ? ' home-challenges-plate' : '');
+    : '';
   return (
     <article
       className={`home-panel${expanded ? ' home-panel--expanded' : ''}${plateClass}`}
@@ -356,11 +355,15 @@ export function PanelFooter({
   // One justify utility, never two: `justify-between` seats the toggle left
   // and the door right, and with no toggle a lone flex child would drift to
   // the left edge instead of staying under the rows it belongs to.
+  //
+  // No side inset and no rule above: the block sits on the page ground, so
+  // the toggle starts at the heading's left edge like the cards above it, and
+  // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
   return (
     <div
       className={expandable
-        ? 'home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5'
-        : 'home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5'}
+        ? 'home-panel-footer flex-none flex items-center justify-between gap-2 pt-2'
+        : 'home-panel-footer flex-none flex items-center justify-end gap-2 pt-2'}
     >
       {expandable ? (
         <button

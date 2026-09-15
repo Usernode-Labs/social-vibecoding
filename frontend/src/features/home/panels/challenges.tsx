@@ -7,11 +7,21 @@
  * says so in one line. A block that silently vanishes between seasons leaves
  * the viewer with no way to tell "nothing is running" from "this broke".
  *
- * ── A PLATE OF CARDS, and the card is the Challenges tab's ─────────────
+ * ── A FLAT COLUMN OF CARDS, and the card is the Challenges tab's ───────
  *
- * One card per challenge on a translucent plate that holds them and the season
- * summary together (`.home-challenges-plate` in app.css): at 55% the grouping
- * reads and the wallpaper's washes carry on through.
+ * The ITERATION 03 board's Home screen draws this area straight on the page
+ * ground: the season summary, the group headers, one card per challenge and
+ * the footer, stacked in one column under the section heading. There is no
+ * plate around them (`PanelShell plate="none"`, as Discover) and no rule
+ * between them. The cards and the headers are surfaces of their own, so a
+ * translucent plate behind them was a second frame, and its 0.625rem padding
+ * pulled the whole block in from the heading's left edge.
+ *
+ * ONE RHYTHM: every item in the column is a 14px step from the one above it.
+ * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
+ * on `pb-1.5` (6px + 8px), and the cards and headers inside the rows list sit
+ * `gap-3.5` apart. Nothing is inset: the season line, the headers, the cards
+ * and the footer all start where the heading's label starts.
  *
  * THE CARD IS SHARED. It is `ChallengeCard` from
  * features/leaderboard/challenge-card.tsx, the same component the Leaderboard
@@ -59,11 +69,15 @@ import { PanelFooter, PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
   if (!view.rows.length) {
+    // The line's hover is a text colour, not a tint: with no plate and no
+    // inset a background would fill a square box starting at the first glyph,
+    // and `.home-panel-body` clips overflow, so a negative-margin inset cannot
+    // widen it past the text either.
     return (
-      <PanelShell panelKey={view.key} expanded={false} plate="soft" stamps={{ rows: 0 }}>
+      <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
         <div className="home-panel-body">
           <p
-            className="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
+            className="home-panel-rows home-panel-row flex items-center text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
             title="Go to the Challenges tab on the Leaderboard screen"
             onClick={() => panels()?.goToChallenges?.()}
           >
@@ -81,7 +95,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
     <PanelShell
       panelKey={view.key}
       expanded={view.expanded}
-      plate="soft"
+      plate="none"
       stamps={{ rows: view.rows.length }}
       footer={(
         <PanelFooter
@@ -92,16 +106,17 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
         />
       )}
     >
-      {view.season ? <SeasonProgress view={view.season} className="home-panel-season px-1 pb-3 pt-0.5" /> : null}
-      {/* #1915: padded on BOTH sides. With `pb-3` alone the line sat flush
-          against the season progress's bottom hairline above it. */}
+      {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
+      {/* #1915 kept this line off its neighbours. It still is, by the column's
+          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
+          of its own against a hairline that is gone. */}
       {view.onboardingNote ? (
-        <p className="px-1 py-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}
         </p>
       ) : null}
-      <div className="home-panel-body">
-        <div className="home-panel-rows flex flex-col gap-2">
+      <div className="home-panel-body pt-2 pb-1.5">
+        <div className="home-panel-rows flex flex-col gap-3.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
               {g.heading ? <GroupHeader heading={g.heading} meta={g.meta} /> : null}

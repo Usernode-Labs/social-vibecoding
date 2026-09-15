@@ -1,8 +1,11 @@
 'use strict';
 
 // #1915: the challenges block's completion-status line ("2 of 5 onboarding
-// challenges completed…") had bottom padding only, so it sat flush against the
-// season ring's hairline directly above it. It now pads both sides.
+// challenges completed…") pads both sides. There is no hairline above it any
+// more (the block is a flat column on the page ground); the padding is the
+// column's one rhythm: every band, the season progress and the body included,
+// opens on `pt-2` and closes on `pb-1.5`, so the note keeps the same 14px step
+// from its neighbours. Trimming either side breaks that step.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

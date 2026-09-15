@@ -2462,22 +2462,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   flex: 0 0 auto;
 }
 
-/* The GROUP boundary inside the card — above the footer — takes the same
-   0.625rem inset as the row hairlines above. Consistency is the point: with
-   the row rules inset and this one full-bleed, the card had two kinds of
-   hairline and the full-bleed one was the one reaching its corner radius. One
-   lane for every rule inside the card. (Its twin, above the retired
-   leaderboard fill's label, went with the fill.) */
-.home-panel-footer::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0.625rem;
-  right: 0;
-  height: 1px;
-  background: var(--border-light);
-  pointer-events: none;
-}
+/* `.home-panel-footer::before`, the rule above the footer, is gone. The
+   Challenges block was the only one with a footer, and it sits on the page
+   ground now with no divider anywhere in it (the ITERATION 03 board's Home
+   screen): the 14px step between items is what separates them. */
 
 /* Uniform height is what makes the 4-slot budget above exact. Each row is
    TWO LINES — goal/count/reward, then the track — and both are fixed, so a
@@ -2502,12 +2490,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   white-space: nowrap;
   overflow: hidden;
 }
-/* INSET to the row's text lane, not the card's edge. The widget language's
-   grouped list (frontend/@/components/ui/grouped-list.tsx) separates rows with
-   a hairline that starts where the content starts; a rule running the full
-   width of a `rounded-2xl` card reaches its corner radius and reads as the
-   list escaping the card rather than as one row ending. 0.625rem is the row's
-   own `px-2.5`, i.e. the `text` inset depth in that component's table.
+/* A hairline between two stacked rows, FLUSH with the column. No markup draws
+   two today: the only `.home-panel-row` is the Challenges block's
+   between-seasons line, and it is alone, so this rule does not fire. It used
+   to start 0.625rem in, matching that line's `px-2.5` inside the retired
+   plate's rounded corners; the block is a flat column on the page ground now
+   and its text starts at the heading's edge, so a rule starts there too.
 
    A pseudo-element rather than a border because the row is a fixed-height box
    whose height budget (--home-panel-row-h) is spent exactly: a 1px border is
@@ -2518,7 +2506,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   content: '';
   position: absolute;
   top: 0;
-  left: 0.625rem;
+  left: 0;
   right: 0;
   height: 1px;
   background: var(--border-light);
@@ -2531,32 +2519,15 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    tab's shared progress rail now (features/leaderboard/challenge-card.tsx),
    and the declared checks select on its `[role=progressbar]`. */
 
-/* THE SEASON PROGRESS's own hairline, inset like the row rules above it —
-   the progress is the card's first band and the rows follow it, so the seam
-   between them has to read as the same kind of seam as the ones between rows.
-   It is a ::after (the band's own bottom) rather than a ::before on the first
-   row, because the rows list draws no leading rule by design: with no
-   progress above it — the between-seasons block — a rule at the top of row
-   one would be a line against the card's own edge. */
-.home-panel-season {
-  position: relative;
-}
-.home-panel-season::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0.625rem;
-  right: 0;
-  height: 1px;
-  background: var(--border-light);
-  pointer-events: none;
-}
+/* The season progress's own hairline (`.home-panel-season::after`) is gone
+   with the plate it divided. `.home-panel-season` stays in the markup as the
+   hook the declared checks select on, and needs no rule: the block is one flat
+   column now and the progress is just its first band. */
 
 /* The footer bar: the expand/collapse toggle and the way out to the
-   Challenges screen. Same height family as the title bar so the block
-   reads as chrome-rows-around-content. */
+   Challenges screen. It carries no rule and no inset (see ui.tsx's
+   PanelFooter); the height keeps the two controls on one steady line. */
 .home-panel-footer {
-  position: relative; /* its hairline is a ::before, inset like the row rules */
   min-height: 1.625rem; /* 26px */
 }
 
@@ -3011,31 +2982,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
 }
 
-/* ── Challenges: the plate, and the cards on it ─────────────
-   The block was one white card of divided rows. It is a PLATE holding the
-   season summary and one card per challenge — the reference's shape —
-   and the plate is what keeps them reading as one area rather than four
-   things that happen to be adjacent.
+/* ── Challenges: a flat column of cards ─────────────────────
+   The block was one white card of divided rows, then a translucent PLATE
+   (`.home-challenges-plate`) holding the season summary and the cards. Both
+   are gone. The ITERATION 03 board's Home screen draws the area straight on
+   the page ground: season summary, group headers, cards and footer in one
+   column, 14px apart, aligned with the section heading and with no border or
+   rule anywhere. The cards and the group headers are surfaces of their own,
+   so the plate was a second frame around them, and its padding pulled the
+   block in from the heading's edge. The spacing is utilities in
+   frontend/src/features/home/panels/challenges.tsx; nothing here draws it.
 
-   TRANSLUCENT, not the white card the block used to be. The three steps
-   before this one put a wallpaper behind the page; an opaque white rectangle
-   here covers it exactly where the page is tallest. At 55% the grouping
-   still reads, the tints stay crisp, and the washes carry on through. The
-   blur is what stops the wallpaper's grain reading through as noise under
-   the text; it degrades to plain translucency where it is unsupported. */
-.home-challenges-plate {
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 1rem;
-  padding: 0.625rem;
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-}
-.dark .home-challenges-plate {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.10);
-}
-/* The cards on the plate carry no rules of their own. Each is the Challenges
+   The cards carry no rules of their own. Each is the Challenges
    tab's shared card (features/leaderboard/challenge-card.tsx), drawn entirely
    in utilities; `.home-challenge-card` survives only as the root class the
    declared checks and tests select on. The tinted card, the white pill, the

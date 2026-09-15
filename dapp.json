@@ -663,7 +663,7 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season progress leads the plate, above the shared challenge cards",
+      "name": "Challenges: the season progress leads the flat block, above the shared challenge cards",
       "path": "/?demo=1",
       "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
     },

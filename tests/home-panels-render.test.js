@@ -1183,7 +1183,8 @@ test('render: each panel is its own bordered article, in its own host', () => {
   // card, never two stacked in the same section. Each is an <article> under
   // its own section label; what they sit ON now differs by block (see
   // PanelShell's `plate`), so this counts the article and not its plate:
-  // Discover has none at all, because its cards are the surface.
+  // Discover and Challenges have none at all, because their cards are the
+  // surface.
   for (const key of ['discover', 'challenges']) {
     const host = out.host(key);
     assert.equal((host.innerHTML.match(/<article class="home-panel[ "]/g) || []).length, 1,
@@ -1735,9 +1736,9 @@ test('each block is a full-width child of the section, not separately bounded', 
     // fixed areas, so the label has exactly one thing to name.
     //
     // Matched WITHOUT naming the plate: what an article sits on is a per-block
-    // decision now (PanelShell's `plate` — Challenges takes the translucent
-    // one, Discover none at all), and this test is about the article being the
-    // block rather than about which surface it wears.
+    // decision (PanelShell's `plate`: Discover and Challenges wear none), and
+    // this test is about the article being the block rather than about which
+    // surface it wears. The next test pins what Challenges wears.
     assert.match(html, /<article class="home-panel[ "]/,
       `${name}: the block is the article itself`);
     assert.doesNotMatch(html, /home-panel-bar[^-]/,
@@ -1747,6 +1748,47 @@ test('each block is a full-width child of the section, not separately bounded', 
   }
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /\.home-section-block\b/, 'the class really is gone');
+});
+
+// The ITERATION 03 board's Home screen draws Challenges straight on the page
+// ground: season summary, group headers, cards and footer in one column,
+// aligned with the section heading, with no plate, border or rule anywhere.
+// It used to wear a translucent plate (`.home-challenges-plate`, PanelShell's
+// retired 'soft') with a hairline under the season progress and another over
+// the footer, and every band inside was inset to the plate's padding.
+test('Challenges sits on the page ground: no plate, no divider, no inset', () => {
+  const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
+  const empty = renderWith(
+    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] }
+  ).html;
+  for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
+    const article = html.match(/<article class="([^"]*)"[^>]*data-panel="challenges"/);
+    assert.ok(article, `${name}: the Challenges article renders`);
+    assert.match(article[1], /^home-panel( home-panel--expanded)?$/,
+      `${name}: the article carries no plate class`);
+    assert.doesNotMatch(html, /home-challenges-plate/, `${name}: the translucent plate is gone`);
+    assert.doesNotMatch(article[0], /home-panel-card/, `${name}: and it did not become the white card`);
+    // Nothing inside is inset from the heading's left edge.
+    assert.doesNotMatch(html, /class="home-panel-rows home-panel-row[^"]*\bpx-/,
+      `${name}: the quiet line starts at the heading's edge`);
+  }
+  // Flush text under a background tint reads as a clipped highlight, and the
+  // body's overflow: hidden rules out a negative-margin inset, so the quiet
+  // line's hover changes its text colour instead.
+  assert.doesNotMatch(empty, /class="home-panel-rows home-panel-row[^"]*\bhover:bg-/,
+    'empty state: no hover tint flush against the text');
+  assert.match(populated, /home-panel-season/, 'the season progress still renders');
+  assert.doesNotMatch(populated, /class="[^"]*home-panel-season[^"]*\bpx-/, 'season progress: no inset');
+  assert.doesNotMatch(populated, /class="home-panel-footer[^"]*\bpx-/, 'footer: no inset');
+
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /\.home-challenges-plate\s*\{/, 'no plate rule, light');
+  assert.doesNotMatch(css, /\.dark \.home-challenges-plate/, 'no plate rule, dark');
+  assert.doesNotMatch(css, /\.home-panel-season::after\s*\{/, 'no hairline under the season progress');
+  assert.doesNotMatch(css, /\.home-panel-footer::before\s*\{/, 'no hairline over the footer');
+
+  const ui = read('frontend/src/features/home/panels/ui.tsx');
+  assert.match(ui, /plate\?: 'card' \| 'none';/, "PanelShell's 'soft' plate is retired");
 });
 
 test('the module is evaluated before home.js and precached with the bundle', () => {
