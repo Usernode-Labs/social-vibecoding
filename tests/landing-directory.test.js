@@ -444,7 +444,7 @@ test('App._tileFor is scoped to the authed grid', () => {
 });
 
 test('public apps list is sorted by usage (active users first)', () => {
-  const src = read('src/routes/public-api.js');
+  const src = read('src/services/public-app-directory.js');
   assert.match(src, /ORDER BY COALESCE\(au\.cnt, 0\) DESC/);
 });
 
@@ -524,12 +524,13 @@ test('shell probe starts at boot and its columns are in schema', () => {
 // ─── public API contract ──────────────────────────────────────────
 
 test('public apps API exposes the home-card fields the landing consumes', () => {
-  const src = read('src/routes/public-api.js');
+  // Both the public route and app-facing v1 route use this one projection.
+  const src = read('src/services/public-app-directory.js');
   for (const field of ['icon_emoji', 'icon_url', 'active_users', 'requires_login']) {
     assert.match(src, new RegExp(field), `public-api carries ${field}`);
   }
   // Fail-safe mapping: only a positive 'public' classification is open.
-  assert.match(src, /a\.anon_shell !== 'public'/);
+  assert.match(src, /app\.anon_shell !== 'public'/);
 });
 
 // ─── staging seed ─────────────────────────────────────────────────

@@ -46,14 +46,8 @@ const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl } = require('../services/marketing-links');
-const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-
-// Apps surfaced publicly: not the self-app, view-public, and in a status
-// that means the app actually exists/runs (creating / awaiting_secrets /
-// error rows aren't usable, so they're hidden — `status` is still returned
-// for the rows that do appear).
-const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
+const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
@@ -122,69 +116,7 @@ function publicApiRoutes(config) {
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      // The active-users join mirrors the authed home list's sticky
-      // 10-day rule (routes/apps.js): a user counts iff they ever spent
-      // >= 60s on the app on a single day AND visited within 10 days.
-      // Batched to one row per app — same shape, no per-app round trips.
-      const { rows: apps } = await pool.query(
-        `SELECT a.id, a.name, a.slug, a.status, a.collab_visibility,
-                a.view_visibility, a.created_at, a.last_deploy_at,
-                a.icon_emoji, a.icon_image_id, a.anon_shell,
-                COALESCE(au.cnt, 0) AS active_users
-           FROM apps a
-           LEFT JOIN (
-             SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
-             FROM app_activity a1
-             WHERE a1.date >= CURRENT_DATE - 10
-               AND EXISTS (
-                 SELECT 1 FROM app_activity a2
-                 WHERE a2.app_id = a1.app_id
-                   AND a2.user_id = a1.user_id
-                   AND a2.seconds_spent >= 60
-               )
-             GROUP BY a1.app_id
-           ) au ON au.app_id = a.id
-          WHERE NOT a.self_hosted
-            AND a.view_visibility = 'public'
-            AND a.status <> ALL($1::text[])
-          ORDER BY COALESCE(au.cnt, 0) DESC,
-                   a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
-        [HIDDEN_APP_STATUSES]
-      );
-
-      const byApp = await loadContributors(pool, apps.map((a) => a.id));
-
-      res.json({
-        apps: apps.map((a) => ({
-          id: a.id,
-          name: a.name,
-          slug: a.slug,
-          status: a.status,
-          collab_visibility: a.collab_visibility,
-          view_visibility: a.view_visibility,
-          created_at: a.created_at,
-          last_deploy_at: a.last_deploy_at,
-          // Home-card presentation fields (landing-page app directory).
-          // icon_url is server-built like the authed list so clients never
-          // assemble ids into paths; /app-icons/:id is a public route.
-          icon_emoji: a.icon_emoji || null,
-          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
-          active_users: parseInt(a.active_users, 10) || 0,
-          // From the anonymous shell + API-gate probe (services/shell-probe.js):
-          // anything not positively classified 'public' is presented as
-          // account-required — 'unknown' fails safe to gated, matching
-          // the scaffold's default behavior.
-          requires_login: a.anon_shell !== 'public',
-          // Direct subdomain URL — what the public landing page links to.
-          // View-public apps pass the Caddy edge gate without a session;
-          // apps that JWT-gate their own HTML shell will show their
-          // "Open in Homeroom" page to anonymous visitors.
-          url: `https://${productionHostname(a.slug)}`,
-          contributors: (byApp.get(a.id) || []).map((r) =>
-            shapeContributor(r, includeWallets)
-          ),
-        })),
-      });
+      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
