@@ -794,6 +794,11 @@
       "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
+      "name": "A board card unfolds into the same sheet the Workshop's does: the comment tail and the reply box under it (#1884)",
+      "path": "/?demo=1&cards=open&col=issues#app/usernode-2d5619/board",
+      "expectSelector": "#dev-body #dev-kanban .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] + .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+    },
+    {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"

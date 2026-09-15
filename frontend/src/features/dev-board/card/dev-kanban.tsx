@@ -101,8 +101,18 @@ function Column(
   // whole on its first frame, and the band's fold measurement (which
   // watches its own subtree) re-folds around the filled slot in the same
   // frame.
+  //
+  // The unfolded card's GitHub-comment slot is the same kind of host and is
+  // filled the same way (#1884, `_wireFeedComments`) — but wired from the
+  // BOARD, not from this column. That filler keeps ONE observer and replaces
+  // it on every call, so four columns wiring their own would leave only the
+  // last one watched; one call from `#dev-kanban` covers all four, and a
+  // fold only ever happens in one column at a time.
   useLayoutEffect(() => {
-    if (hostRef.current) callAppView('_fillKudosHosts', hostRef.current);
+    const host = hostRef.current;
+    if (!host) return;
+    callAppView('_fillKudosHosts', host);
+    callAppView('_wireFeedComments', host.closest('#dev-kanban') || host);
   }, [openKey, unfolded]);
   let cards: ReactNode;
   // Below 640px this column is `display:none` unless it is the active one

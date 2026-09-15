@@ -213,7 +213,7 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
-  assert.match(KANBAN, /callAppView\('_fillKudosHosts', hostRef\.current\)/);
+  assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
   assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
@@ -568,7 +568,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so the third property (the code half still down) is asserted from
   // source in tests/waitlist-two-step.test.js instead of spending a slot
   // the next proposal needs.
-  assert.equal(DAPP.tests.length, 651);
+  // 651 → 652: #1884 gives the BOARD's unfolded card the sheet the Workshop's
+  // has had — the issue's comment tail and the app's own reply box under it —
+  // and declares it on the surface that gained it. One slot, not two: the
+  // Workshop's own pair above already reads the same two regions, so a second
+  // copy of that claim would spend a slot to assert something already
+  // asserted. Room remains against MAX_DECLARED_TESTS (710).
+  assert.equal(DAPP.tests.length, 652);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -616,13 +622,25 @@ test('a tap on the merge-requirements checklist opens the checklist, not the fol
   assert.match(rowView, /if \(\(e\.target as HTMLElement \| null\)\?\.closest\('a, button'\)\) return;\s*onToggle\(\);/);
 });
 
-test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
+test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and the shared sheet', () => {
   assert.match(CSS, /#dev-kanban \.dev-ws-rowwrap \{ margin-bottom: 0; \}/);
-  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board\u2019s card to style');
-  // The Workshop's frosted sheet stays the Workshop's: on the board the open
-  // card is the column's tile, as it always was.
-  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
-  assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board’s card to style');
+  // The frosted sheet used to be the Workshop's alone, and this asserted so:
+  // on the board the open card was the column's tile, because nothing hung
+  // under it. #1884 is what changed that premise — the board's cards carry
+  // the thread and the comment tail now, and #1885's rule above says in as
+  // many words that the sheet's padding is for what hangs UNDER the card. A
+  // reply box on the column's own background, with the next card's row
+  // starting 8px below it, has no boundary saying which card it belongs to.
+  //
+  // So the sheet is scoped to both hosts, and the quiet cards are unmoved:
+  // `:only-child` still pulls a card with nothing under it over every edge,
+  // so the frosting never shows and the column reads as it did. The one
+  // thing an open board card picks up is the sheet's 26px corner in place of
+  // its own 22px — which is the Workshop's open card, which is the point.
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry > div:is\(\.dev-card-dense, \.dev-card-topic\):only-child \{\s*margin-bottom: -12px;/);
+  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS), 'and the board grows no second copy of it');
 });
 
 test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
@@ -835,7 +853,7 @@ test('a merged card opens whole: the kudos slot is filled before paint, and the 
   // card on open. Both surfaces fill it from a LAYOUT effect now, and the
   // fold measurement watches the band's subtree so it re-folds around the
   // filled slot in the same frame.
-  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*if \(hostRef\.current\) callAppView\('_fillKudosHosts', hostRef\.current\);\s*\}, \[openKey, unfolded\]\);/);
+  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);[\s\S]*?\}, \[openKey, unfolded\]\);/);
   assert.ok(!/\bimport \{[^}]*\buseEffect\b/.test(KANBAN), 'the column has no plain effect left to fill from');
   assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_wireFeedComments', host\);\s*callAppView\('_fillKudosHosts', host\);/);
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');

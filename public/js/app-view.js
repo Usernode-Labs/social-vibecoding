@@ -6001,6 +6001,29 @@ const AppView = {
     return null;
   },
 
+  // Hang the item's conversation on a card row: the app's own thread (the
+  // reply box) and, for an issue, its recent GitHub comments.
+  //
+  // #1884: the Workshop's rows carried both and the Board's carried
+  // neither, so the SAME card read as two different objects depending on
+  // which view you opened it from — the Board's had no reply box and no
+  // comment preview under it. Every surface that builds a card row calls
+  // this now, which is what stops the two drifting apart again; the fold
+  // renders whatever the row carries (card/fold.tsx UnfoldedRow).
+  //
+  // `my-session` is addressed as `shared-session`, the way _workshopRows
+  // has always addressed it: the thread is per session id, and whether the
+  // session is shared yet does not change which conversation it is.
+  _attachRowConversation(row, kind, item) {
+    if (!row || !item) return row;
+    const th = AppView._feedThreadRef({
+      kind: kind === 'my-session' ? 'shared-session' : kind, item,
+    });
+    if (th) row.thread = th;
+    if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+    return row;
+  },
+
   // ── The Workshop ───────────────────────────────────────────────────
   //
   // The Dev screen's lander (features/dev-board/workshop/workshop.tsx). The
@@ -6729,10 +6752,7 @@ const AppView = {
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'theme')) {
         card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'theme')) };
       }
-      const row = { t: 'card', key: card.key, card };
-      const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
-      if (th) row.thread = th;
-      if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+      const row = AppView._attachRowConversation({ t: 'card', key: card.key, card }, kind, item);
       const created = createdOf(kind, item);
       if (baseline && created > baseline) row.fresh = true;
       const people = [];
@@ -6799,12 +6819,9 @@ const AppView = {
           ? AppView._mySessionCardModel(item)
           : AppView._proposalCardModel(item);
         if (!card) return null;
-        const row = { t: 'card', key: `mine:${card.key}`, card };
-        const th = AppView._feedThreadRef({
-          kind: kind === 'my-session' ? 'shared-session' : kind, item,
-        });
-        if (th) row.thread = th;
-        return row;
+        return AppView._attachRowConversation(
+          { t: 'card', key: `mine:${card.key}`, card }, kind, item,
+        );
       }).filter(Boolean),
     };
 
@@ -6862,9 +6879,7 @@ const AppView = {
         body: null,
         visuals: kind === 'proposal' ? AppView._workshopVisuals(item && item.visuals) : null,
       };
-      const th = kind ? AppView._feedThreadRef({ kind, item }) : null;
-      if (th) row.thread = th;
-      return row;
+      return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
@@ -7352,11 +7367,16 @@ const AppView = {
     // the request and its answer detaches this one, and writing into an
     // orphan would silently drop the comments.
     const paint = (entry) => {
-      const feed = document.getElementById('dev-workshop');
-      if (!feed) return;
-      const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
-      if (!live) return;
-      live.innerHTML = AppView._feedCommentsHtml(entry.comments);
+      // Document-wide, not `#dev-workshop`-wide: the Board draws the same
+      // slot inside its unfolded cards now (#1884), and the same issue can
+      // legitimately hold a slot in more than one place at once — the
+      // Workshop's stage pane IS the Board's columns. Every live slot for
+      // this number gets the answer; a detached one is simply not found.
+      const html = AppView._feedCommentsHtml(entry.comments);
+      const live = document.querySelectorAll(
+        `.dev-feed-comments[data-comments-for="${number}"]`
+      );
+      for (const node of live) node.innerHTML = html;
     };
 
     const cached = AppView._ghComments[number];
@@ -8259,6 +8279,10 @@ const AppView = {
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
     AppView._fillKudosHosts(board);
+    // The comment slots an unfolded card ships empty, same as the Workshop's
+    // repaint does (#1884). The store flushed synchronously above, so the
+    // slots this walks are the ones just rendered.
+    AppView._wireFeedComments(board);
     AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
     AppView._reanchorCardMenu();
@@ -8363,16 +8387,23 @@ const AppView = {
         : { kind: 'moreCompleted', n: moreCount };
     }
 
-    const cardRows = (items, build) => items.map((it) => {
+    // `refOf` names the kind and item the row's conversation hangs off
+    // (_attachRowConversation). A column that passes none gets a bare row:
+    // Done is built from merged rows, and a merged thing's conversation
+    // lives on the proposal it came from, which is what _feedThreadRef
+    // already declines to address.
+    const cardRows = (items, build, refOf) => items.map((it) => {
       const card = build(it);
-      return { t: 'card', key: card.key, card };
+      const row = { t: 'card', key: card.key, card };
+      const ref = refOf ? refOf(it) : null;
+      return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
     });
     const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
 
     const cols = [
       {
         key: 'issues', title: 'Issues', count: kIssues.length,
-        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i)),
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,
       },
@@ -8392,8 +8423,12 @@ const AppView = {
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
-        rows: cardRows(kInReview, (x) => (x.kind === 'proposal'
-          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item))),
+        rows: cardRows(
+          kInReview,
+          (x) => (x.kind === 'proposal'
+            ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)),
+          (x) => ({ kind: x.kind, item: x.item }),
+        ),
         empty: kInReview.length ? null : emptyNote,
         footer: null,
       },
@@ -9002,7 +9037,7 @@ const AppView = {
       rows.push(AppView._privateDividerRow());
       for (const e of priv) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     if (archived) rows.push(archived);
@@ -9010,18 +9045,18 @@ const AppView = {
       rows.push(AppView._visibleDividerRow());
       for (const e of vis) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     for (const e of issues) {
       const card = AppView._issueCardModel(e.item);
-      rows.push({ t: 'card', key: card.key, card });
+      rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
     }
     if (shared.length) {
       rows.push(AppView._othersDividerRow());
       for (const e of shared) {
         const card = AppView._sharedSessionCardModel(e.item);
-        rows.push({ t: 'card', key: card.key, card });
+        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
       }
     }
     return rows;

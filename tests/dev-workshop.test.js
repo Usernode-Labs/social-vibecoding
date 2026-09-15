@@ -2108,8 +2108,13 @@ test('the open sheet is a DIRECT child of the wrapper, the way the check selects
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
   const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => /^\s*(\.dark\s+)?#dev-feed\b/.test(l));
   assert.deepEqual(rules, [], 'no rule is scoped to the retired #dev-feed');
-  assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
-  assert.match(CSS, /#dev-workshop \.dev-feed-thread \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
+  // #1884: the thread and the comment tail are scoped to BOTH card hosts now,
+  // so the same card opened on the Board reads the same as on the Workshop.
+  // `:is()` takes its specificity from its most specific argument, so the rule
+  // still weighs what it did when the id stood alone.
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-thread \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-comments:empty \{ display: none; \}/);
   // The bottom is `--ws-gap` now, not 12px: it is the same air the sticky rail
   // rests on, so the gap under the bar is identical whether the lander fills
   // the scroller (rail at its bottom edge, padding decides) or overflows it
@@ -3837,7 +3842,7 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   // The bucketing this leans on, pinned here so moving `promoted` to another
   // column fails locally rather than as a red check on somebody's proposal.
   assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
-  assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
+  assert.match(APP_VIEW_SRC, /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
 });
 
 test('the selection slides between tabs instead of snapping', () => {
