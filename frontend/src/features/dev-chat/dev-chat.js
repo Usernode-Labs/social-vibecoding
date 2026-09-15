@@ -7547,12 +7547,26 @@ const DevChat = {
   // — which is what keeps a session's disclosures where the reader left them
   // across a reload, not just across a repaint.
   _detailsOpen(persistId, defaultOpen) {
+    if (DevChat._shotOpensRunLog(persistId)) return true;
     const sid = DevChat.currentSession?.id;
     if (!sid || !persistId) return !!defaultOpen;
     const state = DevChat._readDetailsState(sid);
     if (state[persistId] === 1) return true;
     if (state[persistId] === 0) return false;
     return !!defaultOpen;
+  },
+
+  // Screenshot-state deep link `?shot=cc-log-open` (#1944): the coding-run
+  // cards open on load, so a declared check and a capture can reach the
+  // open card — its flipped chevron and its log panel — without a click.
+  // Ungated by environment like ?shot=credits-low: it reads nothing and
+  // writes nothing (the persisted map is not touched), and any other
+  // `?shot=` value leaves the card on its stored state.
+  _shotOpensRunLog(persistId) {
+    if (!/:ccrun(orphan)?$/.test(String(persistId || ''))) return false;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return false; }
+    return shot === 'cc-log-open';
   },
 
   _detailsToggled(persistId, defaultOpen, open) {
@@ -7915,13 +7929,36 @@ const DevChat = {
         };
       }
     });
-    // Watch for DOM changes (collapsibles expanding, new content) and auto-scroll
-    const observer = new MutationObserver(() => {
+    // Watch for DOM changes (new content) and auto-scroll.
+    //
+    // #1944: NOT for a disclosure the reader just toggled. This used to
+    // follow every mutation, the `open` flip included, so opening the
+    // coding-run card while pinned to the bottom scrolled the transcript
+    // straight past the card — on a phone-height pane the head, with the
+    // toggle on it, went off the top and what stayed in view was the log
+    // panel's stale first lines. The card's own toggle handler now brings
+    // the card into view (features/dev-chat/transcript.tsx); a batch that is
+    // nothing but that flip is the reader's, and the transcript leaves it.
+    const observer = new MutationObserver((records) => {
+      if (DevChat._isDisclosureToggle(records)) return;
       if (DevChat._lockedToBottom) {
         requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
       }
     });
     observer.observe(container, { childList: true, subtree: true, attributes: true });
+  },
+
+  // A MutationObserver batch that is ONLY <details> open/closed flips. New
+  // rows, streamed text and every other attribute still count as content
+  // the transcript follows; an empty batch is not a toggle.
+  _isDisclosureToggle(records) {
+    if (!records || !records.length) return false;
+    for (const r of records) {
+      if (!r || r.type !== 'attributes' || r.attributeName !== 'open') return false;
+      const tag = r.target && r.target.tagName;
+      if (String(tag || '').toLowerCase() !== 'details') return false;
+    }
+    return true;
   },
 
   // Apply a previously saved scroll position for the current session, if

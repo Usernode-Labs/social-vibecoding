@@ -8,11 +8,13 @@
  * juggles per-element classes.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
- * moved the behaviour in and made it stateful. The INITIAL render is still
- * byte-identical to what the shell shipped — same ids, same class strings,
- * same `hidden` semantics, same data-* attributes — and
- * tests/baselines/shell-markup.json plus the prerendered public/index.html in
- * this commit are the proof.
+ * moved the behaviour in and made it stateful. #1910 restyled it in the
+ * pane language (the recipe is spelled out above the class constants
+ * below). The INITIAL render still carries every id, every `hidden` and
+ * every data-* attribute the shell shipped — `public/js/**` looks those up
+ * and the declared dapp.json checks select on them — and
+ * tests/baselines/shell-markup.json is the proof; only the class strings
+ * are new.
  *
  * ── The second view, and why it costs the baseline nothing ────────────
  *
@@ -94,6 +96,20 @@ interface ImportStatus {
 const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
 
 /**
+ * `?shot=create-import` lands the dialog on the import view, so a URL can
+ * reach that state for the declared check and for screenshots. Same
+ * arrangement as app-allowance.tsx's `?shot=create-quota`: display only,
+ * read once on open, and never on the prerender pass (no `location`).
+ */
+function shotMode(): Mode {
+  try {
+    return new URLSearchParams(location.search).get('shot') === 'create-import' ? 'import' : 'new';
+  } catch {
+    return 'new';
+  }
+}
+
+/**
  * How often the progress view re-asks the server while a creation is
  * still pending. The WS broadcasts do the real work; this only has to be
  * often enough that a dropped socket is noticed, and rare enough that a
@@ -102,10 +118,55 @@ const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
 const POLL_INTERVAL_MS = 4000;
 
 function statusClass(status: ImportStatus): string {
-  if (status.tone === 'ok') return 'text-sm mt-2 import-status--ok';
-  if (status.tone === 'err') return 'text-sm mt-2 import-status--err';
-  return 'text-sm mt-2';
+  if (status.tone === 'ok') return 'px-1 text-sm mt-2 import-status--ok';
+  if (status.tone === 'err') return 'px-1 text-sm mt-2 import-status--err';
+  return 'px-1 text-sm mt-2';
 }
+
+/*
+ * ── The pane recipe (#1910) ───────────────────────────────────────────
+ *
+ * The dialog is drawn in the widget language the shell's panes wear — the
+ * notifications sheet, the Improve rail, the app chip's menu and the auth
+ * screens — rather than the bordered-inset look the other dialogs still
+ * have. The language separates by FIGURE/GROUND, not by rules: a grey pane
+ * ground, white cards floating on it with no border, and one high-contrast
+ * state, the solid inversion, for "selected".
+ *
+ *   PANE     the card's own ground, for the web presentation. Inside the
+ *            kit's modal shell the card is neutralised (`.un-modal
+ *            .platform-modal-card` in app.css) and the same ground comes
+ *            from the shell instead, through the `--un-sheet-bg` override
+ *            keyed on `.un-modal:has(> #create-card)`. Tailwind arbitrary
+ *            values, so the classes stay complete literals for the
+ *            extractor; the token is `--dc-strip`, the dev session's strip
+ *            and the ground every `.dc-lift` sheet sits on.
+ *   CARD/ROW the auth screens' field card: rounded-2xl, white, hairline
+ *            rows. `dark:bg-zinc-800` rather than the language's zinc-900
+ *            because the pane ground is darker than the page ground in
+ *            dark mode, and zinc-900 on `--dc-strip` (#131316) did not
+ *            separate.
+ *   FIELD    the borderless 17px input that sits in such a row.
+ *   RAIL/SEGMENT  the segmented control: a raised white track (the
+ *            language's controls float on the ground; a recessed grey
+ *            track vanishes into a grey pane) and full-width segments.
+ *            Their colours stay in app.css, keyed off #create-card's
+ *            data-mode and the `.active` class, so the mechanism the
+ *            legacy controller and the dapp.json checks rely on is
+ *            untouched — only the look changed.
+ *   PILL_SECONDARY  the white pill the auth screens use for a secondary
+ *            action; the primary is <Button variant="pillAccent">.
+ */
+const PANE = 'bg-[color:var(--dc-strip)] dark:bg-[color:var(--dc-strip)] rounded-3xl';
+const CARD = 'rounded-2xl bg-white dark:bg-zinc-800 overflow-hidden';
+const ROW = 'px-4 pt-3 pb-2';
+const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
+const CAPTION = 'px-1 text-xs text-zinc-500 dark:text-zinc-400';
+const FIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
+const RAIL = 'flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-800 p-0.5 text-sm font-semibold';
+const SEGMENT = 'flex-1 min-h-8 rounded-full px-3 py-1 leading-tight transition-colors';
+const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
+  + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors';
 
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -134,7 +195,7 @@ export function CreateAppDialog() {
 
   const dialog = useDialog('create', {
     onOpen: () => {
-      applyMode('new');
+      applyMode(shotMode());
       void invalidateAppAllowance();
       setTimeout(() => nameRef.current?.focus(), 0);
     },
@@ -364,11 +425,13 @@ export function CreateAppDialog() {
         id="create-card"
         data-mode={mode}
         data-import-state={importState}
+        className={PANE}
       >
         {created ? (
           <CreateProgress
             appName={created.name}
             mode={mode}
+            surface="pane"
             progress={progress}
             onOpenApp={() => {
               const slug = created.slug;
@@ -403,15 +466,22 @@ export function CreateAppDialog() {
           />
         ) : (
         <>
-        <h2 id="create-title" className="text-lg font-bold mb-4">
+        <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
           {mode === 'import' ? 'Import existing app' : 'Create a new app'}
         </h2>
-        <AppAllowance id="create-app-quota" />
-        <div className="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+        <AppAllowance id="create-app-quota" surface="pane" />
+        {/*
+            The mode switch is the language's segmented control: a raised
+            WHITE track on the pane ground, and the selected segment is the
+            solid inversion (near-black fill, page-coloured ink). The colours
+            are still keyed off #create-card[data-mode] in app.css, so this
+            markup only flips the attribute, as it always has.
+        */}
+        <div className={RAIL + ' mb-4'}>
           <button
             type="button"
             data-mode-pill="new"
-            className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+            className={'create-mode-pill ' + SEGMENT}
             onClick={() => applyMode('new')}
           >
             Create new
@@ -419,7 +489,7 @@ export function CreateAppDialog() {
           <button
             type="button"
             data-mode-pill="import"
-            className="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+            className={'create-mode-pill ' + SEGMENT}
             onClick={() => applyMode('import')}
           >
             Import existing
@@ -433,57 +503,71 @@ export function CreateAppDialog() {
               name. CSS hides this whole block in "new" mode.
           */}
           <div id="create-import-block" className="create-import-block">
-            <label
-              htmlFor="import-url"
-              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-            >
-              GitHub repo URL
-            </label>
-            <div className="flex gap-2">
-              <Input
-                id="import-url"
-                ref={urlRef}
-                name="repoUrl"
-                type="text"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck="false"
-                width="flex"
-                box="dialog"
-                hint="muted"
-                ring="seamless"
-                className="font-mono text-sm"
-                placeholder="github.com/owner/repo"
-                onBlur={() => {
-                  normalizeRepositoryUrlInput();
-                }}
-                onInput={() => {
-                  // Any edit invalidates the previous check; the user must
-                  // click again. Without this they could verify repo A, edit
-                  // the URL to point at repo B, then submit — the route's own
-                  // pre-flight catches it, but the UI shouldn't claim
-                  // "verified" for a URL that hasn't been verified.
-                  setImportState('idle');
-                  setStatus(IDLE_STATUS);
-                }}
-              />
-              <Button
-                type="button"
-                id="import-check"
-                disabledStyle="block"
-                className="whitespace-nowrap"
-                disabled={importState === 'checking'}
-                onClick={check}
-              >
-                {importState === 'ok' ? 'Re-check' : 'Check'}
-              </Button>
+            <div className={CARD}>
+              <div className={ROW}>
+                <label htmlFor="import-url" className={LABEL}>
+                  GitHub repo URL
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="import-url"
+                    ref={urlRef}
+                    name="repoUrl"
+                    type="text"
+                    inputMode="url"
+                    autoComplete="off"
+                    spellCheck="false"
+                    width="flex"
+                    {...FIELD}
+                    className="font-mono text-[15px]"
+                    placeholder="github.com/owner/repo"
+                    onBlur={() => {
+                      normalizeRepositoryUrlInput();
+                    }}
+                    onInput={() => {
+                      // Any edit invalidates the previous check; the user must
+                      // click again. Without this they could verify repo A, edit
+                      // the URL to point at repo B, then submit — the route's own
+                      // pre-flight catches it, but the UI shouldn't claim
+                      // "verified" for a URL that hasn't been verified.
+                      setImportState('idle');
+                      setStatus(IDLE_STATUS);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    id="import-check"
+                    variant="pillNeutral"
+                    size="sm"
+                    ink="neutral"
+                    layout="shrink"
+                    disabledStyle="block"
+                    // The pill sits INSIDE a white card, so its neutral fill
+                    // has to be one step off the card in both themes: zinc-100
+                    // on white, and zinc-700 on the card's zinc-800 (the
+                    // variant's zinc-800 vanished into it).
+                    className="whitespace-nowrap dark:bg-zinc-700 dark:hover:bg-zinc-600"
+                    disabled={importState === 'checking'}
+                    onClick={check}
+                  >
+                    {importState === 'ok' ? 'Re-check' : 'Check'}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Invite
+            {/*
+                ONE text node on each side of the <code>. `Invite{' '}` is two
+                adjacent text children, and renderToStaticMarkup emits no
+                separator comment between them, so the browser sees one node
+                where hydration expects two and React reports #418 — a
+                console error, which fails proposal checks.
+            */}
+            <p className={CAPTION + ' mt-1.5'}>
+              {'Invite '}
               <code className="font-mono text-xs">
                 usernode-bot
               </code>
-              as a collaborator with Write access.
+              {' as a collaborator with Write access.'}
             </p>
             {/*
                 Inline status row: spinner while checking, green check on
@@ -499,21 +583,21 @@ export function CreateAppDialog() {
               successful access check in "import" mode (CSS hides it
               until #create-card[data-import-state="ok"]).
           */}
-          <div id="create-name-block">
-            <label htmlFor="app-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              App name
-            </label>
-            <Input
-              id="app-name"
-              ref={nameRef}
-              name="name"
-              type="text"
-              autoComplete="off"
-              box="dialog"
-              hint="muted"
-              ring="seamless"
-              placeholder="my cool app"
-            />
+          <div id="create-name-block" className={CARD}>
+            <div className={ROW}>
+              <label htmlFor="app-name" className={LABEL}>
+                App name
+              </label>
+              <Input
+                id="app-name"
+                ref={nameRef}
+                name="name"
+                type="text"
+                autoComplete="off"
+                {...FIELD}
+                placeholder="my cool app"
+              />
+            </div>
           </div>
           {/*
               Visibility: two segmented controls. Collab=Everyone forces
@@ -522,15 +606,15 @@ export function CreateAppDialog() {
           */}
           <div id="create-visibility-block" className="space-y-3">
             <div>
-              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              <p className={LABEL + ' mb-1.5'}>
                 Who can build it
-              </label>
-              <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+              </p>
+              <div className={RAIL}>
                 <button
                   type="button"
                   ref={collabPublicRef}
                   data-collab-vis="public"
-                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  className={'create-vis-pill ' + SEGMENT}
                   onClick={() => applyVisibility('collab', 'public')}
                 >
                   Everyone
@@ -539,7 +623,7 @@ export function CreateAppDialog() {
                   type="button"
                   ref={collabPrivateRef}
                   data-collab-vis="private"
-                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  className={'create-vis-pill ' + SEGMENT}
                   onClick={() => applyVisibility('collab', 'private')}
                 >
                   Invite-only
@@ -547,15 +631,15 @@ export function CreateAppDialog() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              <p className={LABEL + ' mb-1.5'}>
                 Who can see &amp; use it
-              </label>
-              <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+              </p>
+              <div className={RAIL}>
                 <button
                   type="button"
                   ref={viewPublicRef}
                   data-view-vis="public"
-                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  className={'create-vis-pill ' + SEGMENT}
                   onClick={() => applyVisibility('view', 'public')}
                 >
                   Everyone
@@ -564,7 +648,7 @@ export function CreateAppDialog() {
                   type="button"
                   ref={viewPrivateRef}
                   data-view-vis="private"
-                  className="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
+                  className={'create-vis-pill ' + SEGMENT}
                   onClick={() => applyVisibility('view', 'private')}
                 >
                   Collaborators only
@@ -573,20 +657,20 @@ export function CreateAppDialog() {
               <p
                 id="create-vis-hint"
                 ref={hintRef}
-                className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden"
+                className={CAPTION + ' mt-1.5 hidden'}
               >
                 Apps everyone can build are always public to view.
               </p>
             </div>
           </div>
-          <div id="create-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="create-error" ref={errorRef} className="px-1 text-red-400 text-sm hidden">
             {error}
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2 pt-1">
             <button
               type="button"
               id="create-cancel"
-              className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              className={PILL_SECONDARY}
               onClick={() => dialog.close()}
             >
               Cancel
@@ -594,6 +678,8 @@ export function CreateAppDialog() {
             <Button
               type="submit"
               id="create-submit"
+              variant="pillAccent"
+              size="pill"
               layout="flex"
               disabledStyle="block"
               disabled={quotaBlocksCreation}

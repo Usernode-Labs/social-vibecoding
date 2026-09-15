@@ -32,7 +32,11 @@ test('the scrolled session strip keeps the strip fill and frost', () => {
 });
 
 test('without backdrop-filter it falls back to the opaque strip colour', () => {
-  const at = CSS.indexOf('@supports not ((backdrop-filter');
+  // The first `@supports not` block after the strip rule it backs up, not
+  // the first in the file: earlier frosted surfaces (the #apps pane, #1919)
+  // carry fallbacks of their own.
+  const at = CSS.indexOf('@supports not ((backdrop-filter', rule('.dc-lift-strip').at);
+  assert.ok(at > 0, 'the no-backdrop-filter fallback must exist');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
   assert.match(block, /\.dc-lift-strip \{ background-color: var\(--dc-strip\); \}/);
   assert.match(block, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip\); \}/);
