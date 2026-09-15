@@ -342,3 +342,27 @@ test('test alert uses explicit copy with the normal opaque push envelope', () =>
   assert.equal(message.data.notification_id, '42');
   assert.equal(message.android.notification.channelId, 'social_activity');
 });
+
+test('app storage alerts say what happened and what to do (#2253)', () => {
+  // The storage cap speaks through app_health, which had no copy of its
+  // own before; its two tokens get some, and every other detail keeps the
+  // generic fallback it always had.
+  const warn = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_warn' },
+  });
+  assert.deepEqual(warn.notification, {
+    title: 'Storage is nearly full · MyPage',
+    body: 'MyPage has used most of its storage. Clean up old data or ask an admin to raise the limit',
+  });
+  const full = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_full' },
+  });
+  assert.deepEqual(full.notification, {
+    title: 'Out of storage · MyPage',
+    body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
+  });
+  const other = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'deploy_failed' },
+  });
+  assert.deepEqual(other.notification, { title: 'Homeroom', body: 'You have new activity' });
+});

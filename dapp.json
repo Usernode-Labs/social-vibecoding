@@ -120,6 +120,24 @@
       "description": "Maximum Postgres connections in a STAGING PREVIEW's pool. A preview serves one reviewer and one capture run, and capture drives 8 concurrent pages, so 8 is the most it can use at once. Read by the preview's own process; not injected by the platform, because adding a key to the injected env would mark every live preview stale and rebuild the fleet."
     },
     {
+      "key": "APP_DB_STORAGE_CAP_BYTES",
+      "group": "Scaling",
+      "default": "3221225472",
+      "description": "Default ceiling on each app's own Postgres database, in bytes (3 GiB). The leader measures every app database on a timer; at the cap the app's owner role is switched to read-only transactions and its admins are notified, and it thaws once the database drops under 95% of the cap. Uploaded files are capped separately. Per-app overrides live in the admin console's App storage section."
+    },
+    {
+      "key": "APP_DB_STORAGE_WARN_PERCENT",
+      "group": "Scaling",
+      "default": "80",
+      "description": "Percentage of the storage cap at which an app's admins are warned that it is nearly full. One warning per crossing: it re-arms once the database drops back under the line."
+    },
+    {
+      "key": "APP_DB_STORAGE_SWEEP_INTERVAL_MS",
+      "group": "Scaling",
+      "default": "900000",
+      "description": "How often the leader measures app databases against the cap, in milliseconds (15 minutes). Measuring is one catalog query, so this can be short; the first run happens 30 seconds after the leader boots."
+    },
+    {
       "key": "STAGING_CLUSTER_MAINTENANCE",
       "group": "Scaling",
       "default": "",
@@ -1760,6 +1778,12 @@
       "name": "Admin Users list renders",
       "path": "/#admin/users",
       "expectText": "Users"
+    },
+    {
+      "name": "Admin App storage section renders",
+      "path": "/?demo=1#admin/storage",
+      "expectSelector": "#admin-storage #admin-storage-rows",
+      "expectText": "App storage"
     },
     {
       "name": "Analytics spend distribution chart renders",

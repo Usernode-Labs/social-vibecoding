@@ -7678,6 +7678,35 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
 
+-- #2253: a ceiling on each app's own Postgres database. Uploaded files have
+-- had a per-app cap since app-files.js; the database had none, and one app
+-- writing rows in a loop could fill the volume every app shares. The leader
+-- measures every app database on a timer (services/app-storage-cap.js) and
+-- records the result here; at the cap the app's owner role is switched to
+-- default_transaction_read_only and its admins are notified, and it thaws
+-- once the database shrinks under 95% of the cap, an admin raises the cap,
+-- or a grace window is open.
+--
+--   db_size_bytes           pg_database_size() at the last measurement.
+--   db_size_measured_at     when that measurement was taken.
+--   db_storage_cap_bytes    an admin's per-app override; NULL means the
+--                           platform default (APP_DB_STORAGE_CAP_BYTES).
+--   db_storage_frozen_at    set while the database is read-only for size.
+--   db_storage_warned_at    set once the warning line was crossed and the
+--                           admins told; cleared when the database drops
+--                           back under it, so the next crossing warns again.
+--   db_storage_grace_until  an admin's "allow writes" window: the database
+--                           stays writable until then whatever its size.
+--
+-- None of these is a secret: they are the app's own operational state, and
+-- the admin console's App storage section is the surface that shows them.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_size_bytes BIGINT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_size_measured_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_storage_cap_bytes BIGINT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_storage_frozen_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_storage_warned_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_storage_grace_until TIMESTAMPTZ;
+
 -- The Needs-you deck's ask box (services/workshop-ask.js): one person's
 -- own questions about one card, and the answers they got.
 --

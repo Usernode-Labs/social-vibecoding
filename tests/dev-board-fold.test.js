@@ -646,7 +646,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // back to their shared base does not reconcile cleanly through this
   // comment trail. The literal is the ground truth here, not the
   // arithmetic.
-  assert.equal(DAPP.tests.length, 661);
+  // 661 → 662: #2253 adds one check on the admin console's App storage
+  // section, read through `?demo=1#admin/storage` so the preview shows the
+  // fixed demo rows (one frozen, one nearly full) rather than a cloned apps
+  // table with no figures in it.
+  assert.equal(DAPP.tests.length, 662);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
