@@ -505,14 +505,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // under the light shell (`?shot=app-tone-dark`) and a light app under the
   // dark shell (`?shot=app-tone-light&theme=dark`), each reading the tone
   // the frame's page colour put on <html>.
-  // 627 → 629: #1962's two checks that sending a saved draft leaves the
+  // 627 → 629: the invite link now points at the marketing site's /waitlist
+  // page instead of the in-app #waitlist route, so two checks read the
+  // link's own field on the more-to-do screen — one that its value is the
+  // marketing URL and carries no hash route, one that the copy affordance
+  // is still beside it.
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
   // composer empty, one on the send and one on the screen the drafts list
   // is actually painted on.
-  // 629 → 631: the tallies above were computed on either side of a merge and
-  // cannot be read as one sequence. This branch took 627 → 629 alone, with
-  // the #1945 checks above; main independently took the SAME 627 → 629 with
-  // the #1962 checks. Two +2s against a shared 627 is 631.
-  assert.equal(DAPP.tests.length, 631);
+  // 631 → 633: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 627 → 629 with the
+  // #1945 checks, then 629 → 631 with #1962, reaching 631 on its own; main
+  // independently took the SAME 627 → 629 with the invite-link checks, then
+  // 629 → 631 with that same #1962. The #1945 checks and the invite-link
+  // checks are each unique to one side; #1962 is the step both already
+  // carried in common. One +2 unique to this branch and one +2 unique to
+  // main, on top of the shared 631, is 633.
+  assert.equal(DAPP.tests.length, 633);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
