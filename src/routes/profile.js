@@ -145,6 +145,18 @@ function parseProfileFields(body) {
     }
   }
 
+  // A pre-#1939 cached shell still posts the retired free-text fields. Do not
+  // answer 200 while discarding what the person typed: fail the stale request
+  // field-by-field so that client can keep the value visible and explain the
+  // provider-verified replacement path.
+  for (const key of ['github', 'x']) {
+    if (key in src) {
+      details[key] = [
+        'Social handles cannot be entered manually. Open Settings > Connectors > Social accounts to connect or change this account.',
+      ];
+    }
+  }
+
   return { fields, details };
 }
 

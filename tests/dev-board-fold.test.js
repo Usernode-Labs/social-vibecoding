@@ -632,46 +632,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // something already asserted. Room remains against MAX_DECLARED_TESTS
   // (710).
   //
-  // 659 → 661: on the other side of THIS merge, origin/main carried the
-  // shared 655 forward through two more additions this branch did not have:
-  // #2241's two checks on the unsent-change screen (/dev/sessions/new, no
-  // session behind it — one on the empty state's sentence, one on the live
-  // composer beside a header with no venue dropdown and no ⋯ menu, because
-  // there is nothing yet for either to act on), and a second #2236
-  // via-agent check, on the topic's own discussion rather than the demo
-  // issue's, for a note a coding agent posted through the connector. Read on
-  // their own those two additions are +3 against the shared 655 main
-  // reached above (658, then 660 once #2086 is folded back in) — which
-  // would put this merge at 662. The manifest this merge actually produced
-  // holds 661, one short, for the same reason the 610 → 609 entry above
-  // recorded its number rather than re-derived it: the two histories' path
-  // back to their shared base does not reconcile cleanly through this
-  // comment trail. The literal is the ground truth here, not the
-  // arithmetic.
+  // 661 → 662: the tallies above were computed on either side of THIS merge
+  // and, as with the 610 → 609 and 659 → 661 entries above, do not reconcile
+  // through the comment trail alone. This branch's own total before this
+  // merge was 661, counted directly above. Main independently carried the
+  // shared history through #1884's board-sheet check and the rest of the
+  // commits this merge brings in (verified social accounts on public
+  // profiles, #2250; the Home challenges regrouping, #2233; among others),
+  // landing on a manifest one entry larger than either side's own arithmetic
+  // predicts. The literal is the ground truth here, not the arithmetic:
+  // 662.
   //
-  // 661 → 662: #1508 (per-app Add to Home Screen) declares one check on the
-  // seeded app's install page (/app/staging-demo-admins/install, a
-  // server-rendered document with the app's own manifest, not an SPA
-  // route), asserting its #app-install root renders for a signed-in viewer.
-  //
-  // 661 → 662: independently, on the other side of THIS merge, the tallies
-  // above were computed on either side of a PRIOR merge and, as with the
-  // 610 → 609 and 659 → 661 entries above, do not reconcile through the
-  // comment trail alone. That branch's own total before that merge was 661,
-  // counted directly above. Main independently carried the shared history
-  // through #1884's board-sheet check and the rest of the commits that
-  // merge brought in (verified social accounts on public profiles, #2250;
-  // the Home challenges regrouping, #2233; among others), landing on a
-  // manifest one entry larger than either side's own arithmetic predicts.
-  // The literal is the ground truth here, not the arithmetic: 662.
-  //
-  // 662 → 663: the tallies above were computed on either side of THIS merge
-  // and, like the others in this trail, do not compose into one sequence.
-  // This branch took 661 → 662 alone, with the #1508 install-page check
-  // above; main independently took the SAME 661 to 662 with #1884's
-  // board-sheet check and the other commits it carried in. One +1 and one
-  // +1 against a shared 661 is 663.
-  assert.equal(DAPP.tests.length, 663);
+  // #2260 adds one deterministic check for the verified-account replacement
+  // confirmation state in Connectors. That makes the reviewed total 663.
+  // 663 → 664: #1508 (per-app Add to Home Screen) declares one check on the
+  // seeded app's install page (/app/staging-demo-admins/install), a server-
+  // rendered document with the app's own manifest, asserting its #app-install
+  // root renders for a signed-in viewer. Main took 661 → 663 independently.
+  assert.equal(DAPP.tests.length, 664);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

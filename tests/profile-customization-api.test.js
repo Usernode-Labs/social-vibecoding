@@ -63,7 +63,9 @@ function makeMockPool(state) {
       if (sql.startsWith('SELECT provider, handle FROM user_social_identities')) {
         return {
           rows: (state.identities || [])
-            .filter((identity) => identity.user_id === params[0])
+            .filter((identity) => (
+              identity.user_id === params[0] && identity.public_visible !== false
+            ))
             .map(({ provider, handle }) => ({ provider, handle })),
         };
       }
@@ -236,7 +238,8 @@ test('parseProfileFields: social handles are not writable profile fields', () =>
   const { fields, details } = parseProfileFields({
     github: '@octocat', x: '@jack', displayName: 'Ada',
   });
-  assert.deepEqual(details, {});
+  assert.match(details.github[0], /cannot be entered manually/);
+  assert.match(details.x[0], /Settings > Connectors > Social accounts/);
   assert.deepEqual(fields, { display_name: 'Ada' });
 });
 
@@ -335,7 +338,7 @@ test('PATCH echoes the post-write profile in the /api/auth/me shape', async () =
     identities: [{ user_id: USER.id, provider: 'github', handle: 'octocat' }],
   });
   const { app } = makeApp(state, { user: USER });
-  const res = await patch(app, { displayName: 'Ada', github: '@different-account' });
+  const res = await patch(app, { displayName: 'Ada' });
   assert.equal(res.status, 200);
   assert.equal(state.profile.github, 'self-claimed', 'free text cannot replace the verified account');
   assert.deepEqual(res.body.profile, {
@@ -344,6 +347,16 @@ test('PATCH echoes the post-write profile in the /api/auth/me shape', async () =
     avatarUrl: null,
     links: { github: 'octocat', x: null },
   });
+});
+
+test('PATCH rejects stale manual social handles without changing the profile', async () => {
+  const state = freshState({ profile: { display_name: 'Old', github: 'self-claimed' } });
+  const { app } = makeApp(state, { user: USER });
+  const res = await patch(app, { displayName: 'Ada', github: '@different-account' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.details.github[0], /Social handles cannot be entered manually/);
+  assert.equal(state.profile.display_name, 'Old', 'the whole stale request is rejected');
+  assert.equal(state.profile.github, 'self-claimed');
 });
 
 test('PATCH rejects the WHOLE request when any field is invalid', async () => {

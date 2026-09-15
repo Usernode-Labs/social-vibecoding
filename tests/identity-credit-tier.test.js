@@ -105,6 +105,8 @@ test('either one or both provider proofs resolve to the same non-stacking $10 ti
   const entitlementSql = pool.calls.find((sql) => /user_social_identities/.test(sql));
   assert.match(entitlementSql, /EXISTS/);
   assert.doesNotMatch(entitlementSql, /COUNT|SUM/, 'providers prove eligibility; they never stack');
+  assert.doesNotMatch(entitlementSql, /public_visible/,
+    'hiding a verified account from the profile does not revoke its credit proof');
 });
 
 test('an explicit administrator override wins, including intentional zero', async () => {

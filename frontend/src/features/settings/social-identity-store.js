@@ -35,7 +35,12 @@
  *   badge: { text: string, tone: 'emerald'|'amber' }|null,
  *   state: { text: string, tone: 'amber'|'emerald'|'muted' },
  *   linkedAt: string|null, noToken: string|null,
- *   connect: { label: string, href: string|null }|null,
+ *   connect: { label: string, href: string|null, intent: 'connect'|'refresh'|'replace' }|null,
+ *   refresh: { label: string, href: string|null, intent: 'connect'|'refresh'|'replace' }|null,
+ *   replace: { label: string, href: string|null, intent: 'connect'|'refresh'|'replace' }|null,
+ *   visibility: { checked: boolean, disabled: boolean }|null,
+ *   pendingReplacement: { currentHandle: string, replacementHandle: string,
+ *     expiresAt: string|null, disabled: boolean }|null,
  *   unlink: { disabled: boolean }|null,
  *   strandedNote: string|null, diagnostics: DiagnosticsView|null,
  * }} ProviderRowView
