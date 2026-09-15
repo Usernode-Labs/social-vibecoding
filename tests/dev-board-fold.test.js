@@ -611,7 +611,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // trio are independent additions against the shared 655 — neither set
   // overlaps the other — so the merged manifest holds every one of them:
   // 655 + 2 (#2241) + 3 (#2086 pair + the second #2236 check) = 660.
-  assert.equal(DAPP.tests.length, 660);
+  // 660 → 661: the public waitlist CORS fix adds one check on
+  // GET /api/public/waitlist/options — the first declared check whose path is
+  // an API route rather than a screen. It is here because the fix's own
+  // endpoint (POST /api/public/waitlist/status) is registered for POST only,
+  // and a declared check can do nothing but navigate; its sibling GET on the
+  // same router, behind the same new CORS middleware, is what a navigation
+  // can actually prove is reachable anonymously. The preflight and response
+  // headers are pinned in tests/public-api-cors.test.js instead.
+  assert.equal(DAPP.tests.length, 661);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

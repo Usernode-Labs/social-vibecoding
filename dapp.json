@@ -1600,6 +1600,11 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The public waitlist API answers an anonymous cross-origin caller",
+      "path": "/api/public/waitlist/options",
+      "expectText": "discovery_sources"
+    },
+    {
       "name": "Waitlist status check says so when the address is not on the list (#2201)",
       "path": "/?shot=waitlist-not-found",
       "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-note:not(.hidden)",

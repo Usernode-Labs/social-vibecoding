@@ -125,6 +125,7 @@ const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
+const { publicApiCors } = require('./src/middleware/public-cors');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -142,6 +143,16 @@ app.use(trustedProxyClientIp({
   hostname: config.trustedProxyHost,
   trustDirectPeer: config.appRuntime === 'kubernetes',
 }));
+
+// Cross-origin support for the anonymous `/api/public/*` tier, and for
+// nothing else. Marketing pages the platform does not host (the waitlist
+// join + check-my-status forms) call it from the browser, so those responses
+// need an Access-Control-Allow-Origin header and the JSON POST's OPTIONS
+// preflight needs an answer. Mounted here, ahead of every gate and the body
+// parser, so a preflight is a 204 that depends on nothing: no cookie, no
+// bearer, no parser, no route. See src/middleware/public-cors.js for why a
+// wildcard origin with no credentials is the safe shape for this prefix.
+app.use(publicApiCors());
 
 // Global CLI authentication has a hard staging/enablement gate before any
 // body parser, cookie lookup, bearer lookup, or static fallback. Public
