@@ -109,16 +109,16 @@ test('Leaderboard.section defaults to the standings', () => {
 // and keys are asserted where they now live. `_renderSectionTabs` is still the
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
-test('the tab strip leads with the standings, labelled simply "Leaderboard"', () => {
+test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
   const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
   assert.deepEqual(labels, [
-    ['topochain', 'Leaderboard'],
-    ['kudos', 'Kudos'],
     ['challenges', 'Challenges'],
-  ], 'standings first and called Leaderboard; the kudos board is the Kudos tab');
+    ['kudos', 'Kudos'],
+    ['topochain', 'Leaderboard'],
+  ], 'what you can do first, the ranking last; the standings tab is still called Leaderboard');
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
   // app.js, dapp.json checks) and must survive both the relabelling and the
   // move: they are the attribute dapp.json selects on.
@@ -373,10 +373,10 @@ test('the challenges pane decorates the public grid with your own points', () =>
   const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
-  assert.match(chTsx, /See where the season stands/,
-    'the retired season-leaderboard block is replaced by a link to the standings tab');
-  assert.match(chJs, /window\.location\.hash = '#leaderboard\/topochain'/,
-    'and that link goes through the router, so the shared event selection survives');
+  // #1917: the "See where the season stands" link under the grid is gone —
+  // the standings are a tab away in the strip above it.
+  assert.doesNotMatch(chTsx, /See where the season stands|tc-se-to-standings/);
+  assert.doesNotMatch(chJs, /_toStandings/);
 });
 
 // ─── Completed challenges live here now (#981) ───────────────────────────

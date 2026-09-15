@@ -161,3 +161,27 @@ test('the detail page draws the same rail and meta line at page size', () => {
     `${META_OPEN}${EARNED('Earned 900 pts')}</div>`, 'the card size is the card’s line, unchanged');
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, {})), '', 'nothing to say, no line');
 });
+
+test('a card that opens something is a keyboard-reachable button, so it takes the kit press (#1918)', () => {
+  const view = { goal: 'Try Three Apps', reward: '500 pts', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  const tappable = renderToHtml(createElement(Card.ChallengeCard, { view, onClick: () => {} }));
+  assert.match(tappable, /^<div[^>]*role="button"/, 'the card root carries the role the native kit presses');
+  assert.match(tappable, /^<div[^>]*tabindex="0"/, 'and is in the tab order');
+  const inert = card(view);
+  assert.doesNotMatch(inert, /role="button"|tabindex/, 'a card with nothing to open stays a plain div');
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.tc-se-card\[role="button"\]:active,\s*\.home-challenge-card\[role="button"\]:active \{\s*transition: transform 0s linear 120ms, filter 0s linear 120ms;/,
+    'on touch the press waits a beat, so a scroll that starts on a card does not flash it');
+});
+
+test('Enter and Space open a focused card like a tap (#1918)', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend', 'src', 'features', 'leaderboard', 'challenge-card.tsx'), 'utf8');
+  const fn = src.slice(src.indexOf('export function ChallengeCard('));
+  assert.match(fn, /e\.key === 'Enter' \|\| e\.key === ' '/);
+  assert.match(fn, /e\.target !== e\.currentTarget/, 'a key pressed inside the card is left to its own target');
+  assert.match(fn, /e\.currentTarget\.click\(\)/);
+});

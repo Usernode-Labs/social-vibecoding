@@ -59,7 +59,7 @@ function makeAppView(over) {
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
-    App: { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum' },
+    App: o.App || { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum' },
     Kudos: { renderButton: () => '', attach: () => {} },
     document: o.document || {
       getElementById: () => null,
@@ -100,11 +100,19 @@ function makeAppView(over) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  vm.runInContext(`Date.now = () => ${FIXED_NOW};`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
   return AppView;
 }
 
+// #2176: the dashboard counts CALENDAR weeks (Monday 00:00 UTC), so a
+// fixture "two days ago" would land in last week on a Monday and in this
+// week on a Wednesday. The clock is held at a Wednesday noon for the whole
+// file, in the host (these helpers) and in every sandbox (makeAppView), so
+// the fixtures mean the same thing whatever day the suite runs on.
+const FIXED_NOW = Date.parse('2026-09-16T12:00:00Z');
+Date.now = () => FIXED_NOW;
 const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 
 // Values built inside the vm realm carry that realm's prototypes, which trips
@@ -435,7 +443,7 @@ test('the numbers are tiles, and the pane always has a sentence under them', () 
   // Four integers read out as prose is the slowest form they can take, so
   // they are tiles.
   assert.match(html, /data-ws-dash-cell="open"><b>3<\/b>open items/);
-  assert.match(html, /data-ws-dash-cell="shipped"><b>1<\/b>shipped this week/);
+  assert.match(html, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>shipped this week/);
   assert.match(html, /data-ws-dash-cell="votes"><b>1<\/b>waiting on a vote/);
   assert.match(html, /data-ws-dash-cell="unclaimed"><b>2<\/b>with nobody on them/);
 
@@ -485,7 +493,8 @@ test('a paged merge history states a floor and no rate at all', () => {
   // With the whole history in hand the comparison is real, and stands.
   AppView._mergedHasMore = false;
   const whole = workshopHtml(AppView);
-  assert.match(whole, /data-ws-dash-cell="shipped"><b>1<\/b>/, 'no marker');
+  assert.match(whole, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>/, 'no marker');
+  assert.ok(!whole.includes('title="At least this many'), 'and no floor tooltip');
   assert.match(whole, /1 change landed this week, the first in a fortnight\./);
 });
 
@@ -858,10 +867,11 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // what it replaces, and prose naming a selector is not the selector.
   assert.ok(!/\.dev-ws-since-row/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
     'the pressable row rule went with it');
-  // Three rows, because that is what the fixture has; the reveal only exists
-  // when there are more (pinned below, against a board that has six).
+  // Three rows, because that is what the fixture has. The reveal is drawn
+  // whatever the count (#2183, pinned below): with three new rows and one
+  // the reader has already seen, it has somewhere to go.
   assert.equal((html.match(/data-ws-row="since:/g) || []).length, 3);
-  assert.ok(!html.includes('data-ws-since-more'), 'nothing to reveal at exactly three');
+  assert.match(html, /data-ws-since-more=""(?! disabled)/, 'Show older, live, at exactly three');
   // The week walk's reveal keeps its own shape: centred under the stack of
   // full-width cards it belongs to.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
@@ -902,7 +912,10 @@ test('the since heading is styled: each class it emits has a rule, and the count
   assert.ok(head, 'the heading is drawn');
   const classes = [...head[1].matchAll(/<span class="([^"]+)">/g)].map((m) => m[1]);
   assert.deepEqual(classes, ['dev-ws-since-label', 'dev-ws-since-n'], 'the label, then the count, as two elements');
-  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span>$/, 'nothing between them but the gap');
+  // #2183: Clear rides the far end of the same row, after the count, and
+  // there is still nothing between the label and the count but the gap.
+  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span><button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>$/,
+    'label, count, Clear');
   // Comments stripped: a selector named in prose is not a selector.
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-since-head', ...classes, 'dev-ws-since-more']) {
@@ -1012,10 +1025,14 @@ test('no comment in app.css closes early, and no rule has prose for a selector',
 test('the dashboard reads a rate, not just a count, and says when it is a floor', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // #2176: the weeks are calendar weeks (Monday 00:00 UTC), so the fixtures
+  // sit relative to this week's Monday rather than to today.
+  const monday = AppView._weekStart(Date.now());
+  const iso = (ms) => new Date(ms).toISOString();
   AppView._merged = [
-    { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: at(2), created_at: at(2), row_type: 'pr' },
-    { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: at(5), created_at: at(5), row_type: 'pr' },
-    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: at(10), created_at: at(10), row_type: 'pr' },
+    { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: iso(monday + 3600000), created_at: iso(monday + 3600000), row_type: 'pr' },
+    { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: iso(monday + 7200000), created_at: iso(monday + 7200000), row_type: 'pr' },
+    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 3 * 86400000), created_at: iso(monday - 3 * 86400000), row_type: 'pr' },
   ];
   const d = AppView._workshopView().dashboard;
   assert.equal(d.shippedWeek, 2);
@@ -1774,7 +1791,10 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // Seven in the queue, and the count rides the head: the back/forward pair
   // is gone, because Skip is the only way forward a decision screen needs.
   assert.match(html, /class="dev-ws-item-of">1 \/ 7</, 'the feed counts the whole queue');
-  assert.equal((html.match(/ data-ws-item="/g) || []).length, 7, 'and every item is in the DOM');
+  assert.equal((html.match(/ data-ws-item="(?:vote|need):/g) || []).length, 7, 'and every item is in the DOM');
+  // Plus the end card after them (#2172): one more snap slot, not a footer,
+  // and not one of the seven the counter counts.
+  assert.equal((html.match(/ data-ws-item="/g) || []).length, 8, 'and the end card is the slot after the last');
   assert.ok(!html.includes('data-ws-needs-nav'), 'no pager under the answers');
   assert.equal((html.match(/dev-card-dense|dev-card-topic/g) || []).length, 0,
     'and no dense card: an item is its title, the sentence a voter reads, and the caption');
@@ -1791,6 +1811,77 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // was already showing the top of.
   assert.ok(!APP_VIEW_SRC.includes('openBoardNeedingVote'), 'the navigation is gone');
   assert.ok(!WORKSHOP.includes('openBoardNeedingVote'), 'and nothing still calls it');
+});
+
+test('#2172: one card past the last item is the summary, and it is the screen when there is nothing', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals = [1, 2, 3].map((n) => ({
+    id: 100 + n, pr_number: 200 + n, pr_title: `Waiting ${n}`, status: 'promoted', username: 'carol',
+    created_at: at(3), promoted_at: at(3), last_message_at: at(3), linked_issues: [], my_vote: null,
+    votes_for: 1, votes_against: 0, yes_count: 1, no_count: 0,
+  }));
+  const v = AppView._workshopView();
+  assert.equal(v.queue.length, 5, 'three votes and the two unclaimed issues');
+  const html = workshopHtml(AppView, 'needs');
+  // THE LAST SLOT IN THE SCROLLER, after every item, with the item's own
+  // class so it is the same height and the same snap point: a swipe past the
+  // end lands on it the way a swipe landed on each decision.
+  const scroll = /data-ws-feed=""[\s\S]*?<\/section><\/div>/.exec(html);
+  assert.ok(scroll, 'the scroller');
+  const slots = scroll[0].match(/<section class="dev-ws-item[^"]*" data-ws-item="([^"]+)"/g);
+  assert.equal(slots.length, 6, 'five items and the end card');
+  assert.match(slots[5], /class="dev-ws-item dev-ws-needs-done" data-ws-item="done"/, 'and the end card is LAST');
+  assert.match(html, /data-ws-item="done" data-ws-kind="done" data-ws-done-acted="0" data-ws-done-left="5"/,
+    'it says how many this pass answered and how many it passed over');
+  // The counter and the progress line count the decisions only: the end card
+  // is where you are once they are behind you, not a sixth decision.
+  assert.match(html, /class="dev-ws-item-of">1 \/ 5</);
+  assert.ok(!/class="dev-ws-item-of">6 \//.test(html), 'the end card has no counter');
+  // Nothing answered yet and five passed over: the headline says "for now",
+  // the line under it says what is still waiting, and there is a way back
+  // to it as well as the way back to the lander.
+  assert.match(html, /dev-ws-needs-done-line">That’s it for now\.</);
+  assert.match(html, /dev-ws-needs-done-sub">5 are still waiting on you above\.</);
+  assert.match(html, /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
+  assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one waiting</, 'and back up the feed');
+  // The ring states where the viewer stands against everything they could
+  // vote on: three promoted, none answered.
+  assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);
+  // THE RAIL ON THE END CARD is the move pair alone, so the way back up stays
+  // where the thumb learned it is and the stage keeps its width on a wide
+  // window; the item rail is drawn only for an item.
+  assert.match(WORKSHOP, /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">\s*\{moveRow\}/);
+  assert.match(WORKSHOP, /const row = i < n \? items\[i\] : null;/, 'index n is the end card, with no row');
+  assert.match(WORKSHOP, /const idx = key === END_KEY \? items\.length : items\.findIndex/,
+    'a reader on the end card stays on it when rows arrive or leave above');
+  assert.match(WORKSHOP, /const c = Math\.min\(Math\.max\(idx, 0\), items\.length\);/, 'a swipe can land on it');
+  // The way the check reaches it: the route opens ON the end card, instantly.
+  assert.match(WORKSHOP, /\.get\('shot'\) === 'needs-end'/);
+  assert.match(WORKSHOP, /const \[endOnOpen\] = useState\(wantsEnd\);/, 'read once, at mount');
+  assert.match(WORKSHOP, /useRef<string \| null>\(endOnOpen \? END_KEY : null\)/);
+  const check = dapp.tests.find((t) => /shot=needs-end/.test(t.path));
+  assert.ok(check, 'a declared check rides that route');
+  assert.match(check.expectSelector, /\[data-ws-kind="vote"\] ~ \[data-ws-item="done"\]\[data-ws-kind="done"\]/,
+    'and walks past a vote item to the end card');
+  // The copy: no em dashes, and each class the card emits has a rule.
+  const card = /<section class="dev-ws-item dev-ws-needs-done"[\s\S]*?<\/section>/.exec(html)[0];
+  assert.ok(!card.includes('—'), 'no em dash in what the reader is shown');
+  for (const cls of ['dev-ws-needs-done', 'dev-ws-done-ring', 'dev-ws-needs-done-line', 'dev-ws-needs-done-sub', 'dev-ws-done-cta', 'dev-ws-done-back']) {
+    assert.ok(new RegExp(`\\.${cls}\\b[^{]*\\{`).test(CSS), `${cls} has a rule`);
+  }
+
+  // WITH NOTHING IN THE QUEUE it is the whole screen, as the empty state was:
+  // the caught-up line, no way back up (there is nothing above), no rail.
+  AppView._proposals = [];
+  AppView._ghIssues = [];
+  const empty = workshopHtml(AppView, 'needs');
+  const only = empty.match(/ data-ws-item="/g) || [];
+  assert.equal(only.length, 1, 'the end card alone');
+  assert.match(empty, /dev-ws-needs-done-line">You’re all caught up\.</);
+  assert.match(empty, /Every proposal you can vote on has your answer, and every open issue has somebody on it\./);
+  assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
+  assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
 
 test('the footnote says what is actually happening to the category grouping', () => {
@@ -3174,7 +3265,166 @@ test('since-your-last-visit shows three and reveals the rest, like the week walk
   const quiet = workshopHtml(fresh);
   assert.match(quiet, /data-ws-since-none=""/);
   assert.ok(quiet.includes('Nothing has changed since you were last here.'));
-  assert.ok(!quiet.includes('data-ws-since-more'));
+  // #2183: the way down is still there on a quiet day — that is the day the
+  // reader most wants it — and live, because everything on the board is
+  // now on the far side of the line.
+  assert.match(quiet, /data-ws-since-more=""(?! disabled)/);
+});
+
+// ── #2183: Clear, and a Show older that is always there ──────────────
+
+test('since-your-last-visit publishes the rest of the list as "seen", newest first', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  const v = AppView._workshopView();
+  // Issue 13 was filed twenty days ago and last touched nine days ago: on
+  // the far side of the line, so it is the one row the reader has seen.
+  assert.deepEqual(plain(v.since.rows.map((r) => r.key).sort()), ['since:issue:12', 'since:merged:78', 'since:proposal:34']);
+  assert.deepEqual(plain(v.since.seen.rows.map((r) => r.key)), ['seen:issue:13']);
+  assert.equal(v.since.seen.total, 1);
+  assert.ok(!v.since.seen.rows[0].fresh, 'nothing on that side is new');
+  // `through` is the newest stamp among the new rows — what Clear moves the
+  // line up to, so a row a clock put a moment ahead goes with the rest.
+  assert.equal(v.since.through, Date.parse(AppView._ghIssues[0].updatedAt), 'issue 12, touched a day ago, is the newest');
+  assert.ok(v.since.through > v.since.baseline);
+  assert.ok(v.since.through <= Date.now());
+
+  // The seen list is the SAME activity list below the line, newest first,
+  // capped like the new one: thirty-five merges from before the visit draw
+  // as thirty, with the whole rest counted.
+  const many = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) } });
+  seed(many);
+  many._merged = Array.from({ length: 35 }, (_, i) => ({
+    id: 200 + i, pr_number: 300 + i, pr_title: `Old ${i}`, status: 'merged', username: 'alice',
+    created_at: at(10 + i), merged_at: at(10 + i), last_message_at: at(10 + i), row_type: 'pr',
+  }));
+  many._mergedTotal = 35;
+  const mv = many._workshopView();
+  assert.equal(mv.since.seen.rows.length, many.WORKSHOP_SEEN_MAX);
+  assert.equal(many.WORKSHOP_SEEN_MAX, 30);
+  assert.equal(mv.since.seen.total, 36, 'the thirty-five merges and issue 13');
+  assert.equal(mv.since.seen.rows[0].key, 'seen:issue:13', 'nine days ago comes before ten');
+  assert.equal(mv.since.seen.rows[1].key, 'seen:merged:200');
+});
+
+test('Clear moves the baseline to now, persists it, and the rows move under Show older', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  const before = AppView._workshopView();
+  assert.equal(before.since.rows.length, 3);
+  const html = workshopHtml(AppView);
+  assert.match(html, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>/,
+    'live, because there is something to clear');
+
+  AppView._workshopClearSince('demo-app', before.since.through);
+  const after = AppView._workshopView();
+  assert.equal(after.since.rows.length, 0, 'nothing is new any more');
+  assert.ok(after.since.baseline >= before.since.through, 'the line moved up to now');
+  assert.ok(after.since.baseline >= Date.now() - 1000);
+  // The three cleared rows are on the seen side now, newest first, ahead
+  // of the one that was already there.
+  assert.deepEqual(plain(after.since.seen.rows.map((r) => r.key)),
+    ['seen:issue:12', 'seen:merged:78', 'seen:proposal:34', 'seen:issue:13']);
+  assert.equal(after.since.seen.total, 4);
+  assert.equal(after.themes.length ? after.themes[0].counts.fresh : 0, 0, 'the "new" marks go with it');
+  // Persisted the way the baseline is: the SAME localStorage key, so a
+  // reload does not bring the list back...
+  assert.equal(store['workshopSeen:demo-app'], String(after.since.baseline));
+  // ...and held in memory for the page session, so a WS-driven repaint
+  // compares against the new line rather than re-reading the old one.
+  assert.equal(AppView._workshopSince['demo-app'], after.since.baseline);
+  const cleared = workshopHtml(AppView);
+  assert.match(cleared, /data-ws-since-none=""/);
+  assert.match(cleared, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="" disabled="">Clear<\/button>/,
+    'disabled rather than absent, so the row does not reflow');
+  assert.match(cleared, /data-ws-since-more=""(?! disabled)/, 'and the way back to what was cleared is live');
+
+  // A row a server clock put a moment in the future is cleared with the
+  // rest: the stamp is the newer of now and `through`.
+  const ahead = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) } });
+  seed(ahead);
+  const soon = new Date(Date.now() + 60000).toISOString();
+  ahead._ghIssues[0].updatedAt = soon;
+  ahead._ghIssues[0].lastMessageAt = soon;
+  const av = ahead._workshopView();
+  assert.ok(av.since.through > Date.now(), 'the fixture is ahead of the clock');
+  ahead._workshopClearSince('demo-app', av.since.through);
+  assert.equal(ahead._workshopView().since.rows.length, 0);
+  assert.equal(ahead._workshopSince['demo-app'], av.since.through);
+
+  // The slug defaults to the current app.
+  const idle = makeAppView();
+  idle._workshopClearSince();
+  assert.ok(idle._workshopSince['demo-app'] > 0);
+});
+
+test('Show older is always drawn: it walks the new rows, then the seen ones, and disables when spent', () => {
+  // The control, in the markup, on every branch: the count pinned above,
+  // the quiet day pinned with the reveal, and here a board with NOTHING on
+  // either side of the line — the one case where it is disabled.
+  const bare = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) } });
+  seed(bare);
+  bare._ghIssues = []; bare._proposals = []; bare._merged = []; bare._mergedTotal = 0;
+  const v = bare._workshopView();
+  assert.ok(v.since, 'a baseline exists');
+  assert.equal(v.since.rows.length, 0);
+  assert.equal(v.since.seen.rows.length, 0);
+  const html = workshopHtml(bare);
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more="" disabled=""/,
+    'drawn, and disabled: a control that is sometimes there is one nobody learns to reach for');
+  assert.match(html, /data-ws-since-clear="" disabled=""/);
+
+  // The walk itself is state, which a static render cannot press, so the
+  // source is pinned: new rows first, three a press, then across the line.
+  assert.match(WORKSHOP, /const \[seenShown, setSeenShown\] = useState\(0\);/, 'nothing seen is drawn until asked for');
+  assert.match(WORKSHOP, /if \(v\.since\.rows\.length > sinceShown\) setSinceShown\(sinceShown \+ SINCE_STEP\);\s*else setSeenShown\(seenShown \+ SINCE_STEP\);/,
+    'the new rows are exhausted before the seen ones are drawn');
+  assert.match(WORKSHOP, /v\.since\.rows\.length > sinceShown \|\| v\.since\.seen\.rows\.length > seenShown/,
+    'and the button is live while either side has more');
+  assert.match(WORKSHOP, /disabled=\{!sinceMore\}/);
+  // Clear folds the walk back to its start and hands the stamp to AppView,
+  // which owns the baseline and its storage.
+  assert.match(WORKSHOP, /const clearSince = \(\) => \{[\s\S]*?setSinceShown\(SINCE_FIRST\);\s*setSeenShown\(0\);[\s\S]*?callAppView\('_workshopClearSince', slug, v\.since\.through\);/);
+  // The seen rows sit under a mark saying which side of the line they are
+  // on, with the whole rest counted, in the same fold and the same
+  // one-open-at-a-time scope as the rows above.
+  assert.match(WORKSHOP, /seenShown > 0 && v\.since\.seen\.rows\.length \? \(\s*<>\s*<div className="dev-ws-since-seen" data-ws-since-seen="">\s*<span className="dev-ws-since-seen-label">Seen before<\/span>\s*<span className="dev-ws-since-seen-n">\{v\.since\.seen\.total\}<\/span>/);
+  assert.match(WORKSHOP, /v\.since\.seen\.rows\.slice\(0, seenShown\)\.map\(\(row\) => \(row\.t === 'card' \? \(\s*<CardRowView[\s\S]*?open=\{openRows\.since === row\.key\}/);
+  assert.ok(!html.includes('data-ws-since-seen'), 'the mark is not drawn over nothing');
+  // Every class the block emits has a rule (the #2097 lesson), including
+  // the disabled state the reveal did not have before.
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  for (const cls of ['dev-ws-since-clear', 'dev-ws-since-seen', 'dev-ws-since-seen-label', 'dev-ws-since-seen-n']) {
+    assert.match(stripped, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
+  }
+  assert.match(stripped, /\.dev-ws-reveal:disabled \{[^}]*cursor: default;/);
+  assert.match(stripped, /\.dev-ws-since-clear:disabled \{[^}]*cursor: default;/);
+  assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-left: auto;/, 'pushed to the far end of the heading row');
+  // No em dashes in what the reader sees.
+  for (const copy of ['Clear', 'Show older', 'Seen before']) assert.ok(!copy.includes('\u2014'));
+});
+
+test('the since-list controls have a declared check on Current status, through a URL that gives the page a last visit', () => {
+  // The list is drawn only for a returning reader, and the checks run in a
+  // fresh browser — so a first visit, with the dashboard alone, is what
+  // they would see. `?shot=since-visit` seeds the baseline in memory a month
+  // back, before the first paint reads it, and writes nothing to storage.
+  assert.match(APP_VIEW_SRC, /if \(shot === 'since-visit'\) \{\s*AppView\._workshopSince\[slug\] = Date\.now\(\) - 30 \* 86400000;\s*\}/);
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopSince['demo-app'] = Date.now() - 30 * 86400000;
+  const v = AppView._workshopView();
+  assert.ok(v.since, 'seeded, the pane is drawn');
+  assert.equal(AppView._workshopBaseline('demo-app'), AppView._workshopSince['demo-app'], 'and the memory copy is what the paint reads');
+  const check = dapp.tests.find((t) => /data-ws-since-clear/.test(t.expectSelector || ''));
+  assert.ok(check, 'declared');
+  assert.match(check.path, /^\/\?demo=1&shot=since-visit#app\/usernode-2d5619\/workshop$/, 'the Current status tab, which is where the strip lives');
+  assert.match(check.expectSelector, /\[data-ws-since\] > \.dev-ws-since-head:has\(> \.dev-ws-since-n \+ button\[data-ws-since-clear\]\) ~ button\.dev-ws-since-more\[data-ws-since-more\]/);
+  assert.equal(check.expectText, 'Show older');
 });
 
 test('the composer shows its model picker and send circle at every width', () => {
@@ -3201,7 +3451,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // kind, `[data-ws-leaving]` marks it, and a timer drops it — instantly
   // where motion is unwelcome, because app.css runs no animation there.
   assert.match(WORKSHOP, /const \[leaving, setLeaving\] = useState<SheetKind \| null>\(null\);/);
-  assert.match(WORKSHOP, /const shown = sheet \|\| leaving;/);
+  // Never on the end card, which has no item for a sheet to be about (#2172).
+  assert.match(WORKSHOP, /const shown = row \? \(sheet \|\| leaving\) : null;/);
   assert.match(WORKSHOP, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
   assert.match(CSS, /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
   assert.match(CSS, /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
@@ -3353,7 +3604,8 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(WORKSHOP, /<div className="dev-ws-move" data-ws-move-row="">/);
   for (const [dir, guard, name] of [
     ['prev', /disabled=\{i <= 0\}/, /aria-label="Previous"/],
-    ['next', /disabled=\{i >= n - 1\}/, /aria-label="Next"/],
+    // `n`, not `n - 1`: the end card is the last slot (#2172).
+    ['next', /disabled=\{i >= n\}/, /aria-label="Next"/],
   ]) {
     const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,240}?</button>`).exec(WORKSHOP);
     assert.ok(btn, `the ${dir} control exists`);
@@ -3374,7 +3626,8 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(CSS, /\.dev-ws-keys \{ display: none; \}/, 'the legend is off on a phone');
   // NO WRAP, and no reordering: the ends are the ends, the counter says
   // which one you are at, and you walk back yourself.
-  assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), Math\.max\(0, n - 1\)\);/);
+  // `n`, the end card's slot, is the last a press reaches (#2172).
+  assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), n\);/);
   assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
   assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/,
     'the feed keeps the order it was published in');
@@ -3683,4 +3936,69 @@ test('the selection slides between tabs instead of snapping', () => {
   // would cover the labels.
   assert.match(CSS, /\.dev-ws-tab \{ position: relative; z-index: 1; \}/);
   assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?z-index: 0;/);
+});
+
+// ── #2176: the tiles count calendar weeks ────────────────────────────
+
+test('#2176: "shipped this week" is the calendar week from Monday 00:00 UTC, not a trailing seven days', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const monday = AppView._weekStart(Date.now());
+  assert.equal(new Date(monday).getUTCDay(), 1, 'the week starts on a Monday');
+  assert.equal(monday % 86400000, 0, 'at midnight UTC');
+  const iso = (ms) => new Date(ms).toISOString();
+  const row = (id, ms) => ({
+    id, pr_number: id, pr_title: `Merge ${id}`, status: 'merged', username: 'alice',
+    merged_at: iso(ms), created_at: iso(ms), row_type: 'pr',
+  });
+  AppView._merged = [
+    row(1, monday + 3600000),              // this week
+    row(2, monday - 1000),                 // one second before Monday: last week
+    row(3, monday - 7 * 86400000 + 1000),  // the first second of last week
+    row(4, monday - 7 * 86400000 - 1000),  // the week before that: neither
+  ];
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 1, 'only what landed since Monday');
+  assert.equal(d.shippedPrevWeek, 2, 'the whole seven days before that Monday');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-dash-cell="shipped" title="This calendar week, counted from Monday 00:00 UTC\."/,
+    'the tile says which week it means');
+});
+
+// ── #2182: the viewer's strip stays on screen when it is empty ───────
+
+test('#2182: "What you are working on" stays on screen with nothing in it, and says so', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  // Nothing of the viewer's: no session, and the proposal is somebody else's.
+  AppView._mySessions = [];
+  for (const p of AppView._proposals) p.user_id = 999;
+  const v = AppView._workshopView();
+  assert.equal(v.mine.viewer, true);
+  assert.equal(v.mine.rows.length, 0);
+  const html = workshopHtml(AppView);
+  assert.ok(html.includes('data-ws-mine=""'), 'the strip is drawn');
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item below, or start something from the \+ button\.<\/p>/,
+    'with the note in the lane');
+  assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'), 'in its usual place');
+  // The declared check reaches this state through ?shot=mine-empty, whatever
+  // the demo seeded for the viewer.
+  const Seeded = makeAppView();
+  seed(Seeded);
+  Seeded._mySessions = [{ id: 51, session_title: 'Bottom tabs', pr_number: null, last_activity_at: at(0) }];
+  assert.ok(Seeded._workshopView().mine.rows.length > 0, 'the viewer has work');
+  Seeded._workshopShot = 'mine-empty';
+  assert.equal(Seeded._workshopView().mine.rows.length, 0);
+  assert.ok(workshopHtml(Seeded).includes('data-ws-mine-empty=""'));
+});
+
+test('#2182: a guest has no strip to keep', () => {
+  const AppView = makeAppView({ App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const v = AppView._workshopView();
+  assert.equal(v.mine.viewer, false);
+  assert.ok(!workshopHtml(AppView).includes('data-ws-mine='), 'no empty strip for a reader with no work to have');
 });

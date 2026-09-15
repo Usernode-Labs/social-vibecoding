@@ -442,10 +442,19 @@ export interface DevWorkshopView {
    */
   since: {
     baseline: number;
+    /** Newest activity stamp among `rows`, for Clear; 0 when nothing is new. */
+    through: number;
     shipped: number;
     opened: number;
     proposed: number;
     rows: ListRow[];
+    /**
+     * The rest of the same list — what moved BEFORE the baseline, newest
+     * first, which the reader has already seen. `Show older` walks into it
+     * and Clear moves the new rows here (#2183). `rows` is capped; `total`
+     * is the whole rest.
+     */
+    seen: { total: number; rows: ListRow[] };
   } | null;
   /** First-visit orientation: the board's shape in numbers. */
   /**

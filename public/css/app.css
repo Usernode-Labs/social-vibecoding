@@ -10513,10 +10513,20 @@ body.is-offline [data-offline-disabled] {
    10.5rem is not an aesthetic round number: it is the narrowest width at
    which the two "Your computer · …" venues are still told apart — below it
    both ellipsize to the same string, and the control stops answering the
-   question it exists to answer. */
+   question it exists to answer.
+
+   #1941: the second term is the strip's SECOND LINE. Below `sm` the strip
+   wraps, and this control shares its line with the mode switch (7.5rem
+   with its label) and the ⋯ (1.75rem), plus the two gaps between them
+   (1rem): 10.25rem. A flex line is composed from hypothetical sizes, so a
+   control that would only fit by shrinking does not shrink, it wraps — and
+   the ⋯ would start a THIRD line. At 375px `100% - 10.5rem` is 11.4rem and
+   the first term wins; the cap only bites below about 350px, where it
+   trades a little of the venue's name for keeping the strip at two lines
+   on the narrowest phones. */
 @media (max-width: 30rem) {
   .dc-venue-select {
-    max-width: 10.5rem;
+    max-width: min(10.5rem, calc(100% - 10.5rem));
   }
 }
 
@@ -10541,7 +10551,20 @@ body.is-offline [data-offline-disabled] {
 /* Below Tailwind's sm the session name may take two lines, so a long name
    has room beside the provider and the PR link without a very long title
    consuming the chat. (#1940 put those controls back inline at every width;
-   the full branch name stays on the title's tooltip.) */
+   the full branch name stays on the title's tooltip.)
+
+   #1941: THE STRIP IS TWO LINES ON A PHONE, and this basis is what breaks
+   it. The strip wraps below `sm` (view.tsx). The title's hypothetical size
+   is `100% - 4rem` — the strip's width less room for the PR number beside
+   it — so the name and the PR number fill the first line and the first
+   control that does not fit, the venue, starts the second. With `flex-1`'s
+   zero basis every child fit on one line and the title took the leftovers,
+   which at 375px were none: the venue (10.5rem), the mode switch and the ⋯
+   are wider than the strip between them.
+
+   The second line's own cap is on `.dc-venue-select` below (the 30rem
+   rule): wrapping is decided on hypothetical sizes, so a control that
+   would only fit by shrinking does not shrink — it wraps. */
 @media (max-width: 639px) {
   #dc-session-header > .dc-session-title {
     white-space: normal;
@@ -10549,6 +10572,7 @@ body.is-offline [data-offline-disabled] {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+    flex-basis: calc(100% - 4rem);
   }
 }
 
@@ -11244,7 +11268,12 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-radius: 16px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-.dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+/* #2193: the linked-issue rows are flex (chip + one truncating title line),
+   laid out by their own utilities. A `display: block` here outranked the
+   rows' `flex`, so the title's nowrap ran past the card on a phone and
+   scrolled it sideways. Only the wrap for stray long tokens stays. */
+.dev-change-issues { min-width: 0; }
+.dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
 .dev-conversation-tabs {
@@ -11981,6 +12010,44 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
    the air between it and the last row. */
 .dev-ws-since-more { margin-top: 2px; }
+/* #2183: the control is always drawn and DISABLED when the walk is over,
+   rather than leaving — so it reads as spent, not pressable. */
+.dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
+.dev-ws-reveal:disabled:hover { color: var(--text-muted); }
+/* `Clear` rides the far end of the heading row (#2183) — the notifications
+   sheet's "Mark all read", drawn the same size as the heading's own type
+   and in its muted ink, the accent on hover. Pushed right by its own
+   margin so the label and the count keep the gap they had. Disabled when
+   there is nothing to clear rather than absent, so the row does not reflow
+   between a quiet visit and a busy one. */
+.dev-ws-since-clear {
+  flex: none; margin-left: auto; padding: 2px 6px;
+  border: 0; border-radius: 6px; background: transparent;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-since-clear:hover { color: var(--accent); }
+.dev-ws-since-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-since-clear:disabled { opacity: .45; cursor: default; }
+.dev-ws-since-clear:disabled:hover { color: var(--text-muted); }
+/* The line across the list (#2183): where `Show older` crosses from what is
+   new into what the reader has already seen. The heading's own shape, one
+   size down, with the count of the whole rest riding it in plain ink rather
+   than the brand tint — these rows are not news. */
+.dev-ws-since-seen {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; margin-top: 6px; padding: 2px 2px 0;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+}
+.dev-ws-since-seen-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-seen-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--bg-secondary); color: var(--text-muted);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
 
 /* ── Where the summary came from ─────────────────────────────
    Two clauses of the category footnote, moved onto the tab that holds the
@@ -12726,8 +12793,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-ask-send-icon { width: 17px; height: 17px; }
 .dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 
-/* ── The end of the feed ──────────────────────────────────────────── */
+/* ── The end of the feed ──────────────────────────────────────────────
+   One card past the last item, always (#2172): the same snap slot as an
+   item, in a tint of its own so the swipe that lands here reads as arriving
+   somewhere rather than as one more decision. */
 .dev-ws-needs-done { align-items: center; justify-content: center; text-align: center; padding: 24px 28px; gap: 10px; }
+.dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .12), rgba(255, 255, 255, 0) 55%, rgba(139, 92, 246, .08)); }
+.dark .dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .16), rgba(0, 0, 0, 0) 55%, rgba(139, 92, 246, .10)); }
 .dev-ws-done-ring { width: 112px; height: 112px; margin-bottom: 8px; }
 .dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
 .dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-muted); }
@@ -12736,6 +12808,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;
 }
+/* The way back to what was passed over: a quiet second action under the
+   primary one, drawn only when there is something above to go back to. */
+.dev-ws-done-back {
+  height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 600;
+  background: transparent; color: var(--accent);
+}
+.dev-ws-done-back:hover { background: var(--accent-wash); }
 
 /* ── The tab pill steps aside for a sheet ─────────────────────────── */
 @media (max-width: 699.98px) {
@@ -13505,6 +13585,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
+/* #1918: the challenge cards (the Challenges tab's grid and Home's
+   Challenges block) are role="button" now, so the kit's scale + dim press
+   reaches them. They sit in scrolled lists too, so on touch they take the
+   same 120ms hold-back as the Dev board above. */
+@media (hover: none) {
+  .tc-se-card[role="button"]:active,
+  .home-challenge-card[role="button"]:active {
+    transition: transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
+.tc-se-card[role="button"]:focus-visible,
+.home-challenge-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
