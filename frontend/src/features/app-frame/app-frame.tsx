@@ -45,7 +45,7 @@ import { appFrameRefs, appFrameStore } from './app-frame-store.js';
  * restricted, then setSrc synchronously publishes sandboxReady before the
  * verified cross-origin navigation starts.
  */
-const ALLOW = 'clipboard-write; pointer-lock; geolocation';
+const ALLOW = 'clipboard-write; pointer-lock; geolocation; microphone';
 
 function LaunchCover({
   iconKind,

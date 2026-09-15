@@ -32,12 +32,12 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('the React app frame delegates geolocation', () => {
   const src = read('frontend/src/features/app-frame/app-frame.tsx');
-  assert.match(src, /const ALLOW = 'clipboard-write; pointer-lock; geolocation';/);
+  assert.match(src, /const ALLOW = 'clipboard-write; pointer-lock; geolocation; microphone';/);
 });
 
 test('the DOM adapter copy of the app frame delegates geolocation', () => {
   const src = read('public/js/app-view.js');
-  assert.match(src, /allow="clipboard-write; pointer-lock; geolocation"/);
+  assert.match(src, /allow="clipboard-write; pointer-lock; geolocation; microphone"/);
 });
 
 test('the two app-frame copies agree on the allow value', () => {
@@ -53,12 +53,12 @@ test('the two app-frame copies agree on the allow value', () => {
 test('the landing viewer frame delegates geolocation', () => {
   const src = read('frontend/src/features/auth/landing.tsx');
   const block = src.slice(src.indexOf('id="app-viewer-frame"'));
-  assert.match(block.slice(0, 200), /allow="geolocation"/);
+  assert.match(block.slice(0, 200), /allow="geolocation; microphone"/);
 });
 
 test('the staging preview frame delegates geolocation', () => {
   const src = read('frontend/src/features/staging/staging-overlay.tsx');
-  assert.match(src, /allow="pointer-lock; geolocation"/);
+  assert.match(src, /allow="pointer-lock; geolocation; microphone"/);
 });
 
 // The three above are sources; this one is the artifact that actually ships,
@@ -69,9 +69,9 @@ test('the built shell ships the delegation on its server-rendered frames', () =>
   const html = shellMarkup();
   const staging = html.match(/id="staging-iframe"[^>]*/);
   assert.ok(staging, 'staging-iframe should be present in the built shell');
-  assert.match(staging[0], /allow="pointer-lock; geolocation"/);
+  assert.match(staging[0], /allow="pointer-lock; geolocation; microphone"/);
 
   const viewer = html.match(/id="app-viewer-frame"[^>]*/);
   assert.ok(viewer, 'app-viewer-frame should be present in the built shell');
-  assert.match(viewer[0], /allow="geolocation"/);
+  assert.match(viewer[0], /allow="geolocation; microphone"/);
 });

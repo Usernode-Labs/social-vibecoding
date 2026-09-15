@@ -131,7 +131,7 @@ const ViewerRegion = memo(function ViewerRegion() {
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
         title="App"
-        allow="geolocation"
+        allow="geolocation; microphone"
       ></iframe>
     </div>
   );

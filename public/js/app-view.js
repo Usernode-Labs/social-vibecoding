@@ -1662,7 +1662,7 @@ const AppView = {
         id="app-iframe"${styleAttr}
         class="w-full h-full border-0"
         sandbox=""
-        allow="clipboard-write; pointer-lock; geolocation"
+        allow="clipboard-write; pointer-lock; geolocation; microphone"
       ></iframe>`;
   },
 

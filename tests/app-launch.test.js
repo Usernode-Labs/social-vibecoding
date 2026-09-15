@@ -595,7 +595,7 @@ test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
   assert.equal(dom.els.get('app-iframe').getAttribute('sandbox'),
     'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
     'the app sandbox is installed immediately before its safe navigation');
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation"/);
+  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation; microphone"/);
 });
 
 test('a non-running render retires the launch generation', () => {

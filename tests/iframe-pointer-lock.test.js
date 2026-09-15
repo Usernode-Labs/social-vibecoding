@@ -37,7 +37,7 @@ test('App-tab iframe sandbox carries allow-pointer-lock', () => {
 
 test('App-tab iframe allow merges pointer-lock with clipboard-write', () => {
   const src = read('public/js/app-view.js');
-  assert.match(src, /allow="clipboard-write; pointer-lock; geolocation"/);
+  assert.match(src, /allow="clipboard-write; pointer-lock; geolocation; microphone"/);
 });
 
 test('staging preview iframe delegates pointer-lock', () => {
@@ -46,7 +46,7 @@ test('staging preview iframe delegates pointer-lock', () => {
     .split('\n')
     .find((l) => l.includes('id="staging-iframe"'));
   assert.ok(line, 'staging-iframe element should exist');
-  assert.match(line, /allow="pointer-lock; geolocation"/);
+  assert.match(line, /allow="pointer-lock; geolocation; microphone"/);
   // It is intentionally not sandboxed; adding a sandbox attribute would
   // restrict a frame that is currently unrestricted.
   assert.ok(!/\bsandbox=/.test(line), 'staging-iframe must not be sandboxed');
