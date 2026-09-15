@@ -3,6 +3,9 @@ name: Build Kubernetes images
 on:
   push:
     branches: [main, feat/k8s]
+  schedule:
+    # Pick up a new Claude Code release even on a day with no source change.
+    - cron: '23 5 * * *'
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -55,11 +58,25 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
+      - name: Resolve Claude Code version
+        id: claude
+        if: matrix.component == 'worker'
+        shell: bash
+        run: |
+          version="$(npm view @anthropic-ai/claude-code@latest version)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Claude Code version from npm: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build_arg=CLAUDE_CODE_VERSION=$version" >> "$GITHUB_OUTPUT"
+
       - name: Resolve reusable ${{ matrix.component }} image
         id: reuse
         env:
           COMPONENT: ${{ matrix.component }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || 'none' }}
+          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
         run: node scripts/resolve-kubernetes-image.js
 
       - name: Build and push ${{ matrix.component }}
@@ -76,6 +93,7 @@ jobs:
             ${{ steps.reuse.outputs.reuse_tag }}
           pull: true
           no-cache: ${{ steps.reuse.outputs.refresh == 'true' }}
+          build-args: ${{ steps.claude.outputs.build_arg }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -90,6 +108,7 @@ jobs:
           IMAGE_REPOSITORY: ${{ steps.reuse.outputs.image }}
           RESOLUTION: ${{ steps.reuse.outputs.reason }}
           COMPONENT: ${{ matrix.component }}
+          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
         run: |
           case "$IMAGE_DIGEST" in
             sha256:[0-9a-f][0-9a-f]*) ;;
@@ -102,6 +121,9 @@ jobs:
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           printf '%s@%s\n' "$IMAGE_REPOSITORY" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COMPONENT" = worker ]; then
+            printf 'Claude Code: `%s`\n' "$CLAUDE_CODE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload ${{ matrix.component }} digest
         uses: actions/upload-artifact@v4

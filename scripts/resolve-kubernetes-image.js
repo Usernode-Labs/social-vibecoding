@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const WORKFLOW = '.github/workflows/build-kubernetes-images.yml';
 const RESOLVER = 'scripts/resolve-kubernetes-image.js';
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
+const NPM_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 function command(file, args, cwd) {
   return execFileSync(file, args, {
@@ -16,23 +17,32 @@ function command(file, args, cwd) {
   }).trim();
 }
 
-function inputKey({ component, revision, ref }, { cwd, run = command } = {}) {
+function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = command } = {}) {
   // The Git tree includes names, contents, executable modes, Dockerfiles and
-  // .dockerignore. Workflow/resolver changes also invalidate the build recipe.
-  // Keep candidate branches separate from main, even for identical inputs.
+  // .dockerignore. The worker's floating Claude Code dependency is resolved
+  // before this lookup and becomes an exact external input too. Workflow/
+  // resolver changes invalidate the build recipe. Keep candidate branches
+  // separate from main, even for identical inputs.
   const objects = [component, WORKFLOW, RESOLVER].map(path =>
     run('git', ['rev-parse', `${revision}:${path}`], cwd));
-  return createHash('sha256').update(JSON.stringify({
+  const inputs = {
     component, ref, platform: 'linux/amd64', objects,
-  })).digest('hex');
+  };
+  if (component === 'worker') inputs.claudeCodeVersion = claudeCodeVersion;
+  return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
 }
 
-function resolveImage({ component, owner, revision, ref, forceRebuild = 'none' }, dependencies = {}) {
+function resolveImage({
+  component, owner, revision, ref, forceRebuild = 'none', claudeCodeVersion,
+}, dependencies = {}) {
   if (!['platform', 'worker', 'capture'].includes(component)) throw new Error('Invalid component');
   if (!/^[a-f0-9]{40}$/.test(revision || '')) throw new Error('Invalid source revision');
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(owner || '')) throw new Error('Invalid registry owner');
   if (!ref?.startsWith('refs/heads/')) throw new Error('Image releases require a branch ref');
   if (!['none', 'worker', 'capture', 'all'].includes(forceRebuild)) throw new Error('Invalid force_rebuild selection');
+  if (component === 'worker' && !NPM_VERSION.test(claudeCodeVersion || '')) {
+    throw new Error('Worker image releases require an exact CLAUDE_CODE_VERSION');
+  }
 
   const image = `ghcr.io/${owner.toLowerCase()}/social-vibecoding-${component}`;
   const refresh = forceRebuild === 'all' || forceRebuild === component;
@@ -40,7 +50,9 @@ function resolveImage({ component, owner, revision, ref, forceRebuild = 'none' }
   // Platform source identity and generated assets remain tied to this release.
   if (component === 'platform') return result;
 
-  result.reuse_tag = `${image}:inputs-${inputKey({ component, revision, ref }, dependencies)}`;
+  result.reuse_tag = `${image}:inputs-${inputKey({
+    component, revision, ref, claudeCodeVersion,
+  }, dependencies)}`;
   if (refresh) return { ...result, reason: 'forced-refresh' };
 
   const { cwd, run = command } = dependencies;
@@ -72,6 +84,7 @@ if (require.main === module) {
       revision: process.env.GITHUB_SHA,
       ref: process.env.GITHUB_REF,
       forceRebuild: process.env.FORCE_REBUILD || 'none',
+      claudeCodeVersion: process.env.CLAUDE_CODE_VERSION,
     });
     fs.appendFileSync(process.env.GITHUB_OUTPUT,
       Object.entries(result).map(([key, value]) => `${key}=${value}\n`).join(''));

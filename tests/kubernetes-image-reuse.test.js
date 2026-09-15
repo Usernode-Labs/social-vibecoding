@@ -32,7 +32,7 @@ function repository(t) {
 function resolve(repo, options = {}, inspect = () => JSON.stringify(manifest)) {
   return resolveImage({
     component: 'worker', owner: 'Usernode-Labs', revision: repo.revision(),
-    ref: 'refs/heads/main', ...options,
+    ref: 'refs/heads/main', claudeCodeVersion: '2.1.251', ...options,
   }, {
     cwd: repo.cwd,
     run(file, args) {
@@ -82,6 +82,22 @@ test('worker and capture inputs are independent', t => {
   repo.write('capture/capture.js', 'new capture behavior\n');
   assert.equal(resolve(repo).reuse_tag, worker);
   assert.notEqual(resolve(repo, { component: 'capture' }).reuse_tag, capture);
+});
+
+test('the resolved Claude Code version invalidates only the worker image', t => {
+  const repo = repository(t);
+  const worker = resolve(repo, { claudeCodeVersion: '2.1.251' }).reuse_tag;
+  const capture = resolve(repo, {
+    component: 'capture', claudeCodeVersion: '2.1.251',
+  }).reuse_tag;
+
+  assert.notEqual(
+    resolve(repo, { claudeCodeVersion: '2.1.272' }).reuse_tag,
+    worker,
+  );
+  assert.equal(resolve(repo, {
+    component: 'capture', claudeCodeVersion: '2.1.272',
+  }).reuse_tag, capture);
 });
 
 test('workflow and resolver changes invalidate both reusable components', t => {
@@ -156,7 +172,9 @@ test('invalid registry responses and incompatible platforms cannot become releas
 test('invalid workflow inputs fail before consulting the registry', t => {
   const repo = repository(t);
   for (const options of [{ component: '../worker' }, { revision: 'main' }, { owner: 'owner\ninjected=x' },
-    { ref: 'refs/tags/v1' }, { forceRebuild: 'yes' }]) {
+    { ref: 'refs/tags/v1' }, { forceRebuild: 'yes' }, { claudeCodeVersion: undefined },
+    { claudeCodeVersion: '' },
+    { claudeCodeVersion: 'latest' }, { claudeCodeVersion: '2.1.251; echo unsafe' }]) {
     assert.throws(() => resolve(repo, options, () => assert.fail('unexpected lookup')));
   }
 });
@@ -170,7 +188,8 @@ test('workflow CLI writes a reused digest to GitHub outputs without building', t
     cwd: repo.cwd, encoding: 'utf8',
     env: { ...process.env, PATH: `${path.join(repo.cwd, 'bin')}:${process.env.PATH}`,
       COMPONENT: 'worker', GITHUB_REPOSITORY_OWNER: 'Usernode-Labs', GITHUB_SHA: repo.revision(),
-      GITHUB_REF: 'refs/heads/main', FORCE_REBUILD: 'none', GITHUB_OUTPUT: output },
+      GITHUB_REF: 'refs/heads/main', FORCE_REBUILD: 'none', CLAUDE_CODE_VERSION: '2.1.272',
+      GITHUB_OUTPUT: output },
   });
   const values = Object.fromEntries(fs.readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')));
   assert.equal(values.digest, digest);

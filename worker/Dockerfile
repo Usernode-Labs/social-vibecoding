@@ -67,16 +67,18 @@ RUN initdb -U postgres --auth=trust -D /home/node/pgdata \
      } >> /home/node/pgdata/postgresql.conf
 USER root
 
-# Cache-bust the Claude Code install so the worker tracks the latest CLI
-# instead of freezing at whatever version was current when this layer was
-# first built. ensureWorkerImage() passes today's date as
-# CLAUDE_CODE_CACHE_BUST, so the layer is reused within a calendar day and
-# re-pulls `latest` on the first build of each new day. Stale CLIs are the
-# cause of "thinking.type.enabled is not supported for this model" 400s on
-# newer models (Sonnet 5 / Opus 4.8), which require thinking.type.adaptive.
+# Kubernetes resolves the current Claude Code release before it looks up a
+# reusable image, includes that exact version in the reuse key, and passes it
+# here. That makes the published image reproducible while ensuring a new CLI
+# release selects a new worker image. Standalone Docker builds keep `latest`
+# as the default and use CLAUDE_CODE_CACHE_BUST (today's UTC date, supplied by
+# ensureWorkerImage()) to re-pull it once per day. Stale CLIs otherwise fail
+# before doing any work when a model raises its minimum supported version.
+ARG CLAUDE_CODE_VERSION=latest
 ARG CLAUDE_CODE_CACHE_BUST=unset
-RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
-  && npm install -g @anthropic-ai/claude-code
+RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
+  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  && claude --version
 
 # ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
 # PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
