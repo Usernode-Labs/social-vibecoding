@@ -274,6 +274,14 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2219: App device permissions ────────────────────────────────
+  // The Settings sibling of the App AI permissions section. It exists
+  // because a permission the platform asks for has to be one a person can
+  // take back somewhere other than the app that asked, and because a
+  // capability an app stops declaring should be visible as gone.
+  'app-permissions-section': '#2219: the App device permissions pane — every app the viewer has let reach their location, microphone, camera, screen or a connected device, with Revoke and Re-enable per capability.',
+  'app-permissions-list': '#2219: the rows host, React-owned end to end (features/settings/app-permissions-list.tsx). Ships EMPTY, like #llm-grants-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
+  'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',

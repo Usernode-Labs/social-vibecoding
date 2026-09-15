@@ -5582,6 +5582,175 @@
     }
   })();
 
+  // Gated browser capabilities (#2219) — additive within v1.
+  //
+  // The powerful capabilities reach an app by Permissions Policy
+  // DELEGATION: the shell's `allow` attribute on this frame, and nothing
+  // else. Nine of them are gated on a per-user, per-app grant that the
+  // platform asks for in its own dialog:
+  //
+  //   geolocation  microphone  camera  display-capture
+  //   usb  serial  hid  bluetooth  midi
+  //
+  // (`clipboard-write` and `pointer-lock` are delegated to every app and
+  // need none of this.)
+  //
+  // WHY THE PLATFORM ASKS AND NOT JUST THE BROWSER. Under permission
+  // delegation a cross-origin child's request is attributed to the
+  // TOP-LEVEL origin, so the browser's own prompt names the platform
+  // rather than your app, and its answer is remembered for the platform
+  // origin — which would mean every app inheriting it silently. The
+  // platform's prompt is the one that can name the app that is actually
+  // asking.
+  //
+  // DECLARE FIRST. A capability your app has not declared in `dapp.json`
+  // is refused before any dialog is shown:
+  //
+  //   "permissions": [
+  //     { "capability": "microphone", "reason": "Records your voice notes" }
+  //   ]
+  //
+  // USE IT WHEN YOU NEED IT, not at startup. Call requestPermission() on
+  // the tap that needs the capability, then use the ordinary web API:
+  //
+  //   btn.onclick = function () {
+  //     usernode.requestPermission("microphone").then(function (r) {
+  //       if (r.state !== "granted") return showWhyWeNeedIt();
+  //       if (!r.active) return;  // the shell is reloading us; see below
+  //       return navigator.mediaDevices.getUserMedia({ audio: true });
+  //     });
+  //   };
+  //
+  // `active` is the one field worth reading twice. A container policy is
+  // computed when the frame NAVIGATES, so a capability granted just now
+  // cannot apply to the document that asked for it. On that first grant
+  // the platform tells the user the app will reopen, and reloads this
+  // frame — so `active: false` means "granted, and you are about to be
+  // reloaded": stop, do not call the web API, and let the reload land.
+  // Every later launch delegates it up front and resolves `active: true`
+  // with no dialog and no reload at all.
+  //
+  // Standalone (no shell), every call rejects — the same stance as
+  // requestLlmAccess. hasCapability() is the exception: it reads this
+  // document's own policy, so it answers anywhere.
+  (function () {
+    var _PERM_ACK_TIMEOUT_MS = 15000;
+    var _PERM_DECISION_TIMEOUT_MS = 5 * 60 * 1000;
+    var _permPending = {};
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_permission || !data.id) return;
+      var entry = _permPending[data.id];
+      if (!entry) return;
+      if (data.__usernode_permission === "ack") {
+        // The shell has the request; the user may sit on the dialog now.
+        if (entry.ackTimer) { clearTimeout(entry.ackTimer); entry.ackTimer = null; }
+        return;
+      }
+      if (data.__usernode_permission === "response") {
+        delete _permPending[data.id];
+        if (entry.ackTimer) clearTimeout(entry.ackTimer);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (data.error) entry.reject(new Error(data.error));
+        else entry.resolve(data.value);
+      }
+    });
+
+    function permissionCall(type, capability) {
+      return new Promise(function (resolve, reject) {
+        if (window === window.parent) {
+          reject(new Error(
+            "App permissions require the Usernode platform shell (not available standalone)."
+          ));
+          return;
+        }
+        var id = "perm-" + String(Date.now()) + "-" +
+          Math.random().toString(16).slice(2);
+        var entry = { resolve: resolve, reject: reject, ackTimer: null, timer: null };
+        _permPending[id] = entry;
+        entry.ackTimer = setTimeout(function () {
+          if (!_permPending[id]) return;
+          delete _permPending[id];
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(new Error(
+            "Usernode shell did not respond — not running inside the platform, " +
+            "or the host page predates app permissions."
+          ));
+        }, _PERM_ACK_TIMEOUT_MS);
+        entry.timer = setTimeout(function () {
+          if (!_permPending[id]) return;
+          delete _permPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          reject(new Error("Permission request timed out."));
+        }, _PERM_DECISION_TIMEOUT_MS);
+        try {
+          console.log(_BRIDGE_TAG, "permission → parent:", type, capability || "", "id", id);
+          window.parent.postMessage({
+            __usernode_permission: type,
+            id: id,
+            capability: capability || null,
+          }, "*");
+        } catch (err) {
+          delete _permPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(err);
+        }
+      });
+    }
+
+    // Does THIS document hold the delegation right now? Synchronous, and
+    // the only call here that works standalone, because it reads the
+    // document's own Permissions Policy rather than asking the shell.
+    // `true` where the browser exposes no way to ask, so treat it as
+    // "try it and see" rather than a guarantee.
+    if (typeof window.usernode.hasCapability !== "function") {
+      window.usernode.hasCapability = function hasCapability(capability) {
+        if (!capability) return false;
+        try {
+          var policy = document.permissionsPolicy || document.featurePolicy;
+          if (!policy || typeof policy.allowsFeature !== "function") return true;
+          return !!policy.allowsFeature(capability);
+        } catch (err) {
+          return true;
+        }
+      };
+    }
+
+    // Ask for one capability, prompting the user if this app does not
+    // already hold it. Resolves { capability, state, active, reason }.
+    // `state` is "granted" or "denied"; on a denial `reason` is
+    // "declined" (the user said no), "not_declared" (missing from
+    // dapp.json) or "unknown_capability". Asking about one of the two
+    // UNGATED capabilities resolves granted and active with reason
+    // "ungated", so a caller can ask about any capability uniformly
+    // rather than having to know which ones the platform gates.
+    if (typeof window.usernode.requestPermission !== "function") {
+      window.usernode.requestPermission = function requestPermission(capability) {
+        return permissionCall("request", capability);
+      };
+    }
+
+    // Read the current state without ever prompting. Same shape as
+    // requestPermission's answer, so a UI can render an "enable" button
+    // from it before the user commits to anything.
+    if (typeof window.usernode.getPermission !== "function") {
+      window.usernode.getPermission = function getPermission(capability) {
+        return permissionCall("get", capability);
+      };
+    }
+
+    // The whole picture for this app: what it declared, what this user
+    // granted, and what is live in this document. Never prompts.
+    if (typeof window.usernode.getPermissions !== "function") {
+      window.usernode.getPermissions = function getPermissions() {
+        return permissionCall("get-all", null);
+      };
+    }
+  })();
+
   // App file storage (#752) — additive within v1.
   //
   // usernode.uploadFile(file, { visibility }) stores a user-picked image
