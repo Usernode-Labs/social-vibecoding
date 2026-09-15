@@ -2016,6 +2016,12 @@
       "expectText": "Ask"
     },
     {
+      "name": "#2172: one card past the last Needs-you item is a summary that says that's it, with the way back",
+      "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-cta",
+      "expectText": "See what changed this week"
+    },
+    {
       "name": "The view strip marks Workshop as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
