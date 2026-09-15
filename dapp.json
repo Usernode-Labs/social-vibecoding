@@ -1157,6 +1157,18 @@
       "expectText": "1 of 2 app slots used"
     },
     {
+      "name": "Create-app dialog wears the pane styling: a rounded white name card and a pill rail whose segments are full-width (#1910)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
+      "expectText": "Who can build it"
+    },
+    {
+      "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
+      "path": "/?shot=create-import#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"import\"][data-import-state=\"idle\"] #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectText": "GitHub repo URL"
+    },
+    {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "Start work",

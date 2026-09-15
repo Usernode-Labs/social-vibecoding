@@ -9686,48 +9686,84 @@ a.drawer-ver--fork:hover {
   }
 }
 
+/* ── The create-app dialog on the PANE GROUND (#1910) ──────────────────
+   The dialog is drawn in the widget language the shell's panes wear (see
+   the recipe in frontend/src/features/dialogs/create-app.tsx): white cards
+   floating on a grey ground. Presented, the card rides inside the kit's
+   modal shell, which neutralises the card's own chrome (`.un-modal
+   .platform-modal-card` above) and paints the surface itself from
+   `--un-sheet-bg` — so the ground has to come from the SHELL, and the
+   sanctioned way to restyle the kit is its variables, never its rules.
+   `:has()` scopes the override to the one shell that holds this card;
+   the other dialogs keep the kit's white. The token is `--dc-strip`, the
+   ground every `.dc-lift` sheet and the settings screen sit on. */
+.un-modal:has(> #create-card) {
+  --un-sheet-bg: var(--dc-strip);
+}
+
 /* Create-app modal: segmented "Create new | Import existing" toggle.
    The active state is keyed off the parent #create-card[data-mode="..."]
    attribute so app.js only has to flip a single attribute to change modes
    (no per-button class juggling, no race with the form-reset path).
    It must be the CARD, not #create-modal: the native-kit modal adoption
    (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
-   while presented, so selectors rooted at the modal stop matching. */
+   while presented, so selectors rooted at the modal stop matching.
+
+   THE LOOK IS THE LANGUAGE'S SELECTION IDIOM (#1910): the selected segment
+   is the solid inversion — near-black fill, page-coloured ink — the same
+   treatment @/components/ui/chip.tsx and the Leaderboard's section strip
+   state. The raised-face-on-a-recessed-track look these pills used to
+   share with the drawer's theme selector lives on in `.members-vis-pill`
+   and `.theme-seg` above; this dialog left it. */
 #create-card .create-mode-pill {
   color: var(--text-muted);
   cursor: pointer;
 }
 #create-card .create-mode-pill:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  background: var(--text-primary);
+  color: var(--bg-primary);
   cursor: default;
 }
 
-/* Visibility segmented pills (create modal + members modal). Active
-   state is a JS-toggled .active class — unlike the mode pills there are
-   two independent controls per surface, so an attribute on the modal
-   root doesn't fit. Same visual language as .create-mode-pill. */
-.create-vis-pill,
+/* Visibility segmented pills (create modal). Active state is a
+   JS-toggled .active class — unlike the mode pills there are two
+   independent controls per surface, so an attribute on the modal root
+   doesn't fit. Same inversion as .create-mode-pill. */
+.create-vis-pill {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.create-vis-pill:hover {
+  color: var(--text-primary);
+}
+.create-vis-pill.active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+.create-vis-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The Members modal's visibility pills keep the recessed-track look they
+   shared with the create dialog before #1910 restyled it; that dialog is
+   not in the pane language yet. */
 .members-vis-pill {
   color: var(--text-muted);
   cursor: pointer;
 }
-.create-vis-pill:hover,
 .members-vis-pill:hover {
   color: var(--text-secondary);
 }
-.create-vis-pill.active,
 .members-vis-pill.active {
   background: var(--bg-primary);
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-.create-vis-pill:disabled,
 .members-vis-pill:disabled {
   opacity: 0.45;
   cursor: not-allowed;

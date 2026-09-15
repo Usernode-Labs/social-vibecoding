@@ -504,25 +504,28 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the rows inside the body.
   // 627 → 628: challenge illustrations, one check that a Home challenge card
   // whose template names an artwork draws it (the demo rows carry slugs).
-  // 628 → 630: #1962's two checks that sending a saved draft leaves the
+  // 627 → 629: #1910 adds two checks on the restyled create-app dialog: the
+  // form view on `/#create` (the name card and the segmented rail) and the
+  // import view reached through `?shot=create-import`.
+  // 627 → 629: on the other side of the same merge, the invite link now
+  // points at the marketing site's /waitlist page instead of the in-app
+  // #waitlist route, so two checks read the link's own field on the
+  // more-to-do screen — one that its value is the marketing URL and carries
+  // no hash route, one that the copy affordance is still beside it.
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
   // composer empty, one on the send and one on the screen the drafts list
   // is actually painted on.
-  // 627 → 629: the invite link now points at the marketing site's /waitlist
-  // page instead of the in-app #waitlist route, so two checks read the
-  // link's own field on the more-to-do screen — one that its value is the
-  // marketing URL and carries no hash route, one that the copy affordance
-  // is still beside it.
-  // 629 → 631: this branch independently added #1944's two checks on the
-  // coding-run card opened through `?shot=cc-log-open` — the chevron still
-  // in the head row of an OPEN card (the flip rule has to reach it there),
-  // and the log panel under it.
-  // 630 → 634: the tallies above were computed on either side of a merge and
-  // cannot be read as one sequence. This branch took 628 → 630 with #1962's
-  // pair (the first entry above); main independently carried that same pair
-  // plus the waitlist-link pair and #1944's pair on top of the shared 628.
-  // One shared +2 counted once, plus main's two additional +2s, against a
-  // shared 628 is 634.
-  assert.equal(DAPP.tests.length, 634);
+  // 629 → 631: independently, #1944 adds two checks on the coding-run card
+  // opened through `?shot=cc-log-open` — the chevron still in the head row
+  // of an OPEN card (the flip rule has to reach it there), and the log panel
+  // under it.
+  // 631 → 636: the tallies above were computed on either side of two
+  // independent merges and do not compose into one arithmetic sequence: this
+  // branch's #1910 pair and main's #1944 pair each landed against a slightly
+  // different shared base than the other. The number that matters is what
+  // the merged manifest actually holds, so this entry counts it directly
+  // rather than re-deriving it: 636.
+  assert.equal(DAPP.tests.length, 636);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
