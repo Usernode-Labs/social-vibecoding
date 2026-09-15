@@ -95,6 +95,14 @@
  * alerts ride above the keyboard out of the box. Apps may consume the
  * var for their own fixed bottom bars. No-op on desktop.
  *
+ * A presented sheet or side panel also carries `--un-presence` on its own
+ * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
+ * the same number the backdrop's opacity is driven from. Nothing in
+ * native.css reads it; it exists so a host stylesheet can tie a treatment
+ * of its own to the slide (the platform shell casts the modal dim from the
+ * surface rather than the backdrop, so its frosted panes never sample a
+ * dimmed page). Apps that ignore it render exactly as before.
+ *
  * Fidelity requirements this file implements (binding; see the kit section
  * of app-conventions.md): 1:1 finger tracking after intent lock, gestures
  * interruptible mid-spring at current position+velocity, commit-vs-cancel
@@ -3103,7 +3111,15 @@
     function render(val) {
       y = val;
       sheet.style.transform = 'translateY(' + val + 'px)';
-      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
+      var presence = String(Math.max(0, Math.min(1, 1 - val / height)));
+      backdrop.style.opacity = presence;
+      // The same number, on the surface itself, as `--un-presence`: 1 at
+      // rest, 0 off-screen, 1:1 with the drag between. A host stylesheet
+      // that wants the dim to ride the slide from the SHEET's side (the
+      // platform shell casts its own scrim from the sheet, so its glass
+      // never frosts a dimmed page) reads this; the kit's own styles do
+      // not, so an app that ignores it renders exactly as before.
+      sheet.style.setProperty('--un-presence', presence);
     }
 
     function springTo(to, velocity, onRest) {
@@ -3417,7 +3433,10 @@
     function render(val) {
       x = val;
       panel.style.transform = 'translateX(' + (val * dir) + 'px)';
-      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
+      var presence = String(Math.max(0, Math.min(1, 1 - val / width)));
+      backdrop.style.opacity = presence;
+      // `--un-presence` on the panel, as on the sheet: see presentSheet.
+      panel.style.setProperty('--un-presence', presence);
     }
 
     function springTo(to, onRest) {

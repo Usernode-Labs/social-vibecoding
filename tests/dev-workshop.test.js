@@ -1205,7 +1205,10 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
   // The blocker is a red tag on the row's META line — beside the number and
   // the author, with the item's own tags — not on the band. The band is the
   // vote and the Vote button, at both sizes.
-  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
+  // #2222: amber. The folded row carries the same tag the card does, and a
+  // predicted conflict the platform resolves by itself is not the reader's
+  // move — it reads like the "Behind main" beside it, not like a failure.
+  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
   assert.ok(html.indexOf('Conflicts with main') < html.indexOf('dev-ws-row-band'),
     'the tag is above the band, on the meta line');
   assert.ok(!html.includes('dev-ws-row-pill'),

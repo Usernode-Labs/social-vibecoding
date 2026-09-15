@@ -38,20 +38,16 @@ const {
   waitlistCodeConfirmLimiter,
   waitlistResendLimiter,
   waitlistResendIpLimiter,
+  waitlistStatusLimiter,
+  waitlistStatusIpLimiter,
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl } = require('../services/marketing-links');
-const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-
-// Apps surfaced publicly: not the self-app, view-public, and in a status
-// that means the app actually exists/runs (creating / awaiting_secrets /
-// error rows aren't usable, so they're hidden — `status` is still returned
-// for the rows that do appear).
-const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
+const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
@@ -120,69 +116,7 @@ function publicApiRoutes(config) {
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      // The active-users join mirrors the authed home list's sticky
-      // 10-day rule (routes/apps.js): a user counts iff they ever spent
-      // >= 60s on the app on a single day AND visited within 10 days.
-      // Batched to one row per app — same shape, no per-app round trips.
-      const { rows: apps } = await pool.query(
-        `SELECT a.id, a.name, a.slug, a.status, a.collab_visibility,
-                a.view_visibility, a.created_at, a.last_deploy_at,
-                a.icon_emoji, a.icon_image_id, a.anon_shell,
-                COALESCE(au.cnt, 0) AS active_users
-           FROM apps a
-           LEFT JOIN (
-             SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
-             FROM app_activity a1
-             WHERE a1.date >= CURRENT_DATE - 10
-               AND EXISTS (
-                 SELECT 1 FROM app_activity a2
-                 WHERE a2.app_id = a1.app_id
-                   AND a2.user_id = a1.user_id
-                   AND a2.seconds_spent >= 60
-               )
-             GROUP BY a1.app_id
-           ) au ON au.app_id = a.id
-          WHERE NOT a.self_hosted
-            AND a.view_visibility = 'public'
-            AND a.status <> ALL($1::text[])
-          ORDER BY COALESCE(au.cnt, 0) DESC,
-                   a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
-        [HIDDEN_APP_STATUSES]
-      );
-
-      const byApp = await loadContributors(pool, apps.map((a) => a.id));
-
-      res.json({
-        apps: apps.map((a) => ({
-          id: a.id,
-          name: a.name,
-          slug: a.slug,
-          status: a.status,
-          collab_visibility: a.collab_visibility,
-          view_visibility: a.view_visibility,
-          created_at: a.created_at,
-          last_deploy_at: a.last_deploy_at,
-          // Home-card presentation fields (landing-page app directory).
-          // icon_url is server-built like the authed list so clients never
-          // assemble ids into paths; /app-icons/:id is a public route.
-          icon_emoji: a.icon_emoji || null,
-          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
-          active_users: parseInt(a.active_users, 10) || 0,
-          // From the anonymous shell + API-gate probe (services/shell-probe.js):
-          // anything not positively classified 'public' is presented as
-          // account-required — 'unknown' fails safe to gated, matching
-          // the scaffold's default behavior.
-          requires_login: a.anon_shell !== 'public',
-          // Direct subdomain URL — what the public landing page links to.
-          // View-public apps pass the Caddy edge gate without a session;
-          // apps that JWT-gate their own HTML shell will show their
-          // "Open in Homeroom" page to anonymous visitors.
-          url: `https://${productionHostname(a.slug)}`,
-          contributors: (byApp.get(a.id) || []).map((r) =>
-            shapeContributor(r, includeWallets)
-          ),
-        })),
-      });
+      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -482,6 +416,69 @@ function publicApiRoutes(config) {
       log.error('public-api', 'waitlist resend failed', { message: err.message });
     }
     return res.json(RESEND_RESPONSE);
+  });
+
+  // POST /api/public/waitlist/status — where one address stands, by address.
+  //
+  // The read half of check-my-status, and the one route in this family that
+  // answers the membership question OUT LOUD: not on the list, on it and
+  // unconfirmed, or on it and confirmed. Everything else here refuses to,
+  // and the difference is deliberate rather than an oversight to tidy up.
+  //
+  // The decision it rests on is not this endpoint's. #2201 accepted
+  // membership + confirmed-state disclosure on the JOIN endpoint, with the
+  // silent alternative in front of the owner, because the silence was
+  // costing every returning person their way back in. This route discloses
+  // the same three cases for strictly less: it writes nothing, mails
+  // nothing, and mints nothing, where a join creates a row and sends a code.
+  // So it introduces no new disclosure class. If that decision is ever
+  // reversed and the join endpoint goes back to one frozen body, THIS route
+  // has to be revisited in the same motion — the two cannot fall out of step.
+  //
+  // What it never says, whatever the branch: more_token (the stage-2
+  // capability, first join only), invite_code, invited_by, answers, ip, the
+  // linked account, or an echo of the submitted address. Confirming an
+  // address still means holding the code that was mailed to it, so nothing
+  // here helps anyone claim a mailbox they do not have.
+  //
+  // Not mounted with waitlistIntegratorAuth, unlike the join route above. A
+  // key re-keys a WRITE budget for genuinely proxied signups; a read has no
+  // proxied end user to re-key for, and a key must not buy a bigger oracle
+  // budget. A key-bearing caller is simply an anonymous caller here: one
+  // behaviour, one bucket, no second response shape to keep in sync.
+  //
+  // Both branches run the SAME single indexed lookup on the unique email
+  // column and nothing else, so the clock does not separate them either. Do
+  // not add a query, a cache, or an await to only one of them.
+  router.post('/api/public/waitlist/status', waitlistStatusIpLimiter, waitlistStatusLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    // The same words /resend refuses with: a syntactically invalid address
+    // is not a fact about the waitlist, so the two surfaces answer it alike.
+    if (!email) {
+      return res.status(422).json({ error: 'A valid email address is required.' });
+    }
+    try {
+      const row = await waitlist.getSignupByEmail(pool, email);
+      if (!row) {
+        return res.json({ ok: true, on_list: false, admitted: false, status: null });
+      }
+      // signupStatus is the ONE derivation of where a row stands, shared with
+      // POST /confirm and GET /more/:token. Deriving it a second time here is
+      // how one row starts being described three ways; `admitted` is mirrored
+      // at the top level exactly as /more/:token does it.
+      const status = signupStatus(row);
+      return res.json({
+        ok: true,
+        on_list: true,
+        admitted: status.admitted,
+        status,
+      });
+    } catch (err) {
+      // No address in the payload: this line is about our failure, not about
+      // whose lookup it was.
+      log.error('public-api', 'waitlist status read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/public/waitlist/confirm/:token — the one-click confirm link

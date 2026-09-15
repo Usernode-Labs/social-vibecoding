@@ -174,9 +174,12 @@ function makePool(state) {
       };
     }
 
-    // The widened column set (#2201): the join endpoint builds its status
-    // block straight off this row, so submitted_at / released_at /
-    // linked_user_id come back with it rather than costing a second query.
+    // getSignupByEmail. #2201 widened the tuple so both the join endpoint
+    // and POST /api/public/waitlist/status can build their status block
+    // through signupStatus() off this one indexed lookup, with
+    // submitted_at / released_at / linked_user_id coming back rather than
+    // costing a second query; the resend path still reads only confirmed_at
+    // and more_token out of it.
     if (sql.startsWith('SELECT id, email, submitted_at, confirmed_at, released_at, linked_user_id, more_token FROM waitlist_signups WHERE email = $1')) {
       const [email] = params;
       const s = state.signups.get(email);

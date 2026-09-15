@@ -6,12 +6,17 @@ const { appPlatformAuth } = require('../middleware/app-llm-auth');
 const { getPool } = require('../db/pool');
 const governance = require('../services/governance');
 const userDirectory = require('../services/user-directory');
+const { listPublicApps } = require('../services/public-app-directory');
 const log = require('../services/logger');
 const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 
-// App-facing read-only platform API (issue #744). First endpoint:
+// App-facing read-only platform API. `/v1` is the stable contract; every
+// unversioned path remains an alias for apps deployed before issue #1908.
+// New breaking contracts get a new major path instead of changing these.
 //
-//   GET /api/app-platform/governance/feed
+//   GET /api/app-platform/v1/apps
+//   GET /api/app-platform/v1/governance/feed
+//   GET /api/app-platform/v1/users/{lookup,search}
 //
 // Returns the CALLING app's own recent proposal/vote/merge activity so
 // apps can render live "what's changing" strips and changelogs instead
@@ -39,6 +44,16 @@ const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 // clock is armed. It is an "earliest possible merge time", not a
 // guarantee; null when no clock is running (e.g. approvals_required
 // mode, or not enough support yet) and for merging/merged rows.
+
+const API_ROOT = '/api/app-platform';
+const API_V1_ROOT = `${API_ROOT}/v1`;
+
+// Express accepts an array of equivalent paths. Registering every handler
+// once keeps the versioned contract and its permanent legacy alias on the
+// exact same implementation rather than asking two copies to stay in sync.
+function v1Paths(suffix) {
+  return [`${API_V1_ROOT}${suffix}`, `${API_ROOT}${suffix}`];
+}
 
 // Feed page-size bounds — same defaults/clamps as GET /api/apps/:slug/merged.
 const DEFAULT_LIMIT = 20;
@@ -88,6 +103,44 @@ function appPlatformApiRoutes(config) {
   });
 
   const auth = appPlatformAuth(pool);
+
+  const appsLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `app:${req.appPlatform?.appId || 'anon'}`,
+    handler: (req, res) => {
+      log.warn('app-platform-api', 'App directory rate-limited', {
+        appId: req.appPlatform?.appId,
+      });
+      res.status(429).json({ ok: false, code: 'rate_limited' });
+    },
+  });
+
+  // ── Public app directory (issue #1908) ─────────────────────────────
+  //
+  // Server-side replacement for apps that hard-coded the old public
+  // platform hostname. The projection is shared with GET /api/public/apps:
+  // view-private, self-hosted, and unusable deployments never appear, and
+  // contributors use the platform's one canonical definition.
+  //
+  // The data is public, so no user token or grant is required. The app token
+  // still makes the read attributable/rate-limitable and the private-IP gate
+  // keeps this server-to-server API off the public edge. Staging has no app
+  // token and must use deterministic fixtures, like other token-gated APIs.
+  router.get(v1Paths('/apps'), auth, appsLimiter, async (req, res) => {
+    const { appId } = req.appPlatform;
+    try {
+      const includeWallets = req.query.include_wallets !== '0';
+      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
+    } catch (err) {
+      log.error('app-platform-api', 'App directory failed', {
+        appId, message: err.message,
+      });
+      res.status(500).json({ ok: false, error: 'Internal server error' });
+    }
+  });
 
   // ── User directory (issue #1195) ──────────────────────────────────
   //
@@ -140,7 +193,7 @@ function appPlatformApiRoutes(config) {
     },
   });
 
-  router.get('/api/app-platform/users/lookup', directoryAuth, directoryLimiter,
+  router.get(v1Paths('/users/lookup'), directoryAuth, directoryLimiter,
     async (req, res) => {
       const { appId } = req.appPlatform;
       const username = userDirectory.normalizeUsername(req.query.username);
@@ -166,7 +219,7 @@ function appPlatformApiRoutes(config) {
       }
     });
 
-  router.get('/api/app-platform/users/search', directoryAuth, directoryLimiter,
+  router.get(v1Paths('/users/search'), directoryAuth, directoryLimiter,
     async (req, res) => {
       const { appId } = req.appPlatform;
       try {
@@ -180,7 +233,7 @@ function appPlatformApiRoutes(config) {
       }
     });
 
-  router.get('/api/app-platform/governance/feed', auth, feedLimiter, async (req, res) => {
+  router.get(v1Paths('/governance/feed'), auth, feedLimiter, async (req, res) => {
     const { appId } = req.appPlatform;
     try {
       let limit = parseInt(req.query.limit, 10);
@@ -318,3 +371,4 @@ module.exports = appPlatformApiRoutes;
 // Exposed for tests (status mapping + filter resolution).
 module.exports.feedStatus = feedStatus;
 module.exports.dbStatusesFor = dbStatusesFor;
+module.exports.v1Paths = v1Paths;
