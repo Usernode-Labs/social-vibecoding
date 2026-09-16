@@ -1889,7 +1889,7 @@
     {
       "name": "The Dev tab lands on the Workshop, which leads with its number tiles",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"shipped\"] ~ [data-ws-dash-cell=\"unclaimed\"] > b"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
       "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182)",
@@ -2155,7 +2155,7 @@
     {
       "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the open summary card and the step back",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-line]",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
