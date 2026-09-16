@@ -13685,6 +13685,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   .dev-ws-pane:has(> .dev-ws-ear) { position: relative; }
   .dev-ws-ear {
     position: absolute; right: 0; bottom: 100%;
+    /* STRETCHED TO MEET THE PILL. The custom property is measured and
+       published on `.dev-ws` by `useEarInset` (workshop.tsx) — the pill lives
+       in a different subtree, so no selector can hand this one its width. The
+       `auto` fallback is the content-hugging ear, which is what renders for
+       the frame before the measurement lands and in any browser without a
+       ResizeObserver. */
+    left: var(--dev-ws-ear-left, auto);
     padding: 5px 10px;
     border-radius: 22px 22px 0 0;
     box-shadow:
@@ -13692,10 +13699,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
       inset 1px 0 0 var(--app-sheet-line),
       inset -1px 0 0 var(--app-sheet-line);
   }
-  /* Hug the labels. `flex: 1 1 0` is the pane head's rule, where the strip is
-     the only thing on its row and full width reads as one two-state control;
-     an ear stretched to a shared row's width would be a header bar again. */
-  .dev-ws-ear .dev-ws-group-tab { flex: 0 0 auto; }
+  /* SHARE THE EAR, which is the pane head's rule again now that the ear is a
+     full-width surface rather than a pill beside one. The tabs hugged their
+     labels while the ear hugged them back, and the pair sat in a wide band of
+     dead air; with the ear reaching the pill there is a row to divide, and a
+     two-state control divides it in two. */
+  .dev-ws-ear .dev-ws-group-tab { flex: 1 1 0; }
   /* Square where the two meet, so the ear and the card read as one surface
      rather than a pill resting on a rounded corner. */
   .dev-ws-pane:has(> .dev-ws-ear) > .dev-ws-pane-head { border-top-right-radius: 0; }

@@ -2901,9 +2901,40 @@ test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
     /\.dev-ws-pane:has\(> \.dev-ws-ear\) > \.dev-ws-pane-head \{ border-top-right-radius: 0; \}/);
   // The containing block is scoped, so a pane without an ear is untouched.
   assert.match(CSS, /\.dev-ws-pane:has\(> \.dev-ws-ear\) \{ position: relative; \}/);
-  // Hug the labels here; the full-width rule belongs to the pane head, where
-  // the strip is the only thing on its row.
-  assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 0 0 auto; \}/);
+  // STRETCHED TO THE PILL, and the tabs divide what that gives them. The ear
+  // hugged its two labels for one round and the pair sat in a wide band of
+  // dead air — 83px of it at every width, because both boxes were
+  // content-sized inside a column that tops out at 760px.
+  assert.match(ear, /left: var\(--dev-ws-ear-left, auto\)/);
+  assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 1 1 0; \}/);
+});
+
+test('the ear is stretched by measurement, because no selector can reach the pill', () => {
+  // The pill is `.dev-ws-tabtrack` inside the portalled nav and the ear is a
+  // child of the pane: different subtrees, so the width has to be measured
+  // and published. It lands as a custom property with an `auto` fallback, so
+  // the frame before the measurement — and any browser without a
+  // ResizeObserver — draws the content-hugging ear rather than a broken box.
+  assert.match(WORKSHOP, /function useEarInset\(/);
+  assert.match(WORKSHOP, /--dev-ws-ear-left/);
+  assert.match(WORKSHOP, /host\.style\.removeProperty\('--dev-ws-ear-left'\)/,
+    'and the property is cleared below the breakpoint, not left stale');
+  // Both boxes it READS are observed: the pill, whose width is three labels,
+  // and the pane, whose width is the grouping (reading column vs full-bleed).
+  assert.match(WORKSHOP, /ro\.observe\(track\);/);
+  assert.match(WORKSHOP, /ro\.observe\(pane\);/);
+  // NO FEEDBACK LOOP, unlike the filter strip's measurement: the ear is out
+  // of flow, so its width cannot change either input. That is why this hook
+  // needs none of the pair-caching the strip's does.
+  assert.match(WORKSHOP, /absolutely positioned and therefore out of flow/);
+  // The two bounds are spent from the left; `right: 0` is never given up,
+  // because the pane-edge alignment is the thing the ear exists to hold. A
+  // `max-width` would over-constrain the box and let that edge drift.
+  assert.match(WORKSHOP, /const EAR_MIN_PX = 240;/);
+  assert.match(WORKSHOP, /const EAR_MAX_PX = 360;/);
+  assert.match(WORKSHOP, /const left = Math\.min\(Math\.max\(wanted, widest\), narrowest\);/);
+  const earCss = CSS.slice(CSS.indexOf('  .dev-ws-ear {'), CSS.indexOf('}', CSS.indexOf('  .dev-ws-ear {')));
+  assert.ok(!/max-width/.test(earCss), 'the cap is spent leftward, not as a max-width');
 });
 
 test('the declared stage check still describes the pane it has to walk', () => {

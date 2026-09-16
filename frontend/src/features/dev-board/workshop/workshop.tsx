@@ -2030,6 +2030,120 @@ function useMediaFlag(query: string): boolean {
 }
 
 /**
+ * The air between the tab pill and the ear, once the ear claims the rest.
+ *
+ * The two surfaces are level and adjacent, so this is the seam between them
+ * rather than a layout gap — the same 10px the ear spends on its own
+ * horizontal padding, so the distance from the pill to the first label reads
+ * as one step.
+ */
+const EAR_GAP_PX = 10;
+
+/**
+ * The narrowest the ear is allowed to be, which is what its labels need.
+ *
+ * Measured: "By category" + "By stage" plus the rail's padding come to 233px.
+ * The clamp matters at the bottom of the ear's range — just above 768px the
+ * pill is 444px of a 760px column, so the honest answer for `left` would
+ * leave the ear 306px, but a longer translation of either label (or a user
+ * font scale) narrows that fast. Past the clamp the ear stops growing
+ * leftward and keeps its content rather than crushing it; `right: 0` is never
+ * given up, so the pane's right edge is still tracked.
+ */
+const EAR_MIN_PX = 240;
+
+/**
+ * The widest, which is what keeps the ear a control rather than a header bar.
+ *
+ * On By category the pane is the 760px reading column and reaching the pill
+ * costs 306px — comfortably under this, so that case is simply "fill the
+ * space", which is what it was asked to do. By STAGE is why there is a cap at
+ * all: the pane goes full-bleed there while the tab pill stays centred on its
+ * own 760px column, so the honest distance to the pill is 562px at 1280 and
+ * 722px at 1600, which makes each of the two tabs 268px and 348px wide. Two
+ * tabs that size are a title bar with a label in it, and the point of the
+ * strip is that it reads as one two-state control. Measured at both widths.
+ *
+ * It is spent from the LEFT, never by giving up `right: 0` — a `max-width`
+ * here would over-constrain the box and let the right edge drift off the
+ * pane's, which is the one alignment the ear exists to hold.
+ */
+const EAR_MAX_PX = 360;
+
+/**
+ * Stretch the ear leftward to meet the tab pill.
+ *
+ * The ear used to hug its two labels, which left a wide band of dead space
+ * between it and the pill — 83px at the narrow end and the same at every
+ * width, because both boxes were content-sized inside a column that tops out
+ * at 760px. It now spans from just clear of the pill to the pane's right
+ * edge, and the two tabs share that width (`flex: 1 1 0` in app.css).
+ *
+ * WHY THIS IS MEASURED RATHER THAN WRITTEN IN CSS. The pill is
+ * `.dev-ws-tabtrack` inside `.dev-ws-tabs`, and the ear is a child of the
+ * pane: different subtrees, so no selector can hand one the other's width.
+ * The nav is left-aligned on the same reading column as the pane (see the
+ * `justify-content: flex-start` note in app.css), which is what makes the
+ * pill's right edge the ear's left bound in the first place — but its width
+ * is three text labels, so only a measurement knows it.
+ *
+ * NO FEEDBACK LOOP HERE, unlike the filter strip's measurement: the ear is
+ * absolutely positioned and therefore out of flow, so its width cannot
+ * change the pill's or the pane's. The observer watches the two boxes it
+ * reads and writes a property neither of them consults.
+ *
+ * The value lands as a custom property on `.dev-ws` and is inherited by the
+ * ear, so React renders no style of its own — the same rule the rest of the
+ * shell follows for anything written at runtime.
+ */
+function useEarInset(
+  bar: HTMLElement | null,
+  hostRef: React.RefObject<HTMLDivElement | null>,
+  earUp: boolean,
+): void {
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    // Down at phone width the strip is back in the pane head and the ear does
+    // not exist. Clear the property rather than leave a stale number on the
+    // host for the next crossing to inherit.
+    if (!earUp || !bar) {
+      host.style.removeProperty('--dev-ws-ear-left');
+      return undefined;
+    }
+    const track = bar.querySelector<HTMLElement>('.dev-ws-tabtrack');
+    const pane = host.querySelector<HTMLElement>('[data-ws-pane]');
+    if (!track || !pane) return undefined;
+    const measure = () => {
+      const t = track.getBoundingClientRect();
+      const p = pane.getBoundingClientRect();
+      if (!t.width || !p.width) return;
+      // Reach the pill, but stay between the two widths above. The floor is
+      // spent leftward and the ceiling rightward, and `right: 0` is what both
+      // are measured back from, so neither can move the pane-edge alignment.
+      const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
+      const widest = Math.max(0, p.width - EAR_MAX_PX);
+      const narrowest = Math.max(0, p.width - EAR_MIN_PX);
+      const left = Math.min(Math.max(wanted, widest), narrowest);
+      host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(track);
+    // The pane too: By category is the reading column and By stage is the
+    // full-bleed card, so the right edge this is measured back from moves
+    // when the grouping does.
+    ro.observe(pane);
+    return () => ro.disconnect();
+    // The observer covers what changes WITHIN a layout: the pill's width and
+    // the pane's, which is the grouping switch. Re-running the effect is only
+    // for the three things that change WHICH boxes are read — the nav node
+    // arriving from its ref callback, the breakpoint crossing, and the host.
+  }, [bar, hostRef, earUp]);
+}
+
+/**
  * WHERE THE PHONE'S TAB BAR RENDERS.
  *
  * It has to pin to the real viewport, and it cannot do that in place:
@@ -2242,6 +2356,9 @@ export function DevWorkshop(): ReactNode {
   // Where the grouping strip renders: beside the tab pill from 768px up, in
   // the pane's sticky head below it. See `EAR_QUERY` and `GroupStrip`.
   const earUp = useMediaFlag(EAR_QUERY);
+  // ...and how wide it is: from just clear of the pill to the pane's right
+  // edge, which only a measurement knows. See `useEarInset`.
+  useEarInset(bar, hostRef, earUp);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
