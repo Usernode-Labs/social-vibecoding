@@ -211,7 +211,33 @@
 //
 // This is the conflict the v24 entry predicted, resolved the way it asked:
 // both notes kept, the version advanced rather than one side silently won.
-const SW_VERSION = 'v25';
+//
+// v26 (#1938): /usernode-native/v1/native.js, which is precached in
+// SHELL_ASSETS, so the bump belongs in this same proposal per v10. The kit's
+// keyboardInset() measured the keyboard against window.innerHeight, which iOS
+// collapses to the visual viewport when the keyboard opens — the expression
+// went negative there and reported NO keyboard, which left every iOS client
+// (Safari and installed PWA alike) with --un-kb-inset pinned at 0 and every
+// keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
+// that, so per v15 an installed client holding any of them would keep serving
+// the old kit from cache and stay broken however correct the new one is.
+//
+// v27 (#1938 follow-up): app.css, precached in SHELL_ASSETS, so per v10 the
+// bump belongs in this same proposal. The Workshop card sheet kept its own
+// copy of the keyboard arithmetic and published `--ws-kb`; its floor now reads
+// the kit's `--un-kb-inset` like every other surface. Without the bump an
+// installed client would pair the NEW shell.js (which no longer sets --ws-kb)
+// with a CACHED app.css (which still reads it) — the sheet would stop lifting
+// on every platform, not just iOS, which is worse than the bug being fixed.
+//
+// v28 (#1929): frontend/src/head.html gains
+// `apple-mobile-web-app-status-bar-style: black-translucent`, so an installed
+// iOS web app gives the PAGE the status-bar strip instead of letting iOS draw
+// it. /index.html carries that meta and is precached in SHELL_ASSETS, so per
+// v10 the bump belongs here — and per v15 an installed client holding v27
+// would otherwise keep serving the old document and never take the meta at
+// all, which is the one asset where a stale copy hides the whole change.
+const SW_VERSION = 'v28';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

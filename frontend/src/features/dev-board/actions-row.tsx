@@ -303,12 +303,13 @@ export function DevActionsRow({
               groupKey="settings"
               divider={true}
             />
-            {typeof window !== 'undefined' && (window.AppView?.appData?.can_delete
+            {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
+              || window.AppView?.appData?.can_delete
               || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
               data-plus="app-settings"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title="App settings"
-              sub="Manage app deletion in the Danger zone"
+              sub="Manage who can use and build this app"
             /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
@@ -330,8 +331,8 @@ export function DevActionsRow({
                   <PlusRow
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Members &amp; visibility"
-                    sub="Who can build and see this app"
+                    title="Members &amp; approvals"
+                    sub="Manage collaborators, app admins and proposal approvals"
                   />
                 )}
               </>

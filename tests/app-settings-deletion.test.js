@@ -11,18 +11,69 @@ function handler(name) {
   return source.slice(start, end).replace(': FormEvent', '').replace(': string', '');
 }
 function setup(fetch) {
-  const s = { app: {slug:'test-app',name:'Test App',can_delete:true,contributor_count:1}, confirmation:'Test App',
+  const s = { app: {slug:'test-app',name:'Test App',repo_url:'https://github.com/o/r',self_hosted:false,
+    can_manage:true,collab_visibility:'public',view_visibility:'public',can_delete:true,contributor_count:1},
+    confirmation:'Test App',accessDraft:'private',accessChanged:true,accessProposalOpen:false,
     sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,
     pending:{current:false},generation:{current:0},fetch,Error,Promise,
     setApp(v){s.app=v;},setConfirmation(v){s.confirmation=v;},setError(v){s.error=v;},
-    setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},dialog:{close(){s.closed=true;}},
+    setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},
+    setAccessDraft(v){s.accessDraft=v;},setAccessMessage(v){s.accessMessage=v;},
+    setAccessMessageIsError(v){s.accessMessageIsError=v;},setAccessBusy(v){s.accessBusy=v;},
+    setAccessProposalOpen(v){s.accessProposalOpen=v;},
+    currentAccessMode(app){return app.collab_visibility==='public'?'public':(app.view_visibility==='private'?'private':'public-invite');},
+    visibilityForAccess(mode){return ACCESS_MODES.find((item)=>item.id===mode);},
+    dialog:{close(){s.closed=true;}},
     window:{App:{navigateHome(){s.home=true;}},Home:{load(){}},PlatformUI:{toast(){}}},
   };
-  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('remove')}`,s);
+  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
   s.submit=()=>s.remove({preventDefault(){}}); return s;
 }
 const ok = (app) => ({ok:true,json:async()=>({app})});
 const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+
+const modesSource = source.match(/const ACCESS_MODES:[\s\S]*?= (\[[\s\S]*?\n\]);\n\nfunction currentAccessMode/);
+assert.ok(modesSource, 'access mode table is readable');
+const ACCESS_MODES = vm.runInNewContext(`(${modesSource[1]})`);
+
+test('the three access modes map only to the valid build/view combinations',()=>{
+  const values=Object.fromEntries(ACCESS_MODES.map((mode)=>[mode.id,[mode.collabVisibility,mode.viewVisibility]]));
+  assert.deepEqual(values,{
+    public:['public','public'],
+    'public-invite':['private','public'],
+    private:['private','private'],
+  });
+});
+
+test('an explicit access proposal sends the selected valid combination',async()=>{
+  let path;let sent;
+  const s=setup(async(p,opts)=>{path=p;sent=opts;return {ok:true,status:201,json:async()=>({prNumber:77})};});
+  s.accessDraft='public-invite';
+  await s.proposeAccess();
+  assert.equal(path,'/api/apps/test-app/visibility-pr');
+  assert.equal(sent.method,'POST');
+  assert.deepEqual(JSON.parse(sent.body),{collabVisibility:'private',viewVisibility:'public'});
+  assert.equal(s.accessProposalOpen,true);
+  assert.match(s.accessMessage,/PR #77/);
+});
+
+test('access proposals stay blocked without management, a repo, or a mutable app',async()=>{
+  let calls=0;const s=setup(async()=>{calls++;return ok();});
+  s.app.can_manage=false;await s.proposeAccess();
+  s.app.can_manage=true;s.app.repo_url=null;await s.proposeAccess();
+  s.app.repo_url='https://github.com/o/r';s.app.self_hosted=true;await s.proposeAccess();
+  s.app.self_hosted=false;s.accessChanged=false;await s.proposeAccess();
+  assert.equal(calls,0);
+});
+
+test('an existing visibility proposal is reported and prevents a duplicate retry',async()=>{
+  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:409,json:async()=>({sessionId:55})};});
+  await s.proposeAccess();
+  assert.equal(s.accessProposalOpen,true);
+  assert.match(s.accessMessage,/already up for vote/);
+  await s.proposeAccess();
+  assert.equal(calls,1);
+});
 
 test('deletion requires current permission and the exact app name',async()=>{
   let calls=0;const s=setup(async()=>{calls++;return ok();});

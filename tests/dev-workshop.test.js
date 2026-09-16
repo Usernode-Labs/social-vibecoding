@@ -3536,12 +3536,21 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   assert.match(wide, /--ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out;/);
   // THE KEYBOARD. Fixed elements are laid out against the layout viewport,
   // which the on-screen keyboard does not shrink, so the card's floor — and
-  // the field on it — sat under the keys. The visual viewport does shrink;
-  // the difference lifts the sheet's floor, only while a sheet is up and only
-  // below the breakpoint.
-  assert.match(WORKSHOP, /window\.innerHeight - vv\.height - vv\.offsetTop/);
+  // the field on it — sat under the keys. The floor lifts by the inset, only
+  // while a sheet is up and only below the breakpoint.
+  //
+  // THE NUMBER IS THE KIT'S. This screen used to measure the visual viewport
+  // itself, and this test pinned that expression —
+  // `window.innerHeight - vv.height - vv.offsetTop` — which #1938 proved wrong
+  // on iOS, where innerHeight collapses to the visual viewport and the result
+  // goes negative. A private copy is the thing to prevent, not to pin, so the
+  // assertion is now that the screen takes the kit's published inset and does
+  // NOT do its own arithmetic.
+  assert.doesNotMatch(WORKSHOP, /window\.innerHeight\s*-\s*vv\.height/,
+    'the workshop sheet must not re-derive the keyboard: read --un-kb-inset');
+  assert.match(WORKSHOP, /classList\.contains\('un-kb'\)/);
   assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
-  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--ws-kb, 0px\);/);
+  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
   assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
   assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'and the floor clears the home indicator');

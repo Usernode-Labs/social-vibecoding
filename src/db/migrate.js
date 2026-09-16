@@ -5169,10 +5169,15 @@ async function seedStagingMembersPanel(pool) {
 //     truncates (12 > 10), so the untouched-limit typeahead path shows
 //     has_more: true too (#1213).
 //   • 'staging-demo-Nova' / 'staging-demo-nova' — a real case collision.
-//     users.username is UNIQUE but case-SENSITIVE and registration
-//     normalizes nothing, so pairs like this exist in production
-//     (Drea/drea). Looking up 'staging-demo-NOVA' matches neither
-//     exactly and returns the lower id with ambiguous: true.
+//     users.username is UNIQUE but case-SENSITIVE, and before #2296
+//     registration normalized nothing, so a legacy pair like this exists
+//     in production (Drea/drea). Looking up 'staging-demo-NOVA' matches
+//     neither exactly and returns the lower id with ambiguous: true.
+//     The users_reject_case_variant_username trigger now refuses a NEW
+//     pair, so this one is written in its own transaction with that
+//     trigger switched off — the same shape the legacy row has, which is
+//     what the fixture exists to reproduce. It is its own statement so a
+//     failure here cannot take the other directory fixtures down with it.
 //   • 'staging-demo-a_b_test' — a handle containing a LIKE
 //     metacharacter, so the escapeLike path is visible from a preview:
 //     searching 'staging-demo-a_b' must return exactly this row, not
@@ -5191,8 +5196,6 @@ async function seedStagingUserDirectory(pool) {
          (900062, 'staging-demo-carmen',   'staging-demo-not-a-login'),
          (900063, 'staging-demo-carter',   'staging-demo-not-a-login'),
          (900064, 'staging-demo-cargo-bot','staging-demo-not-a-login'),
-         (900065, 'staging-demo-Nova',     'staging-demo-not-a-login'),
-         (900066, 'staging-demo-nova',     'staging-demo-not-a-login'),
          (900067, 'staging-demo-caramel',  'staging-demo-not-a-login'),
          (900068, 'staging-demo-carbon',   'staging-demo-not-a-login'),
          (900069, 'staging-demo-cardio',   'staging-demo-not-a-login'),
@@ -5206,6 +5209,29 @@ async function seedStagingUserDirectory(pool) {
     log.info('db', 'Staging user-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging user-directory seeding failed', { message: err.message });
+  }
+
+  // The legacy case-collision pair. DISABLE TRIGGER inside the transaction
+  // is invisible to every other session: the ACCESS EXCLUSIVE lock it takes
+  // on `users` is held until COMMIT, when the trigger is already back on.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('ALTER TABLE users DISABLE TRIGGER users_reject_case_variant_username');
+    await client.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900065, 'staging-demo-Nova', 'staging-demo-not-a-login'),
+         (900066, 'staging-demo-nova', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await client.query('ALTER TABLE users ENABLE TRIGGER users_reject_case_variant_username');
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    log.warn('db', 'Staging user-directory case-collision seeding failed', { message: err.message });
+  } finally {
+    client.release();
   }
 }
 

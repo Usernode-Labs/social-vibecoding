@@ -58,6 +58,10 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #2304: app access moved to App settings ─────────────────────
+  'members-visibility-section': 'The duplicate visibility editor in Members & visibility. App settings is the canonical access surface now; Members keeps collaborators, app admins and proposal approvals.',
+  'members-vis-hint': 'The dependent build/view hint belonged to the retired two-axis editor. App settings presents only the three valid access combinations, so an invalid combination cannot be selected.',
+  'members-vis-error': 'The visibility proposal status line moved with the editor to #app-access-status. The dialog-level loading failure has the accurately named #members-load-error.',
   // ── Home's fifth area went; Profile kept its door ───────────────
   // The chip's menu has carried the entrance since #1443 (a "You" group
   // holding #switcher-row-profile and #switcher-row-settings, pinned by
@@ -298,8 +302,21 @@ const ADDED_IDS = {
   'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
+  // ── The Workshop screen ──────────────────────────────────────────
+  // The app's own Workshop page answers "what is happening in THIS app";
+  // nothing answered "which of my apps wants something from me", short of
+  // opening each one in turn. This is that page's two numbers, once per app.
+  'switcher-row-workshop': 'The app menu\'s Workshop row, directly under Home and above Discover. Home is the launcher (which app do I want to open); this is which app wants something from me, so it leads the Platform group with Home rather than sitting among the places you go once you know nothing is waiting. The adjacent-sibling check in dapp.json that pinned `#switcher-row-home + #switcher-row-discover` names this row between them now.',
+  'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
+  'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
+  'workshop-empty': 'Its nothing-to-show line, for an account with no apps. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
+  // ── #2304: access is an app setting ──────────────────────────────
+  'app-access-section': '#2304: the canonical app access editor, above the existing Danger zone. It ships hidden and appears only for a manageable, non-self-hosted app.',
+  'app-access-status': '#2304: proposal success, duplicate-proposal and failure feedback for the access editor. It ships empty so the React-owned dialog hydrates exactly.',
+  'app-access-propose': '#2304: the explicit action that turns a selected access draft into the existing vote-gated visibility proposal.',
+  'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'dev-ws-rail-host': 'Empty anchor outside the frosted .dc-lift-strip wrapper, so the Workshop\'s phone tab bar can be `position: fixed` to the real viewport. That wrapper\'s backdrop-filter establishes a containing block for fixed descendants — walking the rail\'s real ancestor chain it is the only one — and it is shared with the chat/topic frames and three panels, so the bar moves out rather than the blur coming off.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────

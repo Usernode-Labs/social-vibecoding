@@ -361,6 +361,48 @@ test('the OpenRouter shortlist starts with saved choice, otherwise GLM', () => {
   );
 });
 
+test('an unsent change displays the saved OpenRouter default before creation', () => {
+  const pending = {
+    pending: true,
+    id: null,
+    app_slug: 'demo',
+    pending_agent_choice: null,
+  };
+  const saved = render({
+    session: pending,
+    pickerData: pickerData({
+      backends: {
+        codex_openrouter: {
+          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
+        },
+      },
+    }),
+  });
+
+  assert.equal(
+    saved.view().models.selected,
+    'openrouter:anthropic/claude-sonnet-4.5',
+    'the client-only placeholder must reflect the provider the server will resolve on first send',
+  );
+  assert.equal(saved.DevChat.currentSession.pending_agent_choice, null,
+    'displaying the saved default must not turn it into an explicit per-session override');
+});
+
+test('an explicit pending Anthropic pick overrides a saved OpenRouter default', () => {
+  const pending = {
+    pending: true,
+    id: null,
+    app_slug: 'demo',
+    pending_agent_choice: {
+      backend: 'claude_code', model: null, reasoningEffort: null,
+    },
+    agent_backend: 'claude_code',
+  };
+  const selected = render({ session: pending });
+
+  assert.equal(selected.view().models.selected, 'anthropic:claude-opus-5');
+});
+
 test('the declared checks follow the grouped native selector', () => {
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));

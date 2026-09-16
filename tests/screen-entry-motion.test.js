@@ -45,16 +45,18 @@ test('the resolved type is stamped on the screen element', () => {
 
 // ── Every screen entry routes through it ───────────────────────────────
 
-test('all eight screen transitions go through App._entryTransition', () => {
-  // It was nine. Notifications and Messages gave one back each when they
-  // stopped being screens: a sheet presents over whatever is there, so there
-  // is no screen swap to animate and nothing for the gate to type.
+test('all nine screen transitions go through App._entryTransition', () => {
+  // It was nine, then eight, and is nine again. Notifications and Messages
+  // gave one back each when they stopped being screens — a sheet presents over
+  // whatever is there, so there is no screen swap to animate and nothing for
+  // the gate to type — and the Workshop screen (#workshop) takes one, because
+  // it is a root that replaces the screen you were on.
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
-  assert.equal(calls.length, 8,
-    `expected 8 PlatformUI.transition call sites in app.js, found ${calls.length} — `
+  assert.equal(calls.length, 9,
+    `expected 9 PlatformUI.transition call sites in app.js, found ${calls.length} — `
     + 'a new one must route its type through App._entryTransition too');
   const routed = appJs.match(/type: App\._entryTransition\(/g) || [];
-  assert.equal(routed.length, 8,
+  assert.equal(routed.length, 9,
     'every call site must take its type from the gate, or that screen keeps '
     + 'animating over the closing drawer');
 });

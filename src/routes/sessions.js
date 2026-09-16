@@ -15260,14 +15260,27 @@ async function buildStagingFromFiles(config, session, app, fileChanges, hash) {
     fs.writeFileSync(filePath, file.content);
   }
 
-  // Ensure Dockerfile exists
+  // Ensure Dockerfile exists.
+  //
+  // This is the platform emitting a Dockerfile on an app's behalf, so it owes
+  // the same contract the app template does (services/template.js): a NUMERIC
+  // non-zero USER, and ownership of the copied tree. Kubernetes runs app and
+  // preview pods with runAsNonRoot and no runAsUser, so an image that names no
+  // user runs as root and the kubelet refuses to start it —
+  // `CreateContainerConfigError: container has runAsNonRoot and image will run
+  // as root`. This path builds for the Docker runtime, where that is not
+  // enforced, which is exactly why it drifted: it kept emitting the old shape
+  // long after the template stopped. `tests/generated-dockerfile-user.test.js`
+  // holds every generator here to the same rule so the two cannot diverge
+  // again (#2302).
   if (!fs.existsSync(path.join(tempDir, 'Dockerfile'))) {
     fs.writeFileSync(path.join(tempDir, 'Dockerfile'), `FROM node:22-alpine
 WORKDIR /app
-COPY package.json ./
+COPY --chown=1000:1000 package.json ./
 RUN npm install --production
-COPY . .
+COPY --chown=1000:1000 . .
 EXPOSE 3000
+USER 1000:1000
 CMD ["node", "server.js"]
 `);
   }

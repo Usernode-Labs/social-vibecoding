@@ -1,5 +1,5 @@
 /**
- * Members & visibility dialog — the behaviour half (#members-modal).
+ * Members & approvals dialog — the behaviour half (#members-modal).
  *
  * MOVED, NOT REWRITTEN, out of public/js/app-view.js:14006-15232 by #1078
  * chunk I, following the repo's rule for relocating a public/js/** module
@@ -68,16 +68,14 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s).replace(/\n/g, ' '); }
 
 const MembersDialog = {
-  // ── Members & visibility modal ─────────────────────────────────────
+  // ── Members & approvals modal ──────────────────────────────────────
   //
   // One modal, two concerns:
-  //   - visibility controls (creator/admin only) → PATCH /visibility
   //   - member list + invite typeahead (collab-private apps) →
   //     /collaborators, /invites, /api/users/search
   // State is re-fetched on every open so a stale modal can't show a
   // removed member or an already-accepted invite.
 
-  _membersVis: { collab: 'public', view: 'public' },
   _inviteDebounce: null,
 
   async _load() {
@@ -90,10 +88,10 @@ const MembersDialog = {
     // when appData is set, so this is a defensive/diagnostic path.
     if (!appData) {
       console.warn('[members] openMembersModal called with no app loaded');
-      const visStatus = document.getElementById('members-vis-error');
-      if (visStatus) {
-        visStatus.textContent = 'This app is still loading. Open Members & visibility again in a moment.';
-        visStatus.className = 'text-sm text-red-400';
+      const loadError = document.getElementById('members-load-error');
+      if (loadError) {
+        loadError.textContent = 'This app is still loading. Open Members & approvals again in a moment.';
+        loadError.className = 'text-sm text-red-400 mb-4';
       }
       return;
     }
@@ -101,48 +99,16 @@ const MembersDialog = {
     // the heading matches the "+" menu item's "Proposal approvals" label.
     const modalTitle = document.getElementById('members-modal-title');
     if (modalTitle) {
-      modalTitle.textContent = appData.self_hosted ? 'Proposal approvals' : 'Members & visibility';
+      modalTitle.textContent = appData.self_hosted ? 'Proposal approvals' : 'Members & approvals';
+    }
+    const loadError = document.getElementById('members-load-error');
+    if (loadError) {
+      loadError.textContent = '';
+      loadError.className = 'hidden text-sm text-red-400 mb-4';
     }
 
-    AppView._membersVis = {
-      collab: appData.collab_visibility || 'public',
-      view: appData.view_visibility || 'public',
-    };
-
-    // Visibility section: creator/admin only. Changing visibility opens
-    // a dapp.json PR (issue #124), so it needs a repo — without one the
-    // pills are disabled with a hint.
-    const visSection = document.getElementById('members-visibility-section');
-    const visStatus = document.getElementById('members-vis-error');
-    if (visStatus) {
-      visStatus.textContent = '';
-      visStatus.className = 'text-red-400 text-sm hidden';
-    }
-    if (visSection) {
-      // Self-hosted platform app: visibility stays out of repo control
-      // (the server 400s visibility-pr for it), so hide the pills — the
-      // modal is reachable there for the Proposal-approvals sections.
-      visSection.classList.toggle('hidden', !appData.can_manage || !!appData.self_hosted);
-      if (appData.can_manage && !appData.self_hosted) {
-        AppView._renderMembersVisPills();
-        // Set (not just conditionally add) the disabled state: the pills are
-        // cloned on every wire, so a `disabled` left over from opening a
-        // repo-less app's modal would survive into this app's pills and eat
-        // every click.
-        visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
-          .forEach((p) => { p.disabled = !appData.repo_url; });
-        if (!appData.repo_url) {
-          if (visStatus) {
-            visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they\'re unavailable.';
-            visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
-          }
-        }
-      }
-    }
-
-    // Proposal-approvals section (issue #646): creator/admin only, like
-    // the visibility pills; changes open a dapp.json governance PR, so
-    // a repo is required.
+    // Proposal-approvals section (issue #646): creator/admin only. Changes
+    // open a dapp.json governance PR, so a repo is required.
     AppView._membersGov = {
       policy: appData.approver_policy === 'invited' ? 'invited' : 'anyone',
       atLeast: appData.approvals_required != null ? Number(appData.approvals_required) : null,
@@ -154,7 +120,8 @@ const MembersDialog = {
       govSection.classList.toggle('hidden', !appData.can_manage);
       if (appData.can_manage) {
         AppView._renderMembersGovPills();
-        // Same set-don't-add rationale as the visibility pills above.
+        // Set (rather than only add) disabled state on every open so a
+        // repo-less app cannot leave stale controls behind for the next app.
         govSection.querySelectorAll('[data-m-approver-policy], [data-m-approvals-mode], #members-approvals-n, #members-approvals-propose')
           .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
@@ -239,15 +206,6 @@ const MembersDialog = {
   // Home.wireCreateButtons, which is gone — the block it wired is React's now
   // and keeps its element, so it needed neither the swap nor the helper.)
   _wireMembersModal() {
-    document.querySelectorAll('#members-visibility-section [data-m-collab-vis], #members-visibility-section [data-m-view-vis]')
-      .forEach((pill) => {
-        const fresh = pill.cloneNode(true);
-        pill.parentNode.replaceChild(fresh, pill);
-        fresh.addEventListener('click', () => {
-          if (fresh.dataset.mCollabVis) AppView._setMembersVisibility('collab', fresh.dataset.mCollabVis);
-          else AppView._setMembersVisibility('view', fresh.dataset.mViewVis);
-        });
-      });
     const input = document.getElementById('members-invite-input');
     if (input) {
       const fresh = input.cloneNode(true);
@@ -428,80 +386,6 @@ const MembersDialog = {
         AppView._hideAppAdminSuggestions();
         AppView._renderAppAdmins(AppView._appAdminsData);
       });
-    }
-  },
-
-  _renderMembersVisPills() {
-    const { collab, view } = AppView._membersVis;
-    const collabPublic = collab === 'public';
-    document.querySelectorAll('#members-visibility-section [data-m-collab-vis]').forEach((p) => {
-      p.classList.toggle('active', p.dataset.mCollabVis === collab);
-    });
-    document.querySelectorAll('#members-visibility-section [data-m-view-vis]').forEach((p) => {
-      p.classList.toggle('active', p.dataset.mViewVis === view);
-      p.disabled = collabPublic;
-    });
-    const hint = document.getElementById('members-vis-hint');
-    if (hint) hint.classList.toggle('hidden', !collabPublic);
-  },
-
-  // Pill click → confirm → open a visibility-change proposal (a PR that
-  // edits dapp.json's `visibility` block — issue #124). NOT optimistic:
-  // the pills keep showing the current values until the proposal passes
-  // its vote, merges, and the redeploy's reconcile fires the
-  // `visibility_changed` WS event (handled in app.js, which re-renders
-  // the pills if this modal is open).
-  async _setMembersVisibility(kind, value) {
-    const cur = {
-      collab: AppView.appData.collab_visibility || 'public',
-      view: AppView.appData.view_visibility || 'public',
-    };
-    const v = value === 'private' ? 'private' : 'public';
-    const target = { ...cur };
-    if (kind === 'collab') {
-      target.collab = v;
-      if (v === 'public') target.view = 'public';
-    } else {
-      target.view = (cur.collab === 'private') ? v : 'public';
-    }
-    if (target.collab === cur.collab && target.view === cur.view) return;
-
-    const statusEl = document.getElementById('members-vis-error');
-    const setStatus = (msg, isError) => {
-      if (!statusEl) return;
-      statusEl.textContent = msg;
-      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
-      statusEl.classList.toggle('hidden', !msg);
-    };
-    setStatus('', false);
-
-    if (!await PlatformUI.confirm({
-      title: 'Open a visibility proposal?',
-      message: 'Changing visibility opens a proposal that needs the group\'s vote. The change applies after the vote passes and the app redeploys.',
-      confirmLabel: 'Open proposal',
-    })) return;
-
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility-pr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collabVisibility: target.collab,
-          viewVisibility: target.view,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 409) {
-        setStatus('A visibility change is already up for vote. See the proposal in the Dev tab\'s vote panel.', false);
-        return;
-      }
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setStatus(
-        `Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab's vote panel before the new visibility applies.`,
-        false
-      );
-    } catch (err) {
-      setStatus(`Could not open the visibility proposal: ${err.message}`, true);
     }
   },
 

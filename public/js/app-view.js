@@ -2895,6 +2895,16 @@ const AppView = {
     // chip said depended on what had been navigated to earlier in the run.
     // It says Workshop on the Dev screen, always.
     App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
+    // BACK TO THE WORKSHOP SCREEN, when that is where this app was opened
+    // from. `App._appBackHref` is the breadcrumb navigateToApp records (see
+    // its note in app.js) and it is null on every other route, which leaves
+    // the house `setBackIcon('home')` above already published — so this is an
+    // override for one origin rather than a new default. It sits on the
+    // LANDER alone: the app's own Workshop is the page the row linked to, and
+    // a chevron on the chat or a topic would promise a level this breadcrumb
+    // says nothing about. Publishing an arrow with an href is also what turns
+    // the phone's back gesture on (features/header/native-back-navigation.ts).
+    if (App._appBackHref) App.setBackIcon?.('arrow', App._appBackHref);
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
@@ -4636,7 +4646,8 @@ const AppView = {
 
   // The App settings sub-page (secrets + display name behind a "+"
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
-  // directly in the "+" menu, alongside Members & visibility.
+  // directly in the "+" menu. The later App settings dialog is the app's
+  // access + danger-zone surface; members and approvals keep their own row.
 
   // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
   //
@@ -4684,14 +4695,14 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
-  // Gate for the menu's Members & visibility item — the full predicate
-  // the old hamburger-drawer row used: creator/admin always (visibility
-  // + proposal-approval controls), collaborators of an invite-only app
+  // Gate for the menu's Members & approvals item — the full predicate
+  // the old hamburger-drawer row used: creator/admin always (app-admin and
+  // proposal-approval controls), collaborators of an invite-only app
   // (member list + invites), and anyone who can collaborate on an
   // invited-approvers app (read-only approver roster). For the self-app
   // (#646) it shows for admins — the modal there hides the
-  // visibility/collaborator sections and offers only the
-  // Proposal-approvals + Approvers sections.
+  // collaborator sections and offers only the Proposal-approvals +
+  // Approvers sections.
   _plusMenuShowsMembers() {
     const a = AppView.appData;
     if (!a) return false;
@@ -16763,7 +16774,7 @@ const AppView = {
   // opened it — the browser can synthesize a trailing `click` ~300ms after
   // `touchend` — lands on the freshly-shown [data-modal-backdrop] and
   // dismisses the modal in the same gesture. The user saw nothing happen
-  // ("Members & visibility does nothing").
+  // ("Members & approvals does nothing").
   //
   // The fix is the DISMISS GUARD, not a deferral. revealModal() shows the
   // modal SYNCHRONOUSLY (deferring the reveal to requestAnimationFrame
@@ -18091,10 +18102,10 @@ const AppView = {
     }
   },
 
-  // ── Members & visibility dialog ───────────────────────────────────
-  // #1078 chunk I moved the whole block — the visibility pills, the invite
-  // typeahead, the approvals governance editor, the initial-approvers draft,
-  // the app-admins roster and the approvers roster — into
+  // ── Members & approvals dialog ────────────────────────────────────
+  // #1078 chunk I moved the collaborator controls — the invite typeahead,
+  // approvals governance editor, initial-approvers draft, app-admins roster
+  // and approvers roster — into
   // frontend/src/features/dialogs/members-controller.js, which the island
   // `init()`s from its layout effect. That module folds every method back
   // onto this object with Object.assign, so `AppView.loadApprovers()` and
@@ -18252,17 +18263,38 @@ const AppView = {
 
   // Pure. Px of the LAYOUT viewport hidden behind the keyboard. A pinch-zoomed
   // visual viewport is not a keyboard, so it reports nothing.
+  //
+  // Measured against the LAYOUT viewport, and with no pan term — the kit's
+  // `keyboardInset` carries the measurements and the reasoning (#1938). The
+  // short version: on iOS `window.innerHeight` collapses to the visual
+  // viewport when the keyboard opens and the page is panned, so
+  // `innerHeight - vvHeight - vvOffsetTop` came out negative there and this
+  // reported 0 — no keyboard, on every iOS device, in Safari and in the
+  // installed PWA alike. This copy has to agree with the kit's: the shell
+  // reads the inset and FORWARDS it to app frames, which cannot read it
+  // themselves, so a disagreement would hand every app a different answer
+  // from the one the shell acts on.
   _keyboardInsetFrom(input) {
     if (!input) return 0;
     const scale = input.scale == null ? 1 : Number(input.scale);
     if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
-    const innerHeight = Number(input.innerHeight);
+    const layoutHeight = Number(
+      input.layoutHeight == null ? input.innerHeight : input.layoutHeight
+    );
     const vvHeight = Number(input.vvHeight);
-    const offsetTop = Number(input.vvOffsetTop || 0);
-    if (!Number.isFinite(innerHeight) || !Number.isFinite(vvHeight)) return 0;
-    const occluded = innerHeight - vvHeight - offsetTop;
+    if (!Number.isFinite(layoutHeight) || !Number.isFinite(vvHeight)) return 0;
+    const occluded = layoutHeight - vvHeight;
     if (!(occluded > 0) || occluded < AppView.KB_MIN_INSET) return 0;
     return Math.round(occluded);
+  },
+
+  // The layout viewport's height — the frame of reference the keyboard cannot
+  // move. Mirrors the kit's `layoutViewportHeight()`.
+  _layoutViewportHeight() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return 0;
+    const docEl = document.documentElement;
+    const client = docEl && docEl.clientHeight ? docEl.clientHeight : 0;
+    return Math.max(window.innerHeight || 0, client);
   },
 
   // Pure. How much of ONE frame's bottom edge the keyboard covers. A frame
@@ -18286,9 +18318,8 @@ const AppView = {
     if (typeof window === 'undefined' || !window.visualViewport) return 0;
     const vv = window.visualViewport;
     return AppView._keyboardInsetFrom({
-      innerHeight: window.innerHeight,
+      layoutHeight: AppView._layoutViewportHeight(),
       vvHeight: vv.height,
-      vvOffsetTop: vv.offsetTop,
       scale: vv.scale,
     });
   },

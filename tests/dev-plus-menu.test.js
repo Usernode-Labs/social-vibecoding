@@ -151,7 +151,7 @@ test('the members item is gated on the predicate, and only on the predicate', ()
   const block = membersBlock();
   assert.ok(block.includes('data-plus="members"'), 'members item lives inside the gate');
   // The gate is the prop, not a re-derivation of the rule inside the component.
-  assert.ok(!FRAME_SRC.includes('can_manage'), 'component does not re-derive the manage rule');
+  assert.ok(!block.includes('can_manage'), 'members row does not re-derive the manage rule');
   assert.ok(!FRAME_SRC.includes('collab_visibility'), 'component does not re-derive visibility');
   assert.ok(!FRAME_SRC.includes('approver_policy'), 'component does not re-derive the policy');
   // …and renderDevView is what evaluates it and hands the answer over.
@@ -169,10 +169,11 @@ test('the members item keeps both label pairs, branched on self_hosted', () => {
     whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
     'self-app sublabel unchanged'
   );
-  assert.ok(!whenSelfHosted.includes('Members &amp; visibility'),
+  assert.ok(!whenSelfHosted.includes('Members &amp; approvals'),
     'self-app does not use the Members label');
-  assert.ok(otherwise.includes('Members &amp; visibility'), 'other apps keep the Members label');
-  assert.ok(otherwise.includes('Who can build and see this app'), 'sublabel unchanged');
+  assert.ok(otherwise.includes('Members &amp; approvals'), 'other apps keep the Members label');
+  assert.ok(otherwise.includes('Manage collaborators, app admins and proposal approvals'),
+    'other apps describe the remaining member and approval controls');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
     VIEW_SRC,
