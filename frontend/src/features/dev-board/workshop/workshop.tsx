@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -1193,10 +1193,10 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // The sheet on its way out. It stays mounted, marked `data-ws-leaving`,
   // for as long as app.css's leave animation runs, then is dropped.
   const [leaving, setLeaving] = useState<SheetKind | null>(null);
-  // How much of the window the on-screen keyboard has taken, in px. The
-  // sheets stop above it (`--ws-kb` in app.css), so the field being typed
-  // into is never under the keys — see the visualViewport effect.
-  const [kb, setKb] = useState(0);
+  // Whether the on-screen keyboard is up. The kit measures it and app.css
+  // lifts the sheet's floor by `--un-kb-inset` on its own; this is only the
+  // flag `[data-ws-kb]` needs to give the card the short sheet's full height.
+  const [kbUp, setKbUp] = useState(false);
   // Answered here, this session: the pinned row's confirmation.
   const [answered, setAnswered] = useState<Record<string, string>>({});
   // The pins, keyed by row, with the index each held when it was answered.
@@ -1377,33 +1377,41 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     const t = window.setTimeout(() => setLeaving(null), still ? 0 : 220);
     return () => window.clearTimeout(t);
   }, [leaving]);
-  // THE KEYBOARD. A fixed sheet is laid out against the layout viewport,
-  // which the on-screen keyboard does not shrink — so on a phone the card's
-  // floor, and the field on it, sat under the keys. The visual viewport
-  // does shrink; the difference is what the keyboard took, and the sheet
-  // ends above it. Only while a sheet is up, and only below the breakpoint:
-  // a panel on a wide window is not fixed at all.
+  // THE KEYBOARD. A fixed sheet is laid out against the layout viewport, which
+  // the on-screen keyboard does not shrink — so on a phone the card's floor,
+  // and the field on it, sat under the keys. app.css lifts that floor by
+  // `--un-kb-inset`, and the kit maintains it from ONE visualViewport tracker
+  // for the whole page.
+  //
+  // This screen used to measure the viewport itself, which is how it ended up
+  // with its own `innerHeight - vv.height - vv.offsetTop` — the expression
+  // #1938 proved wrong on iOS, where `innerHeight` collapses to the visual
+  // viewport and the result goes negative. `Math.max(0, …)` turned that into a
+  // confident zero, so the sheet simply never lifted on an iPhone and nothing
+  // looked broken enough to notice. Reading the kit's number is what stops a
+  // fourth copy of that arithmetic drifting out of step with the other three.
+  //
+  // What is left is the part CSS cannot do: the sheet got shorter, so the
+  // field inside it has to be scrolled back into view. `un-kb` lands on <html>
+  // from the kit's own rAF, so this observes the class rather than racing it
+  // through a second viewport listener. Only while a sheet is up, and only
+  // below the breakpoint: a panel on a wide window is not fixed at all.
   useEffect(() => {
-    if (!sheet || wide || typeof window === 'undefined' || !window.visualViewport) return undefined;
-    const vv = window.visualViewport;
-    let raf = 0;
-    const measure = () => {
-      raf = 0;
-      const taken = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-      setKb((cur) => (cur === taken ? cur : taken));
-      // The body under the field shrank with the sheet; keep the field in it.
+    if (!sheet || wide || typeof document === 'undefined') return undefined;
+    const docEl = document.documentElement;
+    const sync = () => {
+      const up = docEl.classList.contains('un-kb');
+      setKbUp((cur) => (cur === up ? cur : up));
+      if (!up) return;
       const active = document.activeElement as HTMLElement | null;
-      if (taken > 0 && active && active.closest('.dev-ws-sheet-modal')) active.scrollIntoView({ block: 'nearest' });
+      if (active && active.closest('.dev-ws-sheet-modal')) active.scrollIntoView({ block: 'nearest' });
     };
-    const onChange = () => { if (!raf) raf = window.requestAnimationFrame(measure); };
-    vv.addEventListener('resize', onChange);
-    vv.addEventListener('scroll', onChange);
-    measure();
+    const observer = new MutationObserver(sync);
+    observer.observe(docEl, { attributes: true, attributeFilter: ['class'] });
+    sync();
     return () => {
-      vv.removeEventListener('resize', onChange);
-      vv.removeEventListener('scroll', onChange);
-      if (raf) window.cancelAnimationFrame(raf);
-      setKb(0);
+      observer.disconnect();
+      setKbUp(false);
     };
   }, [sheet, wide]);
 
@@ -1651,8 +1659,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       className="dev-ws-needs"
       data-ws-needs=""
       data-ws-sheet={shown || undefined}
-      data-ws-kb={kb > 0 ? '' : undefined}
-      style={kb > 0 ? ({ '--ws-kb': `${kb}px` } as CSSProperties) : undefined}
+      data-ws-kb={kbUp ? '' : undefined}
     >
       {/* THE FEED. A real scroll container with snap points, not a swap of one
           rendered card: every row stays in the DOM (the legacy fillers find

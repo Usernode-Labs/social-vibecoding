@@ -41,6 +41,7 @@ const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const { avatarRoutes } = require('./src/routes/avatars');
 const { profileRoutes } = require('./src/routes/profile');
+const { stakingRoutes } = require('./src/routes/staking');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -55,6 +56,7 @@ const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
+const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
@@ -614,6 +616,10 @@ app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
 app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
+// The top-level Workshop screen's per-app counts (#workshop): one query for
+// every app the viewer can see. Me-scoped like the ordering routes, so it
+// sits behind authMiddleware and refuses an anonymous caller outright.
+app.use(workshopOverviewRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
 // / pushIssueUpdate — on whichever instance handled the change (the row's
@@ -662,6 +668,7 @@ app.use(homeLayoutRoutes(config));
 // Me-scoped, so behind authMiddleware — the avatar READ side is the
 // separate public avatarRoutes mounted above.
 app.use(profileRoutes(config));
+app.use(stakingRoutes(config));
 // #940: saved dev-chat drafts, now server-backed so they follow a user
 // across devices. Owner-scoped per session, like the /api/sessions/* family
 // in routes/sessions.js.

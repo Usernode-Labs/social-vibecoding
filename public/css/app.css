@@ -368,6 +368,28 @@ html.un-kb .platform-kb-column {
   transition: none;
 }
 
+/* …and the scroller inside it must NOT reserve it a second time.
+
+   `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever scroller
+   `attachScreenFx` hands it — the general chat's `#gc-messages`, the topic
+   thread's `#gc-thread-scroll`, the dev chat's `#dc-messages` — so on those
+   screens the class is there at runtime whether or not any source file writes
+   it. With the column reserving as well, the inset is counted twice, and the
+   second one is the damaging one: a scroll container cannot shrink below its
+   own padding, so `#gc-messages` bottomed out at 368px (its `py-2` 8px plus a
+   360px keyboard inset) and floored the whole column. Measured on a Pixel
+   emulator against the live general chat: the composer rose 163px of the 360
+   it needed and stayed behind the keys. The topic thread escaped only because
+   its column had enough slack to absorb the floor.
+
+   Suppressing it here restores the single reservation: general chat's composer
+   moved from 647 to 450 — exactly the keyboard line — while the topic thread
+   stayed at 450, unchanged. Specificity (0,3,1) beats the kit's (0,2,1) and
+   app.css loads after native.css, so no !important is needed. */
+html.un-kb .platform-kb-column .un-kb-avoid {
+  padding-bottom: 0;
+}
+
 /* ── Platform Messages screen ─────────────────────────────
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.
@@ -1558,7 +1580,8 @@ html.un-kb .platform-kb-column {
    trade in this sheet's favour, and it costs less than the panel's does: a
    VERTICAL drag anywhere still reaches the kit's pointer handler, so
    drag-to-dismiss survives intact here. */
-.un-sheet:has(#apps-switcher-sheet) {
+.un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has([data-staking-sheet]) {
   touch-action: pan-x;
 }
 
@@ -2016,7 +2039,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    rule below sets those four values; everything else — the zoom surface,
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -2052,7 +2075,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -2090,7 +2113,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -2102,7 +2125,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -2128,7 +2151,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
@@ -2188,7 +2211,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -12998,10 +13021,22 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    title, sub, x, body) are the deck's either way — they appear in no folded
    card — as are the breakpoint rules further down, which were already keyed
    on the -vote / -ask / -comments modifiers. */
-/* The floor lifts by what the on-screen keyboard took (workshop.tsx measures
-   the visual viewport into `--ws-kb` while a sheet is up), so the field being
-   typed into is above the keys rather than under them. */
-.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--ws-kb, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+/* The floor lifts by what the on-screen keyboard took, so the field being
+   typed into is above the keys rather than under them.
+
+   THE NUMBER IS THE KIT'S, not this screen's. workshop.tsx used to measure the
+   visual viewport itself and publish `--ws-kb` — a third copy of
+   `innerHeight - vv.height - vv.offsetTop`, which is the expression #1938
+   found to be wrong on iOS: `innerHeight` collapses to the visual viewport
+   there, so it came out negative, the `Math.max(0, …)` around it clamped to 0,
+   and this sheet never moved on an iPhone. `--un-kb-inset` is one tracker's
+   answer for the whole page (usernode-native/v1/native.js), which is what
+   keeps this surface and the composer columns from drifting apart again.
+
+   It resolves to 0 with no keyboard, so no `html.un-kb` guard is needed here.
+   The wide block below makes these panels `position: relative; inset: auto`,
+   which drops this `bottom` with it — a docked panel has no floor to lift. */
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);

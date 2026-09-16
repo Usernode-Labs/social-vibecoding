@@ -547,6 +547,12 @@
       "group": "General",
       "description": "OpenRouter Corp API Key",
       "private": true
+    },
+    {
+      "key": "STAKING_OBSERVABILITY_URL",
+      "group": "Native app",
+      "default": "https://observability.preseason-testnet.apps.beta.usernodelabs.org",
+      "description": "Observability origin for the admitted native chain, without /ui/nodes or /v1/observability. Profile staking epoch history reads this service, never the local node. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
   "tests": [
@@ -2717,9 +2723,45 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
+      "name": "The chip opens the menu, and it lists Home, Workshop and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-workshop + #switcher-row-discover"
+    },
+    {
+      "name": "Workshop is a destination in the chip's menu, directly under Home",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-workshop[href=\"#workshop\"]",
+      "expectText": "Workshop"
+    },
+    {
+      "id": "workshop.all-apps",
+      "name": "The Workshop screen lists your apps with both of their numbers",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app=\"staging-demo-your-app\"][href=\"/app/staging-demo-your-app/workshop\"] [data-workshop-needs=\"3\"]",
+      "expectText": "Votes waiting on you",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/workshop/**",
+        "frontend/src/features/app-context/app-context-sheet.tsx",
+        "src/routes/workshop-overview.js",
+        "public/js/app.js",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "name": "A Workshop row says what you are working on as well as what needs you",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-app=\"staging-demo-your-app\"] [data-workshop-working=\"2\"] + [data-workshop-needs=\"3\"]"
+    },
+    {
+      "name": "An app with a decision waiting leads the Workshop list",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-list a[data-workshop-app]:first-of-type [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
+    },
+    {
+      "name": "The Workshop screen draws no empty-state line while it has rows",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -3027,7 +3069,7 @@
       "expectText": "core platform app"
     },
     {
-      "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
+      "name": "Dev '+' menu shows Members & approvals on a managed app (#2304)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
@@ -3035,7 +3077,7 @@
       "name": "Dev '+' menu shows the approver roster on an invited-approvers app (#646)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
-      "expectText": "Members & visibility"
+      "expectText": "Members & approvals"
     },
     {
       "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",
@@ -4267,6 +4309,23 @@
       "path": "/waitlist/connect/github/callback?state=staging-check-unknown&code=staging-check",
       "expectSelector": "#waitlist-connect-status[data-state=\"expired\"]",
       "expectText": "This link has expired"
+    },
+    {
+      "name": "Profile staking: Active shows observability epoch counts (#1551)",
+      "path": "/?demo=staking-active#profile",
+      "expectSelector": "[data-staking-sheet] [data-staking-epoch=\"128\"]",
+      "expectText": "Won slots"
+    },
+    {
+      "name": "Profile staking: Delegated offers only Undelegate (#1551)",
+      "path": "/?demo=staking-delegated#profile",
+      "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
+      "expectText": "Undelegate"
+    },
+    {
+      "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
+      "path": "/api/me/staking/context",
+      "expectText": "\"chainId\":\"utc1"
     }
   ],
   "governance": {

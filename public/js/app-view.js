@@ -2895,6 +2895,16 @@ const AppView = {
     // chip said depended on what had been navigated to earlier in the run.
     // It says Workshop on the Dev screen, always.
     App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
+    // BACK TO THE WORKSHOP SCREEN, when that is where this app was opened
+    // from. `App._appBackHref` is the breadcrumb navigateToApp records (see
+    // its note in app.js) and it is null on every other route, which leaves
+    // the house `setBackIcon('home')` above already published — so this is an
+    // override for one origin rather than a new default. It sits on the
+    // LANDER alone: the app's own Workshop is the page the row linked to, and
+    // a chevron on the chat or a topic would promise a level this breadcrumb
+    // says nothing about. Publishing an arrow with an href is also what turns
+    // the phone's back gesture on (features/header/native-back-navigation.ts).
+    if (App._appBackHref) App.setBackIcon?.('arrow', App._appBackHref);
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
@@ -3642,7 +3652,22 @@ const AppView = {
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a public discussion. The agent workspace stays private unless you share it separately.' : null;
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
-    if (!rows.some((r) => r.key === 'preview')) rows.unshift({ key: 'preview', label: 'Preview', tone: item.staging_url ? 'ok' : 'mute', text: [item.staging_url ? 'Available for the submitted build.' : 'No staging preview is available yet.'] });
+    if (!rows.some((r) => r.key === 'preview')) {
+      const previewFailed = item.preview_state === 'failed'
+        || (!item.staging_url && !!item.staging_error);
+      const previewBuilding = item.preview_state === 'building' || !!item.staging_building;
+      const previewReady = item.preview_state === 'ready'
+        || (!item.preview_state && !!item.staging_url);
+      rows.unshift({
+        key: 'preview', label: 'Preview',
+        tone: previewFailed ? 'error' : previewReady ? 'ok' : 'mute',
+        text: [previewFailed
+          ? `The submitted preview did not start${item.staging_error ? `: ${String(item.staging_error).slice(0, 280)}` : '.'}`
+          : previewBuilding ? 'The submitted preview is building.'
+            : previewReady ? 'Available for the submitted build.'
+              : 'No staging preview is available yet.'],
+      });
+    }
     if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
     if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
       const preview = rows.find((r) => r.key === 'preview');
@@ -4636,7 +4661,8 @@ const AppView = {
 
   // The App settings sub-page (secrets + display name behind a "+"
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
-  // directly in the "+" menu, alongside Members & visibility.
+  // directly in the "+" menu. The later App settings dialog is the app's
+  // access + danger-zone surface; members and approvals keep their own row.
 
   // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
   //
@@ -4684,14 +4710,14 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
-  // Gate for the menu's Members & visibility item — the full predicate
-  // the old hamburger-drawer row used: creator/admin always (visibility
-  // + proposal-approval controls), collaborators of an invite-only app
+  // Gate for the menu's Members & approvals item — the full predicate
+  // the old hamburger-drawer row used: creator/admin always (app-admin and
+  // proposal-approval controls), collaborators of an invite-only app
   // (member list + invites), and anyone who can collaborate on an
   // invited-approvers app (read-only approver roster). For the self-app
   // (#646) it shows for admins — the modal there hides the
-  // visibility/collaborator sections and offers only the
-  // Proposal-approvals + Approvers sections.
+  // collaborator sections and offers only the Proposal-approvals +
+  // Approvers sections.
   _plusMenuShowsMembers() {
     const a = AppView.appData;
     if (!a) return false;
@@ -15056,14 +15082,26 @@ const AppView = {
           : `This proposal no longer merges into main on its own. ${remedy}`,
       });
     }
-    // Checks: the real merge gate.
-    if (p.check_state === 'error') {
+    // Preview lifecycle and checks execution are separate facts. A staging
+    // build failure clears the stale URL and exposes staging_error; a runner
+    // or infrastructure failure after a healthy preview exists carries only
+    // check_state='error'. Conflating those produced #2328's simultaneous
+    // green Preview row and red "Preview won't boot" tag.
+    if (p.preview_state === 'failed' || p.staging_error) {
       out.push({
         key: 'preview_failed',
         label: 'Preview won’t boot',
-        detail: p.check_error_detail
-          ? `The staging preview failed to start, so automated checks can’t run: ${String(p.check_error_detail).slice(0, 300)}`
+        detail: p.staging_error
+          ? `The staging preview failed to start, so automated checks can’t run: ${String(p.staging_error).slice(0, 300)}`
           : 'The staging preview failed to start, so automated checks couldn’t run.',
+      });
+    } else if (p.check_state === 'error') {
+      out.push({
+        key: 'checks_error',
+        label: 'Checks couldn’t run',
+        detail: p.check_error_detail
+          ? `The automated check run ended before it could produce a verdict: ${String(p.check_error_detail).slice(0, 300)}`
+          : 'The automated check run ended before it could produce a verdict. The preview may still be available.',
       });
     } else if (p.check_state === 'failing') {
       const failed = Array.isArray(p.test_results)
@@ -16435,6 +16473,12 @@ const AppView = {
     const live = !!url || canRebuild;
     const label = AppView.PREVIEW_TITLES[kind] || AppView.PREVIEW_TITLES.proposal;
 
+    if (it.preview_state === 'failed' || it.staging_error) {
+      return {
+        state: 'error', iconOnly,
+        title: `Preview unavailable: ${String(it.staging_error || 'the submitted preview did not start').slice(0, 280)}`,
+      };
+    }
     if (live) {
       return {
         state: 'live', sessionId, url, iconOnly,
@@ -16445,12 +16489,6 @@ const AppView = {
       return {
         state: 'building', iconOnly,
         title: 'The staging preview is being built. This usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
-      };
-    }
-    if (it.staging_error) {
-      return {
-        state: 'error', iconOnly,
-        title: `Preview unavailable: ${String(it.staging_error).slice(0, 280)}`,
       };
     }
     return null;
@@ -16763,7 +16801,7 @@ const AppView = {
   // opened it — the browser can synthesize a trailing `click` ~300ms after
   // `touchend` — lands on the freshly-shown [data-modal-backdrop] and
   // dismisses the modal in the same gesture. The user saw nothing happen
-  // ("Members & visibility does nothing").
+  // ("Members & approvals does nothing").
   //
   // The fix is the DISMISS GUARD, not a deferral. revealModal() shows the
   // modal SYNCHRONOUSLY (deferring the reveal to requestAnimationFrame
@@ -17171,16 +17209,6 @@ const AppView = {
     // matching false is closeStagingOverlay's.
     window.Improve?.setPreviewActive?.(true);
 
-    // #621: read-only viewers can't trigger a rebuild (the ensure POST is
-    // collab-gated) — open the last-known staging URL directly. If it was
-    // GC'd they see the dead-preview page rather than a rebuild spinner.
-    if (AppView.readOnly) {
-      if (fallbackUrl) return AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
-      // Nothing opened — take the optimistic publish above back.
-      else window.Improve?.setPreviewActive?.(false);
-      return;
-    }
-
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
     staging.open();
@@ -17209,7 +17237,14 @@ const AppView = {
 
     let data;
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/ensure-staging`, { method: 'POST' });
+      // Collaborators use the mutating ensure route, which may rebuild a
+      // reclaimed/stale preview. Read-only reviewers use its GET twin: it
+      // performs the same revision, health and edge verification but never
+      // repairs or rebuilds. Neither path trusts a stored URL on its own.
+      const endpoint = AppView.readOnly
+        ? `/api/sessions/${sessionId}/preview-status`
+        : `/api/sessions/${sessionId}/ensure-staging`;
+      const res = await fetch(endpoint, AppView.readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
         AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
@@ -17236,11 +17271,17 @@ const AppView = {
       });
     }
     if (data.status === 'unavailable') {
+      const unavailableCopy = {
+        demo: 'Live previews can’t be rebuilt in this demo environment.',
+        unhealthy: 'The submitted preview is running but is not answering its health check. Try again in a moment.',
+        edge: 'The submitted preview is not reachable through its public address. Try again in a moment.',
+        missing: AppView.readOnly
+          ? 'This preview is no longer running. A collaborator can rebuild it.'
+          : 'This preview isn’t available right now.',
+      };
       AppView._showStagingUnavailable(
         loadId,
-        data.reason === 'demo'
-          ? 'Live previews can’t be rebuilt in this demo environment.'
-          : 'This preview isn’t available right now.'
+        unavailableCopy[data.reason] || 'This preview isn’t available right now.'
       );
       return;
     }
@@ -17296,7 +17337,15 @@ const AppView = {
       });
       return;
     }
-    if (url) return AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
+    if (url) {
+      // The rebuild event says the server finished writing a URL; it does
+      // not prove the new runtime still answers by the time this browser
+      // receives the event. Re-enter ensure-staging so the exact same
+      // revision/health/edge gate runs before iframe navigation (#2328).
+      return AppView.ensureStaging(sessionId, url, pending.testing, {
+        jump: pending.jump, dock: pending.dock,
+      });
+    }
   },
 
   // Open staging in the overlay (fullscreen, or docked beside dev chat).
@@ -18091,10 +18140,10 @@ const AppView = {
     }
   },
 
-  // ── Members & visibility dialog ───────────────────────────────────
-  // #1078 chunk I moved the whole block — the visibility pills, the invite
-  // typeahead, the approvals governance editor, the initial-approvers draft,
-  // the app-admins roster and the approvers roster — into
+  // ── Members & approvals dialog ────────────────────────────────────
+  // #1078 chunk I moved the collaborator controls — the invite typeahead,
+  // approvals governance editor, initial-approvers draft, app-admins roster
+  // and approvers roster — into
   // frontend/src/features/dialogs/members-controller.js, which the island
   // `init()`s from its layout effect. That module folds every method back
   // onto this object with Object.assign, so `AppView.loadApprovers()` and
@@ -18230,6 +18279,89 @@ const AppView = {
   //
   // `rect` is a DOMRect-alike in viewport coordinates; `viewport` is
   // { width, height } of the layout viewport.
+  // ── The on-screen keyboard, forwarded into frames (#1937/#1491) ──
+  //
+  // An iframe's visualViewport describes the FRAME, and the keyboard does not
+  // resize the frame — so the kit's tracker, which derives its inset from
+  // innerHeight minus visualViewport.height, computes 0 inside every app.
+  // `--un-kb-inset` is never set there and `html.un-kb` never turns on, which
+  // is why an app's bottom-anchored UI has always been dead to the keyboard
+  // however correctly it consumes the var. Measured on a Pixel emulator with a
+  // docked keyboard and a field inside the frame focused: the shell read
+  // innerHeight 810 / visualViewport 450 / inset 360, and the frame read
+  // 709 / 709 / 0 at the same moment.
+  //
+  // So the shell reads it — it CAN, being top level — and forwards it beside
+  // the safe area it already forwards. Nothing downstream changes: the kit's
+  // own CSS and every app already read `--un-kb-inset`.
+
+  // The kit's floor, mirrored (native.js exports KB_MIN_INSET = 50): below
+  // this it is a collapsing browser toolbar, not a keyboard.
+  KB_MIN_INSET: 50,
+
+  // Pure. Px of the LAYOUT viewport hidden behind the keyboard. A pinch-zoomed
+  // visual viewport is not a keyboard, so it reports nothing.
+  //
+  // Measured against the LAYOUT viewport, and with no pan term — the kit's
+  // `keyboardInset` carries the measurements and the reasoning (#1938). The
+  // short version: on iOS `window.innerHeight` collapses to the visual
+  // viewport when the keyboard opens and the page is panned, so
+  // `innerHeight - vvHeight - vvOffsetTop` came out negative there and this
+  // reported 0 — no keyboard, on every iOS device, in Safari and in the
+  // installed PWA alike. This copy has to agree with the kit's: the shell
+  // reads the inset and FORWARDS it to app frames, which cannot read it
+  // themselves, so a disagreement would hand every app a different answer
+  // from the one the shell acts on.
+  _keyboardInsetFrom(input) {
+    if (!input) return 0;
+    const scale = input.scale == null ? 1 : Number(input.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const layoutHeight = Number(
+      input.layoutHeight == null ? input.innerHeight : input.layoutHeight
+    );
+    const vvHeight = Number(input.vvHeight);
+    if (!Number.isFinite(layoutHeight) || !Number.isFinite(vvHeight)) return 0;
+    const occluded = layoutHeight - vvHeight;
+    if (!(occluded > 0) || occluded < AppView.KB_MIN_INSET) return 0;
+    return Math.round(occluded);
+  },
+
+  // The layout viewport's height — the frame of reference the keyboard cannot
+  // move. Mirrors the kit's `layoutViewportHeight()`.
+  _layoutViewportHeight() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return 0;
+    const docEl = document.documentElement;
+    const client = docEl && docEl.clientHeight ? docEl.clientHeight : 0;
+    return Math.max(window.innerHeight || 0, client);
+  },
+
+  // Pure. How much of ONE frame's bottom edge the keyboard covers. A frame
+  // that ends above the keyboard's top edge is not occluded at all — the same
+  // frame-relative reasoning _frameInsets applies to the safe area, and what
+  // keeps a short or inset frame from being told about a keyboard it cannot
+  // see. Never more than the frame's own height.
+  _frameKeyboardInset(rect, viewport, kbInset) {
+    if (!rect || !viewport || !(kbInset > 0)) return 0;
+    const pageHeight = Number(viewport.height);
+    const bottom = Number(rect.bottom);
+    const height = Number(rect.height);
+    if (!Number.isFinite(pageHeight) || !Number.isFinite(bottom) || !Number.isFinite(height)) return 0;
+    const covered = bottom - (pageHeight - kbInset);
+    if (!(covered > 0)) return 0;
+    return Math.round(Math.min(covered, height));
+  },
+
+  // Live read of the shell's own visual viewport.
+  _keyboardInset() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    return AppView._keyboardInsetFrom({
+      layoutHeight: AppView._layoutViewportHeight(),
+      vvHeight: vv.height,
+      scale: vv.scale,
+    });
+  },
+
   _frameInsets(raw, rect, viewport) {
     const zero = AppView._zeroInsets();
     if (!raw || !rect || !viewport) return zero;
@@ -18318,11 +18450,13 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    return AppView._frameInsets(
-      AppView._readRootInsets(),
-      rect,
-      { width: window.innerWidth, height: window.innerHeight }
-    );
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const insets = AppView._frameInsets(AppView._readRootInsets(), rect, viewport);
+    // `keyboard` rides alongside the four edges rather than inside `bottom`:
+    // they mean different things (one is a notch, the other is transient
+    // occlusion) and apps consume them separately.
+    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, AppView._keyboardInset());
+    return insets;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -18336,7 +18470,7 @@ const AppView = {
       }
       const value = AppView.safeAreaForFrame(id);
       if (!value) return;
-      const key = `${value.top},${value.right},${value.bottom},${value.left}`;
+      const key = `${value.top},${value.right},${value.bottom},${value.left},${value.keyboard}`;
       if (AppView._safeAreaSent[id] === key) return;
       AppView._safeAreaSent[id] = key;
       try {

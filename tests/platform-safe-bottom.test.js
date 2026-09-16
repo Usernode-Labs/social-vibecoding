@@ -169,6 +169,19 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
       `${file} must not reserve the inset twice (column + un-kb-avoid)`);
   }
 
+  // …and the source check above is NOT sufficient on its own, which is what
+  // shipped broken. `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever
+  // scroller `attachScreenFx` hands it, so on the general chat, the topic
+  // thread and the dev chat the class is present at runtime no matter what the
+  // source says. The inset was counted twice, and a scroll container cannot
+  // shrink below its own padding — #gc-messages floored at 368px and held the
+  // composer 197px below the keyboard line. Only CSS can neutralise a class
+  // added by the kit at runtime, so the rule below is the real guarantee.
+  const inner = /html\.un-kb \.platform-kb-column \.un-kb-avoid\s*\{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(inner, 'html.un-kb .platform-kb-column .un-kb-avoid rule is missing');
+  assert.match(inner[1], /padding-bottom:\s*0/,
+    'a scroller inside a reserving column must not reserve the inset again');
+
   // The boxed thread layout is not screen-bottom-anchored, so reserving
   // keyboard space there would be dead space in the middle of a page.
   const shell = read('frontend/src/features/group-chat/thread-shell.tsx');

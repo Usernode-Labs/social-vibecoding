@@ -1,6 +1,40 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- THE PAGE OWNS THE STATUS-BAR STRIP, on an installed iOS web app (#1929).
+
+       Without this, a home-screen install gets iOS's OPAQUE status bar: the
+       system draws that strip itself, tints it from `theme-color`, and starts
+       the web view BELOW it. Two consequences, and the second is the bug:
+
+       - `env(safe-area-inset-top)` is 0, because the page never reaches the
+         unsafe area. Every reservation built for it — `--platform-safe-top`
+         below, the kit's `.un-safe-top-extend` on the header — quietly
+         resolves to nothing on the one platform they were written for.
+       - No page pixel can reach that strip, so a dialog's scrim cannot dim
+         it. Measured on an iPhone 17 Pro: opening a dialog drops the page
+         from luminance 241 to 145 while the strip holds 241, a 115-unit
+         cliff at exactly 62pt — the inset — that never moves in any frame of
+         the fade. That is what "the system header and the background fade at
+         different rates" is: the strip is not fading at all.
+
+       `black-translucent` hands those pixels to the page. `env(...)` then
+       reports the real 62px, the reservations that already exist start doing
+       their job, and the existing `inset: 0` scrim covers the strip for free
+       — one surface, one fade, nothing left to keep in step. Verified on a
+       real standalone install before writing this: same two rows read 130.8
+       and 130.8 with the scrim up, no edge anywhere in the top 400px.
+
+       iOS composites the clock, wifi and battery ON TOP of whatever the page
+       paints, so they survive the dim — measured at 24.4:1 against a dimmed
+       ground, where WCAG asks 4.5:1. The Dynamic Island is a hardware cutout
+       and stays black regardless.
+
+       `theme-color` above still matters and is NOT redundant: it paints
+       Android's address bar and the window ground a standalone install shows
+       before the document does. It simply stops owning the iOS strip. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
        serves: public/index.html is precached, so a cached load shows it in the
        tab, the task switcher and the native AppBar until the SPA routes and

@@ -184,7 +184,60 @@
 // the general chat from the old stylesheet and read as a fix that simply had
 // not worked. The deployed CSS had the new rule the whole time. Bumped here so
 // an installed client is not the next one to report it as unfixed.
-const SW_VERSION = 'v23';
+// v24: the on-screen keyboard is forwarded into app frames (#1937/#1491).
+// An iframe's visualViewport describes the FRAME and the keyboard does not
+// resize the frame, so the kit's tracker computed 0 inside every app and
+// `--un-kb-inset` was never set — every app's bottom-anchored UI was dead to
+// the keyboard however correctly it consumed the var. app-view.js computes and
+// posts it now and the bridge applies it in-frame; both are precached, which
+// is the case the v10 note names. Without the bump an installed client keeps a
+// shell that never sends the value, so no app would see the fix.
+//
+// NOTE FOR WHOEVER MERGES SECOND: the "stop reserving the inset twice"
+// proposal also takes v24 from v23. These two are independent changes that
+// both need a cache retirement, so the loser of the race is a real conflict
+// and wants v25 — not a silent pick of one side.
+
+// v25: and the OTHER half of the same work — the composer column was
+// reserving the inset twice. v23 shipped `.platform-kb-column`, but
+// `attachKeyboardAvoidance` ADDS `un-kb-avoid` to the scroller it is given,
+// so the general chat, the topic thread and the dev chat reserved the
+// keyboard height on the column AND again inside the scroller. A scroll
+// container cannot shrink below its own padding, so #gc-messages floored at
+// 368px and held the composer 197px behind the keys; only the topic thread
+// had enough slack to absorb it, which is why v23 looked verified.
+// app.css again, so the bump belongs here per v10 — and per v15, an
+// installed client that took v23 or v24 would otherwise keep the half-fix.
+//
+// This is the conflict the v24 entry predicted, resolved the way it asked:
+// both notes kept, the version advanced rather than one side silently won.
+//
+// v26 (#1938): /usernode-native/v1/native.js, which is precached in
+// SHELL_ASSETS, so the bump belongs in this same proposal per v10. The kit's
+// keyboardInset() measured the keyboard against window.innerHeight, which iOS
+// collapses to the visual viewport when the keyboard opens — the expression
+// went negative there and reported NO keyboard, which left every iOS client
+// (Safari and installed PWA alike) with --un-kb-inset pinned at 0 and every
+// keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
+// that, so per v15 an installed client holding any of them would keep serving
+// the old kit from cache and stay broken however correct the new one is.
+//
+// v27 (#1938 follow-up): app.css, precached in SHELL_ASSETS, so per v10 the
+// bump belongs in this same proposal. The Workshop card sheet kept its own
+// copy of the keyboard arithmetic and published `--ws-kb`; its floor now reads
+// the kit's `--un-kb-inset` like every other surface. Without the bump an
+// installed client would pair the NEW shell.js (which no longer sets --ws-kb)
+// with a CACHED app.css (which still reads it) — the sheet would stop lifting
+// on every platform, not just iOS, which is worse than the bug being fixed.
+//
+// v28 (#1929): frontend/src/head.html gains
+// `apple-mobile-web-app-status-bar-style: black-translucent`, so an installed
+// iOS web app gives the PAGE the status-bar strip instead of letting iOS draw
+// it. /index.html carries that meta and is precached in SHELL_ASSETS, so per
+// v10 the bump belongs here — and per v15 an installed client holding v27
+// would otherwise keep serving the old document and never take the meta at
+// all, which is the one asset where a stale copy hides the whole change.
+const SW_VERSION = 'v28';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

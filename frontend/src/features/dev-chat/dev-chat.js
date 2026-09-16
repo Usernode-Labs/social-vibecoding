@@ -335,8 +335,20 @@ const DevChat = {
     // A stale saved id is not an option. The server recommendation is GLM by
     // default, so this is also the first-use fallback the user asked for.
     const preferredId = byId.has(savedId) ? savedId : recommendedId;
-    const openRouterSession = DevChat._isOpenRouterSession();
-    const currentOpenRouterId = openRouterSession
+    const pendingChoice = DevChat.currentSession?.pending
+      ? DevChat.currentSession.pending_agent_choice
+      : null;
+    // An unsent change has no server row, so _agentBackend() deliberately
+    // falls back to Claude. That fallback is not the provider the first send
+    // will use: with no explicit pending choice, POST /sessions resolves the
+    // saved server default. Reflect that same default in the picker while
+    // keeping pending_agent_choice null, so merely opening the screen still
+    // performs no write and sends no explicit backend override.
+    const selectedBackend = DevChat.currentSession?.pending
+      ? (pendingChoice?.backend || data?.defaultBackend || 'claude_code')
+      : DevChat._agentBackend(DevChat.currentSession);
+    const openRouterSelected = selectedBackend === 'codex_openrouter';
+    const currentOpenRouterId = openRouterSelected
       ? String(DevChat.currentSession?.agent_model || '').trim()
       : '';
 
@@ -361,7 +373,7 @@ const DevChat = {
       };
     });
     let selectedOpenRouterId = currentOpenRouterId || preferredId;
-    if (openRouterSession && !selectedOpenRouterId) {
+    if (openRouterSelected && !selectedOpenRouterId) {
       // Old/incomplete rows should say that they are still loading rather
       // than make the select visually fall into Anthropic's first option.
       selectedOpenRouterId = '__loading__';
@@ -376,7 +388,7 @@ const DevChat = {
     // Before the async read lands, keep the catalog door available. Once the
     // capability response says OpenRouter is unavailable, omit a dead group
     // unless this is an existing OpenRouter session that must remain visible.
-    if (!data || data.codexAvailable || data.loadError || openRouterSession) {
+    if (!data || data.codexAvailable || data.loadError || openRouterSelected) {
       groups.push({
         id: 'openrouter',
         label: 'OpenRouter key',
@@ -399,7 +411,7 @@ const DevChat = {
         : (Object.keys(DevChat.MODELS)[0] || ''));
     return {
       groups,
-      selected: openRouterSession
+      selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
       changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
@@ -420,7 +432,23 @@ const DevChat = {
       // Direct Anthropic selection is a global per-browser preference, as it
       // was before this control learned about OpenRouter.
       try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
-      if (DevChat._isOpenRouterSession()) {
+      // An unsent change has no session id yet. Its explicit provider choice
+      // must be staged on the placeholder and carried into POST /sessions,
+      // not sent to reset-agent-context with a null id. This branch also
+      // matters when the saved server default is OpenRouter: choosing an
+      // Anthropic model here has to override that default on first send.
+      if (DevChat.isPendingSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else if (DevChat._isOpenRouterSession()) {
         DevChat._modelPickerChanging = true;
         DevChat._publishComposer();
         try {
@@ -1392,7 +1420,34 @@ const DevChat = {
       current,
       fixedBackend,
     });
-    if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+    const stillCurrent = session.pending
+      ? DevChat.currentSession === session
+      : DevChat.currentSession?.id === session.id;
+    if (!choice || !stillCurrent) return;
+
+    // /sessions/new is a client-only placeholder by design (#2241), so there
+    // is no row reset-agent-context could update. Keep the explicit choice on
+    // that placeholder instead. `_materializePendingSession` sends it with
+    // the first real POST /sessions, preserving the no-write-before-send
+    // contract while still making the grouped model picker functional.
+    if (session.pending) {
+      const pendingChoice = choice.backend === 'codex_openrouter'
+        ? {
+          backend: 'codex_openrouter',
+          model: choice.model || null,
+          reasoningEffort: choice.reasoningEffort || null,
+        }
+        : { backend: 'claude_code', model: null, reasoningEffort: null };
+      session.pending_agent_choice = pendingChoice;
+      // Reuse the ordinary session-derived picker logic so the closed control
+      // immediately reflects what will be created, without a full chat render
+      // that could disturb the uncontrolled message textarea.
+      session.agent_backend = pendingChoice.backend;
+      session.agent_model = pendingChoice.model;
+      session.agent_reasoning_effort = pendingChoice.reasoningEffort;
+      DevChat._publishComposer();
+      return;
+    }
 
     const same = choice.backend === current.backend
       && (choice.model || null) === (current.model || null)
@@ -3644,6 +3699,9 @@ const DevChat = {
       pr_number: null,
       session_title: null,
       spec_md: '',
+      // Filled only after an explicit composer pick. Until then creation
+      // omits the backend keys and lets the server resolve the saved default.
+      pending_agent_choice: null,
     };
     DevChat.messages = [];
     // A placeholder is a fresh start: never inherit the previous session's
@@ -3670,7 +3728,11 @@ const DevChat = {
     if (DevChat._pendingCreateInFlight) return false;
     DevChat._pendingCreateInFlight = true;
     try {
-      const session = await DevChat.createSession(pending.app_slug);
+      const session = await DevChat.createSession(
+        pending.app_slug,
+        null,
+        pending.pending_agent_choice || null,
+      );
       if (!session) return false;
       // The viewer can leave the screen while the POST is in flight. The row
       // exists either way (it is theirs, and the list will show it); it just

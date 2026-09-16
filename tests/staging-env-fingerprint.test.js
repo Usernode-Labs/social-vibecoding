@@ -204,6 +204,38 @@ test('platformStagingEnv: forwards the inherited locators only when set', () => 
   }
 });
 
+test('staking previews inherit the receiver and chain, and either change invalidates old previews', (t) => {
+  const keys = ['STAKING_OBSERVABILITY_URL', 'NATIVE_SESSION_V2_TESTNET_CHAIN_ID'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  t.after(() => {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+    stagingEnv._resetExpected();
+  });
+  for (const key of keys) delete process.env[key];
+  const config = { iframeJwtPublicKey: PEM_A };
+  const unset = platformStagingEnv({ id: 7 }, config);
+  assert.equal(keys.some((key) => key in unset), false);
+
+  process.env.STAKING_OBSERVABILITY_URL = 'https://receiver-a.example';
+  process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID = 'chain-a';
+  const first = platformStagingEnv({ id: 7 }, config);
+  assert.equal(first.STAKING_OBSERVABILITY_URL, 'https://receiver-a.example');
+  assert.equal(first.NATIVE_SESSION_V2_TESTNET_CHAIN_ID, 'chain-a');
+  assert.notEqual(envFingerprint(first), envFingerprint(unset));
+
+  process.env.STAKING_OBSERVABILITY_URL = 'https://receiver-b.example';
+  const moved = platformStagingEnv({ id: 7 }, config);
+  assert.notEqual(envFingerprint(moved), envFingerprint(first));
+  process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID = 'chain-b';
+  const switched = platformStagingEnv({ id: 7 }, config);
+  assert.notEqual(envFingerprint(switched), envFingerprint(moved));
+  stagingEnv._resetExpected();
+  assert.equal(stagingEnv.expectedStagingFingerprint(config), envFingerprint(switched));
+});
+
 test('expectedStagingFingerprint: memoised, and equals the digest of a real build env', () => {
   stagingEnv._resetExpected();
   const config = { iframeJwtPublicKey: PEM_A };

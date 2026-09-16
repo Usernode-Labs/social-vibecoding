@@ -162,6 +162,121 @@ test('_frameInsets: a full-viewport frame gets the raw insets', () => {
   assert.deepEqual(out, { top: 44, right: 0, bottom: 34, left: 0 });
 });
 
+// ── The on-screen keyboard, forwarded the same way (#1937/#1491) ────
+//
+// The bridge used to assert that "the app's own visualViewport already
+// reports [the keyboard] correctly inside the frame". It does not: an
+// iframe's visualViewport describes the FRAME, and the keyboard does not
+// resize the frame, so the kit's tracker computes 0 in there forever and
+// `--un-kb-inset` is never set in ANY app. Measured with a docked keyboard
+// and a field inside the frame focused, both sampled at once: the shell read
+// innerHeight 810 / visualViewport 450 / inset 360, the frame read 709/709/0.
+// The shell can see it, so it forwards it beside the safe area.
+
+test('_keyboardInsetFrom: the occluded strip, as the kit computes it', () => {
+  // The measured case: 810 layout viewport, 450 visual, no offset.
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 810, vvHeight: 450, scale: 1 }), 360);
+  // `innerHeight` is still accepted as the old name for the same argument.
+  assert.equal(AppView._keyboardInsetFrom(
+    { innerHeight: 810, vvHeight: 450, scale: 1 }), 360);
+});
+
+test('_keyboardInsetFrom: no keyboard is 0, not a negative', () => {
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 810, vvHeight: 810, scale: 1 }), 0);
+});
+
+test('_keyboardInsetFrom: iOS, where this used to report no keyboard (#1938)', () => {
+  // Measured on an iPhone 17 Pro simulator with the keyboard up. iOS collapses
+  // `innerHeight` to the visual viewport and pans the page, so the old
+  // `innerHeight - vvHeight - vvOffsetTop` came out negative and this returned
+  // 0 — every app frame was told there was no keyboard, on every iOS device.
+  //
+  // installed PWA: innerHeight 409, vv 409, offsetTop 403, layout viewport 812
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 812, vvHeight: 409, vvOffsetTop: 403, scale: 1 }), 403);
+  // Safari: innerHeight 377, vv 377, offsetTop 337, layout viewport 714
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 714, vvHeight: 377, vvOffsetTop: 337, scale: 1 }), 337);
+});
+
+test('_keyboardInsetFrom: agrees with the kit, which is the point of it', () => {
+  // The shell FORWARDS this number into app frames, which cannot read the
+  // keyboard themselves. If the two copies disagreed, an app would act on a
+  // different answer from the shell hosting it.
+  const { physics } = require('../public/usernode-native/v1/native.js');
+  for (const [layoutHeight, vvHeight] of [[810, 450], [812, 409], [714, 377], [810, 810], [844, 804]]) {
+    assert.equal(
+      AppView._keyboardInsetFrom({ layoutHeight, vvHeight, scale: 1 }),
+      physics.keyboardInset({ layoutHeight, vvHeight, vvScale: 1 }),
+      `layout ${layoutHeight} / visual ${vvHeight}`
+    );
+  }
+});
+
+test('_keyboardInsetFrom: a collapsing toolbar is below the floor', () => {
+  // 48px is Chrome's autofill/toolbar strip, not a keyboard — the same
+  // KB_MIN_INSET floor the kit applies, mirrored so both agree.
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 810, vvHeight: 762, scale: 1 }), 0);
+  assert.equal(AppView.KB_MIN_INSET, 50);
+});
+
+test('_keyboardInsetFrom: a pinch-zoomed viewport is not a keyboard', () => {
+  assert.equal(AppView._keyboardInsetFrom(
+    { layoutHeight: 810, vvHeight: 450, scale: 2 }), 0);
+});
+
+test('_frameKeyboardInset: a frame running to the bottom is occluded', () => {
+  // The app frame in the normal view: it reaches the viewport bottom, so the
+  // keyboard covers its last 360px too.
+  assert.equal(
+    AppView._frameKeyboardInset(rect({ top: 97, bottom: 844 }), VIEWPORT, 360), 360);
+});
+
+test('_frameKeyboardInset: a frame ending above the keyboard sees none', () => {
+  // Same reasoning _frameInsets applies to the safe area: chrome that already
+  // clears the strip means the frame is told about nothing.
+  assert.equal(
+    AppView._frameKeyboardInset(rect({ top: 97, bottom: 400 }), VIEWPORT, 360), 0);
+});
+
+test('_frameKeyboardInset: never reports more than the frame is tall', () => {
+  // A short frame sitting inside the occluded strip is fully covered, and
+  // "fully" is its own height — not the keyboard's.
+  assert.equal(
+    AppView._frameKeyboardInset(rect({ top: 700, bottom: 844 }), VIEWPORT, 360), 144);
+});
+
+test('_frameKeyboardInset: no keyboard, no occlusion', () => {
+  assert.equal(
+    AppView._frameKeyboardInset(rect({ top: 97, bottom: 844 }), VIEWPORT, 0), 0);
+});
+
+test('the broadcast memo notices a keyboard change on its own', () => {
+  // The four edges sit still while someone types, so a memo keyed only on
+  // them would post the first keyboard move and then nothing — which is the
+  // whole feature. This pins the key, since the posting path needs a DOM.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(src,
+    /const key = `\$\{value\.top\},\$\{value\.right\},\$\{value\.bottom\},\$\{value\.left\},\$\{value\.keyboard\}`/,
+    'broadcastSafeArea must memoize on the keyboard inset too');
+});
+
+test('the bridge applies the forwarded keyboard inside the frame', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public/usernode-bridge/v1/bridge.js'), 'utf8');
+  assert.match(src, /setProperty\("--un-kb-inset", next \+ "px"\)/,
+    'the bridge must publish --un-kb-inset from the forwarded value');
+  assert.match(src, /classList\.toggle\("un-kb", next > 0\)/,
+    'and toggle html.un-kb, which the kit CSS keys on');
+  // Its own memo: the edges do not move while the keyboard does.
+  assert.match(src, /function applyKeyboard\(/);
+  assert.ok(!/These are the SAFE AREA only/.test(src),
+    'the comment asserting the frame sees the keyboard itself must be gone');
+});
+
 test('_frameInsets: a frame ending above the unsafe strip gets 0 bottom', () => {
   // A docked staging panel / any frame that stops short of the home
   // indicator: the shell's own layout already cleared it.

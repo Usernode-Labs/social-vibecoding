@@ -148,9 +148,11 @@ test('every path the shell prerenders is one the module exports', () => {
   // panel's rows.
   // 21 before the #1367 follow-up removed the notifications disclosure, which
   // was ChevronRightIcon's last prerendered call site (see the expected-absent
-  // list in the next test, which records its full history).
-  assert.ok(shipped.size >= 20,
-    `only ${shipped.size} glyph paths in the prerendered document — the shell ships 20, `
+  // list in the next test, which records its full history). 24 since the
+  // Workshop screen (#workshop) — its menu row and its two-glyph column legend
+  // are drawn unconditionally, so four paths moved from that list into here.
+  assert.ok(shipped.size >= 24,
+    `only ${shipped.size} glyph paths in the prerendered document — the shell ships 24, `
     + 'so something stopped rendering');
 });
 
@@ -160,16 +162,22 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // as normal instead of as the hydration bug it usually is.
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
-  // The Needs-you feed's rail — ballot (three paths), raised hand,
-  // sparkles, play — and the chevron-up its arrows use, all client-rendered.
+  // The Needs-you feed's rail — ballot (three paths), sparkles, play — and
+  // the chevron-up its arrows use, all client-rendered.
+  //
+  // FOUR PATHS LEFT THIS LIST WITH THE WORKSHOP SCREEN (#workshop), and each
+  // is now in the static document because something on it renders
+  // unconditionally rather than behind state: BoardIcon (one path) is the
+  // Workshop row in the app chip's menu, and HandRaisedIcon (one) and
+  // SpeechCheckIcon (two — the bubble and its tick) are the screen's own
+  // column legend, which is drawn whether or not the list has loaded. The two
+  // count glyphs are the same pair the app's own Workshop tab uses, which is
+  // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
     'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
-    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
-    'M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
-    'M8.6 11.8l2.4 2.4 4.4-4.9',
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
@@ -219,7 +227,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
-    'M10.05 4.575a1.575 1.575 0 10-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 013.15 0v1.5m-3.15 0l.075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 013.15 0V15M6.9 7.575a1.575 1.575 0 10-3.15 0v8.175a6.75 6.75 0 006.75 6.75h2.018a5.25 5.25 0 003.712-1.537l1.732-1.732a5.25 5.25 0 001.538-3.712l.003-2.024a.668.668 0 01.198-.471 1.575 1.575 0 10-2.228-2.228 3.818 3.818 0 00-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0116.35 15m.002 0h-.002',
     'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
     'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     'M5 15l7-7 7 7',
@@ -228,6 +235,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // glyph is absent from the cold document by design, not by accident.
     'M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z',
   ];
+  // StakingIcon (#1551) is revealed only after a native wallet snapshot.
+  expected.push('M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
+    'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6');
   assert.deepEqual(absent.sort(), expected.sort());
 });
 

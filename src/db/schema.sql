@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- A renewable browser session still needs a fixed birthday. `expires_at`
+-- slides on authenticated use; `created_at` is the anchor for the absolute
+-- lifetime cap that prevents an actively replayed stolen cookie living
+-- forever. Existing rows are dated from this migration, which can only make
+-- their cap earlier than guessing an older creation time would.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 -- Narrow, HttpOnly-cookie-backed continuation between a successful email
 -- code and first-password setup. This is deliberately not a mobile bearer:
 -- it authorizes exactly one password setup, is stored only as a hash, and is
@@ -7429,6 +7436,64 @@ BEGIN
     CREATE TRIGGER users_reject_retired_username
       BEFORE INSERT OR UPDATE OF username ON users
       FOR EACH ROW EXECUTE FUNCTION reject_retired_username();
+  END IF;
+END $$;
+
+-- Usernames are unique CASE-INSENSITIVELY (#2296). `users.username` is only
+-- UNIQUE on the raw string, so "Drea" could be registered while "drea"
+-- existed — yet every resolver matches LOWER(username) (see
+-- idx_users_username_lower above), so the two then fight over one @mention,
+-- one profile address and one dapp.json `admins` entry. A rename already
+-- refused this (checkAvailability in src/services/usernames.js); the two
+-- registration routes did not.
+--
+-- A trigger, not a UNIQUE index on LOWER(username), because production
+-- already holds case-variant pairs from before this existed: building that
+-- index would fail at boot, and picking a winner between two real accounts
+-- is not something a migration may decide. The trigger enforces the rule on
+-- every NEW insert and rename and leaves the legacy pairs to be resolved by
+-- hand. Same ERRCODE contract as reject_retired_username: every route's
+-- existing 23505 handler answers "Username already taken" unchanged.
+--
+-- The transaction-scoped advisory lock, keyed on the lowered name, is what
+-- makes a check-then-insert safe: two concurrent registrations of "drea"
+-- and "Drea" serialise on it, and the second one's EXISTS runs after the
+-- first has committed. `u.id <> NEW.id` lets a user change the case of
+-- their own handle.
+--
+-- `u.username <> NEW.username` leaves an EXACT match to the raw UNIQUE
+-- constraint. A BEFORE trigger fires before ON CONFLICT is considered, so
+-- without it the idempotent seeds (`INSERT … ON CONFLICT (username) DO
+-- NOTHING`, run on every boot in src/db/migrate.js and
+-- fleet-maintenance.js) would raise here instead of doing nothing.
+CREATE OR REPLACE FUNCTION reject_case_variant_username() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('users.username:' || LOWER(NEW.username)));
+  IF EXISTS (
+    SELECT 1 FROM users u
+     WHERE LOWER(u.username) = LOWER(NEW.username)
+       AND u.username <> NEW.username
+       AND u.id <> NEW.id
+  ) THEN
+    RAISE EXCEPTION 'username % is taken', NEW.username
+      USING ERRCODE = 'unique_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_reject_case_variant_username'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_reject_case_variant_username
+      BEFORE INSERT OR UPDATE OF username ON users
+      FOR EACH ROW EXECUTE FUNCTION reject_case_variant_username();
   END IF;
 END $$;
 

@@ -46,6 +46,7 @@ const T = (offsetDays) => new Date(NOW + offsetDays * DAY);
 let signupRows;
 let userRows;
 let mailRows;
+let socialRows;
 
 function resetFixtures() {
   signupRows = [
@@ -129,6 +130,12 @@ function resetFixtures() {
     // up and report a confirmation mail as the admission mail.
     { id: 72, recipient: 'admitted-silent@example.invalid', kind: 'waitlist_confirm', status: 'sent', created_at: T(-25), error: null },
   ];
+  // Identities connected on the linked ACCOUNTS (not the signup). User 12
+  // connected X; user 11 connected GitHub only.
+  socialRows = [
+    { user_id: 12, provider: 'x', handle: 'admitted_on_x' },
+    { user_id: 11, provider: 'github', handle: 'anchor-gh' },
+  ];
 }
 
 // ─── Mock pool ──────────────────────────────────────────────────────────
@@ -208,6 +215,26 @@ function handleQuery(rawSql, params = []) {
 
   if (sql.startsWith('SELECT COUNT(*)::int AS c FROM waitlist_signups w')) {
     return { rows: [{ c: filterRows(sql).length }] };
+  }
+
+  // The CSV export: same filters, no pagination, newest signup first, plus
+  // the linked account's connected identities.
+  if (sql.startsWith('SELECT w.id, w.email') && sql.includes('user_social_identities')) {
+    const where = sql.slice(sql.lastIndexOf("sg.provider = 'github'"), sql.lastIndexOf('ORDER BY'));
+    let rows = filterRows(where);
+    assert.match(sql, /ORDER BY w\.submitted_at DESC, w\.id DESC$/);
+    rows = rows.slice().sort((a, b) => (b.submitted_at - a.submitted_at) || (b.id - a.id));
+    return {
+      rows: rows.map((r) => {
+        const identity = (provider) => socialRows
+          .find((x) => x.user_id === r.linked_user_id && x.provider === provider);
+        return {
+          ...decorate(r),
+          account_x_handle: identity('x')?.handle ?? null,
+          account_github_handle: identity('github')?.handle ?? null,
+        };
+      }),
+    };
   }
 
   if (sql.startsWith('SELECT w.id, w.email')) {
@@ -423,4 +450,137 @@ test('the survey answers are passed through, and a plain-email row reads null', 
   assert.equal(byId.get(1).answers.country, 'DE');
   assert.equal(byId.get(1).answers.discovery.source, 'friend');
   assert.equal(byId.get(2).answers, null);
+});
+
+// ─── GET /api/v4/admin/waitlist/export-csv ──────────────────────────────
+
+async function getCsv(path, role = 'admin') {
+  const { server, base } = await listen(buildApp(role));
+  try {
+    const res = await fetch(`${base}${path}`);
+    const text = await res.text();
+    return { status: res.status, headers: res.headers, text };
+  } finally { server.close(); }
+}
+
+// Enough of RFC 4180 to read back what the route writes: quoted cells may
+// hold commas, doubled quotes and newlines.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  const [header, ...body] = rows;
+  return body.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+}
+
+// A bulk file of every signup's address is a different exposure class from
+// reading the paged list, so it takes the same WRITE gate users.js's export
+// does — a view-only admin, who can read the list, cannot download it.
+test('export-csv sits behind the write gate: view-only admins and non-admins are refused', async () => {
+  const ro = await getCsv('/api/v4/admin/waitlist/export-csv', 'readonly');
+  assert.equal(ro.status, 403);
+  assert.deepEqual(JSON.parse(ro.text), { success: false, error: 'Full admin access required.' });
+
+  const user = await getCsv('/api/v4/admin/waitlist/export-csv', 'user');
+  assert.equal(user.status, 403);
+});
+
+test('export-csv downloads every signup, newest first, with a dated filename', async () => {
+  const { status, headers, text } = await getCsv('/api/v4/admin/waitlist/export-csv');
+  assert.equal(status, 200);
+  assert.match(headers.get('content-type'), /^text\/csv/);
+  assert.match(headers.get('content-disposition'),
+    /^attachment; filename="waitlist-all-\d{4}-\d{2}-\d{2}\.csv"$/);
+
+  const rows = parseCsv(text);
+  assert.deepEqual(rows.map((r) => r.signup_id), ['5', '2', '3', '4', '1']);
+  assert.equal(text.split('\n')[0], [
+    'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
+    'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
+    'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
+    'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
+    'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+  ].join(','));
+
+  const byId = new Map(rows.map((r) => [r.signup_id, r]));
+  assert.equal(byId.get('3').status, 'admitted');
+  assert.equal(byId.get('1').status, 'waiting');
+  assert.equal(byId.get('2').confirmed_at, '');
+  assert.equal(byId.get('2').came_from_email, 'anchor@example.invalid');
+  assert.equal(byId.get('1').brought_in, '2');
+  assert.equal(byId.get('1').account_username, 'anchor-user');
+  assert.equal(byId.get('1').has_platform_access, 'false');
+  assert.equal(byId.get('4').has_platform_access, '');
+  assert.equal(byId.get('1').country, 'DE');
+  assert.equal(byId.get('5').farcaster, 'someone');
+});
+
+test('export-csv honours the status and only filters the screen has set', async () => {
+  const pending = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv?status=pending')).text);
+  assert.deepEqual(pending.map((r) => r.signup_id), ['5', '2', '1']);
+
+  const released = await getCsv('/api/v4/admin/waitlist/export-csv?status=released&only=confirmed');
+  assert.match(released.headers.get('content-disposition'), /waitlist-released-/);
+  assert.deepEqual(parseCsv(released.text).map((r) => r.signup_id), ['3', '4']);
+
+  const invited = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv?only=invited')).text);
+  assert.deepEqual(invited.map((r) => r.signup_id), ['1']);
+});
+
+// The point of the file: matching people who asked for access on X against
+// who actually joined. The signup's own verified handle wins; the linked
+// account's connected identity fills in otherwise, and the source column
+// says which one an admin is looking at.
+test('export-csv carries the X handle from the signup, else from the linked account', async () => {
+  signupRows[4].answers.verified = { x: 'thorough_x', linkedin: 'thorough-li' };
+  signupRows[0].answers.handles = { telegram: '@anchor_tg' };
+  signupRows[0].answers.referrer_handle = '@someone_who_told_me';
+
+  const rows = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text);
+  const byId = new Map(rows.map((r) => [r.signup_id, r]));
+
+  assert.equal(byId.get('5').x_handle, 'thorough_x');
+  assert.equal(byId.get('5').x_handle_source, 'waitlist');
+  assert.equal(byId.get('5').linkedin_handle, 'thorough-li');
+
+  assert.equal(byId.get('3').x_handle, 'admitted_on_x');
+  assert.equal(byId.get('3').x_handle_source, 'account');
+
+  assert.equal(byId.get('1').x_handle, '');
+  assert.equal(byId.get('1').x_handle_source, '');
+  assert.equal(byId.get('1').github_handle, 'anchor-gh');
+  // A typed `@` is dropped so the column matches a plain handle list.
+  assert.equal(byId.get('1').telegram, 'anchor_tg');
+  assert.equal(byId.get('1').referred_by_handle, 'someone_who_told_me');
+});
+
+// Survey answers come from a PUBLIC form and this file is opened in a
+// spreadsheet: a leading formula character is neutralised, and a comma,
+// quote or newline stays inside its cell.
+test('export-csv neutralises formula injection and quotes awkward cells', async () => {
+  signupRows[1].answers = {
+    discovery: { source: 'other', detail: '=HYPERLINK("http://evil.invalid","x")' },
+    city: 'Paris, France',
+    made_url: 'line one\nline two',
+  };
+
+  const { text } = await getCsv('/api/v4/admin/waitlist/export-csv');
+  const row = parseCsv(text).find((r) => r.signup_id === '2');
+  assert.equal(row.found_us_detail, `'=HYPERLINK("http://evil.invalid","x")`);
+  assert.equal(row.city, 'Paris, France');
+  assert.equal(row.made_url, 'line one\nline two');
+  assert.equal(parseCsv(text).length, 5);
 });

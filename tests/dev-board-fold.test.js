@@ -669,12 +669,35 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 666 → 667: the waitlist connect callback's status page, loaded with a
   // state no server has minted, so it renders the "link has expired"
   // outcome without needing provider credentials on the preview.
+  // 667 → 669: Profile staking (#1551) adds Active and Delegated previews.
+  // 669 → 670: real staking context verifies preview network configuration.
   //
-  // 667 → 668: the programme console's Challenge scoring screen, which has
-  // to render its schedule card and its rules list as siblings — the check
-  // selects across the two, because a screen that drew only one of them
-  // would still look loaded.
-  assert.equal(DAPP.tests.length, 668);
+  // 667 → 672: independently on main, the Workshop screen (#workshop) — the
+  // app chip's Workshop row beside the amended Home-to-Discover adjacency
+  // check, and four on the screen itself, all read through `?demo=1#workshop`
+  // so the numbers come from the fixed demo rows rather than a cloned
+  // database whose `chat_sessions` the staging clone leaves empty. The four
+  // are not one claim four times: the visual one reads a row's identity, its
+  // link to that app's own Workshop page and its votes number together (it is
+  // also the scenario the before/after screenshots are shot on); the second
+  // reads the OTHER number beside it, which no screenshot can be asserted on;
+  // the third reads the ORDER, which is the screen's own argument — an app
+  // with a decision waiting leads; and the fourth reads the empty line's
+  // absence, which is the one thing a populated screenshot cannot show. Room
+  // remains against MAX_DECLARED_TESTS (710).
+  //
+  // 670 → 675, 672 → 675: the tallies above were computed on either side of
+  // THIS merge against the same shared 667 and do not reconcile through the
+  // comment trail alone. This branch's staking pair added 3; main's Workshop
+  // screen added 5; neither set overlaps the other, so the merged manifest
+  // holds every one of them: 667 + 3 + 5 = 675.
+  //
+  // 675 → 676: the programme console's Challenge scoring screen, which has to
+  // render its schedule card and its rules list as siblings — the check
+  // selects across the two, because a screen that drew only one of them would
+  // still look loaded. Computed against the same shared 667 as the two sets
+  // above and overlapping neither, so the merged manifest is 667 + 3 + 5 + 1.
+  assert.equal(DAPP.tests.length, 676);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

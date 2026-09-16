@@ -213,7 +213,7 @@ function makeDevChat() {
   // placeholder makes no requests" is asserted at all.
   sandbox.reply = async () => ({ ok: true, status: 200, json: async () => ({}) });
   sandbox.fetch = async (url, init) => {
-    requests.push([String(url), (init && init.method) || 'GET']);
+    requests.push([String(url), (init && init.method) || 'GET', init || {}]);
     return sandbox.reply(url, init);
   };
   sandbox.window = sandbox;
@@ -358,6 +358,65 @@ test('an unsent change on screen makes no requests at all', async () => {
   assert.equal(await DevChat._resumeCurrentSessionIfPaused({ silent: true }), false);
   assert.deepEqual(plain(sessionRequests()), [],
     'arriving, reading and leaving again writes nothing — the whole point of #2241');
+});
+
+test('an OpenRouter pick stays local until the placeholder is created', async () => {
+  const { DevChat, sandbox, requests, sessionRequests } = makeDevChat();
+  DevChat.startPendingSession('recipe-box');
+
+  await DevChat._switchCurrentCodingAgent({
+    backend: 'codex_openrouter',
+    model: 'openai/gpt-5.3-codex',
+    reasoningEffort: 'high',
+  });
+
+  assert.deepEqual(plain(sessionRequests()), [],
+    'an id-less placeholder must never call /sessions/null/reset-agent-context');
+  assert.deepEqual(plain(DevChat.currentSession.pending_agent_choice), {
+    backend: 'codex_openrouter',
+    model: 'openai/gpt-5.3-codex',
+    reasoningEffort: 'high',
+  });
+  assert.equal(DevChat.currentSession.agent_backend, 'codex_openrouter',
+    'the grouped picker immediately reflects the staged provider');
+
+  sendReplies(sandbox, {
+    create: {
+      id: 101,
+      agent_backend: 'codex_openrouter',
+      agent_model: 'openai/gpt-5.3-codex',
+      agent_reasoning_effort: 'high',
+    },
+  });
+  await DevChat.sendMessage(MSG);
+
+  const create = requests.find(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
+  assert.deepEqual(JSON.parse(create[2].body), {
+    backend: 'codex_openrouter',
+    model: 'openai/gpt-5.3-codex',
+    reasoningEffort: 'high',
+  }, 'the first real session is created with the model selected while it was pending');
+});
+
+test('an Anthropic pick explicitly overrides the saved provider on first send', async () => {
+  const { DevChat, sandbox, requests, sessionRequests } = makeDevChat();
+  DevChat.startPendingSession('recipe-box');
+
+  await DevChat._onModelPicked('anthropic:claude-fable-5-1');
+
+  assert.deepEqual(plain(sessionRequests()), [], 'the pending choice is still client-only');
+  assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
+  assert.deepEqual(plain(DevChat.currentSession.pending_agent_choice), {
+    backend: 'claude_code', model: null, reasoningEffort: null,
+  });
+
+  sendReplies(sandbox, { create: { id: 101, agent_backend: 'claude_code' } });
+  await DevChat.sendMessage(MSG);
+
+  const create = requests.find(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
+  assert.deepEqual(JSON.parse(create[2].body), {
+    backend: 'claude_code', model: null, reasoningEffort: null,
+  }, 'the server must not silently reapply an OpenRouter default after this explicit pick');
 });
 
 // ── 4. the send ───────────────────────────────────────────────────────

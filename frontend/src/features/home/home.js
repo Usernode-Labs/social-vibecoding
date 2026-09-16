@@ -1831,10 +1831,25 @@ const Home = {
   // lever on touch (it fires ~100ms before click, and long-press-to-drag
   // still ends up here harmlessly); `mouseenter` buys much more on desktop.
   // Passive: this never calls preventDefault and must not delay scrolling.
+  //
+  // #1882: the STATUS is not consulted here, on purpose. app-grid.tsx's
+  // `wireRef` is guarded by a module-level WeakSet, so this runs exactly once
+  // per card DOM node — and React keeps that node across re-renders. Reading
+  // `card.dataset.status` here therefore froze a snapshot taken the first
+  // time the tile was ever attached: an app that was still coming up when
+  // the homepage painted got no listeners, and got none later however many
+  // times it reached 'running'. That is the slow case the issue is about, on
+  // a cold load, where rows move into 'running' while the viewer watches.
+  //
+  // `App.prewarmApp` already re-reads the live launcher record and returns
+  // unless `rec.status === 'running'` (also `demo`, `self_hosted`, `url`,
+  // offline), so the check belongs there — at event time, against the truth —
+  // and this only has to attach. That is the shape browse.js's two call sites
+  // always had, which is why the homepage was the one surface with this bug.
+  // `demo` stays here: it is a fixed property of the tile, not a status.
   _wirePrewarm(card) {
     const slug = card.dataset.slug;
     if (!slug || card.dataset.demo === 'true') return;
-    if (card.dataset.status !== 'running') return;
     const warm = () => { try { App.prewarmApp(slug); } catch (err) { /* ignore */ } };
     card.addEventListener('pointerdown', warm, { passive: true });
     card.addEventListener('mouseenter', warm);
@@ -3241,12 +3256,13 @@ const Home = {
         run: () => Home._menuToggleLock(app),
       });
     }
-    // The server computes this from the shared contributor definition and
-    // rechecks it on DELETE. Keep the full-admin fallback for older payloads
-    // already in memory while a deployment rolls over. #2161: the creator of
-    // a shared app (delete_block 'shared' is only ever handed to them) keeps
-    // the entry, because the dialog is where the refusal is explained.
-    if (user.canAdminWrite || app.can_delete || app.delete_block === 'shared') {
+    // App settings is the canonical access editor, so every creator/app admin
+    // with can_manage gets the entry even when deletion is unavailable. Keep
+    // the full-admin fallback for older payloads already in memory while a
+    // deployment rolls over. #2161: the creator of a shared app
+    // (delete_block 'shared' is only ever handed to them) keeps the entry,
+    // because the dialog is also where the deletion refusal is explained.
+    if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     return items;

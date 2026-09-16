@@ -159,7 +159,15 @@ test('ensureStaging {dock:true} enters docked mode with slot geometry; plain ope
 });
 
 test('a rebuild resolved by onStagingRebuildResult preserves the docked mode', async () => {
-  const { AppView, getEl } = makeAppViewHarness({ fetchImpl: okJson({ status: 'rebuilding' }) });
+  let request = 0;
+  const { AppView, getEl } = makeAppViewHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => (++request === 1
+        ? { status: 'rebuilding' }
+        : { status: 'ready', url: 'https://rebuilt.example', verified: true }),
+    }),
+  });
   const overlay = getEl('staging-overlay');
   const swaps = [];
   const realSwap = AppView.swapToStaging.bind(AppView);
@@ -175,7 +183,8 @@ test('a rebuild resolved by onStagingRebuildResult preserves the docked mode', a
   assert.ok(AppView._pendingStagingPreview, 'pending marker parked');
   assert.equal(AppView._pendingStagingPreview.dock, true, 'marker records the dock request');
 
-  AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  assert.equal(request, 2, 'the rebuild event is verified through ensure-staging before navigation');
   assert.equal(swaps.length, 1, 'preview opened after the rebuild');
   assert.equal(swaps[0].opts.dock, undefined, 'resolution passes no dock — current mode wins');
   assert.equal(AppView._stagingMode, 'docked', 'still docked after the real swapToStaging ran');

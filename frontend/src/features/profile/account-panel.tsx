@@ -24,7 +24,7 @@
  * the catch-all hamburger, so they stay on the screen that is already about
  * the viewer.
  *
- * Both native rows ship hidden until the bridge reports the capability.
+ * The native rows ship hidden until the bridge reports the capability.
  * Logout is available on every surface through the shared Settings flow.
  */
 
@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { ensureSettings } from '../settings/facade.js';
 import { NodePillRow } from '../header/node-pill-row';
 import { WalletRow } from '../header/wallet-row';
+import { StakingRow } from './staking-sheet';
 
 export function AccountPanel() {
   const pending = useRef(false);
@@ -64,11 +65,12 @@ export function AccountPanel() {
         Account
       </div>
       {/*
-          Native only — both ship hidden and their stores reveal them when the
+          Native only — these ship hidden and their stores reveal them when the
           bridge reports the capability.
       */}
       <NodePillRow />
       <WalletRow />
+      <StakingRow />
       <Button
         type="button"
         layout="full"

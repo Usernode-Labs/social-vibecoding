@@ -46,9 +46,13 @@ const nativeJs = fs.readFileSync(
 // because the header's chat bubble was on every route, so a full-screen
 // Messages had no honest answer to "back to where?". The bubble is gone —
 // Messages is a row of the chip's menu — and a menu row goes to a page.
+// #workshop-screen joins them as a first-class root: the Workshop across all
+// your apps is a page in the chip's menu, so it replaces the screen you were
+// on rather than presenting over it, and it takes the navigate/exit pair every
+// other root has.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
-  'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
-  'messages-screen'];
+  'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
+  'settings-screen', 'messages-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -57,10 +61,11 @@ const NAVIGATIONS = [
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
+  { fn: 'navigateToWorkshop', reveal: 'workshop-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitWorkshop'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.

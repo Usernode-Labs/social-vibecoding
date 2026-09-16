@@ -547,45 +547,90 @@ test('native.js: the spinner lingers after onRefresh settles before retracting',
 
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
 
-test('keyboardInset: iOS overlay keyboard returns the occluded height', () => {
+test('keyboardInset: the keyboard is what the layout viewport lost', () => {
   // iPhone-ish: layout viewport 844px, keyboard shrinks the visual
-  // viewport to 508px while overlaying the layout viewport.
+  // viewport to 508px.
   assert.equal(
-    keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 0, vvScale: 1 }),
+    keyboardInset({ layoutHeight: 844, vvHeight: 508, vvScale: 1 }),
     336
-  );
-  // A scrolled visual viewport (offsetTop) reduces the occluded strip.
-  assert.equal(
-    keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 100, vvScale: 1 }),
-    236
   );
   // Fractional viewport metrics round to integer px.
   assert.equal(
-    keyboardInset({ innerHeight: 844, vvHeight: 507.7, vvOffsetTop: 0, vvScale: 1 }),
+    keyboardInset({ layoutHeight: 844, vvHeight: 507.7, vvScale: 1 }),
+    336
+  );
+  // `innerHeight` is still accepted as the old name for the same argument,
+  // so an app calling this directly keeps working.
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 508, vvScale: 1 }),
     336
   );
 });
 
-test('keyboardInset: Android resize mode (innerHeight tracks the vv) returns 0', () => {
-  // The layout viewport shrank with the keyboard — fixed bottom:0
-  // already sits above it, so no extra inset (no double compensation).
+test('keyboardInset: the pan is not subtracted from the keyboard (#1938)', () => {
+  // THIS IS THE BUG THIS FUNCTION SHIPPED WITH. It read
+  // `innerHeight - vvHeight - vvOffsetTop`, and the case below used to assert
+  // 236 — a scrolled visual viewport "reducing the occluded strip".
+  //
+  // At scale 1 a non-zero `vvOffsetTop` is not an incidental scroll: it IS
+  // iOS panning the document to reveal the focused field, which is to say it
+  // is the keyboard. Subtracting it cancelled the measurement. It is ignored
+  // now, so the same metrics report the whole keyboard.
   assert.equal(
-    keyboardInset({ innerHeight: 508, vvHeight: 508, vvOffsetTop: 0, vvScale: 1 }),
+    keyboardInset({ layoutHeight: 844, vvHeight: 508, vvOffsetTop: 100, vvScale: 1 }),
+    336
+  );
+});
+
+test('keyboardInset: real iOS metrics, which used to report no keyboard', () => {
+  // Measured on an iPhone 17 Pro simulator, keyboard up, at the moment the
+  // dev session's composer was invisible behind it (#1938). `innerHeight`
+  // collapses to the visual viewport on iOS and the page is panned, so the
+  // old expression went NEGATIVE and returned 0 — no keyboard, so nothing
+  // in the kit or the shell reserved anything.
+  //
+  // installed PWA: innerHeight 409, vv 409, offsetTop 403, layout 812
+  assert.equal(
+    keyboardInset({ layoutHeight: 812, vvHeight: 409, vvOffsetTop: 403, vvScale: 1 }),
+    403
+  );
+  assert.equal(
+    keyboardInset({ innerHeight: 409, vvHeight: 409, vvOffsetTop: 403, vvScale: 1 }),
+    0,
+    'passing the COLLAPSED innerHeight still reports nothing — the caller owes a layout height'
+  );
+  // Safari: innerHeight 377, vv 377, offsetTop 337, layout 714
+  assert.equal(
+    keyboardInset({ layoutHeight: 714, vvHeight: 377, vvOffsetTop: 337, vvScale: 1 }),
+    337
+  );
+  // Android Chrome, unchanged by any of this: innerHeight == layout == 810.
+  assert.equal(
+    keyboardInset({ layoutHeight: 810, vvHeight: 498, vvOffsetTop: 0, vvScale: 1 }),
+    312
+  );
+});
+
+test('keyboardInset: a layout viewport that really shrank returns 0', () => {
+  // `interactive-widget: resizes-content`, where the layout viewport shrinks
+  // with the keyboard — a fixed bottom:0 element already sits above it, so
+  // reserving again would compensate twice.
+  assert.equal(
+    keyboardInset({ layoutHeight: 508, vvHeight: 508, vvScale: 1 }),
     0
   );
 });
 
 test('keyboardInset: sub-threshold noise (URL-bar transients) returns 0', () => {
   assert.equal(
-    keyboardInset({ innerHeight: 844, vvHeight: 804, vvOffsetTop: 0, vvScale: 1 }),
+    keyboardInset({ layoutHeight: 844, vvHeight: 804, vvScale: 1 }),
     0
   );
   // Exactly at the threshold counts as a keyboard.
   assert.equal(
     keyboardInset({
-      innerHeight: 844,
+      layoutHeight: 844,
       vvHeight: 844 - physics.KB_MIN_INSET,
-      vvOffsetTop: 0,
       vvScale: 1,
     }),
     physics.KB_MIN_INSET
@@ -594,11 +639,11 @@ test('keyboardInset: sub-threshold noise (URL-bar transients) returns 0', () => 
 
 test('keyboardInset: pinch zoom forces 0 (a zoomed viewport is not a keyboard)', () => {
   assert.equal(
-    keyboardInset({ innerHeight: 844, vvHeight: 422, vvOffsetTop: 0, vvScale: 2 }),
+    keyboardInset({ layoutHeight: 844, vvHeight: 422, vvScale: 2 }),
     0
   );
   // Missing scale is treated as unzoomed.
-  assert.equal(keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 0 }), 336);
+  assert.equal(keyboardInset({ layoutHeight: 844, vvHeight: 508 }), 336);
 });
 
 test('keyboardInset: negative occlusion clamps to 0', () => {

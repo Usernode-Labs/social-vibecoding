@@ -42,9 +42,9 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
     'gates the redirect on Sec-Fetch-Dest: document'
   );
   // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
-  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (falling back to
-  // the value baked in at scaffold time), so the link follows the platform
-  // when its domain moves instead of pointing at where it used to be.
+  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (no hostname is
+  // baked in at scaffold time), so the link follows the platform when its
+  // domain moves instead of pointing at where it used to be.
   assert.match(
     server,
     /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
