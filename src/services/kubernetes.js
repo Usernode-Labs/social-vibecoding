@@ -1588,6 +1588,56 @@ function checkResourceRequest(request, limit, resource) {
   return quantityNumber(request) > limitNumber ? limit : request;
 }
 
+// Kubernetes pod-log reads are snapshots, not a durable stream contract. A
+// terminal read can legitimately arrive empty or shorter than an earlier
+// follow/poll read (for example while the Pod is completing). Keep complete
+// lines we have already observed and only let the terminal snapshot extend
+// that known prefix. An inconsistent snapshot must never erase evidence the
+// progress observer already received.
+function boundedCheckOutput(text, maxBuffer) {
+  const bytes = Buffer.from(text || '', 'utf8');
+  let end = Math.min(bytes.length, maxBuffer);
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
+function createCheckOutputAccumulator(maxBuffer) {
+  const chunks = [];
+  let bytes = 0;
+  let truncated = false;
+  return {
+    appendLine(line) {
+      const chunk = Buffer.from(`${line}\n`, 'utf8');
+      // Retain complete protocol lines only. A partial frame is not useful to
+      // settlement, and keeping it would also risk cutting a UTF-8 sequence.
+      if (truncated || bytes + chunk.length > maxBuffer) {
+        truncated = true;
+        return false;
+      }
+      chunks.push(chunk);
+      bytes += chunk.length;
+      return true;
+    },
+    output() { return Buffer.concat(chunks, bytes).toString('utf8'); },
+    get truncated() { return truncated; },
+  };
+}
+
+function reconcileCheckOutput(observed, terminal) {
+  const known = String(observed || '');
+  const snapshot = String(terminal || '');
+  if (!known) return snapshot;
+  if (!snapshot) return known;
+  // The normal cumulative-log case: preserve any new complete lines or
+  // trailing fragment that only the terminal read saw.
+  if (snapshot.startsWith(known)) return snapshot;
+  // Empty/short terminal reads are the production failure #2340 reproduced.
+  if (known.startsWith(snapshot)) return known;
+  // A non-prefix snapshot is not safe to splice into a line protocol. The
+  // observed stream is the only version whose ordering we actually know.
+  return known;
+}
+
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
@@ -1651,24 +1701,14 @@ async function runCheckJob(config, {
   let following = false;
   let followAbort = null;
   const retainPartial = !unitSuite && salvagePartial;
-  const retained = [];
-  let retainedBytes = 0;
+  const retained = createCheckOutputAccumulator(maxBuffer);
   const reportLine = line => {
-    if (retainPartial && retainedBytes < maxBuffer) {
-      const bytes = Buffer.from(`${line}\n`, 'utf8').subarray(0, maxBuffer - retainedBytes);
-      retained.push(bytes);
-      retainedBytes += bytes.length;
-    }
+    if (retainPartial) retained.appendLine(line);
     if (typeof onStdoutLine === 'function') {
       try { onStdoutLine(line); } catch { /* observer must not break the run */ }
     }
   };
-  const boundedOutput = text => {
-    const bytes = Buffer.from(text || '', 'utf8');
-    let end = Math.min(bytes.length, maxBuffer);
-    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf8');
-  };
+  const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
@@ -1777,11 +1817,13 @@ async function runCheckJob(config, {
         throw err;
       }
       if (job.status?.succeeded) {
-        let stdout;
-        try { stdout = await observeCheck(readOutput(), signal); }
+        let terminalOutput;
+        try { terminalOutput = await observeCheck(readOutput(), signal); }
         catch (err) { err.captureLogFailed = !unitSuite; throw err; }
         signal?.throwIfAborted();
-        if (!unitSuite && Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
+        const stdout = reconcileCheckOutput(retained.output(), terminalOutput);
+        if (!unitSuite && (Buffer.byteLength(terminalOutput, 'utf8') > maxBuffer
+            || retained.truncated)) {
           const err = new Error('Capture output exceeds maxBuffer');
           err.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
           err.stdout = boundedOutput(stdout);
@@ -1804,8 +1846,7 @@ async function runCheckJob(config, {
     throw err;
   } catch (err) {
     signal?.throwIfAborted();
-    const observed = Buffer.concat(retained).toString('utf8');
-    const stdout = boundedOutput(Buffer.byteLength(err.stdout || '', 'utf8') >= retainedBytes ? err.stdout : observed);
+    const stdout = boundedOutput(reconcileCheckOutput(retained.output(), err.stdout));
     // Capture output is a frame protocol, so every runtime-level ending can
     // be settled honestly even when it produced zero complete frames. Keep
     // the Job/container reason alongside the salvaged stream instead of
@@ -1902,6 +1943,7 @@ async function collectCheckJob(config, {
   let podName = null;
   let consumed = 0;
   let tick = 0;
+  const retained = createCheckOutputAccumulator(maxBuffer);
   const findPod = async () => {
     if (podName) return podName;
     const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
@@ -1913,22 +1955,19 @@ async function collectCheckJob(config, {
     return String(await core.readNamespacedPodLog({ name: podName, namespace, container: kind, limitBytes }) || '');
   };
   const deliverNew = (text) => {
-    if (typeof onStdoutLine !== 'function') return;
     if (text.length <= consumed) return;
     const fresh = text.slice(consumed);
     const lastNl = fresh.lastIndexOf('\n');
     if (lastNl === -1) return;
     for (const line of fresh.slice(0, lastNl).split('\n')) {
-      try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+      retained.appendLine(line);
+      if (typeof onStdoutLine === 'function') {
+        try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+      }
     }
     consumed += lastNl + 1;
   };
-  const boundedOutput = text => {
-    const bytes = Buffer.from(text || '', 'utf8');
-    let end = Math.min(bytes.length, maxBuffer);
-    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf8');
-  };
+  const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
   const finish = async (job) => {
     const described = describeCheckJob(job);
     let raw = '';
@@ -1937,9 +1976,11 @@ async function collectCheckJob(config, {
     catch { logFailed = true; }
     // Everything the observer has not yet seen, so the progress state the
     // caller is rebuilding ends level with the verdict it is about to read.
-    deliverNew(raw.endsWith('\n') ? raw : `${raw}\n`);
-    const over = !unitSuite && Buffer.byteLength(raw, 'utf8') > maxBuffer;
-    const stdout = over ? boundedOutput(raw) : raw;
+    deliverNew(raw);
+    const reconciled = reconcileCheckOutput(retained.output(), raw);
+    const over = !unitSuite && (Buffer.byteLength(raw, 'utf8') > maxBuffer
+      || retained.truncated);
+    const stdout = over ? boundedOutput(reconciled) : reconciled;
     let exitCode = null;
     let terminatedReason = null;
     try {
@@ -1978,13 +2019,17 @@ async function collectCheckJob(config, {
     const described = describeCheckJob(job);
     if (described.state !== 'running') return finish(job);
     tick += 1;
-    if (tick % PROGRESS_EVERY_TICKS === 1 && typeof onStdoutLine === 'function') {
+    if (tick % PROGRESS_EVERY_TICKS === 1) {
       try { deliverNew(await readLog({ limitBytes: maxBuffer })); } catch { /* progress is best-effort */ }
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   let stdout = '';
-  try { stdout = boundedOutput(await readLog({ limitBytes: maxBuffer })); } catch { /* nothing salvageable */ }
+  try {
+    const raw = await readLog({ limitBytes: maxBuffer });
+    deliverNew(raw);
+    stdout = boundedOutput(reconcileCheckOutput(retained.output(), raw));
+  } catch { stdout = retained.output(); }
   return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
 }
 
