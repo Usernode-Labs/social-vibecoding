@@ -7799,6 +7799,14 @@ const DevChat = {
     if (!DevChat._markdownReady) {
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const escAttr = (s) => esc(s).replace(/"/g, '&quot;');
+      const inlineImage = (src, alt) => {
+        const image = `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+        // Preserve an explicit Markdown image link. Otherwise make the
+        // scaled issue screenshot itself the link to its original asset, so
+        // a click, tap or keyboard activation opens the full-size image.
+        if (DevChat._renderImageWithinLink) return image;
+        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">${image}</a>`;
+      };
 
       marked.use({
         breaks: true,
@@ -7837,7 +7845,7 @@ const DevChat = {
               const src = srcMatch ? (srcMatch[1] ?? srcMatch[2] ?? '') : '';
               const alt = altMatch ? (altMatch[1] ?? altMatch[2] ?? '') : '';
               if (/^https:\/\//i.test(src) || /^\/[^/]/.test(src)) {
-                return `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+                return inlineImage(src, alt);
               }
             }
             return esc(text);
@@ -7902,8 +7910,16 @@ const DevChat = {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
           },
           link({ href, title, tokens }) {
-            const inner = this.parser.parseInline(tokens);
-            if (!/^https?:\/\//i.test(href)) return inner;
+            const linkOk = /^https?:\/\//i.test(href);
+            const previous = !!DevChat._renderImageWithinLink;
+            if (linkOk) DevChat._renderImageWithinLink = true;
+            let inner;
+            try {
+              inner = this.parser.parseInline(tokens);
+            } finally {
+              DevChat._renderImageWithinLink = previous;
+            }
+            if (!linkOk) return inner;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
           },
           image({ href, title, text }) {
@@ -7917,7 +7933,7 @@ const DevChat = {
             const inlineOk = DevChat._renderImagesInline
               && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
             if (inlineOk) {
-              return `<img class="dc-inline-img" src="${escAttr(href)}" alt="${escAttr(text || '')}" loading="lazy">`;
+              return inlineImage(href, text || '');
             }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
@@ -7930,7 +7946,7 @@ const DevChat = {
           node.setAttribute('target', '_blank');
           node.setAttribute('rel', 'noopener noreferrer');
           const href = node.getAttribute('href') || '';
-          if (href && !/^https?:\/\//i.test(href)) {
+          if (href && !/^https?:\/\//i.test(href) && !/^\/[^/]/.test(href)) {
             node.removeAttribute('href');
           }
         }
@@ -7951,6 +7967,7 @@ const DevChat = {
       html = marked.parse(text, { breaks });
     } finally {
       DevChat._renderImagesInline = false;
+      DevChat._renderImageWithinLink = false;
     }
 
     return DOMPurify.sanitize(html, {
@@ -7959,7 +7976,7 @@ const DevChat = {
         'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
       ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
-        ...(allowImages ? ['src', 'alt', 'loading'] : [])],
+        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
       ALLOW_DATA_ATTR: false,
     });
   },
