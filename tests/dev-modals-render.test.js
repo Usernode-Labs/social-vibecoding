@@ -144,7 +144,10 @@ test('the Generate-proposal dialog is a short summary of the issue, model and bi
   const view = lastView(published);
   assert.equal(view.issueNumber, 42);
   assert.equal(view.preselect, 'sonnet');
-  assert.equal(view.billingNote, 'Uses your available Usernode credits.');
+  // #1873: the platform is Homeroom. The credits are the platform's, not the
+  // block-producing node's, so this line is brand and was renamed with the
+  // rest of the user-facing copy (tests/platform-brand-strings.test.js).
+  assert.equal(view.billingNote, 'Uses your available Homeroom credits.');
   assert.deepEqual(view.options.map((o) => o.id), ['opus', 'sonnet']);
 
   const html = autoHtml(view);
@@ -152,7 +155,7 @@ test('the Generate-proposal dialog is a short summary of the issue, model and bi
   assert.match(html, /inspect the issue and repository, then create a proposal for review/);
   assert.match(html, />Sonnet</);
   assert.match(html, /simple, small changes/);
-  assert.match(html, /Uses your available Usernode credits/);
+  assert.match(html, /Uses your available Homeroom credits/);
   assert.match(html, />Change model</);
   assert.doesNotMatch(html, /Experimental|Building in|billed to you/);
   assert.doesNotMatch(html, /<select|type="search"|Favorites|Refresh/,

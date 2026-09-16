@@ -14720,12 +14720,12 @@ const AppView = {
       ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
         ? 'Uses your included OpenRouter credits.'
         : 'Uses your OpenRouter account.')
-      : 'Uses your available Usernode credits.';
+      : 'Uses your available Homeroom credits.';
 
     document.body.appendChild(root);
     react.mountAutoSessionModal(root, {
       issueNumber,
-      intro: 'Usernode will inspect the issue and repository, then create a proposal for review.',
+      intro: 'Homeroom will inspect the issue and repository, then create a proposal for review.',
       billingNote,
       options,
       preselect: preselect || (options[0] && options[0].id) || '',

@@ -6609,7 +6609,7 @@
   /* __USERNODE_OFFLINE_READY_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
-  // ── Floating "Open in Usernode" pill (chromeless share views) ─────────
+  // ── Floating "Open in Homeroom" pill (chromeless share views) ─────────
   //
   // Apps shared via their bare production subdomain
   // (<slug>.<platform-host>) render with no platform chrome at all —
@@ -6688,10 +6688,10 @@
       link.id = "__un-platform-link";
       link.className = "__un-platform-link";
       link.href = target.href;
-      link.setAttribute("aria-label", "Open this app on Usernode");
+      link.setAttribute("aria-label", "Open this app on Homeroom");
 
       var label = document.createElement("span");
-      label.textContent = "Open in Usernode";
+      label.textContent = "Open in Homeroom";
 
       var glyph = document.createElement("span");
       glyph.className = "__un-platform-link-glyph";
