@@ -1123,3 +1123,37 @@ test('the Filters dialog draws the two switches only when the payload says so', 
   const SHELL = read('public/index.html');
   assert.ok(!SHELL.includes('board-filters-assignedtome'));
 });
+
+test('a declared check reading the filter bar asks for the All-items sub-view (ws=all)', () => {
+  // The bug this pins cost a check round. `#app/<slug>/workshop` opens the
+  // Workshop LANDER; the board's search-and-filter bar lives in the head of
+  // the All-items pane, which mounts only under `ws=all`. Three checks named
+  // the bare workshop route and read `#dev-filter-row`, so the element they
+  // wanted had never been rendered — a selector that resolves perfectly
+  // against a page the runner was never on.
+  //
+  // tests/dapp-selectors-resolve.test.js cannot catch this: it resolves
+  // selectors against the STATIC shell, and every one of these nodes is
+  // rendered at runtime by React. The invariant is about the ROUTE, so it is
+  // checked here instead — any declared check whose selector names a node the
+  // All-items sub-view owns must carry `ws=all` when it loads the workshop
+  // route.
+  const DAPP = JSON.parse(read('dapp.json'));
+  // Ids and attributes that exist only inside the All-items pane. Deliberately
+  // not `#dev-workshop` itself, which the lander renders too.
+  const ALL_ITEMS_ONLY = [
+    '#dev-filter-row', '#dev-kanban-filterbar', '#dev-kanban-search',
+    '#dev-kanban-filters-btn', 'data-quick-filter', 'data-ws-pane',
+    'data-ws-ear', 'dev-ws-group',
+  ];
+  const offenders = [];
+  for (const t of DAPP.tests) {
+    const p = t.path || '';
+    if (!/#app\/[^/]+\/workshop\b/.test(p)) continue;
+    const sel = t.expectSelector || t.expectNoSelector || '';
+    if (!ALL_ITEMS_ONLY.some((n) => sel.includes(n))) continue;
+    if (!/[?&]ws=all(&|$|#)/.test(p)) offenders.push(`${t.name} → ${p}`);
+  }
+  assert.deepEqual(offenders.join('\n'), '',
+    'these workshop-route checks read All-items nodes without ws=all');
+});
