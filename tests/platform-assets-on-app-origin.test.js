@@ -60,6 +60,64 @@ test('staging previews get the same routing as production', () => {
   assert.deepEqual(preview, production);
 });
 
+test('existing managed child Ingresses are reconciled while self-app routes stay local', async (t) => {
+  const managed = 'social-vibecoding-runtime';
+  const catchAll = (service) => ({
+    path: '/', pathType: 'Prefix', backend: { service: { name: service, port: { number: 3000 } } },
+  });
+  const staleAsset = {
+    path: '/usernode-bridge/', pathType: 'Prefix',
+    backend: { service: { name: k8s.PLATFORM_ASSET_NAME, port: { number: 3000 } } },
+  };
+  const ingresses = [
+    {
+      metadata: { name: 'sv-preview-9-s42', resourceVersion: '1', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'coffee--s42.apps.example.test', http: { paths: [catchAll('sv-preview-9-s42')] } }] },
+    },
+    {
+      metadata: { name: 'sv-preview-10-s43', resourceVersion: '2', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'usernode-2d5619--s43.apps.example.test', http: { paths: [staleAsset, catchAll('sv-preview-10-s43')] } }] },
+    },
+    {
+      metadata: { name: 'sv-preview-11-s44', resourceVersion: '3', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'usernode-2d5619--showcase.apps.example.test', http: { paths: [catchAll('sv-preview-11-s44')] } }] },
+    },
+  ];
+  const replaced = [];
+  k8s._setClientsForTest({ networking: {
+    listNamespacedIngress: async ({ namespace, labelSelector }) => {
+      assert.equal(namespace, 'social-apps');
+      assert.equal(labelSelector, `app.kubernetes.io/managed-by=${managed}`);
+      return { items: ingresses };
+    },
+    replaceNamespacedIngress: async ({ name, namespace, body }) => {
+      replaced.push({ name, namespace, body });
+      return body;
+    },
+  } });
+  t.after(() => k8s._setClientsForTest(null));
+
+  const updated = await k8s._reconcilePlatformAssetIngressesForTest({
+    selfAppSlug: 'usernode-2d5619',
+    kubernetes: { appNamespace: 'social-apps', appDomain: 'apps.example.test' },
+  });
+  assert.equal(updated, 3);
+
+  const childPaths = replaced.find((row) => row.name === 'sv-preview-9-s42')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(childPaths.slice(0, 3).map((item) => item.path), k8s.PLATFORM_ASSET_PREFIXES);
+  assert.equal(childPaths[3].backend.service.name, 'sv-preview-9-s42');
+
+  const selfPaths = replaced.find((row) => row.name === 'sv-preview-10-s43')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(selfPaths.map((item) => item.path), ['/']);
+  assert.equal(selfPaths[0].backend.service.name, 'sv-preview-10-s43');
+
+  const similarSlugPaths = replaced.find((row) => row.name === 'sv-preview-11-s44')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(similarSlugPaths.slice(0, 3).map((item) => item.path), k8s.PLATFORM_ASSET_PREFIXES);
+});
+
 test('an unavailable asset backend leaves the app routed exactly as before', () => {
   // Shared infrastructure failing must not change how THIS app is served.
   const paths = pathsOf(ingressFor('todo-list.onhomeroom.com', null));

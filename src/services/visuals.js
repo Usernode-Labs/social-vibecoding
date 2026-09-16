@@ -717,6 +717,40 @@ function parseTestsDone(stdout) {
   return found;
 }
 
+// A suite-level failure happens outside any individual declared check, so
+// there is no __USERNODE_TEST__ payload to carry its explanation. The
+// capture process writes those failures as `capture: fatal ...` on stderr;
+// Kubernetes' log API may fold that stream into the text we call stdout,
+// while Docker keeps the streams separate. Read both, then fall back to the
+// runtime's bounded termination summary. This string is persisted in
+// check_error_detail, so scrub the same credential shapes as the logger and
+// strip token-like query parameters before returning it.
+function captureFailureDetail({ stdout = '', stderr = '', runPartialReason = '', fallbackReason = '' } = {}) {
+  const clean = (value) => log.redactString(String(value || ''))
+    .replace(/([?&](?:token|jwt|auth|key)=)[^&\s]+/gi, '$1****')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cap = (value) => {
+    const text = clean(value);
+    return text.length > 280 ? `${text.slice(0, 279)}…` : text;
+  };
+  for (const blob of [stderr, stdout]) {
+    const lines = String(blob || '').split('\n');
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const match = /^\s*capture:\s*fatal\s+(.+)\s*$/i.exec(lines[i]);
+      if (match) return cap(`Browser check runner failed: ${match[1]}`);
+    }
+  }
+  const runtimeReason = [runPartialReason, stderr, fallbackReason]
+    .map((value) => clean(value))
+    .find(Boolean);
+  if (runtimeReason) {
+    return cap(`Browser check runner ended before producing results: ${runtimeReason}`);
+  }
+  return 'Browser check runner produced no result frames.';
+}
+
 function normalizeConsoleErrors(list) {
   return (Array.isArray(list) ? list : [])
     .slice(0, CONSOLE_MAX_ERRORS)
@@ -2502,6 +2536,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       deferred: shotsOnly || undefined,
     });
     let stdout;
+    let captureStderr = '';
     let runPartial = false;
     let runPartialReason = '';
     const captureStartedAt = Date.now();
@@ -2615,6 +2650,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
       runPartial = !!res.partial;
       runPartialReason = res.partialReason || '';
+      captureStderr = res.stderr || '';
       if (runPartial) {
         log.warn('visuals', 'Capture run cut short — parsing partial output', {
           sessionId: session.id, reason: runPartialReason,
@@ -2655,7 +2691,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       visualScenarios,
       prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
-      stdout, runPartial, runPartialReason, unitOutcome,
+      stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
     });
     traceStatus = settled.traceStatus;
     return settled.result;
@@ -2679,7 +2715,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'error' so the gate blocks fail-closed with a visible "couldn't run"
     // rather than an indefinite spinner. Best-effort.
     try {
-      const stored = await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
+      const errorDetail = captureFailureDetail({
+        stdout: err.stdout,
+        stderr: err.stderr,
+        fallbackReason: err.message,
+      });
+      const stored = await storeChecks(
+        pool, session.id, commitHash, { state: 'error', results: [] }, errorDetail
+      );
       if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
@@ -2755,7 +2798,7 @@ async function settleCaptureRun(config, pool, run) {
     media, capturePaths, pathDefaulted, captureRouteSource = null,
     visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
-    stdout, runPartial = false, runPartialReason = '', unitOutcome = null,
+    stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
   } = run;
   const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   let traceStatus = 'error';
@@ -2858,9 +2901,17 @@ async function settleCaptureRun(config, pool, run) {
     return { traceStatus, result: { state: 'pending', deferred: true } };
   }
 
-  const checksResult = classifyTests(parseTests(stdout), testsCount, dispatched
+  const parsedTests = parseTests(stdout);
+  const checksResult = classifyTests(parsedTests, testsCount, dispatched
     ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
     : { extraRows });
+
+  // No browser row means the suite never reached a check-level verdict.
+  // Preserve the runner/runtime explanation instead of storing a bare
+  // check_state='error' that sends the author back to an unchanged diff.
+  if (checksResult.state === 'error' && parsedTests.length === 0 && testsCount > 0) {
+    checksResult.errorDetail = captureFailureDetail({ stdout, stderr, runPartialReason });
+  }
 
   // Re-label a whole-origin outage as 'error' rather than 'failing'
   // (#1381). Only rows the container actually produced count — the
@@ -3603,6 +3654,7 @@ module.exports = {
   storeConsoleCheck,
   parseTests,
   parseTestsDone,
+  captureFailureDetail,
   classifyTests,
   unreachableOriginDetail,
   connectionExhaustionDetail,

@@ -171,7 +171,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
       collected.push(kind);
       if (kind === 'capture') {
         onStdoutLine('__USERNODE_TEST__ index=0 status=pass');
-        return { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
+        return { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: 'capture warning', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
       }
       assert.equal(name, 'sv-unit-suite-s42-x');
       return { state: 'succeeded', stdout: 'TAP version 13\n# tests 5\n# pass 5\n# fail 0\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
@@ -200,6 +200,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   assert.equal(settledWith.testsCount, 3);
   assert.deepEqual(settledWith.capturePaths, ['/']);
   assert.equal(settledWith.stdout, 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n');
+  assert.equal(settledWith.stderr, 'capture warning');
   assert.equal(settledWith.runPartial, false);
   assert.equal(settledWith.unitOutcome.row.status, 'pass', 'the unit-suite row comes from the Job\'s own verdict');
   assert.equal(settledWith.unitOutcome.row.summary.tests, 5);
