@@ -2056,6 +2056,30 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "id": "board.quick-filters-in-dialog",
+      "name": "When the strip runs out of room the two quick filters become switches in Filters",
+      "path": "/?demo=1&shot=quick-in-dialog#app/usernode-2d5619/workshop",
+      "expectSelector": "#board-filters-modal:has(#board-filters-assignedtome) #board-filters-createdbyme",
+      "expectText": "Only items the group voted onto you",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dev-board/kanban-filters.tsx",
+        "frontend/src/features/dialogs/board-filters.tsx",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "name": "...and the strip itself no longer draws them",
+      "path": "/?demo=1&shot=quick-in-dialog#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-filter-row:not(:has([data-quick-filter])) #dev-kanban-filters-btn"
+    },
+    {
+      "name": "With room on the line the strip keeps them, and Filters does not offer them",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"createdByMe\"]",
+      "expectText": "Created by you"
+    },
+    {
       "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#board-filters-modal #board-filters-assignee"

@@ -1123,6 +1123,49 @@ const AppView = {
       if (shot === 'mine-empty') {
         AppView._workshopShot = 'mine-empty';
       }
+      // `?shot=quick-in-dialog` — the two quick filters after they have moved
+      // into the Filters dialog for want of room on the strip's one line.
+      //
+      // A capture cannot reach that state on its own. The runner's viewport is
+      // a fixed 1280x800 and the row fits comfortably there, so the strip
+      // measures, reports "they fit" and keeps them; the state exists only on
+      // a narrow window or behind several active filter chips, and a check
+      // that leaned on the second would sit a few characters from its own
+      // threshold and flake on a font metric.
+      //
+      // So this PINS the decision rather than faking the measurement: the flag
+      // is set, `_setQuickFiltersInDialog` stands down, and everything
+      // downstream — the strip dropping its two chips, the dialog drawing two
+      // switches instead, the `Filters (n)` count and the chip row picking
+      // them up — runs exactly as it does for a real narrow window. The
+      // measurement itself is not what this shows; it is verified in a real
+      // browser across a width sweep (see the commit).
+      //
+      // It opens the dialog too, because the point of the screenshot is the
+      // pair of surfaces: the strip without them and the card with them.
+      if (shot === 'quick-in-dialog') {
+        AppView._quickFiltersPinned = true;
+        AppView._quickFiltersInDialog = true;
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        // A human following this link must not have a dialog reopened under
+        // their hands after their first real gesture. Same guard as the
+        // fixtures above; a synthetic click is not `isTrusted`.
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          if (document.querySelector('#board-filters-assignedtome')) { done(); return; }
+          if (document.getElementById('dev-kanban-filters-btn')) {
+            AppView._openKanbanFiltersDialog();
+          }
+        }, 300);
+      }
       // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
       // check can watch a card unfold the way a tap does — through the fold's
       // own handler, with the delegated open handler above standing aside.
@@ -8054,6 +8097,45 @@ const AppView = {
     const me = AppView._viewerUsername();
     return !!me && AppView._devCardAuthor(kind, item) === me;
   },
+  // ── WHERE THE TWO QUICK FILTERS LIVE ────────────────────────────────
+  //
+  // In the STRIP while they fit on its one line, and in the Filters dialog
+  // when they do not. The strip is the only thing that can tell which: it
+  // measures its own row (features/dev-board/kanban-filters.tsx) and calls
+  // this. Everything downstream of the decision is here, because the dialog's
+  // payload, the `Filters (n)` count and the active-chip row are.
+  //
+  // NOT a media query. The row holds a search field, a Filters chip, these
+  // two and one chip per active filter, so whether it fits is a question
+  // about its CONTENTS at a width, not about the width — three active
+  // filters at 1000px overflow where none does at 700.
+  //
+  // Starts false, which is the strip's own starting assumption: it renders
+  // them, measures, and says so if they did not fit. Nothing persists it —
+  // it is a fact about the current layout, re-derived on every resize.
+  _quickFiltersInDialog: false,
+  // `?shot=quick-in-dialog` holds the flag against the strip's own answer —
+  // see the fixture. Nothing else sets this.
+  _quickFiltersPinned: false,
+
+  /**
+   * The strip reporting whether its two quick filters fitted.
+   *
+   * Republishes the bar rather than repainting the board: nothing about which
+   * cards match has changed, only where two controls are drawn. A full
+   * `_repaintBoardSurface()` here would also re-enter the measurement that
+   * called it, which is a loop.
+   */
+  _setQuickFiltersInDialog(inDialog) {
+    // The capture fixture has pinned it; the strip's measurement of the
+    // capture's own 1280px viewport would say the opposite.
+    if (AppView._quickFiltersPinned) return;
+    const next = !!inDialog;
+    if (AppView._quickFiltersInDialog === next) return;
+    AppView._quickFiltersInDialog = next;
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
+  },
+
   // A quick toggle's tap: flip it and repaint. Persistence rides the repaint,
   // as it does for every other filter change.
   _toggleKanbanQuickFilter(key) {
@@ -8170,8 +8252,11 @@ const AppView = {
       seq: AppView._kanbanFilterSeq,
       count: AppView._kanbanFilterCount(),
       chips: AppView._kanbanActiveChips(),
-      // #1935: the two quick toggles, only for someone who has a "you".
-      quick: AppView._viewerUsername()
+      // #1935: the two quick toggles, only for someone who has a "you" —
+      // and only while the STRIP owns them. Null once they have moved into
+      // the Filters dialog for want of room; the strip measures and says so
+      // through `_setQuickFiltersInDialog`.
+      quick: (AppView._viewerUsername() && !AppView._quickFiltersInDialog)
         ? { assignedToMe: !!f.assignedToMe, createdByMe: !!f.createdByMe }
         : null,
     };
@@ -8283,8 +8368,8 @@ const AppView = {
     if (key === 'q') {
       AppView._kanbanFilters.q = '';
       AppView._kanbanFilterSeq += 1;
-    } else if (key === 'needsVote') {
-      AppView._kanbanFilters.needsVote = false;
+    } else if (key === 'needsVote' || key === 'assignedToMe' || key === 'createdByMe') {
+      AppView._kanbanFilters[key] = false;
     } else {
       AppView._kanbanFilters[key] = null;
     }
@@ -8295,8 +8380,14 @@ const AppView = {
   // `Filters (n)` chip. Search is excluded: it has its own field and chip.
   _kanbanFilterCount() {
     const f = AppView._kanbanFilters || {};
+    // The two quick filters count only while the DIALOG owns them. With the
+    // strip's own toggles on screen the count would be reporting a filter the
+    // reader can already see the state of, one control to the right.
+    const quick = AppView._quickFiltersInDialog
+      ? (f.assignedToMe ? 1 : 0) + (f.createdByMe ? 1 : 0)
+      : 0;
     return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
-      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0);
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0) + quick;
   },
   // One entry per active filter, in a fixed order — the dismissable chip
   // row's data. The chips themselves (Material selected filter-chip with a
@@ -8320,6 +8411,12 @@ const AppView = {
       });
     }
     if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
+    // Same rule as the count: a dismissable chip for a filter whose own
+    // toggle is two controls away would be the same state said twice.
+    if (AppView._quickFiltersInDialog) {
+      if (f.assignedToMe) chips.push({ key: 'assignedToMe', label: 'Assigned to you' });
+      if (f.createdByMe) chips.push({ key: 'createdByMe', label: 'Created by you' });
+    }
     if (f.theme) chips.push({ key: 'theme', label: `Theme: ${AppView._workshopThemeName(f.theme)}` });
     return chips;
   },
@@ -8352,10 +8449,17 @@ const AppView = {
         category: f.category || null,
         assignee: f.assignee || null,
         needsVote: !!f.needsVote,
+        assignedToMe: !!f.assignedToMe,
+        createdByMe: !!f.createdByMe,
       },
       categories: AppView._kanbanCategoryChoices(),
       assignees: AppView._kanbanAssigneeOptions(),
       unassigned: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
+      // Whether the dialog draws the two quick switches at all. It never
+      // offers a control the strip is already showing: two controls for one
+      // filter, either of which could be the stale one by the time Done is
+      // pressed. Signed-out viewers have no "you", so they get neither.
+      quick: !!AppView._quickFiltersInDialog && !!AppView._viewerUsername(),
     });
   },
   // The Filters dialog's write-back. Merges the dialog-owned keys over the
@@ -8369,6 +8473,14 @@ const AppView = {
       category: n.category || null,
       assignee: n.assignee || null,
       needsVote: !!n.needsVote,
+      // ONLY WHEN THE DIALOG OWNED THEM. Its values are a snapshot taken at
+      // open; if the strip has the toggles instead, the reader may have
+      // flipped one since, and writing the stale snapshot back over it would
+      // undo a tap they watched land.
+      ...(AppView._quickFiltersInDialog ? {
+        assignedToMe: !!n.assignedToMe,
+        createdByMe: !!n.createdByMe,
+      } : null),
     };
     AppView._repaintBoardSurface();
   },

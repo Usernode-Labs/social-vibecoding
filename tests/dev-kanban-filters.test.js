@@ -988,3 +988,138 @@ test('the strip draws the two quick toggles as pressed chips, only with a viewer
     { ...base, quick: null });
   assert.doesNotMatch(anon, /data-quick-filter/);
 });
+
+// ── When the two quick filters will not fit on one line ────────────────
+//
+// They move into the Filters dialog. The STRIP is the only thing that can
+// tell — whether they fit is a question about the row's contents at a width,
+// not about the width, so three active filter chips at 1000px overflow where
+// none does at 700 — and it measures its own row and reports through
+// `_setQuickFiltersInDialog`. Everything downstream of that decision is in
+// app-view.js, which is what these exercise; the measurement itself needs a
+// browser and was driven in one (a 300-width sweep, ten passes each, no
+// oscillation) rather than asserted here.
+
+test('the dialog owns the two quick filters only when the strip hands them over', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true, createdByMe: true };
+
+  // Strip's, by default: the bar draws the toggles and the dialog offers none.
+  assert.equal(AppView._quickFiltersInDialog, false);
+  assert.deepEqual(plain(AppView._kanbanFilterView().quick),
+    { assignedToMe: true, createdByMe: true });
+  assert.equal(AppView._kanbanFilterCount(), 0,
+    'the count does not report a filter whose own toggle is on screen');
+  assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','), '',
+    'and nor does the chip row');
+
+  // Handed over: the bar stops drawing them, and the count and the chip row
+  // pick them up — which is how every other dialog-owned filter surfaces.
+  let published = 0;
+  AppView._reactDevBoard = () => ({ publishKanbanFilters: () => { published += 1; } });
+  AppView._setQuickFiltersInDialog(true);
+  assert.equal(published, 1, 'reporting republishes the bar');
+  assert.equal(AppView._kanbanFilterView().quick, null);
+  assert.equal(AppView._kanbanFilterCount(), 2);
+  assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','),
+    'assignedToMe,createdByMe');
+  // Idempotent: a re-measure that reaches the same answer publishes nothing,
+  // which is what keeps the report out of a loop with the render that made it.
+  AppView._setQuickFiltersInDialog(true);
+  assert.equal(published, 1);
+});
+
+test('a dismissable chip for a quick filter clears it, rather than nulling it', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true };
+  AppView._quickFiltersInDialog = true;
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+  AppView._dismissKanbanFilter('assignedToMe');
+  assert.equal(AppView._kanbanFilters.assignedToMe, false,
+    'false, not null — every reader of these two treats them as booleans');
+  assert.equal(repaints, 1);
+});
+
+test('the dialog payload offers the switches only when it owns them, and Done respects that', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true };
+  let opened = null;
+  AppView.__sandbox.window.UsernodeReact = {
+    dialogs: { boardFilters: { open: (p) => { opened = p; } } },
+  };
+  AppView._repaintBoardSurface = () => {};
+
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, false, 'the strip has them, so the dialog does not offer them');
+  assert.equal(opened.filters.assignedToMe, true, 'but the snapshot still carries their state');
+
+  // WHILE THE STRIP OWNS THEM, Done must not write its snapshot back: it was
+  // taken at open, and the reader may have flipped a toggle since.
+  AppView.applyKanbanFilters({ priority: 'high', assignedToMe: false, createdByMe: true });
+  assert.equal(AppView._kanbanFilters.priority, 'high');
+  assert.equal(AppView._kanbanFilters.assignedToMe, true, 'untouched');
+  assert.equal(AppView._kanbanFilters.createdByMe, false, 'untouched');
+
+  // Once it owns them, the same call is authoritative.
+  AppView._quickFiltersInDialog = true;
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, true);
+  AppView.applyKanbanFilters({ priority: null, assignedToMe: false, createdByMe: true });
+  assert.equal(AppView._kanbanFilters.assignedToMe, false);
+  assert.equal(AppView._kanbanFilters.createdByMe, true);
+
+  // Signed out there is no "you", so neither surface offers them however the
+  // measurement came out.
+  AppView.__sandbox.App.user = null;
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, false);
+});
+
+test('the strip measures its own row, and cannot be read as a breakpoint', () => {
+  const SRC = read('frontend/src/features/dev-board/kanban-filters.tsx');
+  // The search field counts as its MINIMUM, not the width it happens to have:
+  // it is `flex-1`, so its current width says nothing about whether the row
+  // fits. Both numbers are the literals in the class strings.
+  assert.match(SRC, /const ROW_GAP_PX = 8;/);
+  assert.match(SRC, /const SEARCH_MIN_PX = 160;/);
+  assert.match(SRC, /const SEARCH_CLS = [\s\S]*?min-w-\[10rem\]/,
+    'and the field still declares that minimum');
+  assert.match(SRC, /className="flex flex-wrap items-center gap-2"/, 'and the row that gap');
+  // The full one-line requirement is computed every time, INCLUDING the two
+  // chips when they are not rendered — which is what stops the decision
+  // feeding back into itself. `pairRef` is that cache.
+  assert.match(SRC, /if \(!quickShownNow\) needed \+= pairRef\.current \?\? 0;/);
+  // `#dev-kanban-active-chips` is `display: contents`, so its chips are the
+  // row's own flex items and the span itself has no box to measure.
+  assert.match(SRC, /child\.id === 'dev-kanban-active-chips'/);
+  assert.match(SRC, /className="contents"/);
+  // A LAYOUT effect, so the correction lands before the browser paints rather
+  // than as a visible flicker on a narrow window.
+  assert.ok(!/useEffect\(/.test(SRC), 'no passive effect decides what is drawn');
+  assert.match(SRC, /useLayoutEffect\(\(\) => \{\s*if \(!mounted\) return;/);
+  // And no media query anywhere near it.
+  assert.ok(!/matchMedia|min-width/.test(SRC), 'the decision is measured, never a breakpoint');
+});
+
+test('the Filters dialog draws the two switches only when the payload says so', () => {
+  const SRC = read('frontend/src/features/dialogs/board-filters.tsx');
+  assert.match(SRC, /\{quick \? \(/, 'gated on the payload');
+  for (const id of ['board-filters-assignedtome', 'board-filters-createdbyme']) {
+    assert.ok(SRC.includes(id), `${id} is the switch's id`);
+  }
+  // Switches, like the dialog's other boolean — not a copy of the strip's
+  // chips. One kind of control reads as one list of conditions, which is what
+  // the subtitle at the top of the card promises.
+  assert.match(SRC, /<Switch\s+id="board-filters-assignedtome"/);
+  assert.match(SRC, /<Switch\s+id="board-filters-createdbyme"/);
+  // They are absent from the prerender (`quick` starts false), so they are
+  // deliberately NOT in the shell's id inventory — see
+  // tests/shell-id-inventory.test.js, which requires every ADDED_IDS entry to
+  // be present in the shipped document.
+  const SHELL = read('public/index.html');
+  assert.ok(!SHELL.includes('board-filters-assignedtome'));
+});

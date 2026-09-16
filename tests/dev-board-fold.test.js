@@ -694,7 +694,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // to track its right edge — which is net +2 against a manifest that loses
   // one. tests/dev-workshop.test.js pins that no check still expects the old
   // adjacency, so the swap cannot be half-done.
-  assert.equal(DAPP.tests.length, 674);
+  //
+  // 674 → 677: the "Assigned to you" / "Created by you" quick filters move
+  // into the Filters dialog when the filter row cannot hold them on one
+  // line, which is a state the capture runner's fixed 1280x800 viewport
+  // cannot reach on its own — hence `?shot=quick-in-dialog`, which pins the
+  // handover on and opens the dialog. Three, because the move has three
+  // separately falsifiable halves: the dialog GROWS the two switches (the
+  // visual one, and the only one a screenshot can carry), the strip DROPS
+  // them in the same state (a dialog that gained them while the strip kept
+  // them is two owners of one value), and with room on the line the strip
+  // KEEPS them while the dialog does not offer them — the default, which is
+  // what a measurement bug would break first.
+  assert.equal(DAPP.tests.length, 677);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
