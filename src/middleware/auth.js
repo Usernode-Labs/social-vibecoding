@@ -208,6 +208,76 @@ const STAGING_SESSION_DAYS = 7;
 const SELF_APP_ID = process.env.USERNODE_APP_ID;
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
+// Browser sessions now follow the mobile session's active-lease model: a
+// device that keeps using Homeroom stays signed in, while an abandoned device
+// eventually falls out. Mobile renews its 90-day lease when 89 days remain,
+// which coalesces activity to at most one write per day; use the same cadence
+// here so the two surfaces do not surprise the same person differently.
+//
+// The fixed cap is the extra browser-cookie safety boundary. A bearer cookie
+// that is continuously replayed must still require reauthentication
+// eventually, even though ordinary active use slides the idle lease.
+const SESSION_IDLE_DAYS = 90;
+const SESSION_MAX_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SESSION_RENEW_BEFORE_MS = (SESSION_IDLE_DAYS - 1) * DAY_MS;
+
+/**
+ * Extend a live browser session's idle lease, without moving it beyond the
+ * absolute cap measured from `created_at`.
+ *
+ * Renewal is best-effort. The request has already authenticated by the time
+ * this runs, so a failure to extend must not turn it into an error. The helper
+ * is still awaited by the middleware: response cookies have to be written
+ * before a downstream handler sends the headers.
+ */
+async function renewCookieSession(pool, res, token, row) {
+  try {
+    const now = Date.now();
+    const currentExpiry = new Date(row.expires_at).getTime();
+    if (!Number.isFinite(currentExpiry)
+        || currentExpiry - now > SESSION_RENEW_BEFORE_MS) {
+      return null;
+    }
+
+    // `created_at` is non-null after the schema migration. If a malformed row
+    // somehow lacks it, fail closed on renewal and keep the existing expiry;
+    // extending without a trustworthy cap anchor would make the cap cosmetic.
+    const parsedCreatedAt = new Date(row.created_at).getTime();
+    if (!Number.isFinite(parsedCreatedAt)) return null;
+    const createdAt = parsedCreatedAt;
+    const ceiling = createdAt + SESSION_MAX_DAYS * DAY_MS;
+    const wanted = now + SESSION_IDLE_DAYS * DAY_MS;
+    const nextExpiry = Math.min(wanted, ceiling);
+    if (nextExpiry <= currentExpiry) return null;
+
+    const expiresAt = new Date(nextExpiry);
+    const { rows } = await pool.query(
+      `UPDATE sessions
+          SET expires_at = $1
+        WHERE token = $2 AND expires_at = $3 AND expires_at > NOW()
+        RETURNING expires_at`,
+      [expiresAt, token, row.expires_at]
+    );
+    // Logout, revocation, or another request may have changed/deleted the row
+    // after authentication. Never issue a cookie unless this exact lease was
+    // the one successfully advanced.
+    if (rows.length !== 1) return null;
+
+    const persistedExpiry = new Date(rows[0].expires_at);
+    res.cookie('session', token, {
+      httpOnly: true,
+      secure: SECURE_COOKIE,
+      sameSite: 'lax',
+      expires: persistedExpiry,
+    });
+    return persistedExpiry;
+  } catch (err) {
+    log.warn('auth', 'Session renewal failed', { message: err.message });
+    return null;
+  }
+}
+
 function authMiddleware(config) {
   const pool = getPool(config);
 
@@ -223,7 +293,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -302,6 +372,10 @@ function authMiddleware(config) {
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
           };
+          // Placed after the staging identity-switch block: that path replaces
+          // the cookie outright, so renewing the credential it is discarding
+          // would both waste a write and set competing cookies on one response.
+          await renewCookieSession(pool, res, cookieToken, rows[0]);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -468,4 +542,10 @@ function redirectOrReject(req, res, next) {
   return res.redirect('/');
 }
 
-module.exports = { authMiddleware };
+module.exports = {
+  authMiddleware,
+  renewCookieSession,
+  SESSION_IDLE_DAYS,
+  SESSION_MAX_DAYS,
+  SESSION_RENEW_BEFORE_MS,
+};
