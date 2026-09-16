@@ -184,7 +184,20 @@
 // the general chat from the old stylesheet and read as a fix that simply had
 // not worked. The deployed CSS had the new rule the whole time. Bumped here so
 // an installed client is not the next one to report it as unfixed.
-const SW_VERSION = 'v23';
+// v24: the on-screen keyboard is forwarded into app frames (#1937/#1491).
+// An iframe's visualViewport describes the FRAME and the keyboard does not
+// resize the frame, so the kit's tracker computed 0 inside every app and
+// `--un-kb-inset` was never set — every app's bottom-anchored UI was dead to
+// the keyboard however correctly it consumed the var. app-view.js computes and
+// posts it now and the bridge applies it in-frame; both are precached, which
+// is the case the v10 note names. Without the bump an installed client keeps a
+// shell that never sends the value, so no app would see the fix.
+//
+// NOTE FOR WHOEVER MERGES SECOND: the "stop reserving the inset twice"
+// proposal also takes v24 from v23. These two are independent changes that
+// both need a cache retirement, so the loser of the race is a real conflict
+// and wants v25 — not a silent pick of one side.
+const SW_VERSION = 'v24';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
