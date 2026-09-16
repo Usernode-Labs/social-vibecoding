@@ -681,6 +681,24 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     return;
   }
 
+  // A failed rebuild can leave the row pointing at the previous preview.
+  // That URL may still serve an older revision (or a default/error page), so
+  // keeping it makes the UI advertise and open "the submitted build" while
+  // the submitted build never started (#2328). storeChecks' compare-and-set
+  // above proves this failure still belongs to the current checks commit;
+  // only then retire every pointer that could vouch for the stale runtime.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET staging_container_id = NULL, staging_url = NULL,
+            staging_image_ref = NULL, staging_build_ref = NULL,
+            staging_runtime_kind = NULL, staging_runtime_name = NULL,
+            staging_commit_sha = NULL
+      WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text`,
+    [session.id, commitHash || null]
+  ).catch((clearErr) => log.warn('staging-recovery', 'Failed to retire stale preview after boot failure', {
+    sessionId: session.id, err: clearErr.message,
+  }));
+
   // Read back the streak bookkeeping to decide whether this is the first
   // failure of the streak (→ notify + post) or a quiet backoff retry.
   let row = null;

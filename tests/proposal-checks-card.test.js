@@ -118,14 +118,20 @@ test('card: check_state="pending" renders the running pill', () => {
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
-test('card: check_state="error" is a red tag naming the boot failure', () => {
+test('card: check_state="error" is a red tag naming a checks-run error', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
-    'the tag names WHY checks could not run');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks couldn[^<]*<\/span>/,
+    'a runner error does not accuse a healthy preview of failing to boot');
   assert.doesNotMatch(html, /gc-vote-count-blocked/);
   // The standalone helper keeps its own wording for the other surfaces.
   assert.match(AppView.checksBadgeHtml(baseProposal({ check_state: 'error' })), /Checks couldn/);
+
+  const boot = proposalCardHtml(AppView, baseProposal({
+    check_state: 'error', preview_state: 'failed', staging_error: 'app exited', test_results: [],
+  }));
+  assert.match(boot, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
+    'an explicit preview failure keeps the more specific diagnosis');
 });
 
 test('a legacy row (no check_state) surfaces its console errors as an amber tag', () => {

@@ -50,7 +50,10 @@ const { getPlatformApp } = require('../services/platform-app');
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
 
-const SESSION_DAYS = 7;
+// The idle lease a freshly-minted browser session starts with. This matches
+// SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
+// applies the absolute lifetime cap.
+const SESSION_DAYS = 90;
 
 // Email password-reset magic link. The 30-minute figure is repeated in the
 // password_reset mail template copy (src/services/mail/templates.js).

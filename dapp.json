@@ -3302,6 +3302,11 @@
       "expectSelector": "#admin-topo-mail-status"
     },
     {
+      "name": "Admin Challenge scoring screen lists the rules that credit challenges automatically",
+      "path": "/#admin/challenge-scoring",
+      "expectSelector": "#admin-topo-cs-schedule ~ #admin-topo-cs-rules"
+    },
+    {
       "name": "Admin Seasons screen lists real seasons from /api/v4/admin/seasons with per-row actions",
       "path": "/#admin/seasons",
       "expectSelector": "[data-season-events]",

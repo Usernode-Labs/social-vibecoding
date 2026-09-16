@@ -143,6 +143,7 @@ const AdminTopochain = {
     { key: 'seasons', label: 'Seasons' },
     { key: 'season-events', label: 'Season events' },
     { key: 'challenge-templates', label: 'Challenge templates' },
+    { key: 'challenge-scoring', label: 'Challenge scoring' },
     { key: 'waitlist', label: 'Waitlist' },
     { key: 'onchain-accounts', label: 'Onchain accounts' },
     { key: 'user-activities', label: 'User activities' },

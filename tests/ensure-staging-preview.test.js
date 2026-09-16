@@ -114,7 +114,13 @@ test('ensureStaging opens immediately when the server says {ready}', async () =>
 });
 
 test('ensureStaging shows the "spinning back up" loader and waits on {rebuilding}', async () => {
-  const { AppView, dom, swaps } = makeAppView(okJson({ status: 'rebuilding' }));
+  let requests = 0;
+  const { AppView, dom, swaps } = makeAppView(async () => ({
+    ok: true,
+    json: async () => (++requests === 1
+      ? { status: 'rebuilding' }
+      : { status: 'ready', url: 'https://rebuilt-NEW.example', verified: true }),
+  }));
   await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
   // Loader is up with the rebuild copy (viewer-neutral since #689 — shared
   // sessions route non-owners through this path too); no swap yet.
@@ -124,8 +130,10 @@ test('ensureStaging shows the "spinning back up" loader and waits on {rebuilding
   assert.equal(AppView._pendingStagingPreview.sessionId, 7);
   assert.equal(AppView._pendingStagingPreview.jump, true);
 
-  // staging_ready lands → opens the NEW url (not the stale fallback).
-  AppView.onStagingRebuildResult(7, { url: 'https://rebuilt-NEW.example' });
+  // staging_ready lands → re-verifies through ensure-staging, then opens the
+  // NEW url (not the stale fallback).
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt-NEW.example' });
+  assert.equal(requests, 2, 'rebuild completion is verified before navigation');
   assert.equal(swaps.length, 1, 'opens after the rebuild');
   assert.equal(swaps[0].url, 'https://rebuilt-NEW.example', 'uses the fresh url from staging_ready');
   assert.equal(swaps[0].opts.jump, true, 'carries the original jump intent');
@@ -386,15 +394,21 @@ test('#1993 a timed-out token request can be retried and does not hold the singl
   h.AppView.closeStagingOverlay();
 });
 
-test('#1993 read-only previews authenticate without requesting a rebuild', async () => {
+test('#1993 read-only previews verify without requesting a rebuild', async () => {
   const calls = [];
   const { AppView, dom } = authHarness(async (url) => {
     calls.push(url);
+    if (url.includes('preview-status')) {
+      return { ok: true, json: async () => ({ status: 'ready', verified: true, url: 'https://live.example' }) };
+    }
     return tokenResponse('reader-token');
   });
   AppView.appData.can_collaborate = false;
   await AppView.ensureStaging(7, 'https://live.example', null, {});
-  assert.deepEqual(calls, ['/api/iframe-token?app=usernode-2d5619', 'https://live.example']);
+  assert.deepEqual(calls, [
+    '/api/sessions/7/preview-status',
+    '/api/iframe-token?app=usernode-2d5619',
+  ]);
   assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?token=reader-token');
 });
 
@@ -402,7 +416,12 @@ test('#1993 rebuild completion acquires authentication before navigating', async
   const calls = [];
   const { AppView, dom } = authHarness(async (url) => {
     calls.push(url);
-    if (url.includes('ensure-staging')) return { ok: true, json: async () => ({ status: 'rebuilding' }) };
+    if (url.includes('ensure-staging')) {
+      const ensureCalls = calls.filter((item) => item.includes('ensure-staging')).length;
+      return { ok: true, json: async () => ensureCalls === 1
+        ? ({ status: 'rebuilding' })
+        : ({ status: 'ready', verified: true, url: 'https://rebuilt.example' }) };
+    }
     return tokenResponse('rebuilt-token');
   });
   await AppView.ensureStaging(7, null, null, {});

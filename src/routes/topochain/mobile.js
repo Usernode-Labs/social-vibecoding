@@ -43,7 +43,7 @@
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 
-const { loadOnboarding, visibleChallenges, challengeCategory } =
+const { loadOnboarding, visibleChallenges, challengeCategory, resolveProgress } =
   require('../../services/topochain/challenge-onboarding');
 
 const { Router } = require('express');
@@ -1303,7 +1303,29 @@ function topochainMobileRoutes(config) {
 
       for (const item of items) {
         item.category = challengeCategory(item.id, item.category, onboarding);
-        if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+        if (onboarding?.progress.has(item.id)) {
+          item.progress = onboarding.progress.get(item.id);
+          continue;
+        }
+        // Progress used to ride along on the three onboarding rows only,
+        // because they were the only ones anything credited without an admin
+        // typing it in. The card's `_isDone` reads `progress.done`, so every
+        // other challenge fell through to "is there any activity" and showed
+        // "Started" — for good, even to somebody who had finished it and been
+        // paid. Automatic scoring makes that the NORMAL state of four of the
+        // nine Season 2 challenges, so the same rule now applies to all of
+        // them, from the activity rows this handler has already loaded.
+        //
+        // `blocks_produced` is deliberately left out: its count comes from
+        // the leaderboard snapshot rather than from ledger rows, and a bare
+        // ring is what that card is meant to show.
+        const metricKind = item.metric ? item.metric.kind : null;
+        if (metricKind === 'blocks_produced') continue;
+        item.progress = resolveProgress({
+          metricKind,
+          metricTarget: item.metric ? item.metric.target : null,
+          activityCount: (activitiesByChallenge.get(Number(item.id)) || []).length,
+        });
       }
 
       // active_only (SPEC: "keeps enabled and not-completed challenges").
