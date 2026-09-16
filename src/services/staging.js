@@ -105,11 +105,16 @@ function hasInFlightBuild(sessionId) {
 // the trade the spec picks on purpose.
 function previewDisplayState(row) {
   const missing = !row.staging_url;
+  const stagingBuilding = !!(missing && hasInFlightBuild(row.id));
+  const stagingError = (missing && row.check_state === 'error' && row.check_error_detail)
+    ? row.check_error_detail
+    : null;
   return {
-    staging_building: !!(missing && hasInFlightBuild(row.id)),
-    staging_error: (missing && row.check_state === 'error' && row.check_error_detail)
-      ? row.check_error_detail
-      : null,
+    staging_building: stagingBuilding,
+    staging_error: stagingError,
+    preview_state: stagingBuilding ? 'building'
+      : stagingError ? 'failed'
+        : missing ? 'unavailable' : 'ready',
   };
 }
 
@@ -695,14 +700,28 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 async function verifyStagingEdge(session, hostname, stagingUrl) {
   if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
   log.info('staging', 'Verifying edge before exposing preview', { sessionId: session.id, hostname });
-  const probe = await caddy.probeEdge(hostname, { handshakeOnly: false });
-  if (probe.ok) {
+  const raw = await caddy.probeEdge(hostname, { handshakeOnly: false });
+  // A completed request is not necessarily a usable preview. In particular,
+  // a 5xx proves that the public hostname reached a broken/default upstream,
+  // which is exactly the state Preview must not advertise as ready (#2328).
+  // 4xx remains acceptable here: the edge probe intentionally has no iframe
+  // identity token, so an app may auth-gate the root while still routing to
+  // the correct runtime. The authenticated iframe load follows only after
+  // this transport/upstream gate passes.
+  const serverError = raw?.code != null && raw.code >= 500;
+  const probe = serverError
+    ? { ...raw, ok: false, error: raw.error || new Error(`Preview edge returned HTTP ${raw.code}`) }
+    : raw;
+  if (probe?.ok) {
     log.info('staging', 'Edge verified', {
       sessionId: session.id, hostname, code: probe.code,
       ttfbMs: probe.timings ? probe.timings.ttfbMs : null,
     });
   } else {
-    log.warn('staging', 'Edge verification did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: probe.error?.message });
+    log.warn('staging', 'Edge verification did not complete; preview is not ready', {
+      sessionId: session.id, hostname, code: probe?.code ?? null,
+      err: probe?.error?.message,
+    });
   }
   return probe;
 }

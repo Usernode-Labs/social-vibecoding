@@ -106,8 +106,8 @@ test('event-scoped reads resolve onboarding across the season and reuse prior te
 // HTTP coverage of the actual list handlers. Authentication has dedicated
 // suites; inject an authenticated identity here and exercise the same handler
 // registered for web sessions and native tokens against one catalog/ledger.
-function makeApp(counts = [0, 0, 0]) {
-  const state = { counts };
+function makeApp(counts = [0, 0, 0], credits = {}) {
+  const state = { counts, credits };
   const rows = Array.from({ length: 9 }, (_, i) => {
     const id = i + 1;
     return {
@@ -155,7 +155,34 @@ function makeApp(counts = [0, 0, 0]) {
       }
       return { rows: params[0] === 11 ? rows.filter((r) => r.id > 5) : rows };
     }
-    if (sql.includes('FROM user_activities')) return { rows: [] };
+    // The per-viewer credit count the challenge lists now attach to EVERY
+    // challenge, not only the gate's three. `state.credits` maps a challenge
+    // id to how many ledger rows the viewer has on it.
+    if (sql.includes('FROM user_activities') && sql.includes('GROUP BY challenge_id')) {
+      const ids = params[1] || [];
+      return {
+        rows: Object.entries(state.credits || {})
+          .filter(([id]) => ids.includes(Number(id)))
+          .map(([id, credits]) => ({ challenge_id: Number(id), credits })),
+      };
+    }
+    // The personalised list loads the viewer's rows themselves and counts
+    // them in JS, where the public list asks Postgres for the count. Two
+    // shapes, one fixture.
+    if (sql.includes('FROM user_activities')) {
+      const ids = params[1] || [];
+      const out = [];
+      for (const [id, credits] of Object.entries(state.credits || {})) {
+        if (!ids.includes(Number(id))) continue;
+        for (let i = 0; i < credits; i += 1) {
+          out.push({
+            challenge_id: Number(id), points: 100, description: null,
+            activity_at: new Date(),
+          });
+        }
+      }
+      return { rows: out };
+    }
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
 
@@ -266,5 +293,27 @@ test('home counts and expanded lists respect the same gate and existing lifetime
     assert.equal('hidden_count' in panel.onboarding, false);
     assert.equal(panel.challenges.find((c) => c.id === 4).label, 'PERSISTENT');
     assert.equal(panel.challenges.find((c) => c.id === 1).progress.done, true);
+  });
+});
+
+test('a finished challenge outside the gate reports done, not merely started', () => {
+  // The lists used to carry progress for the gate's three challenges alone,
+  // because nothing credited the others without an admin typing it in. The
+  // card reads `progress.done`, so a persistent challenge somebody had
+  // finished AND been paid for showed "Started" for good. Automatic scoring
+  // makes that the normal state of most of a season, so every challenge now
+  // carries the viewer's progress.
+  const { app, state } = makeApp([3, 1, 1], { 6: 1, 7: 2 });
+  return withServer(app, async (get) => {
+    for (const path of ['/api/v4/season-events/10/challenges', '/challenges-api/challenges?season_id=2']) {
+      const body = await get(path);
+      const byId = new Map(body.data.map((c) => [c.id, c]));
+      assert.equal(byId.get(6).progress.done, true, `${path}: a credited weekly challenge is done`);
+      assert.equal(byId.get(8).progress.done, false, `${path}: an uncredited one is not`);
+    }
+    // And the gate's own rows keep the onboarding service's answer.
+    const body = await get('/api/v4/season-events/10/challenges');
+    assert.equal(body.data.find((c) => c.id === 1).progress.current, 3);
+    assert.equal(state.credits[6], 1);
   });
 });

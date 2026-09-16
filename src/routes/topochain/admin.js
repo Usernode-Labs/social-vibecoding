@@ -38,6 +38,7 @@ const { delegationsAdminRoutes } = require('./admin/delegations');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
 const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
 const { leaderboardAdminRoutes } = require('./admin/leaderboard');
+const { challengeScoringAdminRoutes } = require('./admin/challenge-scoring');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -129,6 +130,8 @@ function topochainAdminRoutes(config) {
   router.use(challengeIllustrationsAdminRoutes(config));
   router.use(onchainAccountsAdminRoutes(config));
   router.use(challengesAdminRoutes(config));
+  // The automatic scorer's rules, and its Run now / Dry run controls.
+  router.use(challengeScoringAdminRoutes(config));
   router.use(appVersionConfigsAdminRoutes(config));
   router.use(settingsAdminRoutes(config));
 

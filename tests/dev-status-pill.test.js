@@ -177,7 +177,8 @@ test('every hard blocking state is a red tag, in severity order', () => {
     // test is about and it is unchanged — a refused merge is still red,
     // because a person really does have to act on it.
     [{ merge_conflict_state: 'conflict' }, 'Needs author to sync with main'],
-    [{ check_state: 'error' }, 'Preview won’t boot'],
+    [{ check_state: 'error' }, 'Checks couldn’t run'],
+    [{ check_state: 'error', preview_state: 'failed', staging_error: 'app exited' }, 'Preview won’t boot'],
     [{ check_state: 'failing', test_results: [] }, 'Checks failing'],
   ];
   for (const [row, label] of cases) {

@@ -57,7 +57,14 @@ const PREVIEW_LIFECYCLE_LOCK = 991008;
 // platform Pods, because every instance runs the same interval and a digest
 // sent twice is worse than one sent late.
 const VOTE_DIGEST_LOCK = 991009;
+// The automatic challenge scorer's tick. Exclusive across platform Pods for
+// the same reason the digest is: every instance runs the same interval, and
+// two of them planning the same credits at once would both read an empty
+// ledger before either wrote to it. The unique index on `source_key` would
+// still refuse the duplicate row, so this lock is about not doing the work
+// (and not spending the grading calls) twice, rather than about correctness.
+const CHALLENGE_SCORER_LOCK = 991010;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK };

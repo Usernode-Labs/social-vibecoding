@@ -82,9 +82,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "202f3cd543e04da1dc8d",
+      "fingerprint": "e52a15616bffc02ac3e4",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platfo"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale"
     },
     {
       "source": "src/middleware/topochain-auth.js",
@@ -470,6 +470,20 @@
       "fingerprint": "bdc25552a7ad442c2493",
       "count": 1,
       "preview": "`UPDATE app_version_configs SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $1 RETURNING *`"
+    },
+    {
+      "source": "src/routes/topochain/admin/challenge-scoring.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/routes/topochain/admin/challenge-scoring.js",
+      "kind": "structural-template",
+      "fingerprint": "ec3bf01a0bfa54941ae4",
+      "count": 1,
+      "preview": "`UPDATE challenge_scoring_rules SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING *`"
     },
     {
       "source": "src/routes/topochain/admin/challenge-templates.js",

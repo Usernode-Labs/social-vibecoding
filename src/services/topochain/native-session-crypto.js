@@ -9,9 +9,11 @@ const AUDIENCE = 'usernode-native-session-v2';
 const DESIRED_RUNTIME = 'running';
 const HANDOFF_TTL_MS = 5 * 60 * 1000;
 const TICKET_TTL_MS = 5 * 60 * 1000;
-// Protocol 2 deliberately preserves the product's existing 7-day cookie
-// session and 90-day mobile bearer lifetime. TODO(native-session-v3): move to
-// persistent product sessions plus server-driven internal credential rotation.
+// Protocol 2 deliberately preserves the initial 7-day native web-restoration
+// cookie and 90-day mobile bearer lifetime. The shared web-auth middleware can
+// renew that cookie after restoration, subject to the browser session's own
+// idle and absolute limits. TODO(native-session-v3): move to persistent product
+// sessions plus server-driven internal credential rotation.
 const CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 const B64URL_32_RE = /^[A-Za-z0-9_-]{43}$/;

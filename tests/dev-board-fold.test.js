@@ -719,7 +719,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // them is two owners of one value), and with room on the line the strip
   // KEEPS them while the dialog does not offer them — the default, which is
   // what a measurement bug would break first.
-  assert.equal(DAPP.tests.length, 680);
+  //
+  // 675 → 676: independently on main, the programme console's Challenge
+  // scoring screen, which has to render its schedule card and its rules list
+  // as siblings — the check selects across the two, because a screen that
+  // drew only one of them would still look loaded.
+  //
+  // 680 → 681, 676 → 681: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 675 → 680 alone, with its two All-items chunks (+2, +3); main
+  // independently took the same 675 to 676 with the Challenge scoring check
+  // (+1). Neither set overlaps the other, so the merged manifest holds every
+  // one of them: 675 + 2 + 3 + 1 = 681.
+  assert.equal(DAPP.tests.length, 681);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
