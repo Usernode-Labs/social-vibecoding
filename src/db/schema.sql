@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- A renewable browser session still needs a fixed birthday. `expires_at`
+-- slides on authenticated use; `created_at` is the anchor for the absolute
+-- lifetime cap that prevents an actively replayed stolen cookie living
+-- forever. Existing rows are dated from this migration, which can only make
+-- their cap earlier than guessing an older creation time would.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 -- Narrow, HttpOnly-cookie-backed continuation between a successful email
 -- code and first-password setup. This is deliberately not a mobile bearer:
 -- it authorizes exactly one password setup, is stored only as a hash, and is
