@@ -2160,11 +2160,24 @@ function useEarInset(
     // when the grouping does.
     ro.observe(pane);
     return () => ro.disconnect();
-    // The observer covers what changes WITHIN a layout: the pill's width and
-    // the pane's, which is the grouping switch. Re-running the effect is only
-    // for the three things that change WHICH boxes are read — the nav node
-    // arriving from its ref callback, the breakpoint crossing, and the host.
-  }, [bar, hostRef, earUp]);
+    // NO DEPENDENCY ARRAY, deliberately: this runs after EVERY render, and a
+    // narrow one is what broke it. With `[bar, hostRef, earUp]` the effect
+    // could not re-run on a grouping switch, so the number measured against
+    // the 760px column — where the pane's left edge is 260 at 1280 — was
+    // still in force once By stage made the pane full-bleed and moved that
+    // edge to 4. The ear then began 250px further left than it should and
+    // overlapped the tab pill.
+    //
+    // It is also what covers a pane or a pill that arrives AFTER the first
+    // run (the observer is attached to whatever is there at the time) and any
+    // viewport change the observed boxes do not register, since a centred
+    // column can MOVE without changing size and a ResizeObserver reports
+    // size alone.
+    //
+    // The cost is one observer teardown and setup per render of the Workshop,
+    // which re-renders on data changes rather than on a timer. Correctness
+    // over that: the version with deps shipped a visible bug.
+  });
 }
 
 /**

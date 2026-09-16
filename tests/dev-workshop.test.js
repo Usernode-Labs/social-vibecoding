@@ -2930,7 +2930,13 @@ test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
   // of it at every width. The surface closes that; the TABS stay put, so the
   // control sits at the same coordinates under either grouping.
   assert.match(ear, /left: var\(--dev-ws-ear-left, auto\)/);
-  assert.match(CSS, /\.dev-ws-ear \{ justify-content: flex-start; \}/);
+  // A FLEX ROW. Without it the ear is a block box, `justify-content` is inert
+  // and `.dev-ws-group` — itself a flex container, and block-level inside a
+  // block — stretches to the ear's full width: a 1200px rounded pill with two
+  // 90px labels at its left end on a full-bleed By stage pane. The TABS hug
+  // either way, which is exactly what hid it, because the pill is a separate
+  // box and measuring the tabs says nothing about it.
+  assert.match(CSS, /\.dev-ws-ear \{ display: flex; justify-content: flex-start; align-items: center; \}/);
   assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 0 0 auto; \}/);
 });
 
@@ -4467,7 +4473,13 @@ test('the surface grows with the pane on By stage, the labels do not', () => {
   const ear = CSS.slice(CSS.indexOf('  .dev-ws-ear {'), CSS.indexOf('}', CSS.indexOf('  .dev-ws-ear {')));
   assert.match(ear, /right: 0;/, 'the surface follows the pane');
   assert.match(ear, /bottom: 100%/, 'and still abuts the head it hangs from');
-  assert.match(CSS, /\.dev-ws-ear \{ justify-content: flex-start; \}/);
+  // A FLEX ROW. Without it the ear is a block box, `justify-content` is inert
+  // and `.dev-ws-group` — itself a flex container, and block-level inside a
+  // block — stretches to the ear's full width: a 1200px rounded pill with two
+  // 90px labels at its left end on a full-bleed By stage pane. The TABS hug
+  // either way, which is exactly what hid it, because the pill is a separate
+  // box and measuring the tabs says nothing about it.
+  assert.match(CSS, /\.dev-ws-ear \{ display: flex; justify-content: flex-start; align-items: center; \}/);
   assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 0 0 auto; \}/,
     'the labels do not grow with it');
   assert.match(WORKSHOP, /const EAR_PROPS = \['--dev-ws-ear-left', '--dev-ws-head-top'\];/,
@@ -4518,4 +4530,31 @@ test('the tab strip, the ear and the head pin as one band (#2339 follow-up)', ()
   // the assertion that would have caught it.
   assert.ok(!/#dev-workshop \.dev-ws-pane-head \{[^}]*position: relative/.test(decls),
     'the head is never un-stuck here');
+});
+
+test('the ear re-measures on every render, or a grouping switch leaves it stale', () => {
+  // A REAL BUG, reported from the preview. `useEarInset` had
+  // `[bar, hostRef, earUp]` as its dependencies, none of which change when the
+  // grouping does — so the left offset measured against the 760px column
+  // stayed in force once By stage made the pane full-bleed and moved its left
+  // edge from 260 to 4. Measured at 1280: the ear then began 246px LEFT of the
+  // tab pill's right edge instead of 10px right of it, overlapping the tabs.
+  //
+  // The ResizeObserver did not save it. It watches the two boxes the effect
+  // captured AT THE TIME, so it cannot cover a node that arrives later or is
+  // replaced — and it reports SIZE only, while a centred column moves without
+  // resizing.
+  //
+  // So: no dependency array. The effect runs after every render, re-measuring
+  // and re-attaching to whatever is there. The cost is one observer teardown
+  // and setup per render of the Workshop, which re-renders on data changes,
+  // not on a timer.
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function useEarInset('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.ok(!/\}, \[[^\]]*\]\);/.test(body),
+    'useEarInset takes no dependency array — a narrow one shipped a stale offset');
+  assert.match(body, /\n  \}\);/, 'the layout effect closes with no deps');
+  // The two things it reads to place the ear are both POSITIONS, which is why
+  // a size-only observer is not enough on its own.
+  assert.match(body, /t\.right - p\.left \+ EAR_GAP_PX/);
 });
