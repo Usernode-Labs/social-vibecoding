@@ -2040,6 +2040,17 @@ function useMediaFlag(query: string): boolean {
 const EAR_GAP_PX = 10;
 
 /**
+ * Everything `useEarInset` publishes, so the teardown cannot miss one.
+ *
+ * They are all derived from the same measurement and all read by app.css; a
+ * stale one left on the host would be inherited by the next crossing, which
+ * is why this is a list rather than four remove calls written out.
+ */
+const EAR_PROPS = [
+  '--dev-ws-ear-left', '--dev-ws-ear-right', '--dev-ws-ear-tail', '--dev-ws-ear-tr',
+];
+
+/**
  * The narrowest the ear is allowed to be, which is what its labels need.
  *
  * Measured: "By category" + "By stage" plus the rail's padding come to 233px.
@@ -2053,22 +2064,27 @@ const EAR_GAP_PX = 10;
 const EAR_MIN_PX = 240;
 
 /**
- * The widest, which is what keeps the ear a control rather than a header bar.
+ * The ear's RIGHT edge belongs to the tab strip's column, not the pane's.
  *
- * On By category the pane is the 760px reading column and reaching the pill
- * costs 306px — comfortably under this, so that case is simply "fill the
- * space", which is what it was asked to do. By STAGE is why there is a cap at
- * all: the pane goes full-bleed there while the tab pill stays centred on its
- * own 760px column, so the honest distance to the pill is 562px at 1280 and
- * 722px at 1600, which makes each of the two tabs 268px and 348px wide. Two
- * tabs that size are a title bar with a label in it, and the point of the
- * strip is that it reads as one two-state control. Measured at both widths.
+ * `right: 0` was the obvious anchor and it was wrong on By stage: the pane
+ * goes full-bleed there while the tab pill stays centred on its own 760px
+ * column, so the ear slid out from beside the pill and off to the window's
+ * edge — it "shifted right with the rest of the pane growth". Anchored to the
+ * NAV instead, the ear's box is identical under both groupings (714..1020 at
+ * 1280) and it stays where the pill is, which is the only place it means
+ * anything.
  *
- * It is spent from the LEFT, never by giving up `right: 0` — a `max-width`
- * here would over-constrain the box and let the right edge drift off the
- * pane's, which is the one alignment the ear exists to hold.
+ * That is also what retired the width cap this constant replaced. The cap
+ * existed to stop By stage stretching the ear to 722px and its two tabs to
+ * 348px apiece; with the right edge on the nav the ear simply cannot grow
+ * past the column, so the ceiling has nothing left to catch and the width is
+ * one number — the column, less the pill, less the seam — at every width.
+ *
+ * The consequence is that on By stage the ear is NO LONGER at the pane's
+ * corner: the pane continues underneath and past it. So the pane keeps its
+ * rounded top-right corner there and its top line resumes to the RIGHT of the
+ * ear, which is what `--dev-ws-ear-tail` and `--dev-ws-ear-tr` are for.
  */
-const EAR_MAX_PX = 360;
 
 /**
  * Stretch the ear leftward to meet the tab pill.
@@ -2108,7 +2124,7 @@ function useEarInset(
     // not exist. Clear the property rather than leave a stale number on the
     // host for the next crossing to inherit.
     if (!earUp || !bar) {
-      host.style.removeProperty('--dev-ws-ear-left');
+      for (const k of EAR_PROPS) host.style.removeProperty(k);
       return undefined;
     }
     const track = bar.querySelector<HTMLElement>('.dev-ws-tabtrack');
@@ -2116,16 +2132,31 @@ function useEarInset(
     if (!track || !pane) return undefined;
     const measure = () => {
       const t = track.getBoundingClientRect();
+      const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
-      if (!t.width || !p.width) return;
-      // Reach the pill, but stay between the two widths above. The floor is
-      // spent leftward and the ceiling rightward, and `right: 0` is what both
-      // are measured back from, so neither can move the pane-edge alignment.
+      if (!t.width || !n.width || !p.width) return;
+      // How far the pane reaches past the tab strip's column: 0 on By
+      // category, where they are the same 760px box, and half the slack on By
+      // stage, where the pane is full-bleed and the nav stays centred.
+      const tail = Math.max(0, Math.round(p.right - n.right));
+      // The ear's right edge, as an x against the pane's left edge.
+      const rightEdge = p.width - tail;
+      // Reach the pill, unless that would leave the ear narrower than its
+      // labels — then stop and let the seam widen instead.
       const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
-      const widest = Math.max(0, p.width - EAR_MAX_PX);
-      const narrowest = Math.max(0, p.width - EAR_MIN_PX);
-      const left = Math.min(Math.max(wanted, widest), narrowest);
+      const left = Math.min(wanted, Math.max(0, rightEdge - EAR_MIN_PX));
       host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
+      host.style.setProperty('--dev-ws-ear-right', `${tail}px`);
+      // The two the pane's outline needs, and both are about the SAME fact —
+      // whether the ear is standing at the pane's corner or part-way along its
+      // top edge. Flush (By category): no line to the right of the ear and a
+      // squared corner, so the two right edges read as one. Inset (By stage):
+      // the top line resumes for the `tail`, plus the 1px the ear's own right
+      // edge occupies, and the corner stays round because the ear is nowhere
+      // near it. A zero-width tail clips to nothing, which is how "no segment"
+      // is expressed without a second rule.
+      host.style.setProperty('--dev-ws-ear-tail', tail ? `${tail + 1}px` : '0px');
+      host.style.setProperty('--dev-ws-ear-tr', tail ? '22px' : '0px');
     };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
