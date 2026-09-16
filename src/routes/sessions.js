@@ -7626,6 +7626,101 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  async function loadPreviewSession(sessionId) {
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+        WHERE cs.id = $1`,
+      [sessionId]
+    );
+    return rows[0] || null;
+  }
+
+  function mayOpenPreview(session, userId, { mutate = false } = {}) {
+    const isOwner = session.user_id === userId;
+    const voteBacked = session.status === 'promoted' || session.status === 'merging';
+    const shared = !!session.shared_at;
+    // Reads use the router's view-level guard and may inspect a public vote
+    // or explicitly shared session. A rebuild remains collab-gated by the
+    // method-aware router guard; this predicate only scopes the row itself.
+    return isOwner || voteBacked || shared || (!mutate && session.status === 'merged');
+  }
+
+  // One authoritative answer for both the owner's ensure-and-rebuild POST
+  // and a read-only reviewer's status GET. A stored URL is only a pointer;
+  // it is not evidence that the submitted revision is still what the runtime
+  // serves. Verify revision/env/liveness, app health, then the public edge in
+  // that order before anybody is allowed to navigate an iframe (#2328).
+  async function inspectPreview(session, { repairDockerAlias = false } = {}) {
+    const headSha = stagingRecovery.recheckHeadSha(session);
+    if (await stagingRecovery.stagingNeedsRebuild(session, { config, headSha })) {
+      return { status: 'missing' };
+    }
+
+    const stagingName = `usernode-staging-${session.app_slug}--${session.id}`;
+    const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
+    if (repairDockerAlias && runtimeKind === 'docker') {
+      await docker.ensureNetworkAlias(
+        stagingName,
+        applicationRuntime.dnsAlias({ environment: 'staging', sessionId: session.id })
+      ).catch(() => false);
+    }
+
+    const healthy = await applicationRuntime.probeHealth(config, {
+      runtimeKind,
+      runtimeName: session.staging_runtime_name || (runtimeKind === 'docker' ? stagingName : null),
+    }, { timeoutMs: 3000 }).catch(() => false);
+    if (!healthy) {
+      log.warn('sessions', 'preview runtime is live but did not answer its healthcheck', {
+        sessionId: session.id, appSlug: session.app_slug,
+      });
+      return { status: 'unavailable', reason: 'unhealthy' };
+    }
+
+    let edgeRequired = false;
+    let hostname = null;
+    try {
+      const url = new URL(session.staging_url);
+      edgeRequired = url.protocol === 'https:';
+      hostname = url.hostname;
+    } catch (_) {
+      return { status: 'unavailable', reason: 'edge' };
+    }
+    if (edgeRequired) {
+      const edge = await staging.verifyStagingEdge(session, hostname, session.staging_url)
+        .catch(() => ({ ok: false }));
+      if (!edge?.ok) return { status: 'unavailable', reason: 'edge' };
+    }
+
+    return {
+      status: 'ready', url: session.staging_url, verified: true,
+      checksRunning: session.check_state === 'pending',
+    };
+  }
+
+  // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
+  // still gets the same health/revision/edge gate instead of opening the
+  // last stored URL directly. It never repairs, rebuilds, or changes state.
+  router.get('/api/sessions/:id/preview-status', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const session = await loadPreviewSession(sessionId);
+      if (!session || !mayOpenPreview(session, req.user.id)) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      if (process.env.USERNODE_ENV === 'staging') {
+        return res.json({ status: 'unavailable', reason: 'demo' });
+      }
+      const result = await inspectPreview(session);
+      return res.json(result.status === 'missing'
+        ? { status: 'unavailable', reason: 'missing' }
+        : result);
+    } catch (err) {
+      log.error('sessions', 'preview-status error', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // On-demand staging restore (#439). The Preview button calls this before
   // opening the overlay. When the preview is already live we tell the
   // client to open it as-is; when it was torn down (idle GC, lost
@@ -7638,14 +7733,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
-         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1`,
-        [sessionId]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      const session = rows[0];
+      const session = await loadPreviewSession(sessionId);
+      if (!session) return res.status(404).json({ error: 'Session not found' });
 
       // Authorize: the session owner always; for promoted/merging sessions
       // (whose preview backs a group vote) any app member who passed the
@@ -7653,10 +7742,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // them the Preview button. Explicitly-shared sessions (shared_at set
       // — their card shows everyone a Preview button too) get the same
       // member-wide access.
-      const isOwner = session.user_id === req.user.id;
-      const voteBacked = session.status === 'promoted' || session.status === 'merging';
-      const shared = !!session.shared_at;
-      if (!isOwner && !voteBacked && !shared) {
+      if (!mayOpenPreview(session, req.user.id, { mutate: true })) {
         return res.status(403).json({ error: 'Not allowed' });
       }
 
@@ -7668,59 +7754,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
-      // Already live (container running, URL set) AND built with current
-      // platform env? Open it as-is. A stale-env preview (#851) falls through
-      // to the rebuild below instead of opening the app's login screen.
-      if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) {
-        // #816: liveness says the CONTAINER is running; it does not say the
-        // app inside it is answering. One bounded in-container healthcheck
-        // upgrades the answer from "should work" to "answered just now",
-        // which is what lets the client point the iframe straight at the
-        // preview instead of re-deriving readiness with its own poll.
-        //
-        // A failed probe is NOT an error and NOT a rebuild trigger — the
-        // preview may simply be busy under the post-build checks run. We
-        // still answer `ready`, just without the verification, and the
-        // client falls back to polling.
-        //
-        // probeHealthOnce swallows its own failures; the .catch is belt and
-        // braces so a docker-layer surprise can never turn "open the
-        // preview" into a 500.
-        // #1381: this is the last platform code that runs before the browser
-        // is pointed at the preview URL, so it is the right place to make
-        // sure Caddy can actually resolve its upstream. The proxy's map row
-        // targets the short session alias, and a container built before
-        // aliases existed carries only its (possibly >63-byte, therefore
-        // unresolvable) name — which would 502 the preview with no way back
-        // short of a new commit. Attaching it here is idempotent, one
-        // `docker inspect` on the already-aliased path, and never throws.
-        const stagingName = `usernode-staging-${session.app_slug}--${sessionId}`;
-        const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
-        if (runtimeKind === 'docker') {
-          await docker.ensureNetworkAlias(
-            stagingName,
-            applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
-          ).catch(() => false);
-        }
-        const verified = await applicationRuntime.probeHealth(config, {
-          runtimeKind,
-          runtimeName: session.staging_runtime_name || (runtimeKind === 'docker' ? stagingName : null),
-        }, { timeoutMs: 3000 }).catch(() => false);
-        if (!verified) {
-          log.warn('sessions', 'ensure-staging: preview is live but did not answer its healthcheck', {
-            sessionId, appSlug: session.app_slug,
-          });
-        }
-        return res.json({
-          status: 'ready',
-          url: session.staging_url,
-          verified,
-          // Drives one honest line of loader copy: the screenshot + checks
-          // pass runs against this same container for 1-3 minutes after a
-          // build, so the first load can legitimately be slower.
-          checksRunning: session.check_state === 'pending',
-        });
-      }
+      // A missing/stale runtime rebuilds. A present but unhealthy one is
+      // reported honestly and left alone: one failed bounded probe is not a
+      // reason to churn the app or its database, but it is a reason not to
+      // navigate the reviewer to stale/current/error content.
+      const inspected = await inspectPreview(session, { repairDockerAlias: true });
+      if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
       if (ensureStagingInFlight.has(sessionId)) {
