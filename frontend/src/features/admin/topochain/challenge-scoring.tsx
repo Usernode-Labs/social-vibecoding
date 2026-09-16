@@ -701,7 +701,19 @@ function ChallengeScoringScreen() {
         {payload && !error && !payload.rules.length ? (
           <EmptyState
             title="No scoring rules yet"
-            message="A challenge with no rule is never scored automatically. Add one to start."
+            body={write
+              ? 'Nothing is credited automatically until a rule says so. Add one per challenge you want scored.'
+              : 'Nothing is credited automatically until a rule says so.'}
+            action={write ? (
+              <button
+                id="admin-topo-cs-empty-new"
+                type="button"
+                className={BTN.primarySm}
+                onClick={() => setEditing('new')}
+              >
+                Add the first rule
+              </button>
+            ) : null}
           />
         ) : null}
         {payload && !error && payload.rules.length ? (
