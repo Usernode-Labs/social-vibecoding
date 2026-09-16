@@ -117,8 +117,9 @@ test('an error verdict records no check history', () => {
   // Recording it would stamp fail_count on checks that never ran, which is
   // how WorkQuest reached pass_count 0 / fail_count 2 on seven rows.
   const src = visualsSource();
-  // The asset-route row (#2315) records through the same guarded block.
-  const gate = src.match(/if \(\(dispatched \|\| unitOutcome \|\| assetOutcome\)([^)]*)\) \{\n\s+const historyRows/);
+  // Browser rows (including the asset-route assertion) and the unit-suite
+  // row record through the same guarded block.
+  const gate = src.match(/if \(\(dispatched \|\| unitOutcome\)([^)]*)\) \{\n\s+const historyRows/);
   assert.ok(gate, 'the recordRun block must still be guarded here');
   assert.match(gate[1], /checksResult\.state !== 'error'/);
 });

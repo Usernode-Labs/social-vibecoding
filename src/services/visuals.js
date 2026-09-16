@@ -59,6 +59,26 @@ function kubernetesCaptureOrigin(config, app, sessionId = null) {
   return `https://${hostname}`;
 }
 
+// The asset row must be observed from the same public-browser network path
+// as the app checks, not from the platform orchestrator's hairpin path. The
+// latter can stay pinned to a 403 listener while capture Jobs and external
+// clients consistently reach the preview (proposal 4408 demonstrated both
+// states in the same run). A stable bridge identifier rejects a 200 HTML
+// catch-all as well as the ordinary 403 failure.
+const ASSET_ROUTE_PROOF_TEXT = 'window.__usernodeBridge';
+function assetRouteBrowserTest(origin, index) {
+  return {
+    index,
+    name: assetRouteCheck.ASSET_CHECK_NAME,
+    path: assetRouteCheck.ASSET_CHECK_PATH,
+    url: `${String(origin).replace(/\/+$/, '')}${assetRouteCheck.ASSET_CHECK_PATH}`,
+    expectSelector: '',
+    expectText: ASSET_ROUTE_PROOF_TEXT,
+    allowConsoleErrors: true,
+    solo: true,
+  };
+}
+
 function captureRuntimeMode() {
   const mode = process.env.CAPTURE_RUNTIME || process.env.APP_RUNTIME || 'docker';
   if (!['docker', 'kubernetes'].includes(mode)) {
@@ -2047,7 +2067,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // URL before flipping the row to testing or creating any Job. Two fresh-
     // connection successes are required inside waitForAssetRouteReady, so a
     // mixed edge cannot pass because one request found a reconciled listener.
-    if (config.captureRuntime === 'kubernetes') {
+    if (config.captureRuntime === 'kubernetes' && assetRouteCheck.isEnabled()) {
       const readinessStartedAt = Date.now();
       const assetOrigin = kubernetesCaptureOrigin(config, app, session.id);
       let expectedBodySha256 = '';
@@ -2432,6 +2452,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         allowConsoleErrors: !!t.allowConsoleErrors,
       };
     });
+
+    // #2344: make the final platform-assets verdict part of the existing
+    // public-browser Job. Besides using the consumer-representative network
+    // path, this inherits the runner's isolated cold retries and survives a
+    // launcher crash through the Job log/manifest harvester. The pre-launch
+    // orchestrator gate above still proves preview-byte identity before this
+    // Job can exist; this row proves the exact own-origin URL while it runs.
+    if (kubernetesCapture && !shotsOnly && assetRouteCheck.isEnabled()) {
+      tests.push(assetRouteBrowserTest(stagingOrigin, tests.length));
+    }
 
     // Earned gating (#1019). Every declared check runs on every build, but a
     // check only BLOCKS the merge once this app has been observed passing it
@@ -2885,15 +2915,6 @@ async function settleCaptureRun(config, pool, run) {
     });
   }
   if (unitOutcome) extraRows.push(unitOutcome.row);
-  // #2315: does the preview's own origin serve the hosted assets? Probed at
-  // settlement rather than beside the capture launch so the harvester's
-  // path (a run whose launching process died) reports it too. A deferred
-  // run takes no verdict, so it does not probe. Never throws.
-  const assetOutcome = shotsOnly ? null : await assetRouteCheck.maybeRunAssetRouteCheck({
-    config, pool, appId: app.id, sessionId: session.id, stagingOrigin,
-  });
-  if (assetOutcome) extraRows.push(assetOutcome.row);
-
   if (shotsOnly) {
     // No verdict was taken, so none is stored: the row stays 'pending' in
     // phase 'deferred' until the head merges cleanly, when the run that
@@ -3063,7 +3084,7 @@ async function settleCaptureRun(config, pool, run) {
       // pass_count 0 / fail_count 2 for a container that logged zero
       // inbound requests — and, worse, could graduate nothing while
       // permanently colouring the app's history with a platform outage.
-      if ((dispatched || unitOutcome || assetOutcome) && checksResult.state !== 'error') {
+      if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
         const historyRows = [];
         if (dispatched) {
           const byIndex = new Map(dispatched.map((d) => [d.index, d]));
@@ -3088,8 +3109,6 @@ async function settleCaptureRun(config, pool, run) {
         // first observed pass flips it from advisory to merge-blocking,
         // and (recordRun's COALESCE) no later failure demotes it.
         if (unitOutcome) historyRows.push(unitOutcome.history);
-        // The asset-route row graduates the same way (#2315).
-        if (assetOutcome) historyRows.push(assetOutcome.history);
         await checkHistory.recordRun(pool, app.id, historyRows);
       }
       log.info('visuals', 'Checks stored', {
@@ -3756,5 +3775,7 @@ module.exports = {
   beforeContainerName,
   resolveCaptureScale,
   CAPTURE_IMAGE,
+  ASSET_ROUTE_PROOF_TEXT,
+  assetRouteBrowserTest,
   MOBILE_VIEWPORT,
 };
