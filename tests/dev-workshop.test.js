@@ -2851,8 +2851,17 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // bounded to the reading column MINUS the head's own gutter — bounding to
   // the column's outer width made them 20px wider there (740 against 760),
   // a toolbar that changed size on a tab click.
+  //
+  // THE EAR IS THE ONE EXEMPTION, and the rule's own note is why it needs
+  // one rather than a deletion: the bound exists because a two-tab strip
+  // stretched across 1200px "reads as pulled apart". That is about the TABS,
+  // and they hug at the surface's left end now — so the surface behind them
+  // follows the pane's width without pulling the control apart. Left in the
+  // bound it took `max-width: 740px` against a `left`/`right` pair that
+  // wanted 562, and an over-constrained box keeps `left`: the ear's right
+  // edge overshot the pane's by 178px at 1280.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
+    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \*:not\(\.dev-ws-ear\) \{[\s\S]*?max-width: calc\(760px - 20px\)/);
 });
 
 test('the grouping strip is one node, in the ear above 768px and the head below', () => {
@@ -2895,12 +2904,11 @@ test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
   // (asserted with that rule, above).
   const ear = CSS.slice(CSS.indexOf('  .dev-ws-ear {'), CSS.indexOf('}', CSS.indexOf('  .dev-ws-ear {')));
   assert.match(ear, /position: absolute/);
-  // The right edge is MEASURED now, not pinned to the pane: `right: 0` slid
-  // the ear off to the window's edge on By stage, where the pane goes
-  // full-bleed while the pill stays centred on its own column. The `0px`
-  // fallback is the flush case, which is By category and every pre-measurement
-  // frame.
-  assert.match(ear, /right: var\(--dev-ws-ear-right, 0px\)/);
+  // The right edge is the PANE'S, in both groupings — so on By stage, where
+  // the pane goes full-bleed, the surface grows with it. It was measured off
+  // the tab strip's column for one round, which held the ear at a fixed 306px
+  // and stopped it following the pane.
+  assert.match(ear, /right: 0;/);
   assert.match(ear, /bottom: 100%/);
   assert.ok(!/background-color/.test(ear),
     'the ear does not paint its own fill — it shares the pane\'s');
@@ -2914,15 +2922,16 @@ test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
   // flush with the pane's right edge and 22px on By stage, where the pane runs
   // on past it. See the junction test below.
   assert.match(CSS,
-    /\.dev-ws-pane:has\(\.dev-ws-ear\) > \.dev-ws-pane-head \{\n\s*border-top-right-radius: var\(--dev-ws-ear-tr, 0px\);/);
+    /\.dev-ws-pane:has\(\.dev-ws-ear\) > \.dev-ws-pane-head \{\n\s*border-top-right-radius: 0;/);
   // The containing block is scoped, so a pane without an ear is untouched.
   assert.match(CSS, /\.dev-ws-pane:has\(\.dev-ws-ear\) \{ position: relative; \}/);
-  // STRETCHED TO THE PILL, and the tabs divide what that gives them. The ear
-  // hugged its two labels for one round and the pair sat in a wide band of
-  // dead air — 83px of it at every width, because both boxes were
-  // content-sized inside a column that tops out at 760px.
+  // STRETCHED TO THE PILL — the surface, not the labels. The ear hugged its
+  // two labels for one round and the pair sat in a wide band of dead air, 83px
+  // of it at every width. The surface closes that; the TABS stay put, so the
+  // control sits at the same coordinates under either grouping.
   assert.match(ear, /left: var\(--dev-ws-ear-left, auto\)/);
-  assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 1 1 0; \}/);
+  assert.match(CSS, /\.dev-ws-ear \{ justify-content: flex-start; \}/);
+  assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 0 0 auto; \}/);
 });
 
 test('the ear is stretched by measurement, because no selector can reach the pill', () => {
@@ -2943,22 +2952,18 @@ test('the ear is stretched by measurement, because no selector can reach the pil
   // of flow, so its width cannot change either input. That is why this hook
   // needs none of the pair-caching the strip's does.
   assert.match(WORKSHOP, /absolutely positioned and therefore out of flow/);
-  // The RIGHT edge is measured off the nav, which is what retired the width
-  // cap that used to live here. The cap existed to stop By stage stretching
-  // the ear to 722px and its tabs to 348px apiece; anchored to the nav's
-  // column the ear cannot grow past it, so there is nothing left to catch and
-  // the width is one number under both groupings.
+  // ONE NUMBER IS MEASURED for the ear: its left bound. The right edge is the
+  // pane's, in CSS, and the width cap this used to carry is gone with the
+  // column anchoring that needed it — the surface is free to grow with the
+  // pane because the LABELS no longer grow with the surface.
   assert.match(WORKSHOP, /const EAR_MIN_PX = 240;/);
-  assert.ok(!/EAR_MAX_PX/.test(WORKSHOP),
-    'the width cap is retired — the nav anchor makes it unreachable');
-  assert.match(WORKSHOP, /const tail = Math\.max\(0, Math\.round\(p\.right - n\.right\)\);/);
-  assert.match(WORKSHOP, /const left = Math\.min\(wanted, Math\.max\(0, rightEdge - EAR_MIN_PX\)\);/);
-  // All four properties are cleared together below the breakpoint; a stale one
+  assert.ok(!/EAR_MAX_PX/.test(WORKSHOP), 'no width cap');
+  assert.ok(!/--dev-ws-ear-right|--dev-ws-ear-tail|--dev-ws-ear-tr/.test(WORKSHOP),
+    'and none of the properties the column anchoring needed');
+  assert.match(WORKSHOP, /const left = Math\.min\(wanted, Math\.max\(0, p\.width - EAR_MIN_PX\)\);/);
+  // Both properties are cleared together below the breakpoint; a stale one
   // would be inherited by the next crossing.
-  assert.match(WORKSHOP, /const EAR_PROPS = \[/);
-  for (const prop of ['left', 'right', 'tail', 'tr']) {
-    assert.ok(WORKSHOP.includes(`'--dev-ws-ear-${prop}'`), `${prop} is in EAR_PROPS`);
-  }
+  assert.match(WORKSHOP, /const EAR_PROPS = \['--dev-ws-ear-left', '--dev-ws-head-top'\];/);
   assert.match(WORKSHOP, /for \(const k of EAR_PROPS\) host\.style\.removeProperty\(k\);/);
   const earCss = CSS.slice(CSS.indexOf('  .dev-ws-ear {'), CSS.indexOf('}', CSS.indexOf('  .dev-ws-ear {')));
   assert.ok(!/max-width/.test(earCss), 'and never as a max-width, which would drift the right edge');
@@ -4419,53 +4424,54 @@ test('no line runs between the ear and the pane, and the two right edges are one
   // by — so the line and the ear cannot disagree about where the ear starts.
   // The `+ 1px` is the width of the ear's own left edge, which it draws as an
   // inset shadow: clipping at the offset exactly left a one-pixel notch.
-  // TWO SEGMENTS, because the ear may stand at the pane's corner or part-way
-  // along its top edge. `::before` is the run to its left, which always
-  // exists; `::after` is the run to its right, which exists only on By stage,
-  // where the pane continues past the ear.
-  assert.match(CSS, /\.dev-ws-pane:has\(\.dev-ws-ear\)::before,\n  \.dev-ws-pane:has\(\.dev-ws-ear\)::after \{/);
+  // ONE SEGMENT: the run to the LEFT of the ear. There was a second, for the
+  // run to its right, for the round when the ear was anchored to the tab
+  // strip's column and the pane continued past it on By stage. The surface
+  // reaches the pane's right edge again, so nothing is ever to the right of
+  // it.
+  assert.match(CSS, /\.dev-ws-pane:has\(\.dev-ws-ear\)::before \{/);
+  assert.ok(!/\.dev-ws-pane:has\(\.dev-ws-ear\)::after/.test(CSS), 'and no second segment');
   assert.match(CSS, /box-shadow: inset 0 1px 0 var\(--app-sheet-line\);/);
   assert.match(CSS, /clip-path: inset\(0 calc\(100% - var\(--dev-ws-ear-left, 100%\) - 1px\) 0 0\);/);
-  // A zero-width tail clips to nothing, which is how "no segment to the right"
-  // is expressed without a second rule — so By category needs no special case.
-  assert.match(CSS, /clip-path: inset\(0 0 0 calc\(100% - var\(--dev-ws-ear-tail, 0px\)\)\);/);
   // With the property unset the left clip is the whole width, so the top line
   // is simply continuous — the pre-ear appearance rather than a broken one.
   assert.match(CSS, /border-radius: inherit;/);
-  // THE CORNER IS CONDITIONAL, and on the same measured fact: squared while
-  // the ear is flush with the pane's right edge, so the two read as one edge;
-  // round on By stage, where the pane runs on past the ear and the corner is
-  // nowhere near it. Squaring it unconditionally would leave a squared corner
-  // on a pane the ear has nothing to do with.
+  // THE CORNER IS SQUARED UNCONDITIONALLY, on both the head and the pane. It
+  // was measured for the round when the ear could sit part-way along the top
+  // edge; the ear is always at the corner now, so both edges are always one.
   for (const sel of ['\\.dev-ws-pane:has\\(\\.dev-ws-ear\\) > \\.dev-ws-pane-head',
     '\\.dev-ws-pane:has\\(\\.dev-ws-ear\\)']) {
-    assert.match(CSS, new RegExp(`${sel} \\{[^}]*border-top-right-radius: var\\(--dev-ws-ear-tr, 0px\\)`));
+    assert.match(CSS, new RegExp(`${sel} \\{[^}]*border-top-right-radius: 0`));
   }
 });
 
-test('the ear stays beside the pill when By stage widens the pane', () => {
-  // A PRODUCT DECISION, not an accident of the layout. By stage takes the pane
-  // full-bleed (`#dev-workshop:has(.dev-ws-board) { max-width: none }`) while
-  // the tab strip stays bounded to its own 760px column and centred, so an ear
-  // pinned to the pane's right edge slid out from beside the pill and off
-  // toward the window's edge the moment you switched grouping. Anchored to the
-  // NAV, its box is identical under both groupings and it stays where the pill
-  // is — which is the only place a strip that says "how am I reading this?"
-  // means anything.
+test('the surface grows with the pane on By stage, the labels do not', () => {
+  // THE SHAPE OF THIS DECISION, twice reversed, so it is worth stating once.
   //
-  // Measured in Chromium: [458,764] at 768, [714,1020] at 1280, [874,1180] at
-  // 1600, the same under both groupings, 306px wide in all six cells.
-  assert.match(WORKSHOP, /const n = bar\.getBoundingClientRect\(\);/,
-    'the nav is measured, not just the pill and the pane');
-  assert.match(WORKSHOP, /const rightEdge = p\.width - tail;/);
-  // The pane is still what the ear is POSITIONED against — it is a child of
-  // the pane and `bottom: 100%` is what keeps it abutting — so the anchor is
-  // expressed as an inset from the pane's right edge rather than by moving the
-  // ear out of the pane, which would detach it from the surface it belongs to.
+  // The ear began pinned to the pane's right edge with the two tabs SHARING
+  // the surface. On By stage the pane goes full-bleed
+  // (`#dev-workshop:has(.dev-ws-board) { max-width: none }`) while the tab
+  // strip keeps its own 760px column, so that made each tab 268px at 1280 and
+  // 348px at 1600 — a title bar with a label in it. The first answer anchored
+  // the ear's right edge to the strip's column, which fixed the tabs at 306px
+  // and stopped the surface following the pane at all; it also needed three
+  // more custom properties to put the pane's outline back to the right of the
+  // ear, and a measured corner radius.
+  //
+  // The answer that holds separates the two questions. The SURFACE follows
+  // the pane, in CSS, with nothing measured. The LABELS hug at its left end,
+  // so they sit at the same coordinates under either grouping and switching
+  // only changes the width behind them. One measured number is left — where
+  // the surface starts — and the cap, the tail, the right inset and the
+  // conditional corner are all gone with the anchoring that needed them.
   const ear = CSS.slice(CSS.indexOf('  .dev-ws-ear {'), CSS.indexOf('}', CSS.indexOf('  .dev-ws-ear {')));
-  assert.match(ear, /bottom: 100%/);
-  assert.match(ear, /right: var\(--dev-ws-ear-right, 0px\)/);
-  assert.ok(!/left: 0|right: 0;/.test(ear), 'neither edge is pinned to the pane');
+  assert.match(ear, /right: 0;/, 'the surface follows the pane');
+  assert.match(ear, /bottom: 100%/, 'and still abuts the head it hangs from');
+  assert.match(CSS, /\.dev-ws-ear \{ justify-content: flex-start; \}/);
+  assert.match(CSS, /\.dev-ws-ear \.dev-ws-group-tab \{ flex: 0 0 auto; \}/,
+    'the labels do not grow with it');
+  assert.match(WORKSHOP, /const EAR_PROPS = \['--dev-ws-ear-left', '--dev-ws-head-top'\];/,
+    'one number for the ear, one for where the head rests');
 });
 
 test('the tab strip, the ear and the head pin as one band (#2339 follow-up)', () => {

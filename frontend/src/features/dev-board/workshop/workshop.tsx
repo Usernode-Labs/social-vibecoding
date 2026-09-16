@@ -2046,10 +2046,7 @@ const EAR_GAP_PX = 10;
  * stale one left on the host would be inherited by the next crossing, which
  * is why this is a list rather than four remove calls written out.
  */
-const EAR_PROPS = [
-  '--dev-ws-ear-left', '--dev-ws-ear-right', '--dev-ws-ear-tail', '--dev-ws-ear-tr',
-  '--dev-ws-head-top',
-];
+const EAR_PROPS = ['--dev-ws-ear-left', '--dev-ws-head-top'];
 
 /** The column gap between the tab strip and the pane below it (`.dev-ws`). */
 const WS_GAP_PX = 10;
@@ -2068,26 +2065,25 @@ const WS_GAP_PX = 10;
 const EAR_MIN_PX = 240;
 
 /**
- * The ear's RIGHT edge belongs to the tab strip's column, not the pane's.
+ * WHY THE SURFACE MAY GROW AND THE LABELS MAY NOT.
  *
- * `right: 0` was the obvious anchor and it was wrong on By stage: the pane
- * goes full-bleed there while the tab pill stays centred on its own 760px
- * column, so the ear slid out from beside the pill and off to the window's
- * edge — it "shifted right with the rest of the pane growth". Anchored to the
- * NAV instead, the ear's box is identical under both groupings (714..1020 at
- * 1280) and it stays where the pill is, which is the only place it means
- * anything.
+ * The ear's right edge is the pane's, in CSS (`right: 0` on a child of the
+ * head), so on By stage — where the pane goes full-bleed — the surface grows
+ * with it. For one round it was measured off the tab strip's column instead,
+ * to stop it "shifting right with the pane growth"; that held the ear at a
+ * fixed 306px and needed three more custom properties to put the pane's
+ * outline back to the right of it.
  *
- * That is also what retired the width cap this constant replaced. The cap
- * existed to stop By stage stretching the ear to 722px and its two tabs to
- * 348px apiece; with the right edge on the nav the ear simply cannot grow
- * past the column, so the ceiling has nothing left to catch and the width is
- * one number — the column, less the pill, less the seam — at every width.
+ * What makes the simpler anchor work now is that the TABS no longer share the
+ * surface (`flex: 0 0 auto`, app.css). Sharing it is what made a full-bleed
+ * pane produce 268px and 348px tabs — a title bar with a label in it — and
+ * what the retired width cap existed to prevent. With the labels hugging at
+ * the surface's left end, the control sits at the same coordinates under
+ * either grouping and only the surface behind it changes width, so there is
+ * nothing left for a cap to catch.
  *
- * The consequence is that on By stage the ear is NO LONGER at the pane's
- * corner: the pane continues underneath and past it. So the pane keeps its
- * rounded top-right corner there and its top line resumes to the RIGHT of the
- * ear, which is what `--dev-ws-ear-tail` and `--dev-ws-ear-tr` are for.
+ * The cost is deliberate: on By theme the labels no longer fill their
+ * surface, leaving empty ear to the right of "By stage".
  */
 
 /**
@@ -2139,28 +2135,14 @@ function useEarInset(
       const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
       if (!t.width || !n.width || !p.width) return;
-      // How far the pane reaches past the tab strip's column: 0 on By
-      // category, where they are the same 760px box, and half the slack on By
-      // stage, where the pane is full-bleed and the nav stays centred.
-      const tail = Math.max(0, Math.round(p.right - n.right));
-      // The ear's right edge, as an x against the pane's left edge.
-      const rightEdge = p.width - tail;
-      // Reach the pill, unless that would leave the ear narrower than its
-      // labels — then stop and let the seam widen instead.
+      // ONE NUMBER LEFT. The ear's right edge is the pane's, in CSS, so only
+      // its left bound needs measuring: reach the pill, unless that would
+      // leave the surface narrower than the two labels — then stop and let
+      // the seam widen instead. `right` and the two the pane's outline used
+      // to need went with the column anchoring that produced them.
       const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
-      const left = Math.min(wanted, Math.max(0, rightEdge - EAR_MIN_PX));
+      const left = Math.min(wanted, Math.max(0, p.width - EAR_MIN_PX));
       host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
-      host.style.setProperty('--dev-ws-ear-right', `${tail}px`);
-      // The two the pane's outline needs, and both are about the SAME fact —
-      // whether the ear is standing at the pane's corner or part-way along its
-      // top edge. Flush (By category): no line to the right of the ear and a
-      // squared corner, so the two right edges read as one. Inset (By stage):
-      // the top line resumes for the `tail`, plus the 1px the ear's own right
-      // edge occupies, and the corner stays round because the ear is nowhere
-      // near it. A zero-width tail clips to nothing, which is how "no segment"
-      // is expressed without a second rule.
-      host.style.setProperty('--dev-ws-ear-tail', tail ? `${tail + 1}px` : '0px');
-      host.style.setProperty('--dev-ws-ear-tr', tail ? '22px' : '0px');
       // WHERE THE HEAD COMES TO REST, which is under the pinned tab strip
       // rather than at the top of the scroller. Both stick, so the offset has
       // to be the strip's own height — three text labels and a glyph, so a
