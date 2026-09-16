@@ -2065,7 +2065,7 @@
       "id": "board.quick-filters-in-dialog",
       "name": "When the strip runs out of room the two quick filters become switches in Filters",
       "path": "/?demo=1&ws=all&shot=quick-in-dialog#app/usernode-2d5619/workshop",
-      "expectSelector": "#board-filters-modal:has(#board-filters-assignedtome) #board-filters-createdbyme",
+      "expectSelector": "body:has(#board-filters-modal:not(.hidden)) label:has(#board-filters-assignedtome) + label:has(#board-filters-createdbyme)",
       "expectText": "Only items the group voted onto you",
       "visual": true,
       "impact": [
