@@ -2895,6 +2895,16 @@ const AppView = {
     // chip said depended on what had been navigated to earlier in the run.
     // It says Workshop on the Dev screen, always.
     App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
+    // BACK TO THE WORKSHOP SCREEN, when that is where this app was opened
+    // from. `App._appBackHref` is the breadcrumb navigateToApp records (see
+    // its note in app.js) and it is null on every other route, which leaves
+    // the house `setBackIcon('home')` above already published — so this is an
+    // override for one origin rather than a new default. It sits on the
+    // LANDER alone: the app's own Workshop is the page the row linked to, and
+    // a chevron on the chat or a topic would promise a level this breadcrumb
+    // says nothing about. Publishing an arrow with an href is also what turns
+    // the phone's back gesture on (features/header/native-back-navigation.ts).
+    if (App._appBackHref) App.setBackIcon?.('arrow', App._appBackHref);
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.

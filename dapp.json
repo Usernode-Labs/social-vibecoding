@@ -2717,9 +2717,45 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
+      "name": "The chip opens the menu, and it lists Home, Workshop and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-workshop + #switcher-row-discover"
+    },
+    {
+      "name": "Workshop is a destination in the chip's menu, directly under Home",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-workshop[href=\"#workshop\"]",
+      "expectText": "Workshop"
+    },
+    {
+      "id": "workshop.all-apps",
+      "name": "The Workshop screen lists your apps with both of their numbers",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app=\"staging-demo-your-app\"][href=\"/app/staging-demo-your-app/workshop\"] [data-workshop-needs=\"3\"]",
+      "expectText": "Votes waiting on you",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/workshop/**",
+        "frontend/src/features/app-context/app-context-sheet.tsx",
+        "src/routes/workshop-overview.js",
+        "public/js/app.js",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "name": "A Workshop row says what you are working on as well as what needs you",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-app=\"staging-demo-your-app\"] [data-workshop-working=\"2\"] + [data-workshop-needs=\"3\"]"
+    },
+    {
+      "name": "An app with a decision waiting leads the Workshop list",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-list > a[data-workshop-app]:first-child [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
+    },
+    {
+      "name": "The Workshop screen draws no empty-state line while it has rows",
+      "path": "/?demo=1#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
