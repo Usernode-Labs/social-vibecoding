@@ -225,7 +225,11 @@ function actionRefs(model) {
   for (const b of [...(model.badges || []), ...(model.linked || [])]) {
     if (b.t === 'issueChip') push({ fn: 'openTopic', args: ['issue', b.n] });
   }
-  if (model.title && model.title.edit) push({ fn: 'beginIssueTitleEdit', args: [model.title.edit.issue] });
+  if (model.title && model.title.edit) {
+    const edit = model.title.edit;
+    if (edit.session != null) push({ fn: 'beginSessionTitleEdit', args: [edit.session] });
+    else push({ fn: 'beginIssueTitleEdit', args: [edit.issue] });
+  }
   return out;
 }
 

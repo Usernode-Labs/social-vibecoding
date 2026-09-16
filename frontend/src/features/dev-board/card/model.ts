@@ -141,8 +141,8 @@ export type BadgeSpec =
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
   | { t: 'chat'; key: string; count: number }
-  /** A metadata chip (priority / assignee / category). */
-  | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
+  /** A metadata chip (priority / assignee / category / theme). */
+  | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category' | 'theme'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
   /** Closes #N — in-app (button) or on GitHub (anchor). */
   | { t: 'issueChip'; key: string; n: number; prefix: string; cls: string; title: string }
   | { t: 'issueLink'; key: string; n: number; href: string; verb: string; cls: string; title: string }
@@ -158,6 +158,9 @@ export type AttrLabel =
   | { kind: 'avatar'; tint: string; initial: string; text: string }
   | { kind: 'avatarEmpty'; text: string };
 
+/** The existing issue editor and #2327's open-proposal editor share one band. */
+export type TitleEditTarget = { issue: number } | { session: number };
+
 /** The title band: the text, plus the two things that ride beside it. */
 export interface TitleSpec {
   text: string;
@@ -165,16 +168,16 @@ export interface TitleSpec {
   lead?: { s: string; cls: string };
   /** A muted run AFTER it — the close-issue row's author. */
   trail?: { s: string; cls: string };
-  /** #133/#556 — the author-only inline edit pencil, topic head only. */
-  edit?: { issue: number };
+  /** Author-only inline edit pencil, topic head only. */
+  edit?: TitleEditTarget;
   /**
    * #665 — the inline title editor, replacing `beginIssueTitleEdit`'s
    * innerHTML write into the title div. While set the band renders an
    * uncontrolled input seeded with `initial`; save/cancel stay module
-   * methods that read `#dev-issue-title-input` by id, exactly as before,
-   * and `#dev-issue-title-error` stays a module-written node.
+   * methods that read the target-specific input by id, exactly as before,
+   * and the matching error line stays a module-written node.
    */
-  editing?: { issue: number; initial: string };
+  editing?: TitleEditTarget & { initial: string };
   /** The full text, for the clamp's own tooltip. */
   title: string;
 }

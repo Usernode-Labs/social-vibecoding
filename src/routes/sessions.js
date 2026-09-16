@@ -383,6 +383,7 @@ async function scheduleRetainedInteractiveTurn({
 }
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
+const MANUAL_SESSION_TITLE_MAX = 256;
 
 // #1038: identifies THIS platform process to the client's session-state
 // store. Live busy state is in-process memory (see services/session-state),
@@ -428,6 +429,28 @@ const recheckInFlight = new Set();
 // staging that they do NOT render in the read-only view. Because the mock
 // goes through sanitizeTranscript exactly like a real read, that check
 // exercises the real allowlist rather than a hand-written "safe" payload.
+function stagingMockOwnSession(userId, appSlug) {
+  return {
+    id: 990101, branch_name: 'mock/my-session', pr_number: null,
+    user_id: userId,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your in-progress session',
+    // Reverse "#N" issue chip demo on the own-session card: links
+    // to mock issue 900002, which stagingMockIssues serves.
+    status: 'active', linked_issues: [900002], shared_at: null,
+    created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+    // #1959: this one is WAITING ON ITS OWNER — a spec that ended
+    // with open questions — so the Improve panel's "Ready for your
+    // input" pill is reviewable in a preview, right under the busy
+    // row's "Working"; every other idle mock row reads plain
+    // "Ready". Hand-set, like `busy` on 990102: the mocks are
+    // appended after the map that computes the real verdict.
+    awaiting_input: true,
+  };
+}
+
 function stagingMockSharedSessions() {
   return [
           {
@@ -1580,6 +1603,103 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  // PATCH /api/sessions/:id/title (#2327)
+  //
+  // Rename the author's own native change throughout its open lifecycle:
+  // Underway (active/paused) and In review (promoted/merging). The
+  // display title and proposed PR title move together: before a PR exists,
+  // `proposed_pr_title` is what pr-metadata will use when it creates one;
+  // after a managed PR exists, the local proposal title moves immediately
+  // and GitHub is a best-effort mirror. Imported PR titles stay with their
+  // external author, and headless issue runs are named by their issue.
+  //
+  // The app-level collab gate above runs first. The UPDATE repeats the
+  // narrower author/lifecycle/source checks atomically and returns the same
+  // 404 for every miss so a foreign private session cannot be enumerated.
+  router.patch('/api/sessions/:id/title', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const rawTitle = req.body?.title;
+    const title = typeof rawTitle === 'string'
+      ? rawTitle.replace(/\s+/g, ' ').trim()
+      : '';
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    if (title.length > MANUAL_SESSION_TITLE_MAX) {
+      return res.status(400).json({
+        error: `Title too long (max ${MANUAL_SESSION_TITLE_MAX} chars)`,
+      });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs
+            SET session_title = $1::text,
+                proposed_pr_title = $1::text,
+                pr_title = CASE WHEN cs.pr_number IS NULL THEN cs.pr_title ELSE $1::text END,
+                pr_title_fallback = CASE
+                  WHEN cs.pr_number IS NULL THEN cs.pr_title_fallback ELSE FALSE END
+           FROM apps a
+          WHERE cs.id = $2 AND cs.user_id = $3 AND a.id = cs.app_id
+            AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+            AND cs.is_headless = FALSE
+            AND cs.source IS DISTINCT FROM 'imported'
+          RETURNING cs.id, cs.app_id, a.slug AS app_slug, a.repo_url,
+                    cs.pr_number, cs.pr_title, cs.session_title,
+                    cs.proposed_pr_title`,
+        [title, sessionId, req.user.id]
+      );
+      const session = rows[0];
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+
+      let githubUpdated = false;
+      if (session.pr_number) {
+        const fullRepo = proposalUpdate.repoNameFromUrl(session.repo_url);
+        if (fullRepo) {
+          const [owner, repo] = fullRepo.split('/');
+          try {
+            await github.updatePR(owner, repo, Number(session.pr_number), { title });
+            githubUpdated = true;
+          } catch (err) {
+            // The panel already has the author's rename. GitHub is a
+            // cosmetic mirror and a transient outage must not roll it back.
+            log.warn('sessions', 'Proposal title saved but GitHub rename failed', {
+              sessionId, prNumber: session.pr_number, message: err.message,
+            });
+          }
+        }
+      }
+
+      try {
+        const { pushSessionUpdate } = require('../services/ws');
+        pushSessionUpdate({
+          action: 'titled', sessionId, appId: session.app_id,
+          appSlug: session.app_slug, sessionTitle: title,
+        });
+      } catch (err) {
+        log.warn('sessions', 'Proposal title broadcast failed', {
+          sessionId, message: err.message,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        title,
+        prTitle: session.pr_number ? title : null,
+        githubUpdated,
+      });
+    } catch (err) {
+      log.error('sessions', 'Proposal title update failed', {
+        sessionId, message: err.message,
+      });
+      return res.status(500).json({ error: 'Could not update the title' });
+    }
+  });
+
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
   //   each annotated with whether a CC turn is in flight right now.
@@ -1725,28 +1845,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // board's pinned block (caption + "Make visible" button) renders
       // for ANY viewer in a demo preview — the real seeded sessions
       // belong to the first admin only. Appended AFTER totals so the
-      // "(x/y)" headers stay honest; fake 99xxxx id, read-only (its
-      // buttons 404 server-side).
+      // "(x/y)" headers stay honest; fake 99xxxx id whose writes still 404
+      // server-side. Its read-only detail projection exists so declared
+      // checks can open the full change page without a console-erroring 404.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
-          {
-            id: 990101, branch_name: 'mock/my-session', pr_number: null,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your in-progress session',
-            // Reverse "#N" issue chip demo on the own-session card: links
-            // to mock issue 900002, which stagingMockIssues serves.
-            status: 'active', linked_issues: [900002], shared_at: null,
-            created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-            // #1959: this one is WAITING ON ITS OWNER — a spec that ended
-            // with open questions — so the Improve panel's "Ready for your
-            // input" pill is reviewable in a preview, right under the busy
-            // row's "Working"; every other idle mock row reads plain
-            // "Ready". Hand-set, like `busy` on 990102: the mocks are
-            // appended after the map that computes the real verdict.
-            awaiting_input: true,
-          },
+          stagingMockOwnSession(req.user.id, config.selfAppSlug),
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
           // affordance beside its ⋯. Both other private rows have
@@ -2879,7 +2983,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
     try {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id));
+        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
+          || (Number(req.params.id) === 990101
+            ? stagingMockOwnSession(req.user.id, config.selfAppSlug) : null);
         if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
       }
       const { rows } = await pool.query(

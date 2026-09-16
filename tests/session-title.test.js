@@ -143,6 +143,8 @@ test('maybeTitleFirstMessage titles a fresh session and emits session_titled', a
     // The persist is guarded so a PR-mirrored title can't be clobbered.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET session_title/.test(q.sql));
     assert.match(upd.sql, /pr_number IS NULL/);
+    assert.match(upd.sql, /proposed_pr_title IS NULL/,
+      'a later automatic title cannot replace an author-chosen proposal title');
     assert.deepEqual(upd.params, ['Session naming defaults', 5]);
     assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Session naming defaults' } }]);
     // The Haiku call was debited to the requesting user.

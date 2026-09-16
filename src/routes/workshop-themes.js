@@ -98,6 +98,14 @@ function workshopThemesRoutes(config) {
         // placer (`unplaced`, also named by key), and not yet placed.
         coverage: result.coverage || null,
         unplaced: Array.isArray(result.unplaced) ? result.unplaced : [],
+        // The app's LIVE theme vocabulary — the model's standing draft plus
+        // whatever the group has pinned — so a card's theme picker can offer
+        // it without a second round-trip, and `votes` so the view can show
+        // which cards the group placed itself rather than the model.
+        // Voting rides the existing topic-attributes POST: merging the two
+        // groupings onto one mechanism means this route still needs no write.
+        registry: Array.isArray(result.registry) ? result.registry : [],
+        votes: result.votes && typeof result.votes === 'object' ? result.votes : {},
         // The three windowed lines the lander draws as cards — what landed
         // last week, what has landed this week, what the open work is about
         // — written by the model on the same reconcile that drafted the

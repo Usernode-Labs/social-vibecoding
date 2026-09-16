@@ -357,7 +357,23 @@ const AppView = {
   // sessionStorage: which way you read the board is a lasting preference,
   // not a scratch narrowing that should quietly expire.
   WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
-  WORKSHOP_GROUPS: ['category', 'stage'],
+  WORKSHOP_GROUPS: ['theme', 'stage'],
+  // The pane used to be called 'category', which was the name of the OTHER
+  // grouping entirely: this one is the app's THEMES (what the work is about,
+  // drafted by the model and now votable), while a category is the kind of
+  // work — feature, bug, docs. Two groupings both labelled "category" is what
+  // the merge of the two systems set out to end.
+  //
+  // The stored value and `?group=` are both public surfaces, so the old
+  // spelling keeps resolving rather than silently falling back to the
+  // default: a viewer who last chose this pane opens on it, and an old link
+  // still lands where it used to. Read-time only, like every other migration
+  // here — the new spelling is written the next time they tap a tab.
+  WORKSHOP_GROUP_ALIASES: { category: 'theme' },
+  _migrateWorkshopGroup(v) {
+    if (AppView.WORKSHOP_GROUPS.includes(v)) return v;
+    return AppView.WORKSHOP_GROUP_ALIASES[v] || null;
+  },
   // `?group=stage`, mirroring `?view=` above — resolved once and cached, so a
   // deep link can reach a pane that is otherwise only a click away. It is
   // what the declared check for the stage pane navigates to: a check run
@@ -374,10 +390,9 @@ const AppView = {
   _readWorkshopGroupOverride() {
     if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
     try {
-      const v = new URLSearchParams(location.search).get('group');
-      AppView._workshopGroupUrlOverride = AppView.WORKSHOP_GROUPS.includes(v)
-        ? v
-        : (AppView._retiredBoardLink() ? 'stage' : null);
+      const v = AppView._migrateWorkshopGroup(new URLSearchParams(location.search).get('group'));
+      AppView._workshopGroupUrlOverride = v
+        || (AppView._retiredBoardLink() ? 'stage' : null);
     } catch { AppView._workshopGroupUrlOverride = null; }
     return AppView._workshopGroupUrlOverride;
   },
@@ -385,19 +400,22 @@ const AppView = {
   // override without a query parameter: `#app/<slug>/board` resolves onto the
   // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
   // exactly as `?group=` is — it does NOT write the stored preference, and a
-  // tap on "By category" clears it through _setWorkshopGroup — so following an
+  // tap on "By theme" clears it through _setWorkshopGroup — so following an
   // old board link shows those columns without re-deciding how this viewer
   // reads the board from then on.
   _overrideWorkshopGroup(group) {
-    if (!AppView.WORKSHOP_GROUPS.includes(group)) return;
-    AppView._workshopGroupUrlOverride = group;
+    const next = AppView._migrateWorkshopGroup(group);
+    if (!next) return;
+    AppView._workshopGroupUrlOverride = next;
   },
   _getWorkshopGroup() {
     try {
       const override = AppView._readWorkshopGroupOverride();
       if (override) return override;
-      const stored = window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY);
-      if (AppView.WORKSHOP_GROUPS.includes(stored)) return stored;
+      const stored = AppView._migrateWorkshopGroup(
+        window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY)
+      );
+      if (stored) return stored;
       // THE RETIRED BOARD PREFERENCE, carried across rather than dropped.
       // `RETIRED_VIEW_MODES` already stops a stored 'kanban' landing on a mode
       // that no longer exists, but on its own it forgets the thing the viewer
@@ -412,11 +430,11 @@ const AppView = {
       // every other migration here: nothing is written back, so the day they
       // do choose a pane, that choice is what persists.
       if (AppView._storedBoardPreference()) return 'stage';
-      return 'category';
-    } catch { return 'category'; }
+      return 'theme';
+    } catch { return 'theme'; }
   },
   _setWorkshopGroup(mode) {
-    const next = AppView.WORKSHOP_GROUPS.includes(mode) ? mode : 'category';
+    const next = AppView._migrateWorkshopGroup(mode) || 'theme';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?group=` would keep winning over every later click.
     AppView._workshopGroupUrlOverride = null;
@@ -3357,17 +3375,23 @@ const AppView = {
     }
   },
 
-  // #665: pure predicate behind _renderTopicHead's repaint guard — true
-  // when the repaint must be SKIPPED because the inline issue-title editor
-  // (beginIssueTitleEdit) is open on the mounted topic. Blocks only when
-  // the topic is the issue being edited AND the editor element is actually
-  // in the DOM; the caller supplies that DOM lookup so this stays
-  // node-testable (tests/issue-title-edit-guard.test.js).
-  _titleEditBlocksRepaint(topic, editingIssueNumber, editorInDom) {
-    return !!(topic && topic.kind === 'issue'
+  // #665/#2327: pure predicate behind _renderTopicHead's repaint guard.
+  // A live refresh must not remount whichever inline title editor is open
+  // and discard the author's typed text. Open changes have both
+  // /sessions/:id and unified /proposals/:id URLs, hence the two accepted
+  // kinds for a session editor. DOM presence keeps a stale flag self-healing.
+  _titleEditBlocksRepaint(topic, editingIssueNumber, issueEditorInDom,
+    editingSessionId, sessionEditorInDom) {
+    if (!topic) return false;
+    const issueBlocked = topic.kind === 'issue'
       && editingIssueNumber != null
       && editingIssueNumber === topic.id
-      && editorInDom);
+      && issueEditorInDom;
+    const sessionBlocked = (topic.kind === 'session' || topic.kind === 'proposal')
+      && editingSessionId != null
+      && editingSessionId === topic.id
+      && sessionEditorInDom;
+    return !!(issueBlocked || sessionBlocked);
   },
 
   // Paint (or live-refresh) the topic title + header card + body.
@@ -3393,8 +3417,12 @@ const AppView = {
     // this one guard covers them all. Data still refreshes in the background
     // (_loadDevData runs regardless); save/cancel clear the flag and repaint
     // from the fresh cache.
-    const editorInDom = !!document.getElementById('dev-issue-title-input');
-    if (AppView._titleEditBlocksRepaint(t, AppView._editingIssueTitle, editorInDom)) return;
+    const issueEditorInDom = !!document.getElementById('dev-issue-title-input');
+    const sessionEditorInDom = !!document.getElementById('dev-session-title-input');
+    if (AppView._titleEditBlocksRepaint(
+      t, AppView._editingIssueTitle, issueEditorInDom,
+      AppView._editingSessionTitle, sessionEditorInDom
+    )) return;
     // The flag is NOT cleared here any more. It used to be, because the
     // paint wiped the editor's markup and a still-set flag would have frozen
     // every future repaint; the editor is rendered FROM the flag now
@@ -4153,6 +4181,9 @@ const AppView = {
     github: '↗',           // ↗ leaves the platform
     priority: '⚑',         // ⚑ the same flag the priority chip uses
     category: '🏷',   // 🏷
+    // The app's THEMES — what the work is about, as opposed to the label
+    // above, which is what KIND of work it is. Two axes, so two glyphs.
+    theme: '◈',            // ◈
     assignee: '@',              // the assignee chip renders "@name"
     progress: '◐',         // ◐ half-filled: in progress
     clear: '○',            // ○ the same circle, emptied
@@ -4680,6 +4711,7 @@ const AppView = {
     // #665: an inline title edit never carries across topics — a stale
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
+    AppView._editingSessionTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
       return App.switchTab('dev', { kind, id }, 'topic');
     }
@@ -6731,14 +6763,21 @@ const AppView = {
           unplaced: Number(cov.unplaced) || 0, pending: Number(cov.pending) || 0,
         } : null,
         unplaced: Array.isArray(data.unplaced) ? data.unplaced.map(String) : [],
+        // key -> theme key for the cards the GROUP placed itself, so a row
+        // can say a member put it here rather than the model.
+        votes: (data.votes && typeof data.votes === 'object') ? data.votes : {},
         at: Date.now(),
       };
+      // Seed the theme picker's vocabulary from the same response, so the
+      // ⋯ menu's "Move to theme…" opens on the app's live themes without a
+      // second round-trip. The attribute GET refreshes it on each open.
+      if (Array.isArray(data.registry)) AppView._appThemes = data.registry;
     } catch {
       // A failed fetch names no themes: `failed` keeps _workshopThemeData
       // from reading an empty list as "the themes cover nothing".
       next = {
         slug, themes: [], source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false,
-        pendingStage: null, lastError: null, coverage: null, unplaced: [], failed: true, at: Date.now(),
+        pendingStage: null, lastError: null, coverage: null, unplaced: [], votes: {}, failed: true, at: Date.now(),
       };
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
@@ -6923,7 +6962,7 @@ const AppView = {
     // the heading on every line. It is dropped from the rows this pane draws
     // and kept everywhere else: the stage pane's columns, the Board, and the
     // vote and own-work strips, which are not grouped by category.
-    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
+    const underThemeHeading = AppView._getWorkshopGroup() === 'theme';
     const add = (kind, item, lane, build) => {
       if (!match(kind, item)) return;
       let card = build();
@@ -9142,8 +9181,14 @@ const AppView = {
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
+    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
     const owner = s.username || 'someone';
     const imported = s.source === 'imported';
+    const canEditTitle = !!(noNav && !AppView.readOnly && !imported
+      && ['active', 'paused'].includes(s.status)
+      && typeof App !== 'undefined' && App.user
+      && Number(s.user_id) === Number(App.user.id));
+    const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(s.id);
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
@@ -9163,7 +9208,14 @@ const AppView = {
       cls: `${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}`,
       attrs,
       icon: AppView._devCardIcon('session'),
-      title: { text: label, title: label },
+      title: {
+        text: label,
+        title: label,
+        edit: canEditTitle && !editingTitle ? { session: Number(s.id) } : undefined,
+        editing: editingTitle
+          ? { session: Number(s.id), initial: editableTitle }
+          : undefined,
+      },
       meta: [{
         t: 'text',
         s: imported
@@ -9947,6 +9999,14 @@ const AppView = {
     // #687: an imported PR has no platform-owned dev session — its code is
     // maintained on GitHub by an external author.
     const imported = pr.source === 'imported';
+    const canEditTitle = !!(noNav && !AppView.readOnly && mine && !imported
+      && ['promoted', 'merging'].includes(pr.status));
+    const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(pr.id);
+    title.edit = canEditTitle && !editingTitle ? { session: Number(pr.id) } : undefined;
+    title.editing = editingTitle ? {
+      session: Number(pr.id),
+      initial: String(pr.pr_title || pr.session_title || title.text),
+    } : undefined;
 
     // ── Badges: at most four metadata chips ──
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
@@ -12894,6 +12954,24 @@ const AppView = {
   _customCategories() {
     return (AppView._appCategories || []).filter((c) => c.custom);
   },
+  // The app's LIVE theme vocabulary, as the Workshop GET last served it
+  // (`registry`) or as the attribute popover's own response refreshed it.
+  // Themes are drafted by the model and pinned by the group, so unlike the
+  // categories there is no built-in set to fall back on — an app whose first
+  // draft has not run yet simply offers a text box.
+  _appThemes: [],
+  _themeOptions() {
+    return AppView._appThemes || [];
+  },
+  // A theme's display label, and its emoji when the model chose one. Falls
+  // back to the raw key so a vote for a theme the registry has since retired
+  // still reads as something rather than as nothing.
+  _themeMeta(value) {
+    const found = AppView._themeOptions().find((t) => t.value === value);
+    const label = (found && found.label) || String(value || '');
+    return { label, icon: (found && found.icon) || '', cls: 'attr-dot-theme' };
+  },
+  ATTR_THEME_MAX_LEN: 48,
 
   // #780: adopt a `categories` payload from any attributes GET/POST (or the
   // dedicated vocabulary endpoint) so a category typed just now can be
@@ -13052,8 +13130,13 @@ const AppView = {
       priority: ['Set priority…', 'Change priority…'],
       category: ['Set category…', 'Change category…'],
       assignee: ['Assign someone…', 'Change assignee…'],
+      // The Workshop groups by theme and a model drafts that grouping; this
+      // row is how a member OVERRIDES the placement it chose. It is the
+      // whole of "corrected by the group" that the Workshop has always
+      // claimed to be — before the merge there was no write path at all.
+      theme: ['Move to theme…', 'Change theme…'],
     };
-    return ['priority', 'category', 'assignee'].map((field) => {
+    return ['priority', 'category', 'assignee', 'theme'].map((field) => {
       const set = !!(it[field] && it[field].top);
       return {
         label: labels[field][set ? 1 : 0],
@@ -13062,7 +13145,9 @@ const AppView = {
         icon: field,
         title: field === 'assignee'
           ? 'Suggest or vote on who should take this'
-          : `Vote on this card's ${field}`,
+          : (field === 'theme'
+            ? 'Vote on which theme this card belongs to'
+            : `Vote on this card's ${field}`),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
     });
@@ -13328,6 +13413,34 @@ const AppView = {
         defaultValue: '',
         suggest: false,
       };
+    } else if (field === 'theme') {
+      // The app's live vocabulary — the model's standing draft plus whatever
+      // the group has pinned — refreshed from this response so a theme
+      // somebody minted a moment ago is already on offer. There is no
+      // built-in set: an app whose first draft has not run shows the box
+      // alone, and typing into it is how the group starts its own.
+      if (Array.isArray(data.themes)) AppView._appThemes = data.themes;
+      const themes = AppView._themeOptions();
+      if (themes.length) {
+        groups.push({
+          head: 'Theme',
+          divided: false,
+          options: themes.map((t) => {
+            const meta = AppView._themeMeta(t.value);
+            return row(t.value, meta.cls, meta.icon ? `${meta.icon} ${meta.label}` : meta.label);
+          }),
+        });
+      } else {
+        emptyNote = 'No themes drafted yet. Type one to start.';
+      }
+      add = {
+        inputId: 'attr-theme-input',
+        buttonId: 'attr-theme-add',
+        placeholder: 'Type a theme…',
+        maxLength: AppView.ATTR_THEME_MAX_LEN,
+        defaultValue: '',
+        suggest: false,
+      };
     } else {
       const opts = data.options || [];
       groups.push({
@@ -13386,6 +13499,21 @@ const AppView = {
         ? lower
         : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
       AppView._castAttrVote(known || typed);
+      return;
+    }
+    if (ctx.field === 'theme') {
+      const input = document.getElementById('attr-theme-input');
+      const typed = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
+      if (!typed) return;
+      // Match an existing theme case-insensitively by LABEL, so typing
+      // "signing in" votes for the model's own `signing-in` rather than
+      // minting a near-duplicate. The server slugs either way; this only
+      // decides which label the registry row keeps.
+      const lower = typed.toLowerCase();
+      const known = AppView._themeOptions()
+        .find((t) => String(t.label || '').toLowerCase() === lower
+          || String(t.value || '').toLowerCase() === lower);
+      AppView._castAttrVote(known ? known.value : typed);
       return;
     }
     const input = document.getElementById('attr-assignee-input');
@@ -14140,6 +14268,7 @@ const AppView = {
   // Cleared on cancel, on save success/no-op (NOT on save error — the
   // editor stays open showing the error), and on openTopic.
   _editingIssueTitle: null,
+  _editingSessionTitle: null,
 
   // The editor is the title band's own markup now (card/dev-card.tsx's
   // `TitleContent`, keyed on the model's `editing`), so this sets the flag
@@ -14150,6 +14279,7 @@ const AppView = {
     const issue = (AppView._ghIssues || []).find((i) => i.number === n);
     if (!issue) return;
     AppView._editingIssueTitle = n;
+    AppView._editingSessionTitle = null;
     // Not blocked by the guard: no editor is in the DOM yet, which is the
     // second half of its predicate.
     AppView._renderTopicHead();
@@ -14190,6 +14320,92 @@ const AppView = {
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
       AppView._editingIssueTitle = null;
+      AppView._renderTopicHead();
+    } catch {
+      showError('Network error');
+    }
+  },
+
+  // #2327: the proposal counterpart to the issue editor above. It lives on
+  // the full change page throughout Underway and In review; dense cards
+  // remain one unambiguous tap target.
+  // Save updates every cached copy because a visible own session can also be
+  // present in the shared-row map, and an active unified /proposals URL may
+  // have resolved through either cache.
+  _cacheSessionTitle(sessionId, title, prTitle) {
+    const id = Number(sessionId);
+    const rows = [];
+    for (const list of [
+      AppView._mySessions, AppView._sharedSessions, AppView._proposals,
+      AppView._merged,
+    ]) {
+      if (!Array.isArray(list)) continue;
+      for (const row of list) if (row && Number(row.id) === id) rows.push(row);
+    }
+    if (AppView._sharedById && AppView._sharedById[id]) rows.push(AppView._sharedById[id]);
+    if (AppView._topicProposal && Number(AppView._topicProposal.id) === id) {
+      rows.push(AppView._topicProposal);
+    }
+    if (typeof DevChat !== 'undefined' && DevChat.currentSession
+      && Number(DevChat.currentSession.id) === id) rows.push(DevChat.currentSession);
+
+    for (const row of new Set(rows)) {
+      row.session_title = title;
+      row.proposed_pr_title = title;
+      if (prTitle) {
+        row.pr_title = prTitle;
+        row.pr_title_fallback = false;
+      }
+    }
+  },
+
+  beginSessionTitleEdit(sessionId) {
+    const id = Number(sessionId);
+    const session = AppView._findItem('session', id);
+    if (!session) return;
+    AppView._editingIssueTitle = null;
+    AppView._editingSessionTitle = id;
+    AppView._renderTopicHead();
+  },
+
+  cancelSessionTitleEdit() {
+    AppView._editingSessionTitle = null;
+    AppView._renderTopicHead();
+  },
+
+  async saveSessionTitle(sessionId) {
+    const id = Number(sessionId);
+    const input = document.getElementById('dev-session-title-input');
+    const errEl = document.getElementById('dev-session-title-error');
+    const session = AppView._findItem('session', id);
+    if (!input || input.disabled || !session) return;
+    const newTitle = input.value.replace(/\s+/g, ' ').trim();
+    const currentTitle = String(
+      session.session_title || session.pr_title || session.branch_name || `Session #${id}`
+    );
+    if (!newTitle || newTitle === currentTitle) {
+      AppView._editingSessionTitle = null;
+      AppView._renderTopicHead();
+      return;
+    }
+    input.disabled = true;
+    const showError = (message) => {
+      input.disabled = false;
+      if (errEl) {
+        errEl.textContent = message;
+        errEl.classList.remove('hidden');
+      }
+    };
+    try {
+      const res = await fetch(`/api/sessions/${id}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      AppView._cacheSessionTitle(id, data.title || newTitle, data.prTitle || null);
+      AppView._editingSessionTitle = null;
       AppView._renderTopicHead();
     } catch {
       showError('Network error');

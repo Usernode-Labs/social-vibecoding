@@ -725,13 +725,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // as siblings — the check selects across the two, because a screen that
   // drew only one of them would still look loaded.
   //
-  // 680 → 681, 676 → 681: the tallies above were computed on either side of
+  // 676 → 678: also independently on main, #2327 declares the author-only
+  // title editor once while a change is Underway and once while it is In
+  // review. They are distinct lifecycle renderers (_sharedSessionCardModel /
+  // _proposalCardModel), so pinning both prevents one half of the feature
+  // disappearing unnoticed.
+  //
+  // 680 → 683, 678 → 683: the tallies above were computed on either side of
   // this merge and cannot be read as one sequence. This branch took
   // 675 → 680 alone, with its two All-items chunks (+2, +3); main
-  // independently took the same 675 to 676 with the Challenge scoring check
-  // (+1). Neither set overlaps the other, so the merged manifest holds every
-  // one of them: 675 + 2 + 3 + 1 = 681.
-  assert.equal(DAPP.tests.length, 681);
+  // independently took the same 675 to 678, with the Challenge scoring check
+  // (+1) and the title-editor pair (+2). Neither set overlaps the other, so
+  // the merged manifest holds every one of them: 675 + 2 + 3 + 1 + 2 = 683.
+  assert.equal(DAPP.tests.length, 683);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

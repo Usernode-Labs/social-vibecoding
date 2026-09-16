@@ -35,7 +35,10 @@ const STAGES = {
     // 2 puts the call on 'medium' effort: at the default ('high') it spent
     // its 16000 token budget thinking and hit the output limit before its
     // JSON finished, which froze one board's categories for 17 hours.
-    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e' },
+    // 3 merges the Workshop's grouping with the voted categories onto one
+    // mechanism: "previousThemes" now carry `pinned`, and a pinned theme —
+    // one the group has voted cards into — must come back unchanged.
+    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a' },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',
@@ -54,7 +57,11 @@ const STAGES = {
     // 4 halves the length and swaps "name the breadth" for two rules that
     // survive twelve words: two clauses rather than a list, and lead by the
     // COUNT of items in an area rather than by how visible it is.
-    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b', 4: '5ae848d3fe65b9d1' },
+    // 5 is vocabulary only, but it is not cosmetic: the prompt told the model
+    // to call the grouping "CATEGORIES", which is the name of the OTHER axis
+    // (the voted feature/bug/docs field). The line it writes is user-facing,
+    // so the rows have to re-ask for it under the right noun.
+    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b', 4: '5ae848d3fe65b9d1', 5: 'fa7bbe7465b5aea4' },
   },
 };
 

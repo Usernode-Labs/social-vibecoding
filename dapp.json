@@ -2162,8 +2162,8 @@
       "id": "workshop.grouping-ear",
       "name": "The grouping strip sits beside the tabs, on a surface joined to the pane",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"category\"][aria-selected=\"true\"]",
-      "expectText": "By category",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"theme\"][aria-selected=\"true\"]",
+      "expectText": "By theme",
       "visual": true,
       "impact": [
         "frontend/src/features/dev-board/workshop/**",
@@ -2184,9 +2184,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > [data-ws-ear] [data-ws-group=\"stage\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
+      "name": "The Workshop offers the two groupings as tabs at the head of All items, on theme by default",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"theme\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
       "expectText": "By stage"
     },
     {
@@ -4200,6 +4200,18 @@
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies",
       "expectText": "Change overview"
+    },
+    {
+      "name": "#2327: an author can edit an underway proposal title",
+      "path": "/?demo=1&conversation=activity#app/usernode-2d5619/dev/proposals/990101",
+      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectText": "Your in-progress session"
+    },
+    {
+      "name": "#2327: an author can also edit a proposal title in review",
+      "path": "/#app/usernode-2d5619/dev/proposals/900801",
+      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectText": "Staging demo: pills fall back after a build"
     },
     {
       "name": "A full underway change card has Discussion, Build and Activity tabs",

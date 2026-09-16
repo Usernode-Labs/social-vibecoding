@@ -101,7 +101,7 @@ test('managed handoff details derive readiness from the checked revision', async
   assert.equal((await get({ id: 42 }, 'details')).body.session.proposal_state, 'failed');
 });
 
-test('shared demo details reuse the list fixture only in staging demo mode', async () => {
+test('shared and own demo details reuse list fixtures only in staging demo mode', async () => {
   reset(); session = null;
   const previous = process.env.USERNODE_ENV;
   try {
@@ -110,6 +110,10 @@ test('shared demo details reuse the list fixture only in staging demo mode', asy
     assert.equal(result.status, 200);
     assert.equal(result.body.session.id, 990002);
     assert.equal(result.body.session.transcript_shared, true);
+    const own = await get({ id: 42 }, 'details?demo=1', 990101);
+    assert.equal(own.status, 200);
+    assert.equal(own.body.session.user_id, 42);
+    assert.equal(own.body.session.session_title, '[Mock] Your in-progress session');
     assert.equal((await get({ id: 42 }, 'details', 990002)).status, 404);
     process.env.USERNODE_ENV = 'production';
     assert.equal((await get({ id: 42 }, 'details?demo=1', 990002)).status, 404);

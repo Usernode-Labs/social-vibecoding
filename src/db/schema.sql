@@ -1860,7 +1860,7 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
   app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   target_type VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
   target_ref  INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
-  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category'
+  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category' | 'theme'
   value       TEXT NOT NULL,
   user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1893,6 +1893,64 @@ CREATE TABLE IF NOT EXISTS app_topic_categories (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(app_id, slug)
 );
+
+-- The app's THEME vocabulary: what the work is ABOUT ("Signing in", "Game
+-- Corner"), as opposed to app_topic_categories above, which is what KIND of
+-- work it is ("bug", "docs"). Two axes, deliberately — the discovery prompt
+-- in services/llm.js forbids cutting the board on the second one — but from
+-- here down they share ONE mechanism: a theme is a value of the `theme`
+-- field in topic_attribute_votes, tallied and moved exactly like a category,
+-- so a member's vote and the model's placement meet in the same table.
+--
+-- Before this, the model's grouping lived only in app_workshop_themes'
+-- themes_json/placements_json, which no member could write to: the Workshop
+-- described itself as "drafted by a model and corrected by the group" while
+-- routes/workshop-themes.js exposed a GET and nothing else. The AI placement
+-- is now a SEED and any vote overrides it.
+--
+-- GENERATIONAL, not append-only, and that distinction is the whole reason
+-- this is its own table rather than more rows in app_topic_categories.
+-- Discovery re-drafts an app's entire vocabulary every run (daily, or at a
+-- tenth of the board's churn), while app_topic_categories only ever INSERTs
+-- and is capped at 24. Pointing the model's churn at an append-only registry
+-- would exhaust that cap within weeks, after which ensureCategory throws
+-- CATEGORY_CAP_ERROR for good and the model could never introduce a new
+-- theme again. So:
+--   * discovery may MINT rows and RETIRE ones it no longer draws;
+--   * retirement is a `retired_at` stamp, never a DELETE, so the votes and
+--     placements that point at a theme can never dangle;
+--   * `pinned_at` is set the moment a HUMAN votes for the theme, and a
+--     pinned row is never retired — it rides into the next discovery inside
+--     `previousThemes` carrying `pinned: true`, and services/workshop-themes.js
+--     re-adds it after the call whatever the model answered. The prompt is
+--     told to keep it; the code does not rely on the prompt obeying.
+--   * the cap counts LIVE rows (retired_at IS NULL) only, so model churn
+--     stops consuming the budget members' own themes need.
+--
+-- theme_key is slugify()'d text and IS the literal value written into
+-- topic_attribute_votes.value, so a member typing "Signing in" tallies
+-- byte-for-byte with the model's own `signing-in` id and needs no migration.
+--
+-- NOT staging:private — like topic_attribute_votes and app_topic_categories
+-- this is a shared, governance-style signal everyone in the app sees.
+CREATE TABLE IF NOT EXISTS app_theme_registry (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  theme_key   TEXT NOT NULL,           -- slugified dedupe key + vote value
+  label       TEXT NOT NULL,           -- display casing, as drafted or typed
+  description TEXT NOT NULL DEFAULT '',
+  icon        TEXT NOT NULL DEFAULT '',-- one emoji, or '' for the initial
+  origin      VARCHAR(8) NOT NULL DEFAULT 'ai',  -- 'ai' | 'member'
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pinned_at   TIMESTAMPTZ,             -- first human vote; pinned is forever
+  retired_at  TIMESTAMPTZ,             -- dropped by a draft; never deleted
+  UNIQUE(app_id, theme_key)
+);
+-- The read every list, cap check and discovery hand-off makes: this app's
+-- live vocabulary. Partial, because retired rows are dead weight on it.
+CREATE INDEX IF NOT EXISTS idx_app_theme_registry_live
+  ON app_theme_registry (app_id, created_at) WHERE retired_at IS NULL;
 
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);
