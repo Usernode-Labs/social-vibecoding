@@ -18,6 +18,12 @@ function dialogIsland(name) {
 
 const AppView = {
   appData: null,
+  // The app-detail request that currently owns app-scoped state. Navigating
+  // app A → app B can leave both GET /api/apps/:slug requests in flight; a
+  // slower response for A must not replace B's data after B is already on
+  // screen. Every open supersedes the previous one, and close invalidates
+  // whichever request is still pending.
+  _openId: 0,
   iframeToken: null,
   // Slug the held iframeToken was minted for (app-scoped RS256 audience).
   iframeTokenSlug: null,
@@ -716,6 +722,8 @@ const AppView = {
    * whole of the option.
    */
   async open(slug, { needsToken = true } = {}) {
+    const openId = ++AppView._openId;
+    const isCurrentOpen = () => openId === AppView._openId;
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
     // These used to be strictly sequential, which cost a full extra round
     // trip before the app iframe could even be built — the thing that made
@@ -725,6 +733,10 @@ const AppView = {
     // the mint the launch already started.
     const tokenReady = AppView.refreshToken(slug);
     const res = await fetch(`/api/apps/${slug}`);
+    // A newer app open (or close) owns every app-scoped field now. The
+    // router also guards its own tail, but AppView.open writes shared state
+    // before that tail resumes, so the ownership check belongs here too.
+    if (!isCurrentOpen()) return false;
     if (!res.ok) {
       // The server won't confirm this app, but a launch surface may already
       // be mounted and pointing at it (beginLaunch runs off the cached list
@@ -732,11 +744,13 @@ const AppView = {
       // renderAppTab's "App not available" branch instead of leaving an
       // orphan frame under a cover that would never reveal.
       await tokenReady;
+      if (!isCurrentOpen()) return false;
       if (AppView.appData && AppView.appData.slug === slug) AppView.appData = null;
       AppView._teardownLaunch();
-      return;
+      return false;
     }
     const { app: fetchedAppData } = await res.json();
+    if (!isCurrentOpen()) return false;
     // A terminal WS event may have landed after this request began but before
     // its older snapshot came back. It is the later fact, so reconcile it
     // before any consumer can paint the stale spinning-up state.
@@ -811,6 +825,7 @@ const AppView = {
     // that says self-hosted for an app that no longer is lands on the App
     // tab, and would land there token-less.
     if (needsToken) await tokenReady;
+    if (!isCurrentOpen()) return false;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
@@ -1281,6 +1296,10 @@ const AppView = {
   },
 
   close() {
+    // Invalidate the detail request before clearing its state. Without this,
+    // leaving an app while GET /api/apps/:slug is in flight lets that late
+    // response repopulate appData on Home (or underneath the next app).
+    AppView._openId += 1;
     if (AppView._staging().isOpen()) AppView.closeStagingOverlay();
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
