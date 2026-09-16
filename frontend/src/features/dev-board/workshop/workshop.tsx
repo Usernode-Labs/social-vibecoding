@@ -652,9 +652,11 @@ function weekRange(startMs: number, endMs: number, live?: boolean): string {
  * had nowhere to go, and a reader who wanted none of them still paid three
  * cards of vertical space before reaching the board.
  *
- * So the LIVE window is the default and everything earlier is one step
- * behind a button. Each press reveals the next-oldest window BELOW the
- * stack, and the control moves down with it. It grew upwards first, on the
+ * So NOTHING is drawn until it is asked for, and each press reveals the
+ * next-oldest window BELOW the stack, with the control moving down with it.
+ * The live window is behind the first press like every other: what the pane
+ * always shows is the lead paragraph above this walk, which is a sentence
+ * about now rather than a window. It grew upwards first, on the
  * reasoning that a column of dated cards reads oldest-at-the-top like any
  * timeline. It does, but this is not a timeline being read: it is one card
  * with a way to ask for more, and growing upwards pushed the card you were
@@ -674,18 +676,38 @@ function weekRange(startMs: number, endMs: number, live?: boolean): string {
  * about the summary's reach, not a claim about the app's age, and it can
  * always be made.
  */
-function WeekWalk({ weeks, firstWeek, note }: {
+export function WeekWalk({ weeks, firstWeek, note, initialShown = 0 }: {
   weeks: Dash['weeks'];
   firstWeek: number | null;
   /** Why the summary is what it is, when something is wrong with it. */
   note?: string;
+  /**
+   * How many windows are open on the first render. The pane passes nothing
+   * and gets none, which is the product behaviour; this exists so the suite
+   * can assert what an OPENED walk draws.
+   *
+   * It is a test seam and worth saying so plainly. The alternative was to
+   * leave a window drawn unasked purely so a static render could see one —
+   * which is letting the tests choose the product's default state, and this
+   * walk's default is the whole question. `renderToStaticMarkup` runs no
+   * effects and dispatches no events (tests/lib/render-tsx.js says so in its
+   * header), so there is no press for a test to make.
+   */
+  initialShown?: number;
 }): ReactNode {
-  // How many windows are on screen. The list is newest-first and holds only
-  // real weeks now — `open` left it for the pane's lead paragraph — so one
-  // means the live week alone and every press is a step further back. That
-  // is what makes "Show past week" true on its FIRST press: it used to
-  // reveal This week, which is not a past week.
-  const [shown, setShown] = useState(1);
+  // How many windows are on screen. NONE, until asked: the pane opens on its
+  // lead paragraph — what the open work is about — and the whole history,
+  // the live week included, is behind the press. That is the bargain this
+  // walk has always made; what changed is only WHAT is always on screen,
+  // because `open` is a sentence about now rather than a window and has left
+  // the walk for the paragraph above it.
+  //
+  // The label stays "Show past week" on every press, which makes its first
+  // press the one place it overstates: This week is not a past week. The
+  // alternative — drawing the live window unasked — buys that one word at
+  // the cost of opening every visit on a block nobody asked for, and reads
+  // as a pane that forgot to collapse.
+  const [shown, setShown] = useState(initialShown);
   if (!weeks.length) return null;
   const drawn = weeks.slice(0, shown);
   const more = weeks.length - drawn.length;

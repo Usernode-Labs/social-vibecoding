@@ -12411,6 +12411,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    full-width rows exactly as that one does, so it takes the centred form
    rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
    the air between it and the last row. */
+/* THE WALK'S OWN SPACING, which the cards no longer supply. `.dev-ws-cards`
+   carried `gap: 6px` while every window was a floating card; the windows
+   space themselves across their own rules now (12px above, 11px below), so
+   the gap went — and took the air under the last window with it, leaving
+   this button flush against a sentence it is 23px away from on the other
+   side. 11px mirrors the padding the rule above each window uses, so the
+   control sits in the same rhythm as the blocks it follows. */
+.dev-ws-week-more { margin-top: 11px; }
 .dev-ws-since-more { margin-top: 2px; }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
@@ -13517,8 +13525,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   }
 }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
+/* Same story as the button above: `.dev-ws-cards`' gap used to hold this
+   note off the last window, and the windows space themselves now. */
 .dev-ws-week-note {
-  margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
+  margin: 11px 0 0; font-size: 12px; color: var(--text-muted); text-align: center;
 }
 /* ── One offer at a time, paged sideways ───────────────────────
    The track is the scroller and each item is exactly its width, so a swipe

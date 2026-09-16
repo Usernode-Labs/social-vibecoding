@@ -30,7 +30,22 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
-const { loadTsx } = require('./lib/render-tsx');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+// The pane's week walk opens CLOSED — every window, the live one included,
+// is behind "Show past week" — so a static render of the whole tab draws no
+// window at all and cannot be asked to press anything
+// (renderToStaticMarkup runs no effects and dispatches no events). `WeekWalk`
+// takes an initial-shown seam for exactly this: render it open, with the
+// pane's own weeks, and assert what a revealed window is made of.
+const openWalk = (AppView, shown) => {
+  const { WeekWalk } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  return renderToHtml(createElement(WeekWalk, {
+    weeks: plain(AppView._workshopView().dashboard.weeks),
+    firstWeek: null,
+    initialShown: shown,
+  }));
+};
 const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
@@ -684,20 +699,22 @@ test('the pane leads with the open line, and the walk opens on the live week', a
   assert.ok(!html.includes('data-ws-card="open"'), 'and is not a window in the walk');
   assert.ok(!html.includes('Open issues'), 'nor titled as one');
 
-  // The walk opens on the LIVE window and every press is a step back, so
-  // the button's label is true on its first press as well as its later ones.
+  // THE WALK OPENS CLOSED. Every window is behind the press, the live one
+  // included — the pane's always-visible sentence is the lead paragraph
+  // above, not a window drawn unasked. Drawing This week on arrival would
+  // buy the button's first press its literal truth at the cost of opening
+  // every visit on a block nobody asked for.
   const order = [...html.matchAll(/data-ws-card="([a-zA-Z:0-9]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['thisWeek'], 'the live week is drawn');
-  assert.ok(html.includes(cards.thisWeek), "and it is this week's line");
-  assert.ok(!html.includes(cards.lastWeek), 'last week waits behind the control');
-  assert.ok(!html.includes('data-ws-card="lastWeek"'));
-  const titles = [...html.matchAll(/dev-ws-card-title[^>]*>([^<]*)</g)].map((m) => m[1]);
-  assert.deepEqual(titles, ['This week'], 'the live window is the one that keeps a word');
+  assert.deepEqual(order, [], 'no window is drawn until one is asked for');
+  assert.ok(!html.includes(cards.thisWeek), 'this week waits behind the control');
+  assert.ok(!html.includes(cards.lastWeek), 'and so does last week');
   assert.match(html, /data-ws-week-more=""/, 'and the step back is offered');
-  // BELOW the stack. It grew upwards first, which read like a timeline and
-  // pushed the card you were looking at down the screen on every press; the
-  // present stays put now and the history unrolls under it.
-  assert.ok(html.indexOf('data-ws-card="thisWeek"') < html.indexOf('data-ws-week-more'));
+  // The control carries its own air. `.dev-ws-cards` used to space it with
+  // a flex gap, which went when the windows started spacing themselves
+  // across their own rules — leaving the button flush against a sentence
+  // it is 23px from on the other side.
+  assert.match(CSS, /\.dev-ws-week-more \{ margin-top: 11px; \}/);
+  assert.ok(!/\.dev-ws-cards \{[^}]*gap:/.test(CSS), 'and the gap it replaced is gone');
 
   // The walk itself is the view model's, so the order and the titles are
   // pinned where the component cannot quietly re-sort them. Newest first,
@@ -733,7 +750,7 @@ test('a window is a block on a rule: its heading, what it paid, then its line', 
       open: 'mostly QA triage, with older proposals still awaiting votes.',
     },
   }));
-  const html = workshopHtml(AppView);
+  const html = openWalk(AppView, 2);
 
   // ONE NAMED WINDOW, THE REST DATED. "Last week" and "3 weeks ago" are
   // both relative counts a reader decodes against today, and the second is
@@ -752,6 +769,12 @@ test('a window is a block on a rule: its heading, what it paid, then its line', 
   // them.
   assert.match(html, /class="dev-ws-card-counts"[^>]*>[\s\S]*?changes? landed[\s\S]*?<\/p><p class="dev-ws-card-line">/,
     'counts sit between the heading and the line');
+
+  // The second window is DATED, with no word of its own — the rule the
+  // first half of this test is the exception to.
+  assert.match(html, /<h4 class="dev-ws-card-title"><span class="dev-ws-card-dates">/,
+    'the older window is its dates');
+  assert.ok(!html.includes('Last week'), 'and carries no relative name');
 
   assert.ok(!html.includes('\u00B7'), 'no separator in the markup');
   assert.ok(!/\.dev-ws-card-title::(after|before)/.test(CSS), 'and none in the stylesheet either');
@@ -804,11 +827,16 @@ test('an empty window draws no card at all', async () => {
   const AppView = await loadWith(responseBody({
     digestCards: { lastWeek: 'Kubernetes deploys and staging previews.', thisWeek: '', open: '' },
   }));
+  // The empty window is absent from the MODEL, which is where the rule
+  // lives — a window with nothing in it is never built, so no press can
+  // reveal one.
+  assert.deepEqual(plain(AppView._workshopView().dashboard.weeks.map((w) => w.key)), ['lastWeek'],
+    'no window for a week with nothing in it');
+  const walk = openWalk(AppView, 9);
+  assert.match(walk, /data-ws-card="lastWeek"/);
+  assert.ok(!walk.includes('data-ws-card="thisWeek"'), 'and none is drawn however far the walk goes');
+
   const html = workshopHtml(AppView);
-  // With this week empty the walk opens on the next window it has, so the
-  // one line the server wrote is what is drawn rather than nothing.
-  assert.match(html, /data-ws-card="lastWeek"/);
-  assert.ok(!html.includes('data-ws-card="thisWeek"'), 'no card for a week with nothing in it');
   // An empty `open` means no lead paragraph — and the derived sentence
   // stands down while the model has written anything at all.
   assert.ok(!html.includes('class="dev-ws-open-line"'), 'and no lead line for an empty one');
@@ -847,9 +875,11 @@ test('a row written before the cards still says its paragraph', async () => {
     digestCards: { lastWeek: 'The last-week line.', thisWeek: '', open: '' },
   }));
   const bothHtml = workshopHtml(both);
-  assert.match(bothHtml, /The last-week line\./);
-  assert.ok(!bothHtml.includes('data-ws-digest-note'), 'and no provenance caption');
+  // The windows win, so the flattened prose is not drawn beside them — and
+  // the line it lost to is one press away rather than on screen.
   assert.ok(!bothHtml.includes('The flattened paragraph.'), 'the prose form is not drawn beside them');
+  assert.ok(!bothHtml.includes('data-ws-digest-note'), 'and no provenance caption');
+  assert.match(openWalk(both, 1), /The last-week line\./, 'the window carries it');
 });
 
 test('a malformed digestCards is no cards, not a broken pane', async () => {
