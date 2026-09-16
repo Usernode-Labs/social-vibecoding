@@ -32,6 +32,8 @@
 // Turning it on fleet-wide therefore never blocks an app whose routing was
 // already broken before the check existed — it shows up, muted, on its
 // next proposal instead.
+//
+// Currently OFF by default — see isEnabled.
 
 'use strict';
 
@@ -50,9 +52,16 @@ const PROBE_TIMEOUT_MS = parseInt(process.env.ASSET_ROUTE_CHECK_TIMEOUT_MS, 10) 
 // without carrying a page into test_results.
 const BODY_PREVIEW_CHARS = 80;
 
+// OFF unless ASSET_ROUTE_CHECK_ENABLED is set to a true value. The probe runs
+// from the platform pod, and there a request to a preview's public hostname
+// answers 403 text/plain "Access denied" — while the very same URL returns 200
+// application/javascript from outside the cluster and from the capture
+// runner's browser. On by default, that turned into a false failure row on
+// every app proposal (seen on seven previews in a row the day it shipped).
+// It stays opt-in until the probe runs from where the browser checks run.
 function isEnabled() {
-  const v = String(process.env.ASSET_ROUTE_CHECK_ENABLED ?? '1').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off');
+  const v = String(process.env.ASSET_ROUTE_CHECK_ENABLED ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'on';
 }
 
 function preview(text) {
