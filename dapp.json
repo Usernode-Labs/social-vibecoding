@@ -2750,7 +2750,7 @@
     {
       "name": "An app with a decision waiting leads the Workshop list",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-list > a[data-workshop-app]:first-child [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
+      "expectSelector": "#workshop-list a[data-workshop-app]:first-of-type [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
     },
     {
       "name": "The Workshop screen draws no empty-state line while it has rows",

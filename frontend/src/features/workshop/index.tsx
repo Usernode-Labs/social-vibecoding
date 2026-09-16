@@ -49,8 +49,9 @@
 import { useRef, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
-import { ChevronRightIcon, HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
+import { HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
 import { useStoreState } from '../../lib/use-store-state';
@@ -134,7 +135,7 @@ function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label
       // what a legend a thumb cannot hover is for.
       aria-label={`${n} ${label}`}
       title={`${n} ${label}`}
-      className={'shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 '
+      className={'shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 '
         + 'text-xs font-semibold tabular-nums '
         + (lit ? tint : 'text-zinc-400 dark:text-zinc-500')}
     >
@@ -147,64 +148,93 @@ function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label
 }
 
 /**
- * One app.
+ * One app, as a grouped-list row.
  *
- * An ANCHOR to the app's own Workshop path, for the reason every navigation
- * control in this shell is one: cmd/ctrl-click, middle-click and "open in new
- * tab" all have to work. `/app/<slug>/workshop` is App._appUrl's own spelling
- * for that page (`boardView: 'workshop'`), so a copied address restores the
- * same screen cold. A plain primary click routes in place through
- * `App.navigateToApp`, which is also what records the back breadcrumb — it
- * reads `App._inWorkshop`, so the arrow appears because the visit came from
- * here rather than because this row asked for it. A modified click never
- * reaches the handler at all: the browser handles it natively, which is the
- * whole reason this is an anchor.
+ * `ListRow` from @/components/ui/grouped-list is the widget language's primary
+ * content shape, and this is the shape it is for: a leading app tile, the
+ * app's name as the row's subject, something on the trailing edge and a
+ * disclosure chevron. It draws the inset hairline between rows (a
+ * pseudo-element, so the last row has none without this file knowing which
+ * one is last) and the `active:` press state.
+ *
+ * AN ANCHOR, which is what `as="a"` on that primitive is for: cmd/ctrl-click,
+ * middle-click, "open in new tab" and the context menu are the browser's to
+ * give, and the shell takes that seriously enough that #back-btn and the app
+ * chip's own menu rows are anchors. `/app/<slug>/workshop` is App._appUrl's
+ * spelling for that page (`boardView: 'workshop'`), so a copied address
+ * restores the same screen cold.
+ *
+ * A plain primary click routes in place through `App.navigateToApp`, which is
+ * also what records the back breadcrumb — it reads `App._inWorkshop`, so the
+ * arrow appears because the visit came from here rather than because this row
+ * asked for it. A modified click never reaches the handler: the browser
+ * handles it natively, which is the whole reason this is an anchor.
+ *
+ * The leading tile is `.app-icon-tile` at the primitive's own `sm` geometry
+ * (2.75rem, `rounded-xl`), exactly as features/apps/browse-list.tsx draws it —
+ * app.css owns that face, and a call site must not repaint it.
  */
 function AppRow({ row }: { row: WorkshopRow }) {
-  const label = row.name || row.slug;
   return (
-    <a
+    <ListRow
+      as="a"
       href={`/app/${encodeURIComponent(row.slug)}/workshop`}
       data-workshop-app={row.slug}
-      className="flex items-center gap-3 px-4 py-3 min-h-[56px] hover:bg-zinc-500/5 transition-colors"
       onClick={(event) => {
         const win = window as any;
         if (win.NavLink?.isNativeClick?.(event)) return;
         event.preventDefault();
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
-    >
-      <span
-        data-icon={appIconKind(row as any)}
-        className={'app-icon-tile w-10 h-10 shrink-0 rounded-xl overflow-hidden '
-          + 'flex items-center justify-center text-base font-bold'}
-      >
-        <AppIconContent app={row as any} />
-      </span>
-      <span className="min-w-0 flex-1 text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
-        {label}
-      </span>
-      <Count kind="working" n={row.working} label="items you are working on" />
-      <Count kind="needs" n={row.needs} label="votes waiting on you" />
-      <ChevronRightIcon
-        className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600"
-        aria-hidden="true"
-      />
-    </a>
+      leading={(
+        <div
+          className={'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
+            + 'flex items-center justify-center font-bold text-lg'}
+          data-icon={appIconKind(row as any)}
+        >
+          <AppIconContent app={row as any} />
+        </div>
+      )}
+      title={row.name || row.slug}
+      trailing={(
+        /* ONE trailing group, with its own tight gap. `ListRow` sets `gap-4`
+           between every element it lays out, which is right between the tile,
+           the title and the trailing edge and is 16px too much BETWEEN two
+           numbers that read as one column. Grouping them also buys the title
+           that width back, and at phone width the title is what truncates. */
+        <span className="flex shrink-0 items-center gap-1.5">
+          <Count kind="working" n={row.working} label="items you are working on" />
+          <Count kind="needs" n={row.needs} label="votes waiting on you" />
+        </span>
+      )}
+    />
   );
 }
 
-/** Four rows of the real geometry, so the list does not change shape on load. */
+/**
+ * Four rows of the real geometry, so the list does not change shape on load.
+ *
+ * The bars sit in a `ListRow` rather than a hand-built div, which is what
+ * keeps "the real geometry" true when the row's padding or its tile size
+ * changes. `chevron={false}` because a disclosure arrow on a row that
+ * discloses nothing yet is the one part of the shape worth NOT reproducing.
+ */
 function RowSkeletons(): ReactNode {
   return (
     <SkeletonGroup label="Loading your apps">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="flex items-center gap-3 px-4 py-3 min-h-[56px]">
-          <Skeleton shape="block" className="w-10 h-10 rounded-xl" />
-          <Skeleton className="flex-1 max-w-[40%]" />
-          <Skeleton shape="block" className="w-10 h-5 rounded-full" />
-          <Skeleton shape="block" className="w-10 h-5 rounded-full" />
-        </div>
+        <ListRow
+          key={i}
+          chevron={false}
+          leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
+          title={<Skeleton className="max-w-[40%]" />}
+          trailing={(
+            <>
+              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
+              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
+            </>
+          )}
+        />
       ))}
     </SkeletonGroup>
   );
@@ -217,6 +247,7 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   const rows = state.rows ? orderRows(state.rows) : null;
+  const empty = !!rows && rows.length === 0 && !state.error;
 
   return (
     <main
@@ -225,58 +256,54 @@ export function WorkshopScreen() {
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: 'relative' }}
     >
-      <div className="max-w-2xl mx-auto p-3 sm:p-4">
-        {/* ONE PANE, head and body, the shape the Workshop's own panes have:
-            an eyebrow saying what the list is, the legend saying what the two
-            columns mean, and the rows under it. The legend is not decoration
-            — two bare numbers on a row are unreadable without it, and a
-            tooltip is not available to a thumb. */}
-        <section
-          className={'rounded-[22px] overflow-hidden bg-white/80 dark:bg-zinc-900/80 '
-            + 'ring-1 ring-zinc-900/5 dark:ring-white/10 backdrop-blur-xl'}
-        >
-          <div className="px-4 pt-4 pb-3">
-            <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-              Your apps
-            </span>
-            <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="inline-flex items-center gap-1">
-                <HandRaisedIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                You are working on
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <SpeechCheckIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                Votes waiting on you
-              </span>
-            </p>
-          </div>
-          <div
-            id="workshop-list"
-            className={'border-t border-zinc-900/5 dark:border-white/10 '
-              + 'divide-y divide-zinc-900/5 dark:divide-white/10'}
-          >
-            {state.error
-              ? (
-                <AppsLoadError
-                  title="Couldn't load your workshop"
-                  onRetry={() => { void workshopController.reload(); }}
-                />
-              )
-              : rows === null
-                ? <RowSkeletons />
-                : rows.map((row) => <AppRow key={row.slug} row={row} />)}
-          </div>
-          {/* The nothing-to-show line, drawn only once the list has answered
-              that there really is nothing — never while it is still loading,
-              which is the state the skeletons above are for. */}
+      {/* SECTION LABEL over a card of hairline-separated rows — the widget
+          language's primary content shape, drawn by @/components/ui/grouped-list
+          rather than by hand. The card carries no border: the language
+          separates by figure/ground, and this route paints the wallpaper
+          ground (see the `:is(...)` list in app.css) that the white card
+          floats on. `max-w-2xl mx-auto` is the only thing here that is this
+          screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
+      <div className="max-w-2xl mx-auto pb-8">
+        <SectionHeader>Your apps</SectionHeader>
+        {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
+            read, and the per-pill tooltip is not available to a thumb — so the
+            two glyphs are named once, here, in the muted line the language
+            uses under a section label. */}
+        <p className="px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
+          <span className="inline-flex items-center gap-1">
+            <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            You are working on
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            Votes waiting on you
+          </span>
+        </p>
+        <GroupedList id="workshop-list">
+          {/* FIRST, not last, and that is load-bearing: the row separator is
+              `[&:not(:last-child)]:after:*` on the row itself, so a note after
+              the rows would leave the last one drawing a hairline under
+              nothing. Ahead of them it changes which element is last not at
+              all. It ships in the prerender — hidden — because the shell's id
+              inventory resolves against that document. */}
           <p
             id="workshop-empty"
-            className={(rows && rows.length === 0 && !state.error ? '' : 'hidden ')
-              + 'px-4 py-6 text-sm text-zinc-500 dark:text-zinc-400'}
+            className={(empty ? '' : 'hidden ')
+              + 'px-4 py-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-500'}
           >
             You have no apps yet. Discover finds the ones you can join.
           </p>
-        </section>
+          {state.error
+            ? (
+              <AppsLoadError
+                title="Couldn't load your workshop"
+                onRetry={() => { void workshopController.reload(); }}
+              />
+            )
+            : rows === null
+              ? <RowSkeletons />
+              : rows.map((row) => <AppRow key={row.slug} row={row} />)}
+        </GroupedList>
       </div>
     </main>
   );

@@ -154,22 +154,50 @@ test('the demo overlay never overwrites a real count', () => {
 
 // ── 2. The screen ──────────────────────────────────────────────────────
 
-test('the prerendered screen is hidden and its list is empty', () => {
+test('the prerendered screen is hidden and its list has no rows', () => {
   const html = renderComponent('frontend/src/features/workshop/index.tsx', 'WorkshopScreen', {});
   assert.match(html, /<main id="workshop-screen" class="hidden /,
     'the root ships hidden, with `hidden` first in a CONSTANT class string — '
     + 'useVisibilityHiddenClass writes that class, so React must not re-render it');
-  const list = /<div id="workshop-list"[^>]*>([\s\S]*?)<p id="workshop-empty"/.exec(html);
-  assert.ok(list, 'the list and the empty line are both in the prerender');
-  assert.ok(!/data-workshop-app/.test(list[1]),
+  assert.ok(!/data-workshop-app/.test(html),
     'no rows in the first render — a fetch during render is the hydration mismatch');
   assert.match(html, /<p id="workshop-empty" class="hidden /,
     'and the empty line is hidden while the list has not answered, so an '
     + 'unloaded screen never reads as "you have no apps"');
+  // THE NOTE IS THE LIST'S FIRST CHILD, not its last, and that is structural
+  // rather than cosmetic: GroupedList's row separator is
+  // `[&:not(:last-child)]:after:*` on the ROW, so a note after the rows would
+  // leave the last one drawing a hairline under nothing.
+  const list = /<div[^>]*id="workshop-list"[^>]*>([\s\S]*?)$/.exec(html);
+  assert.ok(list, '#workshop-list is in the prerender');
+  assert.match(list[1].trimStart(), /^<p id="workshop-empty"/);
   // The document the shell actually ships agrees.
   const shipped = read('public/index.html');
   assert.match(shipped, /<main id="workshop-screen" class="hidden /);
   assert.ok(!/data-workshop-app/.test(shipped));
+});
+
+test('the screen is built from the grouped-list primitives, not a copy of them', () => {
+  // AGENTS.md: "a primitive nobody knows exists gets hand-written instead."
+  // GroupedList / SectionHeader / ListRow ARE the widget language's primary
+  // content shape — the section label over a borderless white card of
+  // hairline-separated rows — and an earlier cut of this screen hand-rolled
+  // all three, with a ring, a backdrop blur and `divide-y`, none of which the
+  // language draws any more.
+  const src = read('frontend/src/features/workshop/index.tsx');
+  assert.match(src, /from '@\/components\/ui\/grouped-list'/);
+  for (const name of ['GroupedList', 'ListRow', 'SectionHeader']) {
+    assert.match(src, new RegExp(`\\b${name}\\b`), `${name} is used`);
+  }
+  for (const wrong of [/\bdivide-y\b/, /\bbackdrop-blur/, /\bring-1\b/, /rounded-\[22px\]/]) {
+    assert.doesNotMatch(src, wrong,
+      'the card has no border, no blur and no hand-rolled radius — the '
+      + 'language separates by figure/ground and GroupedList owns the shape');
+  }
+  // The leading tile is app.css's one face at the primitive's own geometry,
+  // exactly as features/apps/browse-list.tsx draws it.
+  assert.match(src, /app-icon-tile w-11 h-11 shrink-0 rounded-xl/);
+  assert.match(src, /data-icon=\{appIconKind/);
 });
 
 test('a row goes to that app\'s own Workshop page, as an anchor', () => {

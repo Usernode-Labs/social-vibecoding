@@ -74,7 +74,12 @@ export interface ListRowProps
   // `title` is omitted from the DOM attributes because ours is a ReactNode and
   // HTMLAttributes' is the tooltip string. Same reason in QuoteCard and
   // StackedTitle below — an intersection would silently narrow ours to string.
-  extends Omit<React.HTMLAttributes<HTMLElement>, 'title'>,
+  //
+  // AnchorHTMLAttributes rather than HTMLAttributes so `href`, `target` and
+  // `rel` reach the element for `as="a"` (see below). Its own `type` — the
+  // anchor's MIME hint — is omitted because this component writes a button's
+  // `type`, and two meanings on one prop name is a trap rather than a union.
+  extends Omit<React.AnchorHTMLAttributes<HTMLElement>, 'title' | 'type'>,
     VariantProps<typeof rowSeparator> {
   /**
    * The element to render. `button` for a row that DOES something — which is
@@ -82,8 +87,20 @@ export interface ListRowProps
    * is invisible to keyboard and assistive tech, and wrapping every call site
    * in its own button would put the focus ring around the row instead of on
    * it. `div` stays the default for a row that is only ever read.
+   *
+   * `a` for a row that NAVIGATES, and it is not interchangeable with `button`:
+   * cmd/ctrl-click, middle-click, "open in new tab", the context menu, the
+   * status bar and drag-to-bookmark are all the browser's to give, and only an
+   * anchor with an href gets them. The shell takes that seriously enough that
+   * #back-btn and the app chip's own menu rows are anchors for this reason —
+   * so a grouped-list row that is a link should be one too, rather than a
+   * button that assigns `location`.
+   *
+   * A row that WRAPS its own controls cannot be one (nested interactives are
+   * invalid inside an anchor); features/apps/browse-list.tsx is that case, and
+   * it keeps `div` plus NavLink's modified-click interception instead.
    */
-  as?: 'div' | 'button';
+  as?: 'div' | 'button' | 'a';
   /** The leading rounded-square glyph tile. */
   leading?: React.ReactNode;
   title: React.ReactNode;
@@ -128,15 +145,16 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
   const depth = inset ?? (leading ? 'tile' : 'text');
   return (
     <Tag
-      ref={ref as React.Ref<HTMLDivElement & HTMLButtonElement>}
+      ref={ref as React.Ref<HTMLDivElement & HTMLButtonElement & HTMLAnchorElement>}
       // `text-left w-full` only matter on a button — a button centres its
       // content and shrinks to it, which would break the row's layout the
       // moment `as` changed. Harmless on a div, so they are unconditional
-      // rather than a second branch to keep in step.
+      // rather than a second branch to keep in step. An anchor needs neither
+      // (`flex` blockifies it) and takes no `type`.
       {...(as === 'button' ? { type: 'button' as const } : null)}
       className={cn(
         'relative flex w-full items-center gap-4 px-4 py-3.5 text-left',
-        (props.onClick || as === 'button') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
+        (props.onClick || as === 'button' || as === 'a') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
         rowSeparator({ inset: depth }),
         className,
       )}
