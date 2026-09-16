@@ -658,3 +658,9 @@ export const Glyph = ({
   </svg>
 );
 Glyph.displayName = 'Glyph';
+
+/** Coins held for staking, used beside the Profile wallet row. */
+export const StakingIcon = stroked('StakingIcon', [
+  'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
+  'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
+]);

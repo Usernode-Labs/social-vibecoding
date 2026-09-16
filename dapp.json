@@ -547,6 +547,12 @@
       "group": "General",
       "description": "OpenRouter Corp API Key",
       "private": true
+    },
+    {
+      "key": "STAKING_OBSERVABILITY_URL",
+      "group": "Native app",
+      "default": "https://observability.preseason-testnet.apps.beta.usernodelabs.org",
+      "description": "Observability origin for the admitted native chain, without /ui/nodes or /v1/observability. Profile staking epoch history reads this service, never the local node. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
   "tests": [
@@ -4298,6 +4304,23 @@
       "path": "/waitlist/connect/github/callback?state=staging-check-unknown&code=staging-check",
       "expectSelector": "#waitlist-connect-status[data-state=\"expired\"]",
       "expectText": "This link has expired"
+    },
+    {
+      "name": "Profile staking: Active shows observability epoch counts (#1551)",
+      "path": "/?demo=staking-active#profile",
+      "expectSelector": "[data-staking-sheet] [data-staking-epoch=\"128\"]",
+      "expectText": "Won slots"
+    },
+    {
+      "name": "Profile staking: Delegated offers only Undelegate (#1551)",
+      "path": "/?demo=staking-delegated#profile",
+      "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
+      "expectText": "Undelegate"
+    },
+    {
+      "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
+      "path": "/api/me/staking/context",
+      "expectText": "\"chainId\":\"utc1"
     }
   ],
   "governance": {
