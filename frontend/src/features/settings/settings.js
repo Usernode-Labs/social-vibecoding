@@ -122,6 +122,23 @@
   // at the Settings screen forever, land them on the landing page.
   const NATIVE_LOGOUT_SAFETY_MS = 5000;
 
+  // How long the sign-out POST may take before it is abandoned. Two budgets,
+  // because the two paths fail differently (#2078):
+  //
+  //   - A capable phone (protocol 2 + `offlineLogout`) has native deleting the
+  //     cookie and the durable credential locally, so remote revocation is
+  //     best effort. Giving up after two seconds still ends in a real
+  //     sign-out, and waiting longer only holds a person on a screen whose
+  //     work is already done.
+  //   - The ordinary WEB path has no such guarantee: only the server can
+  //     revoke a web session, so abandoning the request means the sign-out did
+  //     NOT happen and the user is told so. The budget is therefore generous —
+  //     far longer than any working round trip, including a slow phone
+  //     network — and exists only to stop a request that will never settle
+  //     from holding the disabled button forever.
+  const OFFLINE_LOGOUT_TIMEOUT_MS = 2000;
+  const WEB_LOGOUT_TIMEOUT_MS = 15000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -3609,20 +3626,33 @@
       let controller;
       try {
         if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
-        controller = offlineLogout ? new AbortController() : null;
+        controller = typeof AbortController === 'function' ? new AbortController() : null;
         const request = fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
           ...(controller ? { signal: controller.signal } : {}),
         });
-        const response = offlineLogout ? await Promise.race([
+        // #2078: BOTH paths are bounded now. The capable-phone budget is
+        // short because native owns the cookie, so giving up early still
+        // ends in a real sign-out. The ordinary web path has to reach the
+        // server — only the server can revoke a web session — so it gets a
+        // generous budget instead, one no working request is near. What it
+        // must not be is ABSENT: this await used to be bare, with the
+        // button already disabled, so a request that never settled left the
+        // screen frozen with nothing to press. Running out here throws into
+        // the catch below, which for the web path is `fail()` — the toast
+        // and the button back, not a sign-out nobody performed.
+        const budgetMs = offlineLogout
+          ? OFFLINE_LOGOUT_TIMEOUT_MS
+          : WEB_LOGOUT_TIMEOUT_MS;
+        const response = await Promise.race([
           request,
           new Promise((_, reject) => {
             timeout = setTimeout(() => {
-              controller.abort();
+              if (controller) controller.abort();
               reject(new Error('Remote sign-out timed out'));
-            }, 2000);
+            }, budgetMs);
           }),
-        ]) : await request;
+        ]);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         webRevoked = true;
       } catch (error) {
