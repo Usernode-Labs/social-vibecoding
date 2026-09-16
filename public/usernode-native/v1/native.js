@@ -400,22 +400,64 @@
   // shorter than this.
   var KB_MIN_INSET = 50;
 
-  // On-screen keyboard occlusion: height of the layout-viewport strip
-  // hidden behind the keyboard, derived from visualViewport metrics.
-  // input: { innerHeight, vvHeight, vvOffsetTop?, vvScale?, minInset? }.
-  // Returns integer px (0 when no keyboard). iOS overlays the layout
-  // viewport, so the difference is positive while the keyboard is up;
-  // Android's default resize mode shrinks innerHeight in lockstep with
-  // vvHeight, so this degenerates to 0 (no double compensation). Forced
-  // to 0 while pinch-zoomed — a zoomed visual viewport is not a keyboard.
+  // On-screen keyboard occlusion: height of the LAYOUT-viewport strip
+  // hidden behind the keyboard.
+  // input: { layoutHeight, vvHeight, vvScale?, minInset? }.
+  // Returns integer px (0 when no keyboard). Forced to 0 while pinch-zoomed
+  // — a zoomed visual viewport is not a keyboard.
+  //
+  // ── WHY layoutHeight, AND WHY NO vvOffsetTop (#1938) ─────────────────
+  //
+  // This used to read `innerHeight - vvHeight - vvOffsetTop`, on the stated
+  // reasoning that iOS OVERLAYS the layout viewport and so leaves
+  // `window.innerHeight` at full height. It does not. Measured on an
+  // iPhone 17 Pro with the keyboard up, in Safari AND in an installed PWA:
+  //
+  //             innerHeight  vvHeight  vvOffsetTop  documentElement.clientHeight
+  //   standalone    409        409        403            812
+  //   Safari        377        377        337            714
+  //   Android       810        498          0            810
+  //
+  // On iOS `innerHeight` collapses to the visual viewport AND the page is
+  // panned, so the old expression came out NEGATIVE (409-409-403 = -403),
+  // fell through the `occluded > 0` guard, and returned 0. The `un-kb` class
+  // was therefore never set and `--un-kb-inset` never left 0: every piece of
+  // keyboard avoidance the kit publishes — its own sheets and modals, and
+  // `.platform-kb-column` in the shell (#1937, #1491) — was inert on iOS,
+  // while working correctly on Android. It read as a fix that worked, because
+  // iOS pans the document on focus and that happens to reveal a composer at
+  // the foot of a SHORT column; a taller one inside an `overflow: hidden`
+  // shell (the dev session's) stayed behind the keys, which is #1938.
+  //
+  // The layout viewport is the frame of reference that holds still on all
+  // three, so the occlusion is simply what the keyboard took from it. The
+  // pan term goes with it: at scale 1 a non-zero `vvOffsetTop` IS the
+  // keyboard pan, so subtracting it cancelled the very thing being measured.
+  // Callers pass the layout height; `layoutViewportHeight()` below is how the
+  // kit obtains one that iOS cannot move. `innerHeight` is still accepted as
+  // the old name so an app calling this directly keeps working.
   function keyboardInset(input) {
     if (!input) return 0;
     var scale = input.vvScale == null ? 1 : input.vvScale;
     if (Math.abs(scale - 1) > 0.01) return 0;
     var min = input.minInset == null ? KB_MIN_INSET : input.minInset;
-    var occluded = input.innerHeight - input.vvHeight - (input.vvOffsetTop || 0);
+    var layout = input.layoutHeight == null ? input.innerHeight : input.layoutHeight;
+    var occluded = layout - input.vvHeight;
     if (!(occluded > 0) || occluded < min) return 0;
     return Math.round(occluded);
+  }
+
+  // The layout viewport's height — the one the on-screen keyboard does not
+  // move. `documentElement.clientHeight` is that viewport in standards mode
+  // (CSS on <html> does not change it), and it stayed at full height on every
+  // platform measured above while `innerHeight` collapsed on iOS. The max of
+  // the two covers the reverse case: a browser in `interactive-widget:
+  // resizes-content` mode genuinely shrinks the layout viewport, and there
+  // both agree, so no keyboard is reported and nothing is compensated twice.
+  function layoutViewportHeight() {
+    var docEl = document.documentElement;
+    var client = docEl && docEl.clientHeight ? docEl.clientHeight : 0;
+    return Math.max(window.innerHeight || 0, client);
   }
 
   // Text-entry classifier for keyboard-avoidance tap interception. Only
@@ -731,6 +773,7 @@
     remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
+    layoutViewportHeight: layoutViewportHeight,
     isTextEntryField: isTextEntryField,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
@@ -811,9 +854,8 @@
     function apply() {
       rafPending = false;
       var inset = keyboardInset({
-        innerHeight: window.innerHeight,
+        layoutHeight: layoutViewportHeight(),
         vvHeight: vv.height,
-        vvOffsetTop: vv.offsetTop,
         vvScale: vv.scale,
       });
       if (inset === kbInset) return;
