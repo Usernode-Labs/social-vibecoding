@@ -42,6 +42,17 @@
 // for every app the viewer has. The screen's column header says "votes" for
 // that reason rather than claiming the whole deck.
 //
+// And "governance proposals" in both definitions means the five kinds in
+// services/governance-kinds.js, never every open row in `issues`. The table
+// also holds a `general` TWIN row per request filed through the platform:
+// the request board's own rows, which the deck excludes and which the
+// paragraph above says this endpoint excludes too. Counting them is what
+// made this screen report forty-six votes waiting on an app whose board had
+// three open requests — a twin is only ever closed by a passed close-issue
+// vote, so it outlives its GitHub issue by however long that issue has been
+// closed. Both `issues` CTEs below carry governanceKindsSql for that reason,
+// and tests/workshop-screen.test.js pins it there.
+//
 // ── Scope ──────────────────────────────────────────────────────────────
 //
 // Every app the viewer may SEE, under the same visibility filter as
@@ -57,6 +68,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { currentVotePredicateSql } = require('../services/pr-vote-revision');
+const { governanceKindsSql } = require('../services/governance-kinds');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -115,6 +127,7 @@ const COUNTS_SQL = `
     SELECT i.app_id, COUNT(*)::int AS n
       FROM issues i
      WHERE i.status = 'open'
+       AND ${governanceKindsSql('i')}
        AND i.created_by = $1
      GROUP BY i.app_id
   ),
@@ -135,6 +148,7 @@ const COUNTS_SQL = `
     SELECT i.app_id, COUNT(*)::int AS n
       FROM issues i
      WHERE i.status = 'open'
+       AND ${governanceKindsSql('i')}
        AND i.created_by IS DISTINCT FROM $1
        AND NOT EXISTS (
          SELECT 1 FROM issue_votes iv
