@@ -302,7 +302,7 @@ function load() {
     nativeSessionV2Network,
     // Read-only receiver for the same admitted chain. Epoch metrics never
     // query an embedded node; the browser sees only our authenticated adapter.
-    stakingObservabilityUrl: process.env.STAKING_OBSERVABILITY_URL || 'https://observability.usernodelabs.org',
+    stakingObservabilityUrl: process.env.STAKING_OBSERVABILITY_URL || 'https://observability.preseason-testnet.apps.beta.usernodelabs.org',
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.

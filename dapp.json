@@ -551,8 +551,8 @@
     {
       "key": "STAKING_OBSERVABILITY_URL",
       "group": "Native app",
-      "default": "https://observability.usernodelabs.org",
-      "description": "Observability receiver origin for the admitted native chain. Profile staking epoch history reads this service; it never queries a local node."
+      "default": "https://observability.preseason-testnet.apps.beta.usernodelabs.org",
+      "description": "Observability origin for the admitted native chain, without /ui/nodes or /v1/observability. Profile staking epoch history reads this service, never the local node. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
   "tests": [
