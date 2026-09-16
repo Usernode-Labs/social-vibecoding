@@ -92,6 +92,25 @@ test('registering a different capitalisation of a taken username is refused with
   });
 });
 
+// The staging and platform seeds re-run `INSERT … ON CONFLICT (username) DO
+// NOTHING` on every boot. A BEFORE trigger fires before ON CONFLICT is
+// weighed, so an exact match must be left to the constraint — raising here
+// aborted the whole staging seed on the first proposal that shipped this.
+test('an idempotent ON CONFLICT (username) DO NOTHING seed still does nothing on re-run', async (t) => {
+  await withDatabase(t, async (pool) => {
+    const seed = `INSERT INTO users (username) VALUES ('seeded-service') ON CONFLICT (username) DO NOTHING`;
+    await pool.query(seed);
+    const again = await pool.query(seed);
+    assert.equal(again.rowCount, 0);
+    // A case-variant is still refused even through ON CONFLICT: it is not a
+    // conflict on the raw constraint.
+    assert.equal(
+      await codeOf(pool.query(`INSERT INTO users (username) VALUES ('Seeded-Service') ON CONFLICT (username) DO NOTHING`)),
+      '23505'
+    );
+  });
+});
+
 test('renaming into another user\'s handle in a different case is refused', async (t) => {
   await withDatabase(t, async (pool) => {
     const { rows } = await pool.query(

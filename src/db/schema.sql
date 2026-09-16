@@ -7314,6 +7314,12 @@ END $$;
 -- and "Drea" serialise on it, and the second one's EXISTS runs after the
 -- first has committed. `u.id <> NEW.id` lets a user change the case of
 -- their own handle.
+--
+-- `u.username <> NEW.username` leaves an EXACT match to the raw UNIQUE
+-- constraint. A BEFORE trigger fires before ON CONFLICT is considered, so
+-- without it the idempotent seeds (`INSERT … ON CONFLICT (username) DO
+-- NOTHING`, run on every boot in src/db/migrate.js and
+-- fleet-maintenance.js) would raise here instead of doing nothing.
 CREATE OR REPLACE FUNCTION reject_case_variant_username() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -7321,6 +7327,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM users u
      WHERE LOWER(u.username) = LOWER(NEW.username)
+       AND u.username <> NEW.username
        AND u.id <> NEW.id
   ) THEN
     RAISE EXCEPTION 'username % is taken', NEW.username
