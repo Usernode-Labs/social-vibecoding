@@ -49,7 +49,8 @@ import type { WaitlistOptions } from '../../auth/waitlist-shared.tsx';
 //
 // Ids are like-for-like — `admin-topo-wl-*` and `admin-topo-bpq-*`, including
 // the two status selects and the `data-release-wl` / `data-release-bp` hooks.
-// The sort select is the one addition, and it follows the same naming.
+// The sort select and the Export CSV button are the additions, and they
+// follow the same naming.
 
 const STATUSES = ['pending', 'released', 'all'] as const;
 type Status = typeof STATUSES[number];
@@ -374,7 +375,7 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
 // they differ only in their endpoint, their columns and what admitting means.
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, statusLabels, endpoint, columns,
-  rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId,
+  rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId, exportCsv,
 }: {
   hostId: string;
   title: string;
@@ -400,6 +401,12 @@ function Queue<T>({
   onlyFilterId?: string;
   /** Set to render the order select. Omitted: the server's FIFO order only. */
   sortId?: string;
+  /**
+   * A CSV endpoint that takes the same `?status=` / `?only=` filters, set
+   * only for an admin allowed to download it. Renders "Export CSV", which
+   * downloads EVERY row the filters select rather than the page on screen.
+   */
+  exportCsv?: { id: string; path: string };
 }) {
   const [status, setStatus] = useState<Status>('pending');
   const [only, setOnly] = useState<Only>('any');
@@ -411,10 +418,19 @@ function Queue<T>({
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+  // The filters alone, shared by the page fetch and the export so the file
+  // always holds the rows the selects describe.
+  const filterParams = useCallback(() => {
+    const params = new URLSearchParams();
     if (status !== 'all') params.set('status', status);
     if (onlyFilterId && only !== 'any') params.set('only', only);
+    return params;
+  }, [only, onlyFilterId, status]);
+
+  const load = useCallback(async () => {
+    const params = filterParams();
+    params.set('page', String(page));
+    params.set('per_page', '50');
     // `waiting` is the absence of a sort param, not a value the server knows.
     if (sortId && sort === 'answered') params.set('sort', 'answered');
     const res = await fetchJson(`${endpoint}?${params}`);
@@ -428,7 +444,7 @@ function Queue<T>({
     setItems([]);
     setMeta(null);
     setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [endpoint, only, onlyFilterId, page, sort, sortId, status]);
+  }, [endpoint, filterParams, page, sort, sortId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -473,6 +489,24 @@ function Queue<T>({
                   <option key={v} value={v}>{SORT_LABELS[v]}</option>
                 ))}
               </Select>
+            ) : null}
+            {exportCsv ? (
+              <button
+                id={exportCsv.id}
+                type="button"
+                className={BTN.secondarySm}
+                title="Download every signup these filters select, not just this page"
+                onClick={() => {
+                  // Navigation, not a Blob: the server streams the file as an
+                  // attachment, the same as the Users screen's export. The
+                  // path is a constant and the query is built from the
+                  // selects' own fixed values.
+                  const query = filterParams().toString();
+                  window.location.href = query ? `${exportCsv.path}?${query}` : exportCsv.path;
+                }}
+              >
+                Export CSV
+              </button>
             ) : null}
           </>
         )}
@@ -723,6 +757,9 @@ function WaitlistScreen() {
         onlyFilterId="admin-topo-wl-only"
         sortId="admin-topo-wl-sort"
         endpoint="/api/v4/admin/waitlist"
+        exportCsv={write
+          ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
+          : undefined}
         columns={WAITLIST_COLUMNS}
         rowKey={(w) => w.id}
         empty={waitlistEmpty}

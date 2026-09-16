@@ -23,7 +23,7 @@ const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
-const { ok, fail, iso, paginate, meta } = require('../helpers');
+const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
 
 function formatSignup(row) {
   return {
@@ -68,6 +68,82 @@ function formatSignup(row) {
   };
 }
 
+// The `?status=` / `?only=` narrowing, shared by the list and the CSV export
+// so a download always holds exactly the rows the screen's filters select.
+// Every clause is a fixed literal chosen by an exact match — no request
+// text reaches the SQL.
+function waitlistWhere(query) {
+  const status = typeof query.status === 'string' ? query.status : '';
+  const only = typeof query.only === 'string' ? query.only : '';
+  const clauses = [];
+  if (status === 'pending') clauses.push('w.released_at IS NULL');
+  else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
+  if (only === 'confirmed') clauses.push('w.confirmed_at IS NOT NULL');
+  else if (only === 'invited') {
+    clauses.push('EXISTS (SELECT 1 FROM waitlist_signups c WHERE c.invited_by = w.id)');
+  }
+  return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+function plainObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
+// A handle as the file carries it: trimmed, and without a leading `@`
+// (people type one into the self-reported fields; X's API never returns
+// one), so a column can be matched against a list of handles directly.
+function bareHandle(v) {
+  return typeof v === 'string' ? v.trim().replace(/^@+/, '') : '';
+}
+
+// One export row, in file order (the header is EXPORT_HEADER). A verified
+// handle is the one this SIGNUP proved through the waitlist's connect flow
+// (answers.verified) first, and otherwise the identity connected on its
+// linked ACCOUNT — `x_handle_source` says which, since only the first is
+// the waitlist row's own claim.
+const EXPORT_HEADER = [
+  'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
+  'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
+  'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
+  'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
+  'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+];
+
+function exportRow(r) {
+  const a = plainObject(r.answers);
+  const verified = plainObject(a.verified);
+  const handles = plainObject(a.handles);
+  const discovery = plainObject(a.discovery);
+  const signupX = bareHandle(verified.x);
+  const accountX = bareHandle(r.account_x_handle);
+  return [
+    Number(r.id),
+    r.email,
+    r.released_at ? 'admitted' : 'waiting',
+    iso(r.submitted_at),
+    iso(r.confirmed_at),
+    iso(r.released_at),
+    signupX || accountX,
+    signupX ? 'waitlist' : (accountX ? 'account' : ''),
+    bareHandle(verified.github) || bareHandle(r.account_github_handle),
+    bareHandle(verified.linkedin),
+    bareHandle(handles.farcaster),
+    bareHandle(handles.discord),
+    bareHandle(handles.telegram),
+    bareHandle(handles.other),
+    bareHandle(a.referrer_handle),
+    r.linked_username || '',
+    r.linked_username ? String(!!r.has_platform_access) : '',
+    r.invited_by_email || '',
+    Number(r.invited_count) || 0,
+    a.country || '',
+    a.city || '',
+    discovery.source || '',
+    discovery.detail || '',
+    a.made_url || '',
+  ];
+}
+
 function formatBpUser(row) {
   return {
     id: Number(row.id),
@@ -96,16 +172,7 @@ function waitlistAdminRoutes(config) {
   router.get('/api/v4/admin/waitlist', async (req, res) => {
     try {
       const { page, perPage } = paginate(req, { defaultPerPage: 200 });
-      const status = typeof req.query.status === 'string' ? req.query.status : '';
-      const only = typeof req.query.only === 'string' ? req.query.only : '';
-      const clauses = [];
-      if (status === 'pending') clauses.push('w.released_at IS NULL');
-      else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
-      if (only === 'confirmed') clauses.push('w.confirmed_at IS NOT NULL');
-      else if (only === 'invited') {
-        clauses.push('EXISTS (SELECT 1 FROM waitlist_signups c WHERE c.invited_by = w.id)');
-      }
-      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const where = waitlistWhere(req.query);
 
       // The key count is computed in SQL rather than from signalsFor
       // because the list is PAGINATED: sorting the 200 rows a page happens
@@ -159,6 +226,56 @@ function waitlistAdminRoutes(config) {
     } catch (err) {
       log.error('topochain-admin', 'GET /admin/waitlist failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET /api/v4/admin/waitlist/export-csv ─────────────────────────────
+  // Every signup the `?status=` / `?only=` filters select, unpaginated, as
+  // a CSV — newest signup first, which is the order someone cross-checking
+  // recent requests for access wants. Carries the X handle a signup
+  // connected (see exportRow for where it is read from).
+  //
+  // `adminWriteGate` on a GET, for the reason users.js's export-csv gives:
+  // a view-only admin can read these rows page by page, but walking away
+  // with the whole list as a file is a different exposure class.
+  router.get('/api/v4/admin/waitlist/export-csv', adminWriteGate, async (req, res) => {
+    try {
+      const where = waitlistWhere(req.query);
+      const { rows } = await pool.query(
+        `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+                w.answers,
+                (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id)
+                  AS invited_count,
+                p.email AS invited_by_email,
+                u.username AS linked_username, u.has_platform_access,
+                sx.handle AS account_x_handle,
+                sg.handle AS account_github_handle
+           FROM waitlist_signups w
+           LEFT JOIN users u ON u.id = w.linked_user_id
+           LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN user_social_identities sx
+             ON sx.user_id = w.linked_user_id AND sx.provider = 'x'
+           LEFT JOIN user_social_identities sg
+             ON sg.user_id = w.linked_user_id AND sg.provider = 'github'
+          ${where}
+          ORDER BY w.submitted_at DESC, w.id DESC`
+      );
+
+      const status = req.query.status === 'pending' || req.query.status === 'released'
+        ? req.query.status : 'all';
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="waitlist-${status}-${day}.csv"`);
+      res.write(`${EXPORT_HEADER.join(',')}\n`);
+      for (const r of rows) {
+        res.write(`${exportRow(r).map(csvField).join(',')}\n`);
+      }
+      return res.end();
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/waitlist/export-csv failed', { message: err.message });
+      if (!res.headersSent) return fail(res, 500, 'Internal server error.');
+      return res.end();
     }
   });
 
