@@ -141,8 +141,8 @@ export type BadgeSpec =
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
   | { t: 'chat'; key: string; count: number }
-  /** A metadata chip (priority / assignee / category). */
-  | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
+  /** A metadata chip (priority / assignee / category / theme). */
+  | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category' | 'theme'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
   /** Closes #N — in-app (button) or on GitHub (anchor). */
   | { t: 'issueChip'; key: string; n: number; prefix: string; cls: string; title: string }
   | { t: 'issueLink'; key: string; n: number; href: string; verb: string; cls: string; title: string }

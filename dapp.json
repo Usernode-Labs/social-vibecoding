@@ -2138,12 +2138,12 @@
       "name": "The Workshop's grouping tabs lead its own pane, with the search, filters and + under them",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group + #dev-actions",
-      "expectText": "By category"
+      "expectText": "By theme"
     },
     {
-      "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
+      "name": "The Workshop offers the two groupings as tabs at the head of All items, on theme by default",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"theme\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
       "expectText": "By stage"
     },
     {
