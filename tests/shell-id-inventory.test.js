@@ -58,6 +58,10 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #2304: app access moved to App settings ─────────────────────
+  'members-visibility-section': 'The duplicate visibility editor in Members & visibility. App settings is the canonical access surface now; Members keeps collaborators, app admins and proposal approvals.',
+  'members-vis-hint': 'The dependent build/view hint belonged to the retired two-axis editor. App settings presents only the three valid access combinations, so an invalid combination cannot be selected.',
+  'members-vis-error': 'The visibility proposal status line moved with the editor to #app-access-status. The dialog-level loading failure has the accurately named #members-load-error.',
   // ── Home's fifth area went; Profile kept its door ───────────────
   // The chip's menu has carried the entrance since #1443 (a "You" group
   // holding #switcher-row-profile and #switcher-row-settings, pinned by
@@ -300,6 +304,11 @@ const ADDED_IDS = {
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
+  // ── #2304: access is an app setting ──────────────────────────────
+  'app-access-section': '#2304: the canonical app access editor, above the existing Danger zone. It ships hidden and appears only for a manageable, non-self-hosted app.',
+  'app-access-status': '#2304: proposal success, duplicate-proposal and failure feedback for the access editor. It ships empty so the React-owned dialog hydrates exactly.',
+  'app-access-propose': '#2304: the explicit action that turns a selected access draft into the existing vote-gated visibility proposal.',
+  'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'dev-ws-rail-host': 'Empty anchor outside the frosted .dc-lift-strip wrapper, so the Workshop\'s phone tab bar can be `position: fixed` to the real viewport. That wrapper\'s backdrop-filter establishes a containing block for fixed descendants — walking the rail\'s real ancestor chain it is the only one — and it is shared with the chat/topic frames and three panels, so the bar moves out rather than the blur coming off.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────

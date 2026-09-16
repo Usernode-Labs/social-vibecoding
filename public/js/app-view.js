@@ -4636,7 +4636,8 @@ const AppView = {
 
   // The App settings sub-page (secrets + display name behind a "+"
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
-  // directly in the "+" menu, alongside Members & visibility.
+  // directly in the "+" menu. The later App settings dialog is the app's
+  // access + danger-zone surface; members and approvals keep their own row.
 
   // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
   //
@@ -4684,14 +4685,14 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
-  // Gate for the menu's Members & visibility item — the full predicate
-  // the old hamburger-drawer row used: creator/admin always (visibility
-  // + proposal-approval controls), collaborators of an invite-only app
+  // Gate for the menu's Members & approvals item — the full predicate
+  // the old hamburger-drawer row used: creator/admin always (app-admin and
+  // proposal-approval controls), collaborators of an invite-only app
   // (member list + invites), and anyone who can collaborate on an
   // invited-approvers app (read-only approver roster). For the self-app
   // (#646) it shows for admins — the modal there hides the
-  // visibility/collaborator sections and offers only the
-  // Proposal-approvals + Approvers sections.
+  // collaborator sections and offers only the Proposal-approvals +
+  // Approvers sections.
   _plusMenuShowsMembers() {
     const a = AppView.appData;
     if (!a) return false;
@@ -16763,7 +16764,7 @@ const AppView = {
   // opened it — the browser can synthesize a trailing `click` ~300ms after
   // `touchend` — lands on the freshly-shown [data-modal-backdrop] and
   // dismisses the modal in the same gesture. The user saw nothing happen
-  // ("Members & visibility does nothing").
+  // ("Members & approvals does nothing").
   //
   // The fix is the DISMISS GUARD, not a deferral. revealModal() shows the
   // modal SYNCHRONOUSLY (deferring the reveal to requestAnimationFrame
@@ -18091,10 +18092,10 @@ const AppView = {
     }
   },
 
-  // ── Members & visibility dialog ───────────────────────────────────
-  // #1078 chunk I moved the whole block — the visibility pills, the invite
-  // typeahead, the approvals governance editor, the initial-approvers draft,
-  // the app-admins roster and the approvers roster — into
+  // ── Members & approvals dialog ────────────────────────────────────
+  // #1078 chunk I moved the collaborator controls — the invite typeahead,
+  // approvals governance editor, initial-approvers draft, app-admins roster
+  // and approvers roster — into
   // frontend/src/features/dialogs/members-controller.js, which the island
   // `init()`s from its layout effect. That module folds every method back
   // onto this object with Object.assign, so `AppView.loadApprovers()` and

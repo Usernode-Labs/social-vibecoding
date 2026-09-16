@@ -2954,9 +2954,9 @@ const App = {
       // Visibility flipped (a merged visibility PR's deploy-time
       // reconcile — see services/app-manifest.js). Reload the home grid
       // so badges update and newly-private apps drop out for outsiders;
-      // patch the open app's in-memory row so the Members modal and tab
-      // gating see the fresh values, and re-render the modal's pills if
-      // it's open right now.
+      // patch the open app's in-memory row so member-list and tab gating see
+      // the fresh values. App settings re-fetches the authoritative row each
+      // time it opens, so it never needs a legacy DOM repaint here.
       const homeScreen = document.getElementById('home-screen');
       if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
         Home.load();
@@ -2965,12 +2965,6 @@ const App = {
           && typeof AppView !== 'undefined' && AppView.appData) {
         AppView.appData.collab_visibility = data.collabVisibility;
         AppView.appData.view_visibility = data.viewVisibility;
-        const membersModal = document.getElementById('members-modal');
-        if (membersModal && !membersModal.classList.contains('hidden')
-            && AppView._renderMembersVisPills) {
-          AppView._membersVis = { collab: data.collabVisibility, view: data.viewVisibility };
-          AppView._renderMembersVisPills();
-        }
       }
     } else if (data.action === 'governance_changed') {
       // Proposal-approval settings applied (a merged governance PR's
@@ -5003,7 +4997,7 @@ const App = {
     // lineage. A particular dApp's SHA is intentionally not shown in the
     // platform-information footer.
     App.ImproveStatus.setAppOpen(true);
-    // Members & visibility moved from the drawer into the Dev tab's "+"
+    // Members & approvals moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on the Dev forum

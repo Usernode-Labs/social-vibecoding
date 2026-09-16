@@ -68,6 +68,14 @@ test('the subtitles survive: this is not the chip menu’s one-line row', () => 
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 
+test('App settings is an access surface for app managers, not only deleters (#2304)', () => {
+  const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
+  assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
+  assert.match(settings.slice(0, 900), /Manage who can use and build this app/);
+  assert.match(FRAME, /title="Members &amp; approvals"/);
+  assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
+});
+
 test('the touch action sheet reads the title by name, not by position', () => {
   // The regression this prevents: a glyph or a wrapper arriving before the
   // title would have labelled every sheet row with the wrong text, or ''.

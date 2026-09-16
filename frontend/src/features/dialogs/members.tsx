@@ -1,10 +1,9 @@
 /**
  * Members, approvers & governance dialog (#members-modal).
  *
- * Sections are shown and hidden per viewer: visibility controls for the
- * creator/admin, member list + invite typeahead for collab-private apps,
- * proposal-approval governance, the app-admins roster and the approvers
- * roster.
+ * Sections are shown and hidden per viewer: member list + invite typeahead
+ * for collab-private apps, proposal-approval governance, the app-admins
+ * roster and the approvers roster. App access lives in App settings.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * gave it a lifecycle. The render output is still byte-identical to what the
@@ -58,59 +57,12 @@ export function MembersDialog() {
         {/*
             Heading is set per app in openMembersModal: "Proposal approvals"
             on the self-app (whose only sections are the approval ones),
-            "Members & visibility" everywhere else.
+            "Members & approvals" everywhere else.
         */}
         <h2 id="members-modal-title" className="text-lg font-bold mb-4">
-          Members &amp; visibility
+          Members &amp; approvals
         </h2>
-        <div id="members-visibility-section" className="hidden space-y-3 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Who can build it
-            </label>
-            <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
-              <button
-                type="button"
-                data-m-collab-vis="public"
-                className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Everyone
-              </button>
-              <button
-                type="button"
-                data-m-collab-vis="private"
-                className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Invite-only
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Who can see &amp; use it
-            </label>
-            <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
-              <button
-                type="button"
-                data-m-view-vis="public"
-                className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Everyone
-              </button>
-              <button
-                type="button"
-                data-m-view-vis="private"
-                className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Collaborators only
-              </button>
-            </div>
-            <p id="members-vis-hint" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden">
-              Apps everyone can build are always public to view.
-            </p>
-          </div>
-          <div id="members-vis-error" className="text-red-400 text-sm hidden">
-          </div>
+        <div id="members-load-error" className="hidden text-sm text-red-400 mb-4">
         </div>
         <div id="members-invite-section" className="hidden mb-4">
           <label
