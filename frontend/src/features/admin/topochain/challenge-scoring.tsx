@@ -118,22 +118,58 @@ const canWrite = () => !!topo()?.canWrite();
 // the one that matters in practice: with no key the two graded challenges
 // quietly wait instead of failing, and an operator needs to be told that
 // rather than discover it from an empty week.
-function ScheduleCard({ schedule }: { schedule: Schedule | null }) {
+function ScheduleCard({ schedule, write, busy, onRun }: {
+  schedule: Schedule | null;
+  write: boolean;
+  busy: boolean;
+  onRun: (dryRun: boolean) => void;
+}) {
   if (!schedule) return null;
   const off = !schedule.interval_minutes;
   return (
-    <div id="admin-topo-cs-schedule" className={`${PANEL_CLS} mb-4 px-4 py-3 text-sm sm:px-5`}>
-      <div className="font-semibold">
-        {off ? 'Scoring runs only when you press Run now' : `Scoring runs every ${schedule.interval_minutes} minutes`}
+    <div
+      id="admin-topo-cs-schedule"
+      className={`${PANEL_CLS} mb-4 flex flex-col gap-3 px-4 py-3 text-sm sm:flex-row sm:items-start sm:justify-between sm:px-5`}
+    >
+      <div className="min-w-0">
+        <div className="font-semibold">
+          {off ? 'Scoring runs only when you press Run now' : `Scoring runs every ${schedule.interval_minutes} minutes`}
+        </div>
+        <p className="mt-1 text-zinc-500 dark:text-zinc-400">
+          {schedule.aggregate_hours
+            ? `Standings are rebuilt at most every ${schedule.aggregate_hours} hours after a run. `
+            : 'Standings are rebuilt only from the Aggregate button. '}
+          {schedule.grading_configured
+            ? 'Graded challenges are being scored.'
+            : 'Graded challenges are waiting: no model key is configured, so accepted proposals and feedback are left uncredited until one is.'}
+        </p>
       </div>
-      <p className="mt-1 text-zinc-500 dark:text-zinc-400">
-        {schedule.aggregate_hours
-          ? `Standings are rebuilt at most every ${schedule.aggregate_hours} hours after a run. `
-          : 'Standings are rebuilt only from the Aggregate button. '}
-        {schedule.grading_configured
-          ? 'Graded challenges are being scored.'
-          : 'Graded challenges are waiting: no model key is configured, so accepted proposals and feedback are left uncredited until one is.'}
-      </p>
+      {/* The two controls that act on the SERVICE this card describes, rather
+          than on the list below it. They sat in the screen header, which put
+          "press Run now" and the button it names at opposite ends of the
+          page. New rule stays up there: it makes a rule, not a run. */}
+      {write ? (
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+          <button
+            id="admin-topo-cs-dry-run"
+            type="button"
+            className={BTN.secondarySm}
+            disabled={busy}
+            onClick={() => onRun(true)}
+          >
+            Dry run
+          </button>
+          <button
+            id="admin-topo-cs-run"
+            type="button"
+            className={BTN.warnSm}
+            disabled={busy}
+            onClick={() => onRun(false)}
+          >
+            {busy ? 'Running…' : 'Run now'}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -618,38 +654,18 @@ function ChallengeScoringScreen() {
         title="Challenge scoring"
         subtitle="Rules that credit season challenges automatically, and the service that applies them."
         actions={write ? (
-          <>
-            <button
-              id="admin-topo-cs-new"
-              type="button"
-              className={BTN.primarySm}
-              onClick={() => setEditing('new')}
-            >
-              New rule
-            </button>
-            <button
-              id="admin-topo-cs-dry-run"
-              type="button"
-              className={BTN.secondarySm}
-              disabled={busy}
-              onClick={() => run(true)}
-            >
-              Dry run
-            </button>
-            <button
-              id="admin-topo-cs-run"
-              type="button"
-              className={BTN.warnSm}
-              disabled={busy}
-              onClick={() => run(false)}
-            >
-              Run now
-            </button>
-          </>
+          <button
+            id="admin-topo-cs-new"
+            type="button"
+            className={BTN.primarySm}
+            onClick={() => setEditing('new')}
+          >
+            New rule
+          </button>
         ) : null}
       />
 
-      <ScheduleCard schedule={payload?.schedule || null} />
+      <ScheduleCard schedule={payload?.schedule || null} write={write} busy={busy} onRun={run} />
 
       {preview ? (
         <div id="admin-topo-cs-preview" className="mb-4">
