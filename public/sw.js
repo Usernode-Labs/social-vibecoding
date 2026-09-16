@@ -221,7 +221,15 @@
 // keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
 // that, so per v15 an installed client holding any of them would keep serving
 // the old kit from cache and stay broken however correct the new one is.
-const SW_VERSION = 'v26';
+//
+// v27 (#1938 follow-up): app.css, precached in SHELL_ASSETS, so per v10 the
+// bump belongs in this same proposal. The Workshop card sheet kept its own
+// copy of the keyboard arithmetic and published `--ws-kb`; its floor now reads
+// the kit's `--un-kb-inset` like every other surface. Without the bump an
+// installed client would pair the NEW shell.js (which no longer sets --ws-kb)
+// with a CACHED app.css (which still reads it) — the sheet would stop lifting
+// on every platform, not just iOS, which is worse than the bug being fixed.
+const SW_VERSION = 'v27';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
