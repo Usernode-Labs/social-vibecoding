@@ -18230,6 +18230,69 @@ const AppView = {
   //
   // `rect` is a DOMRect-alike in viewport coordinates; `viewport` is
   // { width, height } of the layout viewport.
+  // ── The on-screen keyboard, forwarded into frames (#1937/#1491) ──
+  //
+  // An iframe's visualViewport describes the FRAME, and the keyboard does not
+  // resize the frame — so the kit's tracker, which derives its inset from
+  // innerHeight minus visualViewport.height, computes 0 inside every app.
+  // `--un-kb-inset` is never set there and `html.un-kb` never turns on, which
+  // is why an app's bottom-anchored UI has always been dead to the keyboard
+  // however correctly it consumes the var. Measured on a Pixel emulator with a
+  // docked keyboard and a field inside the frame focused: the shell read
+  // innerHeight 810 / visualViewport 450 / inset 360, and the frame read
+  // 709 / 709 / 0 at the same moment.
+  //
+  // So the shell reads it — it CAN, being top level — and forwards it beside
+  // the safe area it already forwards. Nothing downstream changes: the kit's
+  // own CSS and every app already read `--un-kb-inset`.
+
+  // The kit's floor, mirrored (native.js exports KB_MIN_INSET = 50): below
+  // this it is a collapsing browser toolbar, not a keyboard.
+  KB_MIN_INSET: 50,
+
+  // Pure. Px of the LAYOUT viewport hidden behind the keyboard. A pinch-zoomed
+  // visual viewport is not a keyboard, so it reports nothing.
+  _keyboardInsetFrom(input) {
+    if (!input) return 0;
+    const scale = input.scale == null ? 1 : Number(input.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const innerHeight = Number(input.innerHeight);
+    const vvHeight = Number(input.vvHeight);
+    const offsetTop = Number(input.vvOffsetTop || 0);
+    if (!Number.isFinite(innerHeight) || !Number.isFinite(vvHeight)) return 0;
+    const occluded = innerHeight - vvHeight - offsetTop;
+    if (!(occluded > 0) || occluded < AppView.KB_MIN_INSET) return 0;
+    return Math.round(occluded);
+  },
+
+  // Pure. How much of ONE frame's bottom edge the keyboard covers. A frame
+  // that ends above the keyboard's top edge is not occluded at all — the same
+  // frame-relative reasoning _frameInsets applies to the safe area, and what
+  // keeps a short or inset frame from being told about a keyboard it cannot
+  // see. Never more than the frame's own height.
+  _frameKeyboardInset(rect, viewport, kbInset) {
+    if (!rect || !viewport || !(kbInset > 0)) return 0;
+    const pageHeight = Number(viewport.height);
+    const bottom = Number(rect.bottom);
+    const height = Number(rect.height);
+    if (!Number.isFinite(pageHeight) || !Number.isFinite(bottom) || !Number.isFinite(height)) return 0;
+    const covered = bottom - (pageHeight - kbInset);
+    if (!(covered > 0)) return 0;
+    return Math.round(Math.min(covered, height));
+  },
+
+  // Live read of the shell's own visual viewport.
+  _keyboardInset() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    return AppView._keyboardInsetFrom({
+      innerHeight: window.innerHeight,
+      vvHeight: vv.height,
+      vvOffsetTop: vv.offsetTop,
+      scale: vv.scale,
+    });
+  },
+
   _frameInsets(raw, rect, viewport) {
     const zero = AppView._zeroInsets();
     if (!raw || !rect || !viewport) return zero;
@@ -18318,11 +18381,13 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    return AppView._frameInsets(
-      AppView._readRootInsets(),
-      rect,
-      { width: window.innerWidth, height: window.innerHeight }
-    );
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const insets = AppView._frameInsets(AppView._readRootInsets(), rect, viewport);
+    // `keyboard` rides alongside the four edges rather than inside `bottom`:
+    // they mean different things (one is a notch, the other is transient
+    // occlusion) and apps consume them separately.
+    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, AppView._keyboardInset());
+    return insets;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -18336,7 +18401,7 @@ const AppView = {
       }
       const value = AppView.safeAreaForFrame(id);
       if (!value) return;
-      const key = `${value.top},${value.right},${value.bottom},${value.left}`;
+      const key = `${value.top},${value.right},${value.bottom},${value.left},${value.keyboard}`;
       if (AppView._safeAreaSent[id] === key) return;
       AppView._safeAreaSent[id] = key;
       try {

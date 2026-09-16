@@ -6145,9 +6145,21 @@
   //      same object as `detail` (same convention as
   //      `usernode:locale-changed`), for apps that lay out in JS.
   //
-  // These are the SAFE AREA only — independent of the kit's
-  // `--un-kb-inset` keyboard tracking, which the app's own visualViewport
-  // already reports correctly inside the frame.
+  //   4. `--un-kb-inset` and the `un-kb` class on <html>, from the same
+  //      message's `keyboard` field. This USED to say the app's own
+  //      visualViewport already reported the keyboard correctly inside the
+  //      frame. It does not, and that assumption is why every app's
+  //      bottom-anchored UI was dead to the keyboard: an iframe's
+  //      visualViewport describes the FRAME, the keyboard does not resize the
+  //      frame, so the kit's tracker — innerHeight minus visualViewport.height
+  //      — computes 0 in here, forever. Measured with a docked keyboard and a
+  //      field in the frame focused: the shell read 810/450/360 while the
+  //      frame read 709/709/0 at the same moment. The shell can see it, so the
+  //      shell forwards it, and the kit's existing CSS (.un-kb-avoid,
+  //      .un-sheet, .un-panel-body, .un-action-sheet, .un-modal) plus any app
+  //      consuming the var start receiving a real number with no change of
+  //      their own. The kit's in-frame tracker does not fight this: computing
+  //      0 every time, it never writes the property at all.
   //
   // Standalone (no parent frame, or a host that never answers) the
   // properties are deliberately left UNSET rather than zeroed, so the
@@ -6168,6 +6180,33 @@
         out[EDGES[i]] = isFinite(n) && n > 0 ? n : 0;
       }
       return out;
+    }
+
+    // The keyboard travels in the same message but memoizes separately: it
+    // moves while the four edges sit still, so folding it into `apply`'s
+    // `changed` check below would swallow every keyboard event.
+    var _keyboard = 0;
+
+    function applyKeyboard(value) {
+      if (!value || typeof value !== "object") return;
+      var n = Number(value.keyboard);
+      var next = isFinite(n) && n > 0 ? Math.round(n) : 0;
+      if (next === _keyboard) return;
+      _keyboard = next;
+      try {
+        document.documentElement.style.setProperty("--un-kb-inset", next + "px");
+        document.documentElement.classList.toggle("un-kb", next > 0);
+      } catch (_) {}
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:keyboard-changed", {
+          detail: { inset: next },
+        }));
+      } catch (_) {}
+    }
+
+    function applyAll(value) {
+      applyKeyboard(value);
+      apply(value);
     }
 
     function apply(value) {
@@ -6214,11 +6253,11 @@
       // whenever the frame's rect shifts; `response` answers our startup
       // request. Both carry the same value shape.
       if (data.__usernode_safe_area === "changed") {
-        apply(data.value);
+        applyAll(data.value);
         return;
       }
       if (data.__usernode_safe_area === "response" && data.id === _getId) {
-        apply(data.value);
+        applyAll(data.value);
       }
     });
 
