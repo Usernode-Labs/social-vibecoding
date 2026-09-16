@@ -66,17 +66,16 @@ test('a scaffolded app answers the same paths with no edge in front of it', () =
     'the origin comes from the platform-injected env var, never a literal');
 });
 
-test('a scaffolded app prefers the INJECTED origin over the one baked in', () => {
-  // The scaffold does still write a platform origin into the app, as a
-  // fallback for a container that was handed no env var. What matters is
-  // which one wins: the injected value is read first, so the app follows
-  // the platform when its domain moves instead of pointing at wherever it
-  // was the day the app was created. That ordering is the whole fix — a
-  // baked-in origin that took precedence is what broke the fleet before.
+test('a scaffolded app takes the platform origin ONLY from the injected variable', () => {
+  // The scaffold used to bake the platform's origin in as a fallback for a
+  // container handed no env var. A fallback is still a hostname written into
+  // every app, and a hostname written into every app is exactly what broke
+  // the fleet when the platform moved domains (#2047, #2322). So there is no
+  // fallback: the injected USERNODE_PLATFORM_ORIGIN or nothing.
   const server = scaffoldServer();
   const line = server.match(/const PLATFORM_ORIGIN = .*/)[0];
-  assert.match(line, /process\.env\.USERNODE_PLATFORM_ORIGIN \|\|/,
-    'the injected origin is read first and the literal is only the fallback');
+  assert.match(line, /process\.env\.USERNODE_PLATFORM_ORIGIN \|\| ''\)/,
+    'the injected origin, with an empty fallback rather than a hostname');
 
   // And the platform LINKS follow that constant rather than embedding a
   // hostname of their own — they are the case a relative path cannot serve,
@@ -84,7 +83,11 @@ test('a scaffolded app prefers the INJECTED origin over the one baked in', () =>
   assert.match(server, /res\.redirect\(302, PLATFORM_ORIGIN \+/);
   assert.match(server, /<a href="\$\{PLATFORM_ORIGIN\}/);
   const hosts = server.match(/https:\/\/[a-z0-9.-]+/g) || [];
-  assert.equal(hosts.length, 1, `exactly one origin literal, as the fallback: ${hosts}`);
+  assert.deepEqual(hosts, [], 'no origin literal at all');
+  // With the variable unset nothing is fetched or redirected to an empty
+  // origin: the asset route answers 503 and the landing page is served.
+  assert.match(server, /if \(!PLATFORM_ORIGIN\) return res\.sendStatus\(503\);/);
+  assert.match(server, /if \(PLATFORM_ORIGIN && req\.get\('sec-fetch-dest'\) === 'document'\)/);
 });
 
 test('the scaffolded asset route is public — it precedes the auth middleware', () => {

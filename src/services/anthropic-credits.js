@@ -35,7 +35,10 @@ const ANTHROPIC_UPSTREAM = 'https://api.anthropic.com';
 const ANTHROPIC_VERSION = '2023-06-01';
 // Anthropic asks integrations to identify themselves so they can see
 // usage patterns; harmless either way.
-const USER_AGENT = 'Homeroom/1.0 (+https://social-vibecoding.usernodelabs.org)';
+// The contact URL is the platform's current domain, never a baked-in one.
+const USER_AGENT = process.env.USERNODE_DOMAIN
+  ? `Homeroom/1.0 (+https://${process.env.USERNODE_DOMAIN})`
+  : 'Homeroom/1.0';
 
 const FETCH_TIMEOUT_MS = 8000;
 // cost_report caps a page at 31 daily buckets, so a long window pages.
