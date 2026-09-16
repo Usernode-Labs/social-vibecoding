@@ -420,7 +420,23 @@ const DevChat = {
       // Direct Anthropic selection is a global per-browser preference, as it
       // was before this control learned about OpenRouter.
       try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
-      if (DevChat._isOpenRouterSession()) {
+      // An unsent change has no session id yet. Its explicit provider choice
+      // must be staged on the placeholder and carried into POST /sessions,
+      // not sent to reset-agent-context with a null id. This branch also
+      // matters when the saved server default is OpenRouter: choosing an
+      // Anthropic model here has to override that default on first send.
+      if (DevChat.isPendingSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else if (DevChat._isOpenRouterSession()) {
         DevChat._modelPickerChanging = true;
         DevChat._publishComposer();
         try {
@@ -1392,7 +1408,34 @@ const DevChat = {
       current,
       fixedBackend,
     });
-    if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+    const stillCurrent = session.pending
+      ? DevChat.currentSession === session
+      : DevChat.currentSession?.id === session.id;
+    if (!choice || !stillCurrent) return;
+
+    // /sessions/new is a client-only placeholder by design (#2241), so there
+    // is no row reset-agent-context could update. Keep the explicit choice on
+    // that placeholder instead. `_materializePendingSession` sends it with
+    // the first real POST /sessions, preserving the no-write-before-send
+    // contract while still making the grouped model picker functional.
+    if (session.pending) {
+      const pendingChoice = choice.backend === 'codex_openrouter'
+        ? {
+          backend: 'codex_openrouter',
+          model: choice.model || null,
+          reasoningEffort: choice.reasoningEffort || null,
+        }
+        : { backend: 'claude_code', model: null, reasoningEffort: null };
+      session.pending_agent_choice = pendingChoice;
+      // Reuse the ordinary session-derived picker logic so the closed control
+      // immediately reflects what will be created, without a full chat render
+      // that could disturb the uncontrolled message textarea.
+      session.agent_backend = pendingChoice.backend;
+      session.agent_model = pendingChoice.model;
+      session.agent_reasoning_effort = pendingChoice.reasoningEffort;
+      DevChat._publishComposer();
+      return;
+    }
 
     const same = choice.backend === current.backend
       && (choice.model || null) === (current.model || null)
@@ -3644,6 +3687,9 @@ const DevChat = {
       pr_number: null,
       session_title: null,
       spec_md: '',
+      // Filled only after an explicit composer pick. Until then creation
+      // omits the backend keys and lets the server resolve the saved default.
+      pending_agent_choice: null,
     };
     DevChat.messages = [];
     // A placeholder is a fresh start: never inherit the previous session's
@@ -3670,7 +3716,11 @@ const DevChat = {
     if (DevChat._pendingCreateInFlight) return false;
     DevChat._pendingCreateInFlight = true;
     try {
-      const session = await DevChat.createSession(pending.app_slug);
+      const session = await DevChat.createSession(
+        pending.app_slug,
+        null,
+        pending.pending_agent_choice || null,
+      );
       if (!session) return false;
       // The viewer can leave the screen while the POST is in flight. The row
       // exists either way (it is theirs, and the list will show it); it just
