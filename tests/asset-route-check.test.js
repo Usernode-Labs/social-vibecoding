@@ -298,3 +298,49 @@ test('its synthetic index does not collide with the other synthetic rows', () =>
   assert.equal(check.ASSET_CHECK_INDEX, -4);
   assert.notEqual(check.ASSET_CHECK_INDEX, unitSuite.UNIT_CHECK_INDEX);
 });
+
+// ─── The self app is skipped ───────────────────────────────────────────
+
+test('the self app takes no asset-route row at all', async () => {
+  // deployApplication strips these three prefixes from the self app's
+  // Ingress on purpose, so its preview serves the bytes from the revision
+  // under review. With no asset route the probe falls through to the
+  // preview container, which is behind the private-app access gate, and
+  // this probe sends no credential by design. The row could therefore only
+  // ever fail there — on every Homeroom proposal — describing a routing
+  // rule the platform is not supposed to have.
+  let probed = 0;
+  const outcome = await check.maybeRunAssetRouteCheck({
+    config: { captureRuntime: 'kubernetes', selfAppSlug: 'usernode-2d5619' },
+    pool: {},
+    appId: 1,
+    appSlug: 'usernode-2d5619',
+    stagingOrigin: 'https://usernode-2d5619--s4409.example.test',
+    fetchImpl: async () => { probed += 1; throw new Error('must not probe'); },
+  });
+  assert.equal(outcome, null, 'no row, rather than a failing one');
+  assert.equal(probed, 0, 'and no probe is spent on it');
+});
+
+test('a child app on the same installation still gets the row', async () => {
+  const outcome = await check.maybeRunAssetRouteCheck({
+    config: { captureRuntime: 'kubernetes', selfAppSlug: 'usernode-2d5619' },
+    pool: { query: async () => ({ rows: [] }) },
+    appId: 2,
+    appSlug: 'recipebot',
+    stagingOrigin: 'https://recipebot--s1.example.test',
+    fetchImpl: async () => ({
+      status: 200,
+      headers: { get: () => 'application/javascript' },
+      text: async () => 'export const x = 1;',
+    }),
+  });
+  assert.ok(outcome, 'the check that protects child apps is untouched');
+});
+
+test('isSelfApp needs a configured slug and an exact match', () => {
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, 'a'), true);
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, 'b'), false);
+  assert.equal(check.isSelfApp({}, 'a'), false);
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, null), false);
+});

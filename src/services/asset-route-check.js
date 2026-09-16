@@ -23,6 +23,16 @@
 // status plus the content type, never the bytes: a 200 that is not JavaScript
 // is exactly the failure this row exists for.
 //
+// Where it does NOT run: the platform's own self-app. deployApplication
+// deliberately strips these three prefixes from the self app's Ingress
+// (kubernetes.js, "route only for child apps") so its preview serves the
+// asset bytes from the revision under review rather than the shared
+// backend's copy of production. With no asset route, the probe falls through
+// to the preview container itself, which sits behind the private-app access
+// gate — and this probe sends no credential on purpose. So the row could
+// only ever fail there, on every self-app proposal, describing a routing
+// rule the platform is not supposed to have. It is skipped instead.
+//
 // Where it runs. Kubernetes capture only. There the preview origin is the
 // public ingress hostname, which is what a browser sees. On the docker
 // runtime the capture origin is the bare container (`http://<name>:3000`)
@@ -165,13 +175,21 @@ function shapeOutcome({ passed, reason, graduated }) {
 
 // Returns { row, history } or null when the check does not apply. Never
 // throws: the checks run must not die because this probe did.
+// The self app is the SOURCE of the three asset trees, so there is no
+// cross-hostname routing to verify on it — see the header.
+function isSelfApp(config, appSlug) {
+  const slug = String(config?.selfAppSlug || '');
+  return !!slug && String(appSlug || '') === slug;
+}
+
 async function maybeRunAssetRouteCheck({
-  config, pool, appId, sessionId = null, stagingOrigin, fetchImpl,
+  config, pool, appId, appSlug = null, sessionId = null, stagingOrigin, fetchImpl,
   probeAttempts, probeRetryMs, sleep,
 } = {}) {
   try {
     if (!isEnabled()) return null;
     if (!config || config.captureRuntime !== 'kubernetes') return null;
+    if (isSelfApp(config, appSlug)) return null;
     if (typeof stagingOrigin !== 'string' || !/^https:\/\//i.test(stagingOrigin)) return null;
 
     // Ingress replacement and edge routing converge just after the preview
@@ -214,6 +232,7 @@ async function maybeRunAssetRouteCheck({
 }
 
 module.exports = {
+  isSelfApp,
   ASSET_CHECK_NAME,
   ASSET_CHECK_PATH,
   ASSET_CHECK_INDEX,
