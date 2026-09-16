@@ -171,6 +171,35 @@ async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
   }
 }
 
+// A local receipt for a report that reached GitHub.
+//
+// The issue is still the real output; this row exists because the issue
+// cannot answer the two questions the season's feedback challenge asks. It
+// was filed by the platform's bot account, so GitHub does not know WHO on
+// this platform wrote it, and reading every issue back over the API once a
+// tick to find out would be absurd. Written only after the issue exists, so
+// the scorer can never pay for feedback that reached nobody.
+//
+// Best-effort like the acknowledgement below it: the report is filed and the
+// person has been helped, so a bookkeeping failure must not turn their
+// submission into an error and invite a duplicate.
+async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description }) {
+  if (!user?.id) return;
+  try {
+    await pool.query(
+      `INSERT INTO feedback_reports
+         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [user.id, app ? 'app' : 'platform', app ? app.id : null,
+        owner || null, repo || null,
+        Number.isSafeInteger(issueNumber) ? issueNumber : null,
+        title ? String(title).slice(0, 512) : null, description]
+    );
+  } catch (err) {
+    log.warn('feedback', 'Feedback report record failed', { issueNumber, message: err.message });
+  }
+}
+
 // The issue already exists. A failed acknowledgement must never turn a
 // successful submission into an error (and encourage a duplicate report).
 async function firstFeedbackMoment(pool, { user, app, owner, repo, issueNumber }) {
@@ -557,6 +586,10 @@ function feedbackRoutes(config) {
             issueNumber: issue.number, user: req.user,
           })
           : null;
+        await recordFeedbackReport(pool, {
+          user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
+          issueNumber: issue.number, title, description: description.trim(),
+        });
         const firstFeedback = await firstFeedbackMoment(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
         });
@@ -620,6 +653,10 @@ function feedbackRoutes(config) {
           issueNumber: issue.number, user: req.user,
         })
         : null;
+      await recordFeedbackReport(pool, {
+        user: req.user, app: null, owner: issueOwner, repo: issueRepo,
+        issueNumber: issue.number, title, description: description.trim(),
+      });
       const firstFeedback = await firstFeedbackMoment(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
       });

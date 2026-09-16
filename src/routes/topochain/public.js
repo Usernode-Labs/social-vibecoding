@@ -62,7 +62,7 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
-const { loadOnboarding, visibleChallenges, challengeCategory } =
+const { loadOnboarding, visibleChallenges, challengeCategory, resolveProgress } =
   require('../../services/topochain/challenge-onboarding');
 const events = require('../../services/events');
 
@@ -666,6 +666,34 @@ function topochainPublicRoutes(config) {
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
       const listed = rows.filter((r) => r.t_id != null);
       const visible = visibleChallenges(listed, onboarding);
+
+      // The viewer's own credit count per challenge.
+      //
+      // This list used to carry progress for the ONBOARDING rows alone,
+      // because they were the only challenges anything credited without an
+      // admin typing it in. The card's `_isDone` reads `progress.done` off
+      // THIS payload, so every other challenge fell through to "is there any
+      // activity" and showed "Started" — permanently, even to somebody who
+      // had finished it and been paid for it. Automatic scoring
+      // (services/topochain/challenge-scorer.js) makes that the normal state
+      // of four of the nine Season 2 challenges, so the same rule now covers
+      // all of them.
+      //
+      // One grouped count for the whole list rather than a query per card,
+      // and only for a signed-in viewer — the anonymous list has no progress
+      // to report and must not pay for a query to say so.
+      const counts = new Map();
+      if (req.user?.id && visible.length) {
+        const { rows: countRows } = await pool.query(
+          `SELECT challenge_id, COUNT(*)::int AS credits
+             FROM user_activities
+            WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
+            GROUP BY challenge_id`,
+          [req.user.id, visible.map((r) => Number(r.id))]
+        );
+        for (const row of countRows) counts.set(Number(row.challenge_id), Number(row.credits));
+      }
+
       const data = visible
         .map((r) => {
           const item = buildChallengeListItem(r);
@@ -673,7 +701,18 @@ function topochainPublicRoutes(config) {
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();
-          if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+          if (onboarding?.progress.has(item.id)) {
+            item.progress = onboarding.progress.get(item.id);
+          } else if (req.user?.id && item.metric?.kind !== 'blocks_produced') {
+            // `blocks_produced` is left out on purpose: its count comes from
+            // the leaderboard snapshot rather than from ledger rows, and a
+            // bare ring is what that card is meant to show.
+            item.progress = resolveProgress({
+              metricKind: item.metric ? item.metric.kind : null,
+              metricTarget: item.metric ? item.metric.target : null,
+              activityCount: counts.get(Number(item.id)) || 0,
+            });
+          }
           return item;
         });
 

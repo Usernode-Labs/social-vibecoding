@@ -70,14 +70,16 @@ test('all 22 topochain tables are declared as CREATE TABLE IF NOT EXISTS', () =>
   }
 });
 
-// The 22 tables above plus `challenge_illustrations`, the art admins upload
-// from the challenge template form's gallery. It is platform content rather
-// than a SPEC §3.4 table, so it is pinned by its own test below instead of
-// joining TABLES, whose entries mirror the db tools' allowlist and all carry
-// the surrogate keys checked further down.
-test('exactly 23 CREATE TABLE statements in this block: the 22 above plus challenge_illustrations', () => {
+// The 22 tables above plus three the platform added of its own:
+// `challenge_illustrations` (the art admins upload from the template form's
+// gallery), `challenge_scoring_rules` and `challenge_scorer_runs` (the
+// automatic scorer's configuration and its run history). None is a SPEC §3.4
+// table, so each is pinned by its own test below instead of joining TABLES,
+// whose entries mirror the db tools' allowlist and all carry the surrogate
+// keys checked further down.
+test('exactly 25 CREATE TABLE statements in this block: the 22 above plus the three platform ones', () => {
   const matches = block.match(/CREATE TABLE IF NOT EXISTS/g) || [];
-  assert.equal(matches.length, 23);
+  assert.equal(matches.length, 25);
 });
 
 // ─── Dependency order (FK targets declared before their referencing table) ──

@@ -691,7 +691,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // comment trail alone. This branch's staking pair added 3; main's Workshop
   // screen added 5; neither set overlaps the other, so the merged manifest
   // holds every one of them: 667 + 3 + 5 = 675.
-  assert.equal(DAPP.tests.length, 675);
+  //
+  // 675 → 676: the programme console's Challenge scoring screen, which has to
+  // render its schedule card and its rules list as siblings — the check
+  // selects across the two, because a screen that drew only one of them would
+  // still look loaded. Computed against the same shared 667 as the two sets
+  // above and overlapping neither, so the merged manifest is 667 + 3 + 5 + 1.
+  assert.equal(DAPP.tests.length, 676);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

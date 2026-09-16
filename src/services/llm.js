@@ -1340,6 +1340,52 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
+// One graded unit for the challenge scorer (services/topochain/
+// challenge-grader.js): a season challenge whose points depend on how useful
+// the thing somebody did was, rather than on whether they did it.
+//
+// Deliberately dumb about its subject — the rubric, the ceiling and every
+// word of the prompt come from the caller, because that is what keeps the
+// thing that decides points in a reviewable module of its own rather than
+// spread across this file. All this adds is the model choice, the structured
+// output and the same defensive parse every other Haiku helper here carries.
+//
+// THROWS on anything that is not a usable score (no key, refusal, truncation,
+// unparseable text). The scorer treats a throw as "leave it for the next
+// tick" and never as a zero, so an outage costs a delay, never someone's
+// points.
+async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  if (!system || !user) throw new Error('gradeChallengeUnit needs a rubric and an input');
+  const model = 'claude-haiku-4-5';
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 200,
+      system,
+      messages: [{ role: 'user', content: user }],
+      ...(schema ? { output_config: { format: { type: 'json_schema', schema } } } : {}),
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'challenge_grade' },
+    apiKey,
+  });
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  // Same fence/smart-quote fallback as the progress estimator: structured
+  // outputs normally return clean JSON, but a refusal or a truncation can
+  // still put prose in the text block.
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in grade response');
+  const parsed = JSON.parse(match[0]);
+  return { score: parsed.score, reason: parsed.reason, usage: resp.usage, model };
+}
+
 // ── #1001 quick-reply pills: enforcement + contextual backstop ────────
 //
 // Background. The Mayor's suggest_replies tool is optional and production
@@ -2326,6 +2372,9 @@ function _setClientForTests(fakeClient) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  // The challenge scorer's one model call (services/topochain/
+  // challenge-grader.js owns the rubrics; this owns the transport).
+  gradeChallengeUnit,
   // #1001 quick-reply pills: the forced Mayor continuation, the Haiku
   // backstop, and the compact context both share.
   buildQuickReplyContext, requireQuickReplies, generateQuickReplies,
