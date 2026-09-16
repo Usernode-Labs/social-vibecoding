@@ -654,26 +654,30 @@ function MetaPartView({ p }: { p: MetaPart }): ReactNode {
 /** The title band's content: lead/trail runs, the edit pencil, the editor. */
 function TitleContent({ t }: { t: TitleSpec }): ReactNode {
   if (t.editing) {
-    const n = t.editing.issue;
+    const session = 'session' in t.editing;
+    const n = session ? t.editing.session : t.editing.issue;
+    const kind = session ? 'session' : 'issue';
+    const save = session ? 'saveSessionTitle' : 'saveIssueTitle';
+    const cancel = session ? 'cancelSessionTitleEdit' : 'cancelIssueTitleEdit';
     const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') { e.preventDefault(); call({ fn: 'saveIssueTitle', args: [n] }); }
-      if (e.key === 'Escape') { e.preventDefault(); call({ fn: 'cancelIssueTitleEdit' }); }
+      if (e.key === 'Enter') { e.preventDefault(); call({ fn: save, args: [n] }); }
+      if (e.key === 'Escape') { e.preventDefault(); call({ fn: cancel }); }
     };
     return (
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          id="dev-issue-title-input"
+          id={`dev-${kind}-title-input`}
           type="text"
-          maxLength={200}
+          maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
           autoFocus
           width="flex"
           box="tight"
           onKeyDown={onKeyDown}
         />
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: 'saveIssueTitle', args: [n] })}>Save</button>
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: 'cancelIssueTitleEdit' })}>Cancel</button>
-        <span id="dev-issue-title-error" className="w-full text-xs text-red-400 hidden"></span>
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: save, args: [n] })}>Save</button>
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: cancel })}>Cancel</button>
+        <span id={`dev-${kind}-title-error`} className="w-full text-xs text-red-400 hidden"></span>
       </div>
     );
   }
@@ -681,19 +685,25 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
   // {' '} between two text runs is two adjacent children, which cannot
   // survive hydration (React #418) and the shell build refuses it.
   const text = t.lead ? ` ${t.text}` : t.text;
+  const edit = t.edit;
+  const editSession = !!edit && 'session' in edit;
+  const editId = edit ? ('session' in edit ? edit.session : edit.issue) : null;
   return (
     <>
       {t.lead ? <span className={t.lead.cls}>{t.lead.s}</span> : null}
       {t.edit ? `${text} ` : text}
       {t.trail ? <span className={t.trail.cls}>{` · ${t.trail.s}`}</span> : null}
-      {t.edit ? (
+      {edit ? (
         <>
           <button
             type="button"
             className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title="Edit this issue's title (you created it)"
+            title={editSession ? 'Edit this proposal title' : "Edit this issue's title (you created it)"}
             aria-label="Edit title"
-            onClick={() => call({ fn: 'beginIssueTitleEdit', args: [t.edit!.issue] })}
+            onClick={() => call({
+              fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
+              args: [editId],
+            })}
           >
             <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" />
           </button>

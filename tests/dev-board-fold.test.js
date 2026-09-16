@@ -691,7 +691,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // comment trail alone. This branch's staking pair added 3; main's Workshop
   // screen added 5; neither set overlaps the other, so the merged manifest
   // holds every one of them: 667 + 3 + 5 = 675.
-  assert.equal(DAPP.tests.length, 675);
+  //
+  // 675 → 677: #2327 declares the author-only title editor once while a
+  // change is Underway and once while it is In review. They are distinct
+  // lifecycle renderers (_sharedSessionCardModel / _proposalCardModel), so
+  // pinning both prevents one half of the feature disappearing unnoticed.
+  assert.equal(DAPP.tests.length, 677);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

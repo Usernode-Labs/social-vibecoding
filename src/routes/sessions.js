@@ -383,6 +383,7 @@ async function scheduleRetainedInteractiveTurn({
 }
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
+const MANUAL_SESSION_TITLE_MAX = 256;
 
 // #1038: identifies THIS platform process to the client's session-state
 // store. Live busy state is in-process memory (see services/session-state),
@@ -1580,6 +1581,103 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  // PATCH /api/sessions/:id/title (#2327)
+  //
+  // Rename the author's own native change throughout its open lifecycle:
+  // Underway (active/paused) and In review (promoted/merging). The
+  // display title and proposed PR title move together: before a PR exists,
+  // `proposed_pr_title` is what pr-metadata will use when it creates one;
+  // after a managed PR exists, the local proposal title moves immediately
+  // and GitHub is a best-effort mirror. Imported PR titles stay with their
+  // external author, and headless issue runs are named by their issue.
+  //
+  // The app-level collab gate above runs first. The UPDATE repeats the
+  // narrower author/lifecycle/source checks atomically and returns the same
+  // 404 for every miss so a foreign private session cannot be enumerated.
+  router.patch('/api/sessions/:id/title', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const rawTitle = req.body?.title;
+    const title = typeof rawTitle === 'string'
+      ? rawTitle.replace(/\s+/g, ' ').trim()
+      : '';
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    if (title.length > MANUAL_SESSION_TITLE_MAX) {
+      return res.status(400).json({
+        error: `Title too long (max ${MANUAL_SESSION_TITLE_MAX} chars)`,
+      });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs
+            SET session_title = $1,
+                proposed_pr_title = $1,
+                pr_title = CASE WHEN cs.pr_number IS NULL THEN cs.pr_title ELSE $1 END,
+                pr_title_fallback = CASE
+                  WHEN cs.pr_number IS NULL THEN cs.pr_title_fallback ELSE FALSE END
+           FROM apps a
+          WHERE cs.id = $2 AND cs.user_id = $3 AND a.id = cs.app_id
+            AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+            AND cs.is_headless = FALSE
+            AND cs.source IS DISTINCT FROM 'imported'
+          RETURNING cs.id, cs.app_id, a.slug AS app_slug, a.repo_url,
+                    cs.pr_number, cs.pr_title, cs.session_title,
+                    cs.proposed_pr_title`,
+        [title, sessionId, req.user.id]
+      );
+      const session = rows[0];
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+
+      let githubUpdated = false;
+      if (session.pr_number) {
+        const fullRepo = proposalUpdate.repoNameFromUrl(session.repo_url);
+        if (fullRepo) {
+          const [owner, repo] = fullRepo.split('/');
+          try {
+            await github.updatePR(owner, repo, Number(session.pr_number), { title });
+            githubUpdated = true;
+          } catch (err) {
+            // The panel already has the author's rename. GitHub is a
+            // cosmetic mirror and a transient outage must not roll it back.
+            log.warn('sessions', 'Proposal title saved but GitHub rename failed', {
+              sessionId, prNumber: session.pr_number, message: err.message,
+            });
+          }
+        }
+      }
+
+      try {
+        const { pushSessionUpdate } = require('../services/ws');
+        pushSessionUpdate({
+          action: 'titled', sessionId, appId: session.app_id,
+          appSlug: session.app_slug, sessionTitle: title,
+        });
+      } catch (err) {
+        log.warn('sessions', 'Proposal title broadcast failed', {
+          sessionId, message: err.message,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        title,
+        prTitle: session.pr_number ? title : null,
+        githubUpdated,
+      });
+    } catch (err) {
+      log.error('sessions', 'Proposal title update failed', {
+        sessionId, message: err.message,
+      });
+      return res.status(500).json({ error: 'Could not update the title' });
+    }
+  });
+
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
   //   each annotated with whether a CC turn is in flight right now.
@@ -1731,6 +1829,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessions.push(
           {
             id: 990101, branch_name: 'mock/my-session', pr_number: null,
+            user_id: req.user.id,
             pr_url: null, pr_title: null,
             session_title: '[Mock] Your in-progress session',
             // Reverse "#N" issue chip demo on the own-session card: links
