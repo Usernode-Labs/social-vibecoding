@@ -27,6 +27,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -88,6 +89,27 @@ test('a long body is clipped in the reason', () => {
   assert.ok(out.reason.length < 800, `reason stays short: ${out.reason.length}`);
 });
 
+test('a self-app bridge must match the preview bytes, not the shared production backend', () => {
+  const missing = check.classifyAssetResponse({
+    status: 200, contentType: 'application/javascript', expectedBodySha256: 'a'.repeat(64),
+  });
+  assert.equal(missing.passed, false);
+  assert.match(missing.reason, /no readable asset digest/);
+  assert.match(missing.reason, /shared production asset backend/);
+
+  const wrong = check.classifyAssetResponse({
+    status: 200, contentType: 'application/javascript', bodySha256: 'b'.repeat(64),
+    expectedBodySha256: 'a'.repeat(64),
+  });
+  assert.equal(wrong.passed, false);
+  assert.match(wrong.reason, /asset digest b+/);
+
+  assert.equal(check.classifyAssetResponse({
+    status: 200, contentType: 'application/javascript', bodySha256: 'A'.repeat(64),
+    expectedBodySha256: 'a'.repeat(64),
+  }).passed, true);
+});
+
 // ── probeAssetRoute against a real server ──────────────────────────────
 
 async function serve(t, handler) {
@@ -128,12 +150,16 @@ test('unrouted origin: a catch-all answers HTML for the bridge path and the prob
 test('the probe sends no credentials and does not follow a redirect to a sign-in page', async (t) => {
   let seen = null;
   const origin = await serve(t, (req, res) => {
-    seen = { auth: req.headers.authorization, cookie: req.headers.cookie };
+    seen = {
+      auth: req.headers.authorization,
+      cookie: req.headers.cookie,
+      connection: req.headers.connection,
+    };
     res.writeHead(302, { location: '/login' });
     res.end();
   });
   const response = await check.probeAssetRoute(origin);
-  assert.deepEqual(seen, { auth: undefined, cookie: undefined });
+  assert.deepEqual(seen, { auth: undefined, cookie: undefined, connection: 'close' });
   assert.equal(response.status, 302);
   assert.equal(check.classifyAssetResponse(response).passed, false);
 });
@@ -177,6 +203,91 @@ test('a persistent bad route still fails after the bounded retry window', async 
   assert.equal(out.attempts, 3);
   assert.equal(out.verdict.passed, false);
   assert.match(out.verdict.reason, /403 text\/plain/);
+});
+
+// ── readiness gate ────────────────────────────────────────────────────
+
+function routeResponse(status, contentType, buildSha = '', body = '') {
+  const bytes = Buffer.from(body, 'utf8');
+  return {
+    status,
+    headers: { get: (name) => ({
+      'content-type': contentType,
+      'x-platform-build': buildSha,
+    }[name.toLowerCase()] || null) },
+    text: async () => body,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  };
+}
+
+test('readiness waits for two consecutive fresh-edge successes', async () => {
+  const responses = [
+    routeResponse(403, 'text/plain', '', 'Access denied'),
+    routeResponse(200, 'application/javascript'),
+    routeResponse(200, 'application/javascript'),
+  ];
+  const sleeps = [];
+  const out = await check.waitForAssetRouteReady('https://a--s1.example.invalid', {
+    fetchImpl: async () => responses.shift(), attempts: 5, maxWaitMs: 10_000,
+    retryMs: 7, sleep: async (ms) => { sleeps.push(ms); },
+  });
+  assert.equal(out.ready, true);
+  assert.equal(out.attempts, 3);
+  assert.equal(out.consecutivePasses, 2);
+  assert.deepEqual(sleeps, [7, 7]);
+});
+
+test('a miss between successes resets the readiness streak', async () => {
+  const responses = [
+    routeResponse(200, 'application/javascript'),
+    routeResponse(403, 'text/plain', '', 'Access denied'),
+    routeResponse(200, 'application/javascript'),
+    routeResponse(200, 'application/javascript'),
+  ];
+  const out = await check.waitForAssetRouteReady('https://a--s1.example.invalid', {
+    fetchImpl: async () => responses.shift(), attempts: 5, maxWaitMs: 10_000,
+    retryMs: 0, sleep: async () => {},
+  });
+  assert.equal(out.ready, true);
+  assert.equal(out.attempts, 4);
+  assert.equal(out.consecutivePasses, 2);
+});
+
+test('readiness rejects a stale self-app build and exhausts a persistent 403', async () => {
+  const expectedBodySha256 = crypto.createHash('sha256').update('preview bridge').digest('hex');
+  const staleThenReady = [
+    routeResponse(200, 'application/javascript', '', 'production bridge'),
+    routeResponse(200, 'application/javascript', '', 'preview bridge'),
+    routeResponse(200, 'application/javascript', '', 'preview bridge'),
+  ];
+  const ready = await check.waitForAssetRouteReady('https://usernode--s1.example.invalid', {
+    fetchImpl: async () => staleThenReady.shift(), expectedBodySha256,
+    attempts: 4, maxWaitMs: 10_000, retryMs: 0, sleep: async () => {},
+  });
+  assert.equal(ready.ready, true);
+  assert.equal(ready.attempts, 3);
+
+  const failed = await check.waitForAssetRouteReady('https://a--s1.example.invalid', {
+    fetchImpl: async () => routeResponse(403, 'text/plain', '', 'Access denied'),
+    attempts: 3, maxWaitMs: 10_000, retryMs: 0, sleep: async () => {},
+  });
+  assert.equal(failed.ready, false);
+  assert.equal(failed.attempts, 3);
+  assert.equal(failed.consecutivePasses, 0);
+  assert.match(failed.verdict.reason, /403 text\/plain/);
+});
+
+test('readiness stops at its wall-clock deadline even when attempts remain', async () => {
+  let elapsed = 0;
+  const out = await check.waitForAssetRouteReady('https://a--s1.example.invalid', {
+    fetchImpl: async () => routeResponse(403, 'text/plain', '', 'Access denied'),
+    attempts: 20, maxWaitMs: 100, retryMs: 500,
+    now: () => elapsed,
+    sleep: async (ms) => { elapsed += ms; },
+  });
+  assert.equal(out.ready, false);
+  assert.equal(out.attempts, 1);
+  assert.equal(elapsed, 100);
 });
 
 // ── maybeRunAssetRouteCheck ────────────────────────────────────────────
@@ -291,6 +402,24 @@ test('settlement probes, carries the row, and records it in check history', () =
   assert.match(body, /if \(assetOutcome\) extraRows\.push\(assetOutcome\.row\);/);
   assert.match(body, /\(dispatched \|\| unitOutcome \|\| assetOutcome\) && checksResult\.state !== 'error'/);
   assert.match(body, /if \(assetOutcome\) historyRows\.push\(assetOutcome\.history\);/);
+});
+
+test('capture gates on public asset readiness before testing state or either Job launch', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function captureForSession('), src.indexOf('async function settleCaptureRun('));
+  const gate = body.indexOf('await assetRouteCheck.waitForAssetRouteReady(assetOrigin');
+  const pending = body.indexOf("await setChecksPending(pool, session.id, commitHash, 'testing', trigger)");
+  const unit = body.indexOf('unitSuite.maybeRunUnitSuite({');
+  const capture = body.indexOf('kubernetes.runCaptureJob(config, {');
+  assert.ok(gate > -1, 'the central capture path waits on the public route');
+  assert.ok(gate < pending, 'readiness precedes the testing-state flip');
+  assert.ok(gate < unit, 'readiness precedes the unit Job');
+  assert.ok(gate < capture, 'readiness precedes the capture Job');
+  assert.match(body.slice(0, pending), /internalOrigin = applicationRuntime\.appOrigin/);
+  assert.match(body.slice(gate, pending), /expectedBodySha256/,
+    'self-app readiness pins the public asset response to the preview bytes');
+  assert.match(body.slice(gate, pending), /PLATFORM_ASSET_ROUTE_NOT_READY/,
+    'bounded exhaustion takes the existing infrastructure-error path');
 });
 
 test('its synthetic index does not collide with the other synthetic rows', () => {

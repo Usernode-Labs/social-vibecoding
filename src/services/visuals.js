@@ -2041,6 +2041,66 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     }
     const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
+    // Pod readiness and GET / prove that the preview process is alive, but
+    // not that Cilium's public data plane has converged on the newly-written
+    // asset route. Gate the one common checks entry point on the exact bridge
+    // URL before flipping the row to testing or creating any Job. Two fresh-
+    // connection successes are required inside waitForAssetRouteReady, so a
+    // mixed edge cannot pass because one request found a reconciled listener.
+    if (config.captureRuntime === 'kubernetes') {
+      const readinessStartedAt = Date.now();
+      const assetOrigin = kubernetesCaptureOrigin(config, app, session.id);
+      let expectedBodySha256 = '';
+      if (app.slug === config.selfAppSlug) {
+        const runtimeName = usableRuntimeName(stagingResult?.runtimeName)
+          || usableRuntimeName(session.staging_runtime_name)
+          || `usernode-staging-${app.slug}--${session.id}`;
+        const internalOrigin = applicationRuntime.appOrigin(config, {
+          runtimeKind: 'kubernetes', runtimeName,
+        });
+        const internal = await assetRouteCheck.probeAssetRoute(internalOrigin, {
+          includeBodyHash: true,
+          signal: operation?.signal || null,
+        });
+        const internalVerdict = assetRouteCheck.classifyAssetResponse(internal);
+        if (!internalVerdict.passed || !internal.bodySha256) {
+          const err = new Error(
+            `Preview platform asset could not be fingerprinted from its runtime. ${internalVerdict.reason || ''}`.trimEnd()
+          );
+          err.code = 'PLATFORM_ASSET_ROUTE_NOT_READY';
+          err.infrastructure = true;
+          throw err;
+        }
+        expectedBodySha256 = internal.bodySha256;
+      }
+      const readiness = await assetRouteCheck.waitForAssetRouteReady(assetOrigin, {
+        expectedBodySha256,
+        signal: operation?.signal || null,
+      });
+      traceStep('asset_readiness', readiness.ready
+        ? 'Public platform asset route is ready'
+        : 'Public platform asset route did not become ready', {
+        durationMs: Date.now() - readinessStartedAt,
+        attempts: readiness.attempts,
+        consecutivePasses: readiness.consecutivePasses,
+        requiredPasses: readiness.requiredPasses,
+        status: readiness.response?.status,
+        contentType: readiness.response?.contentType || undefined,
+        buildSha: readiness.response?.buildSha || undefined,
+        bodyMatchesPreview: expectedBodySha256 ? readiness.ready : undefined,
+      });
+      if (!readiness.ready) {
+        const err = new Error(
+          `Preview platform asset route was not ready after ${readiness.attempts} probe`
+          + `${readiness.attempts === 1 ? '' : 's'}. ${readiness.verdict?.reason || ''}`.trimEnd()
+        );
+        err.code = 'PLATFORM_ASSET_ROUTE_NOT_READY';
+        err.infrastructure = true;
+        throw err;
+      }
+      await operation?.check();
+    }
+
     // #47: mark the checks 'pending' for this commit the moment the run
     // starts, so the merge gate (votes.checkAndMerge) can't act on a stale
     // 'passing' while the fresh build is being tested. Best-effort.
@@ -2715,11 +2775,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'error' so the gate blocks fail-closed with a visible "couldn't run"
     // rather than an indefinite spinner. Best-effort.
     try {
-      const errorDetail = captureFailureDetail({
-        stdout: err.stdout,
-        stderr: err.stderr,
-        fallbackReason: err.message,
-      });
+      const errorDetail = err.code === 'PLATFORM_ASSET_ROUTE_NOT_READY'
+        ? String(err.message).slice(0, 300)
+        : captureFailureDetail({
+          stdout: err.stdout,
+          stderr: err.stderr,
+          fallbackReason: err.message,
+        });
       const stored = await storeChecks(
         pool, session.id, commitHash, { state: 'error', results: [] }, errorDetail
       );
