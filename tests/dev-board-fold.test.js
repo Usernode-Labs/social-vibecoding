@@ -692,20 +692,52 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // screen added 5; neither set overlaps the other, so the merged manifest
   // holds every one of them: 667 + 3 + 5 = 675.
   //
-  // 675 → 677: #2327 declares the author-only title editor once while a
-  // change is Underway and once while it is In review. They are distinct
-  // lifecycle renderers (_sharedSessionCardModel / _proposalCardModel), so
-  // pinning both prevents one half of the feature disappearing unnoticed.
+  // 675 → 680: this branch's two All-items chunks, which computed their own
+  // tallies (672 → 674 → 677) against the pre-staking manifest and so cannot
+  // be read as continuing the line above; +2 and +3 are what each chunk
+  // actually adds, and neither touches a staking check.
   //
-  // 675 → 676, 675 → 677: the tallies above were computed on either side of
-  // THIS merge against the same shared 675 and do not reconcile through the
-  // comment trail alone. This branch's title-editor pair added 2; main's
-  // Challenge scoring screen — which has to render its schedule card and its
-  // rules list as siblings, the check selecting across the two because a
-  // screen that drew only one of them would still look loaded — added 1;
-  // neither set overlaps the other, so the merged manifest holds both:
-  // 675 + 2 + 1 = 678.
-  assert.equal(DAPP.tests.length, 678);
+  // +2 — the Workshop's grouping strip moves out of the All-items pane head
+  // and up beside the tab pill on a wide window, so the check that read
+  // `.dev-ws-group + #dev-actions` inside the head describes an arrangement
+  // that no longer exists at the capture's 1280px viewport. It is REPLACED
+  // rather than removed — one check on the ear (the visual one, since this is
+  // the change a voter has to see), one on the head it left, one on the ear
+  // in the By-stage state, where the pane runs edge to edge and the ear has
+  // to track its right edge — which is net +2 against a manifest that loses
+  // one. tests/dev-workshop.test.js pins that no check still expects the old
+  // adjacency, so the swap cannot be half-done.
+  //
+  // +3 — the "Assigned to you" / "Created by you" quick filters move into
+  // the Filters dialog when the filter row cannot hold them on one line,
+  // which is a state the capture runner's fixed 1280x800 viewport cannot
+  // reach on its own — hence `?shot=quick-in-dialog`, which pins the
+  // handover on and opens the dialog. Three, because the move has three
+  // separately falsifiable halves: the dialog GROWS the two switches (the
+  // visual one, and the only one a screenshot can carry), the strip DROPS
+  // them in the same state (a dialog that gained them while the strip kept
+  // them is two owners of one value), and with room on the line the strip
+  // KEEPS them while the dialog does not offer them — the default, which is
+  // what a measurement bug would break first.
+  //
+  // 675 → 676: independently on main, the programme console's Challenge
+  // scoring screen, which has to render its schedule card and its rules list
+  // as siblings — the check selects across the two, because a screen that
+  // drew only one of them would still look loaded.
+  //
+  // 676 → 678: also independently on main, #2327 declares the author-only
+  // title editor once while a change is Underway and once while it is In
+  // review. They are distinct lifecycle renderers (_sharedSessionCardModel /
+  // _proposalCardModel), so pinning both prevents one half of the feature
+  // disappearing unnoticed.
+  //
+  // 680 → 683, 678 → 683: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 675 → 680 alone, with its two All-items chunks (+2, +3); main
+  // independently took the same 675 to 678, with the Challenge scoring check
+  // (+1) and the title-editor pair (+2). Neither set overlaps the other, so
+  // the merged manifest holds every one of them: 675 + 2 + 3 + 1 + 2 = 683.
+  assert.equal(DAPP.tests.length, 683);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

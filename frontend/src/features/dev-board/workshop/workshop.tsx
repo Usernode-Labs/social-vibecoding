@@ -739,7 +739,7 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  * floor over a scrim and the tab pill hides under it. Above, Ask and the
  * comments take a PANEL beside the rail and the stage slides over, so the
  * item stays readable while you use them, and Vote is a popover on its own
- * button. `useWideLayout` is that breakpoint in the other language; the keys
+ * button. `useMediaFlag(WIDE_QUERY)` is that breakpoint in the other language; the keys
  * (↑ ↓ move, V vote, A ask, C comments, T try it, M more) work everywhere
  * and are only LISTED on the wide layout, where a keyboard is likely.
  *
@@ -1213,7 +1213,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const endScrollRef = useRef<boolean>(endOnOpen);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
-  const wide = useWideLayout();
+  const wide = useMediaFlag(WIDE_QUERY);
 
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
@@ -1933,6 +1933,45 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
 }
 
 /**
+ * The grouping strip — "By theme" / "By stage".
+ *
+ * ONE NODE, RENDERED IN ONE OF TWO PLACES, which is the arrangement the tab
+ * bar above it already uses (see `useRailHost`). Below 768px it is a row of
+ * the pane's sticky head, full width, as it has always been. From 768px up it
+ * moves into `.dev-ws-ear` — a surface hanging off the pane's top-right
+ * corner, beside the lander's tab pill — and app.css shrinks it to its labels
+ * there. Rendered in ONE place at a time rather than twice with one hidden:
+ * `[data-ws-group]` is what the declared checks and `querySelector` reach
+ * for, and a hidden twin is the copy they would find first.
+ */
+function GroupStrip({ group }: { group: string }): ReactNode {
+  return (
+    <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
+      <button
+        type="button"
+        role="tab"
+        className="dev-ws-group-tab"
+        data-ws-group="theme"
+        aria-selected={group === 'theme'}
+        onClick={() => callAppView('_setWorkshopGroup', 'theme')}
+      >
+        By theme
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className="dev-ws-group-tab"
+        data-ws-group="stage"
+        aria-selected={group === 'stage'}
+        onClick={() => callAppView('_setWorkshopGroup', 'stage')}
+      >
+        By stage
+      </button>
+    </div>
+  );
+}
+
+/**
  * The breakpoint, in one place. app.css's `@media (min-width: 700px)` block is
  * the same decision written in the other language, and the two move together:
  * above it the tab strip is a segmented control at the head of the column and
@@ -1941,10 +1980,23 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
  */
 const WIDE_QUERY = '(min-width: 700px)';
 
+/**
+ * The OTHER breakpoint, and it is deliberately not that one.
+ *
+ * From 768px up the grouping strip leaves the pane head and sits beside the
+ * tab pill as an ear on the pane's top-right corner (app.css, "The grouping
+ * strip as an EAR"). 768 rather than 700 because the reading column tops out
+ * at 760px there: above it the row has exactly one appearance — a 444px pill,
+ * a 233px ear, 83px of air — at every width, and below it the two would close
+ * on each other through a 60px band before the rail breakpoint took the pill
+ * away. Those three numbers are measured, not chosen.
+ */
+const EAR_QUERY = '(min-width: 768px)';
+
 /** `matchMedia` where there is one — the vm the tests render in has none. */
-function matchesWide(): boolean {
+function matchesQuery(query: string): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia(WIDE_QUERY).matches
+    ? window.matchMedia(query).matches
     : false;
 }
 
@@ -1964,17 +2016,162 @@ function matchesWide(): boolean {
  * The effect is still there for the CROSSING — a rotated phone, a resized
  * window — which the seed alone cannot see.
  */
-function useWideLayout(): boolean {
-  const [wide, setWide] = useState(matchesWide);
+function useMediaFlag(query: string): boolean {
+  const [on, setOn] = useState(() => matchesQuery(query));
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(WIDE_QUERY);
-    const apply = () => setWide(mq.matches);
+    const mq = window.matchMedia(query);
+    const apply = () => setOn(mq.matches);
     apply();
     mq.addEventListener('change', apply);
     return () => mq.removeEventListener('change', apply);
-  }, []);
-  return wide;
+  }, [query]);
+  return on;
+}
+
+/**
+ * The air between the tab pill and the ear, once the ear claims the rest.
+ *
+ * The two surfaces are level and adjacent, so this is the seam between them
+ * rather than a layout gap — the same 10px the ear spends on its own
+ * horizontal padding, so the distance from the pill to the first label reads
+ * as one step.
+ */
+const EAR_GAP_PX = 10;
+
+/**
+ * Everything `useEarInset` publishes, so the teardown cannot miss one.
+ *
+ * They are all derived from the same measurement and all read by app.css; a
+ * stale one left on the host would be inherited by the next crossing, which
+ * is why this is a list rather than four remove calls written out.
+ */
+const EAR_PROPS = [
+  '--dev-ws-ear-left', '--dev-ws-ear-right', '--dev-ws-ear-tail', '--dev-ws-ear-tr',
+];
+
+/**
+ * The narrowest the ear is allowed to be, which is what its labels need.
+ *
+ * Measured: "By category" + "By stage" plus the rail's padding come to 233px.
+ * The clamp matters at the bottom of the ear's range — just above 768px the
+ * pill is 444px of a 760px column, so the honest answer for `left` would
+ * leave the ear 306px, but a longer translation of either label (or a user
+ * font scale) narrows that fast. Past the clamp the ear stops growing
+ * leftward and keeps its content rather than crushing it; `right: 0` is never
+ * given up, so the pane's right edge is still tracked.
+ */
+const EAR_MIN_PX = 240;
+
+/**
+ * The ear's RIGHT edge belongs to the tab strip's column, not the pane's.
+ *
+ * `right: 0` was the obvious anchor and it was wrong on By stage: the pane
+ * goes full-bleed there while the tab pill stays centred on its own 760px
+ * column, so the ear slid out from beside the pill and off to the window's
+ * edge — it "shifted right with the rest of the pane growth". Anchored to the
+ * NAV instead, the ear's box is identical under both groupings (714..1020 at
+ * 1280) and it stays where the pill is, which is the only place it means
+ * anything.
+ *
+ * That is also what retired the width cap this constant replaced. The cap
+ * existed to stop By stage stretching the ear to 722px and its two tabs to
+ * 348px apiece; with the right edge on the nav the ear simply cannot grow
+ * past the column, so the ceiling has nothing left to catch and the width is
+ * one number — the column, less the pill, less the seam — at every width.
+ *
+ * The consequence is that on By stage the ear is NO LONGER at the pane's
+ * corner: the pane continues underneath and past it. So the pane keeps its
+ * rounded top-right corner there and its top line resumes to the RIGHT of the
+ * ear, which is what `--dev-ws-ear-tail` and `--dev-ws-ear-tr` are for.
+ */
+
+/**
+ * Stretch the ear leftward to meet the tab pill.
+ *
+ * The ear used to hug its two labels, which left a wide band of dead space
+ * between it and the pill — 83px at the narrow end and the same at every
+ * width, because both boxes were content-sized inside a column that tops out
+ * at 760px. It now spans from just clear of the pill to the pane's right
+ * edge, and the two tabs share that width (`flex: 1 1 0` in app.css).
+ *
+ * WHY THIS IS MEASURED RATHER THAN WRITTEN IN CSS. The pill is
+ * `.dev-ws-tabtrack` inside `.dev-ws-tabs`, and the ear is a child of the
+ * pane: different subtrees, so no selector can hand one the other's width.
+ * The nav is left-aligned on the same reading column as the pane (see the
+ * `justify-content: flex-start` note in app.css), which is what makes the
+ * pill's right edge the ear's left bound in the first place — but its width
+ * is three text labels, so only a measurement knows it.
+ *
+ * NO FEEDBACK LOOP HERE, unlike the filter strip's measurement: the ear is
+ * absolutely positioned and therefore out of flow, so its width cannot
+ * change the pill's or the pane's. The observer watches the two boxes it
+ * reads and writes a property neither of them consults.
+ *
+ * The value lands as a custom property on `.dev-ws` and is inherited by the
+ * ear, so React renders no style of its own — the same rule the rest of the
+ * shell follows for anything written at runtime.
+ */
+function useEarInset(
+  bar: HTMLElement | null,
+  hostRef: React.RefObject<HTMLDivElement | null>,
+  earUp: boolean,
+): void {
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    // Down at phone width the strip is back in the pane head and the ear does
+    // not exist. Clear the property rather than leave a stale number on the
+    // host for the next crossing to inherit.
+    if (!earUp || !bar) {
+      for (const k of EAR_PROPS) host.style.removeProperty(k);
+      return undefined;
+    }
+    const track = bar.querySelector<HTMLElement>('.dev-ws-tabtrack');
+    const pane = host.querySelector<HTMLElement>('[data-ws-pane]');
+    if (!track || !pane) return undefined;
+    const measure = () => {
+      const t = track.getBoundingClientRect();
+      const n = bar.getBoundingClientRect();
+      const p = pane.getBoundingClientRect();
+      if (!t.width || !n.width || !p.width) return;
+      // How far the pane reaches past the tab strip's column: 0 on By
+      // category, where they are the same 760px box, and half the slack on By
+      // stage, where the pane is full-bleed and the nav stays centred.
+      const tail = Math.max(0, Math.round(p.right - n.right));
+      // The ear's right edge, as an x against the pane's left edge.
+      const rightEdge = p.width - tail;
+      // Reach the pill, unless that would leave the ear narrower than its
+      // labels — then stop and let the seam widen instead.
+      const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
+      const left = Math.min(wanted, Math.max(0, rightEdge - EAR_MIN_PX));
+      host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
+      host.style.setProperty('--dev-ws-ear-right', `${tail}px`);
+      // The two the pane's outline needs, and both are about the SAME fact —
+      // whether the ear is standing at the pane's corner or part-way along its
+      // top edge. Flush (By category): no line to the right of the ear and a
+      // squared corner, so the two right edges read as one. Inset (By stage):
+      // the top line resumes for the `tail`, plus the 1px the ear's own right
+      // edge occupies, and the corner stays round because the ear is nowhere
+      // near it. A zero-width tail clips to nothing, which is how "no segment"
+      // is expressed without a second rule.
+      host.style.setProperty('--dev-ws-ear-tail', tail ? `${tail + 1}px` : '0px');
+      host.style.setProperty('--dev-ws-ear-tr', tail ? '22px' : '0px');
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(track);
+    // The pane too: By category is the reading column and By stage is the
+    // full-bleed card, so the right edge this is measured back from moves
+    // when the grouping does.
+    ro.observe(pane);
+    return () => ro.disconnect();
+    // The observer covers what changes WITHIN a layout: the pill's width and
+    // the pane's, which is the grouping switch. Re-running the effect is only
+    // for the three things that change WHICH boxes are read — the nav node
+    // arriving from its ref callback, the breakpoint crossing, and the host.
+  }, [bar, hostRef, earUp]);
 }
 
 /**
@@ -2187,6 +2384,12 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
+  // Where the grouping strip renders: beside the tab pill from 768px up, in
+  // the pane's sticky head below it. See `EAR_QUERY` and `GroupStrip`.
+  const earUp = useMediaFlag(EAR_QUERY);
+  // ...and how wide it is: from just clear of the pill to the pane's right
+  // edge, which only a measurement knows. See `useEarInset`.
+  useEarInset(bar, hostRef, earUp);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -2642,6 +2845,19 @@ export function DevWorkshop(): ReactNode {
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
+          {/* THE EAR, on a wide window: the grouping strip on its own surface
+              at the pane's top-right corner, level with the tab pill. It is a
+              child of the PANE and absolutely positioned against it, so it
+              tracks whichever width the pane has — the 760px reading column
+              on By category, the full-bleed card on By stage. See app.css.
+
+              Rendered only when it is up, so the strip below is the same one
+              node moved rather than a second copy of it. */}
+          {earUp ? (
+            <div className="dev-ws-ear" data-ws-ear="">
+              <GroupStrip group={group} />
+            </div>
+          ) : null}
           {/* ── The sticky head: the controls that act on what is below ──
               The search, the filters and the "+" used to sit in the frame's
               chrome above the scroller, two strips away from the list they
@@ -2664,28 +2880,9 @@ export function DevWorkshop(): ReactNode {
               were the first thing in the pane and named only the CHOICE,
               leaving what the choice was being made about unsaid. */}
           <span className="dev-ws-eyebrow dev-ws-pane-eyebrow">All items</span>
-          <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-group-tab"
-              data-ws-group="theme"
-              aria-selected={group === 'theme'}
-              onClick={() => callAppView('_setWorkshopGroup', 'theme')}
-            >
-              By theme
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-group-tab"
-              data-ws-group="stage"
-              aria-selected={group === 'stage'}
-              onClick={() => callAppView('_setWorkshopGroup', 'stage')}
-            >
-              By stage
-            </button>
-          </div>
+          {/* The strip's narrow home. Above the breakpoint it is in the ear
+              instead — one node, two places. */}
+          {earUp ? null : <GroupStrip group={group} />}
             <DevActionsRow
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}

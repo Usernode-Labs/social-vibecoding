@@ -34,6 +34,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
+const { idsOf } = require('./helpers/html-tokens');
+
 const ROOT = path.join(__dirname, '..');
 const DIALOGS = path.join(ROOT, 'frontend', 'src', 'features', 'dialogs');
 
@@ -316,4 +318,50 @@ test('the two modules the dialogs owned are retired from public/js/', () => {
   // screenshot-select's only consumer is the feedback dialog, which imports it.
   const feedback = fs.readFileSync(path.join(DIALOGS, 'feedback-controller.js'), 'utf8');
   assert.match(feedback, /import '\.\/screenshot-select'/);
+});
+
+test('a declared check anchored on a dialog ROOT reads only markup the shell ships', () => {
+  // The lift is why this rule exists. `useStaticModal` presents a dialog by
+  // MOVING its card out of the root (`#<name>-modal`) into the kit's modal
+  // shell — see the note at the top of frontend/src/lib/static-modal.ts — so
+  // while a dialog is OPEN its contents are no longer descendants of its
+  // root. A declared check written as `#<name>-modal <something inside>`
+  // therefore describes the CLOSED dialog, and can only ever be satisfied by
+  // markup the prerendered document already contains.
+  //
+  // This cost a check round. A new check read
+  // `#board-filters-modal:has(#board-filters-assignedtome) …` for two
+  // switches that render only once the dialog is open with a payload asking
+  // for them. It resolved perfectly in a local harness — which had no kit
+  // loaded, so nothing was lifted — and could not match on a preview, where
+  // the kit is present and the card had moved. The fix is to anchor such a
+  // check INSIDE the card (on the labels, here), never on the root.
+  //
+  // tests/dapp-selectors-resolve.test.js does not catch it: it allows any id
+  // that public/js/** or React injects at runtime, which these are.
+  const DAPP = JSON.parse(read('dapp.json'));
+  const shellIds = new Set(idsOf(INDEX_HTML));
+  // A root named inside a `:has()` PREDICATE is not an ancestor claim — it is
+  // the house pattern for "the document is in the state where this dialog is
+  // open", and the #2161 app-settings check uses it precisely BECAUSE the
+  // card has been lifted away from the root by then:
+  //
+  //   body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked
+  //
+  // So the predicates come off first, and only a root still standing in the
+  // chain afterwards is asserting descent.
+  const withoutHas = (sel) => sel.replace(/:has\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
+  const offenders = [];
+  for (const t of DAPP.tests) {
+    const chain = withoutHas(t.expectSelector || '');
+    const root = DIALOG_IDS.find((id) => chain.includes(`#${id}`));
+    if (!root) continue;
+    const after = chain.slice(chain.indexOf(`#${root}`) + root.length + 1);
+    for (const m of after.match(/#[a-zA-Z][\w-]*/g) || []) {
+      const id = m.slice(1);
+      if (!shellIds.has(id)) offenders.push(`${t.name}: #${id} is not in the shipped shell`);
+    }
+  }
+  assert.deepEqual(offenders.join('\n'), '',
+    'a root-anchored declared check cannot read markup that appears only once the dialog is open');
 });

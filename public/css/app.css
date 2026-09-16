@@ -13638,6 +13638,150 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
+/* ── The grouping strip as an EAR on the pane's top-right corner ───────
+   From 768px up the strip leaves the pane head and sits beside the lander's
+   own tab pill, on a surface of its own that joins the card below it. Two
+   controls on one row, each answering its own question: the pill picks WHICH
+   of the three destinations, the ear picks how the board under it is read.
+
+   768px, and not the 700px the tab bar uses. The reading column tops out at
+   760px from 768 up (`#dev-workshop { max-width: 760px }` plus `#dev-body`'s
+   4px sides), so above this width the row has exactly one appearance: a
+   444px pill, a 233px ear and 83px of air between them, at 768 and at 2560
+   alike. Below it the column is the viewport and the two would close on each
+   other through a 60px band before the rail breakpoint took the pill away
+   altogether — a cramped range nobody designed. Measured, not chosen: those
+   three numbers are what the strip and the pill actually are.
+
+   IT HANGS OFF THE PANE, NOT OFF THE NAV, and that is the whole reason it is
+   absolutely positioned rather than a third flex item in `.dev-ws-tabs`. On
+   By stage the pane runs edge to edge while the nav keeps the reading column
+   (see "The stage pane runs edge to edge" below), so an ear in the nav would
+   detach from the card's corner the moment you switched panes. `right: 0`
+   against the pane tracks whichever width the pane currently has.
+
+   `bottom: 100%` ABUTS, it does not overlap. The pane's fill is
+   semi-transparent over a backdrop-filter, so an ear lapping over the head
+   would stack two frosted layers and draw the lighter band the pane's own
+   note is about — the same fill on the same backdrop, edge to edge, is what
+   makes them one surface. The ear is 46px tall for the same reason the sum
+   works out: 36px of strip plus its 5px padding is the pill's height, and
+   the 10px it reaches past that is `.dev-ws`'s column gap, so its bottom
+   edge lands exactly on the pane's top edge.
+
+   THE RING IS THREE-SIDED. `.dev-ws-pane`'s hairline is a single inset
+   shadow all the way round; a fourth side here would draw a line across the
+   join and split the ear from the card again.
+
+   It does NOT pin. The pane head is sticky and this is not in it: scroll the
+   board and the ear leaves with the tab pill it sits beside, which is the
+   row it now belongs to. The head keeps the search, the filters and the "+",
+   which are the controls you reach for mid-scroll. */
+@media (min-width: 768px) {
+  /* Scoped by `:has()` so a pane without an ear is untouched. The "+" menu
+     and the vote sheet are absolutely positioned against their own local
+     wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
+     this containing block takes nothing away from them. */
+  .dev-ws-pane:has(> .dev-ws-ear) { position: relative; }
+  /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
+     shadow, so its top side used to run the full width — straight under the
+     ear, which is what made the ear read as a pill resting on a card rather
+     than part of it. A shadow cannot be drawn on part of a side, so the ring
+     gives up its TOP here and the pseudo-element below puts it back, clipped
+     to stop where the ear starts.
+
+     Covering it was the other candidate and is worse: the ear's fill is
+     semi-transparent over a backdrop-filter, so a 1px overlap leaves the line
+     dimmed and smeared rather than gone — and two of these fills stacked is
+     the lighter band the pane's own note is about. */
+  .dev-ws-pane:has(> .dev-ws-ear) {
+    box-shadow:
+      inset 1px 0 0 var(--app-sheet-line),
+      inset -1px 0 0 var(--app-sheet-line),
+      inset 0 -1px 0 var(--app-sheet-line);
+  }
+  /* TWO SEGMENTS, because the ear may stand at the pane's corner or part-way
+     along its top edge. `::before` is the run to its left, which always
+     exists; `::after` is the run to its right, which exists only on By stage
+     — there the pane continues past the ear, so its top line has to come back
+     and its rounded corner has to stay. On By category the tail measures 0,
+     the clip keeps nothing, and the corner is squared instead so the ear's
+     right edge and the pane's read as one. */
+  .dev-ws-pane:has(> .dev-ws-ear)::before,
+  .dev-ws-pane:has(> .dev-ws-ear)::after {
+    content: '';
+    position: absolute; inset: 0;
+    /* `inherit` carries the squared top-right corner below with it, so the
+       line follows the rounded top-LEFT corner and nothing else. */
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 var(--app-sheet-line);
+    /* Stop at the ear. The same measured offset the ear is positioned by, so
+       the two cannot disagree about where that is; with the property unset
+       (no ResizeObserver, or the frame before the measurement) the clip is
+       the whole width and the top line is simply continuous, which is the
+       pre-ear appearance rather than a broken one. */
+    /* Plus the 1px the ear's own left edge occupies: the ear draws that side
+       as an INSET shadow, so its line sits in [left, left+1] and a clip that
+       stopped at `left` exactly left a one-pixel notch between the two. */
+    pointer-events: none;
+  }
+  .dev-ws-pane:has(> .dev-ws-ear)::before {
+    clip-path: inset(0 calc(100% - var(--dev-ws-ear-left, 100%) - 1px) 0 0);
+  }
+  .dev-ws-pane:has(> .dev-ws-ear)::after {
+    clip-path: inset(0 0 0 calc(100% - var(--dev-ws-ear-tail, 0px)));
+  }
+  .dev-ws-ear {
+    position: absolute; bottom: 100%;
+    /* The right edge follows the TAB STRIP'S column, not the pane's. `right: 0`
+       slid the ear off to the window's edge on By stage, where the pane goes
+       full-bleed and the pill stays centred on its own 760px box — the ear
+       shifted right with the pane's growth and left the pill behind. Measured
+       by `useEarInset`; 0 on By category, where the two boxes are the same. */
+    right: var(--dev-ws-ear-right, 0px);
+    /* ABOVE THE NAV, or the strip is decorative. `.dev-ws-tabs` is
+       `z-index: 30` for its phone life as a floating bar, and up here it is
+       back in flow spanning the whole reading column — the same column the
+       pane has — so its box covers the band the ear hangs in. Positioned with
+       a z-index against an ear with none, it won every hit test: both
+       `elementFromPoint` probes at the buttons' centres returned
+       `.dev-ws-tabs`, and clicking either grouping did nothing at all. The
+       nav paints no fill of its own here (the pill is `.dev-ws-tabtrack`
+       inside it), so this changes hit-testing and not the picture. */
+    z-index: 31;
+    /* STRETCHED TO MEET THE PILL. The custom property is measured and
+       published on `.dev-ws` by `useEarInset` (workshop.tsx) — the pill lives
+       in a different subtree, so no selector can hand this one its width. The
+       `auto` fallback is the content-hugging ear, which is what renders for
+       the frame before the measurement lands and in any browser without a
+       ResizeObserver. */
+    left: var(--dev-ws-ear-left, auto);
+    padding: 5px 10px;
+    border-radius: 22px 22px 0 0;
+    box-shadow:
+      inset 0 1px 0 var(--app-sheet-line),
+      inset 1px 0 0 var(--app-sheet-line),
+      inset -1px 0 0 var(--app-sheet-line);
+  }
+  /* SHARE THE EAR, which is the pane head's rule again now that the ear is a
+     full-width surface rather than a pill beside one. The tabs hugged their
+     labels while the ear hugged them back, and the pair sat in a wide band of
+     dead air; with the ear reaching the pill there is a row to divide, and a
+     two-state control divides it in two. */
+  .dev-ws-ear .dev-ws-group-tab { flex: 1 1 0; }
+  /* Square where the two meet, so the ear and the card read as one surface
+     rather than a pill resting on a rounded corner. */
+  .dev-ws-pane:has(> .dev-ws-ear) > .dev-ws-pane-head {
+    border-top-right-radius: var(--dev-ws-ear-tr, 0px);
+  }
+  /* AND THE PANE'S OWN CORNER WITH IT. Squaring the head alone left the
+     pane's 22px ring curving away inside the ear's straight right edge, which
+     is what read as the ear being "slightly inset" — the two right edges
+     measure flush to the pixel, but the pane's outline turned the corner 22px
+     before the ear's did. Square, they are one edge. */
+  .dev-ws-pane:has(> .dev-ws-ear) { border-top-right-radius: var(--dev-ws-ear-tr, 0px); }
+}
+
 /* ── The working pane ──────────────────────────────────────────────────
    The controls, the switch and the thing they act on, as one card — the same
    sheet the "Where the app is" and "What needs you" strips above it wear, so
@@ -13673,7 +13817,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
    positioned in this subtree, and sticky does not work under a clipping
    ancestor. */
-.dev-ws-pane-head, .dev-ws-pane-body {
+.dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -13697,7 +13841,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    frost prevents — not a slightly flatter bar. Both halves go opaque together,
    because they must stay the same colour as each other above all. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-pane-head, .dev-ws-pane-body { background-color: var(--dc-sheet); }
+  .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear { background-color: var(--dc-sheet); }
 }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */

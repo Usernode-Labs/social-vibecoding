@@ -35,6 +35,16 @@ export interface BoardFilterValues {
   category: string | null;
   assignee: string | null;
   needsVote: boolean;
+  /**
+   * The two quick filters, present only while the DIALOG owns them — the
+   * filter strip measures its own row and hands them over when they will not
+   * fit on its one line (features/dev-board/kanban-filters.tsx, and
+   * `_quickFiltersInDialog` in public/js/app-view.js). The strip's toggles and
+   * these switches are never both on screen: two controls for one filter,
+   * either of which could be the stale one by the time Done is pressed.
+   */
+  assignedToMe: boolean;
+  createdByMe: boolean;
 }
 
 export interface BoardFiltersPayload {
@@ -45,6 +55,13 @@ export interface BoardFiltersPayload {
   assignees: string[];
   /** AppView.KANBAN_ASSIGNEE_UNASSIGNED — the fixed "Unassigned" sentinel. */
   unassigned: string;
+  /**
+   * Draw the two quick switches? True only when the strip has handed them
+   * over AND there is a "you" to filter by. `applyKanbanFilters` applies the
+   * same test on the way back, so a Done pressed while the strip owns them
+   * cannot write its snapshot over a toggle the reader has since flipped.
+   */
+  quick: boolean;
 }
 
 const FIELD_LABEL_CLS =
@@ -55,6 +72,9 @@ export function BoardFiltersDialog() {
   const [category, setCategory] = useState('');
   const [assignee, setAssignee] = useState('');
   const [needsVote, setNeedsVote] = useState(false);
+  const [assignedToMe, setAssignedToMe] = useState(false);
+  const [createdByMe, setCreatedByMe] = useState(false);
+  const [quick, setQuick] = useState(false);
   const [categories, setCategories] = useState<Array<{ value: string; label: string }>>([]);
   const [assignees, setAssignees] = useState<string[]>([]);
   const [unassigned, setUnassigned] = useState(' __unassigned__');
@@ -66,6 +86,9 @@ export function BoardFiltersDialog() {
       setCategory(payload.filters.category || '');
       setAssignee(payload.filters.assignee || '');
       setNeedsVote(!!payload.filters.needsVote);
+      setAssignedToMe(!!payload.filters.assignedToMe);
+      setCreatedByMe(!!payload.filters.createdByMe);
+      setQuick(!!payload.quick);
       setCategories(payload.categories || []);
       setAssignees(payload.assignees || []);
       setUnassigned(payload.unassigned || ' __unassigned__');
@@ -81,6 +104,8 @@ export function BoardFiltersDialog() {
       category: category || null,
       assignee: assignee || null,
       needsVote,
+      assignedToMe,
+      createdByMe,
     });
     dialog.close();
   }
@@ -181,6 +206,52 @@ export function BoardFiltersDialog() {
               onChange={(event) => setNeedsVote(event.target.checked)}
             />
           </label>
+          {/* THE TWO QUICK FILTERS, when the strip could not keep them. They
+              are switches here rather than the strip's chips because that is
+              what this dialog's other boolean is, and a row of one kind of
+              control reads as one list of conditions — which is what the
+              subtitle at the top promises. Rendered only when the payload
+              says so, so the strip and the dialog never both offer them. */}
+          {quick ? (
+            <>
+              <label
+                htmlFor="board-filters-assignedtome"
+                className="flex items-center justify-between gap-3 cursor-pointer select-none"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Assigned to you
+                  </span>
+                  <span className="block text-xs text-zinc-500">
+                    Only items the group voted onto you
+                  </span>
+                </span>
+                <Switch
+                  id="board-filters-assignedtome"
+                  checked={assignedToMe}
+                  onChange={(event) => setAssignedToMe(event.target.checked)}
+                />
+              </label>
+              <label
+                htmlFor="board-filters-createdbyme"
+                className="flex items-center justify-between gap-3 cursor-pointer select-none"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Created by you
+                  </span>
+                  <span className="block text-xs text-zinc-500">
+                    Only items you opened yourself
+                  </span>
+                </span>
+                <Switch
+                  id="board-filters-createdbyme"
+                  checked={createdByMe}
+                  onChange={(event) => setCreatedByMe(event.target.checked)}
+                />
+              </label>
+            </>
+          ) : null}
           <div className="flex justify-end">
             <Button
               type="button"
