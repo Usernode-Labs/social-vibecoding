@@ -472,6 +472,20 @@
       "preview": "`UPDATE app_version_configs SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $1 RETURNING *`"
     },
     {
+      "source": "src/routes/topochain/admin/challenge-scoring.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/routes/topochain/admin/challenge-scoring.js",
+      "kind": "structural-template",
+      "fingerprint": "ec3bf01a0bfa54941ae4",
+      "count": 1,
+      "preview": "`UPDATE challenge_scoring_rules SET ${set}, updated_at = NOW() WHERE id = $1 RETURNING *`"
+    },
+    {
       "source": "src/routes/topochain/admin/challenge-templates.js",
       "kind": "structural-template",
       "fingerprint": "dd2a3897c61ecbe6d1b0",

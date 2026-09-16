@@ -456,6 +456,16 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
+    // Automatic challenge scoring (services/topochain/challenge-scorer.js).
+    // `intervalMinutes` 0 switches the schedule off entirely — the admin's
+    // Run now button still works, which is what makes "off" a usable
+    // operating mode rather than a way to break the season.
+    // `aggregateHours` is how stale the leaderboard snapshots may get before
+    // a scoring run also rebuilds them; 0 leaves that to the admin button.
+    challengeScorer: {
+      intervalMinutes: parseInt(process.env.CHALLENGE_SCORER_INTERVAL_MINUTES || '10', 10),
+      aggregateHours: parseInt(process.env.CHALLENGE_SCORER_AGGREGATE_HOURS || '6', 10),
+    },
     kubernetes: {
       platformNamespace: process.env.PLATFORM_NAMESPACE || 'social-platform',
       platformDeployment: process.env.PLATFORM_DEPLOYMENT || 'social-vibecoding',

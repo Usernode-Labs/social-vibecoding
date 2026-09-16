@@ -1096,6 +1096,11 @@ async function becomeLeader() {
   // advisory-locked so only one instance sends, and the counterweight to
   // new-proposal notifications now defaulting off.
   require('./src/services/vote-digest').start(config);
+  // Season challenges are read from the points ledger, and until this ran
+  // only two of them ever wrote to it without an admin typing the rows in.
+  // Leader-only and advisory-locked on top of that, because a tick costs
+  // model calls for the two graded challenges.
+  require('./src/services/topochain/challenge-scorer').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
@@ -5306,6 +5311,7 @@ async function cleanup() {
   cleanupStarted = true;
   lifecycle.setShuttingDown();
   const retentionStop = require('./src/services/build-retention').stop();
+  const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
@@ -5399,7 +5405,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        retentionStop.then(() => shutdownPool.end()),
+        Promise.all([retentionStop, scorerStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

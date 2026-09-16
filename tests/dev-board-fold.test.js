@@ -669,7 +669,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 666 → 667: the waitlist connect callback's status page, loaded with a
   // state no server has minted, so it renders the "link has expired"
   // outcome without needing provider credentials on the preview.
-  assert.equal(DAPP.tests.length, 667);
+  //
+  // 667 → 668: the programme console's Challenge scoring screen, which has
+  // to render its schedule card and its rules list as siblings — the check
+  // selects across the two, because a screen that drew only one of them
+  // would still look loaded.
+  assert.equal(DAPP.tests.length, 668);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

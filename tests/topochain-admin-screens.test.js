@@ -34,7 +34,7 @@ const topoTokens = fs.readFileSync(
 // key; the programme Users screen is the deliberate exception — it has no
 // section of its own, the console's Users section embeds renderUsers.
 const BUILT_SUBS = [
-  'seasons', 'season-events', 'challenge-templates', 'waitlist',
+  'seasons', 'season-events', 'challenge-templates', 'challenge-scoring', 'waitlist',
   'onchain-accounts', 'user-activities', 'delegations',
   'settings', 'app-version', 'sql-console', 'api-tester',
 ];
@@ -245,7 +245,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const registry = fs.readFileSync(path.join(REACT_DIR, 'screens.tsx'), 'utf8');
   const subsBlock = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  // ── Shared helpers'));
   const subKeys = [...subsBlock.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
-  assert.equal(subKeys.length, 11, 'all eleven screens are still listed');
+  assert.equal(subKeys.length, 12, 'all twelve screens are still listed');
   for (const key of subKeys) {
     assert.ok(new RegExp(`(^|\\s)'?${key}'?: \\{ mount`, 'm').test(registry),
       `SUBS key '${key}' has a screen in the React registry`);
