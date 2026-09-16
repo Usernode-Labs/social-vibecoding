@@ -368,7 +368,7 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
-    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a category and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
+    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a theme and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
   }
   if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
   return parts.join(' ');
@@ -377,7 +377,7 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
 /**
  * Which paragraph is at the top of the page, and why.
  *
- * This used to be two clauses of the category footnote under the themes,
+ * This used to be two clauses of the theme footnote under the themes,
  * which worked while the summary and the themes were on one scroll. They are
  * two TABS now, and an explanation of the summary sitting on the screen that
  * does not contain the summary explains nothing — so it moved to the
@@ -480,7 +480,7 @@ function pace(d: Dash): string {
  * drafted the themes — from the same board snapshot, so the paragraph and the
  * grouping under it can never describe different boards. `describe()` below is
  * what runs when there is none: no model configured, no draft yet, or that one
- * call failed. Same relationship the category grouping has to the themes.
+ * call failed. Same relationship the voted-category fallback has to the themes.
  */
 /**
  * The four numbers, as tiles.
@@ -673,7 +673,7 @@ function summarise(d: Dash): string {
 function describe(d: Dash): string {
   const parts: string[] = [];
   const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
-    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'category' : 'categories'}` : '');
+    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'theme' : 'themes'}` : '');
   parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
   parts.push(pace(d));
   const waiting: string[] = [];
@@ -829,7 +829,7 @@ function chipsFor(row: QueueRow, voted: string | null): { key: string; cls: stri
     out.push({ key: 'tally', cls: 'dev-ws-chip', text: `${st.yes} of ${st.majority} yes` });
   }
   for (const b of row.card.badges) {
-    if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
+    if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority' || b.field === 'theme') && b.label.text) {
       out.push({ key: b.key, cls: 'dev-ws-chip dev-ws-chip-info', text: b.label.text });
     }
   }
@@ -2030,7 +2030,7 @@ function useWideLayout(): boolean {
  * that is not a coordinate. These are OFFSETS INTO THE BAR, not screen
  * positions, so the bar moving or resizing re-expresses a tab that has not
  * budged — and the marker then animated across the strip to arrive exactly
- * where it already was. Switching the All-items pane between By category and
+ * where it already was. Switching the All-items pane between By theme and
  * By stage did it every time: the two panes gave the nav two different
  * widths, and under the centred strip that alone moved the measurement 158px
  * for an unmoved tab. app.css takes that particular 158 away; this takes away
@@ -2194,19 +2194,19 @@ export function DevWorkshop(): ReactNode {
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
   // The eyebrow over the theme list: the count, then whatever the grouping
-  // itself has to report. Named categories only — "Not yet grouped" is a
+  // itself has to report. Named themes only — "Not yet grouped" is a
   // holding pen, not one of them — and counted here so the label can agree
   // with itself: it read "1 themes" before, which is the kind of thing a
   // reader trusts a screen slightly less for.
   const countOfThemes = themes.filter((t) => !t.ungrouped).length;
   const groupingNote = [
-    `${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`,
+    `${countOfThemes} ${countOfThemes === 1 ? 'theme' : 'themes'}`,
     v.meta.source === 'category' ? 'grouped by category for now' : '',
     v.meta.source === 'demo' ? 'staging demo grouping' : '',
     v.meta.pending
       ? (v.meta.pendingStage === 'placement'
         ? 'placing new cards…'
-        : (v.meta.source === 'ai' ? 're-drafting categories…' : 'drafting categories…'))
+        : (v.meta.source === 'ai' ? 're-drafting themes…' : 'drafting themes…'))
       : '',
   ].filter(Boolean).join(' · ');
   // Every theme starts SHUT. The first one used to open itself, on the
@@ -2344,7 +2344,7 @@ export function DevWorkshop(): ReactNode {
               Above 700px the two have different jobs. The nav is the POSITIONING
               box — it inherits the 760px reading column and its centring, which
               is what keeps the strip anchored to the same left edge whether the
-              pane beside it is the 760px category list or the full-bleed board.
+              pane beside it is the 760px theme list or the full-bleed board.
               The track is the pill, and it hugs its three labels: a segmented
               control spanning the reading column would read as a header bar
               rather than as a control, which is the same reason
@@ -2631,7 +2631,7 @@ export function DevWorkshop(): ReactNode {
       {tab === 'all' ? (
         <>
           {/* ── The two ways to read the same board ──────────────────────
-              The eyebrow here used to say "12 categories" and nothing else:
+              The eyebrow here used to say "12 themes" and nothing else:
               a count of a grouping the viewer had no say in. The grouping is
               a CHOICE, so it is a control. "By stage" is not a second board
               — it renders the very same <DevKanban/> the Board view mode
@@ -2669,11 +2669,11 @@ export function DevWorkshop(): ReactNode {
               type="button"
               role="tab"
               className="dev-ws-group-tab"
-              data-ws-group="category"
-              aria-selected={group === 'category'}
-              onClick={() => callAppView('_setWorkshopGroup', 'category')}
+              data-ws-group="theme"
+              aria-selected={group === 'theme'}
+              onClick={() => callAppView('_setWorkshopGroup', 'theme')}
             >
-              By category
+              By theme
             </button>
             <button
               type="button"
@@ -2717,7 +2717,7 @@ export function DevWorkshop(): ReactNode {
           <>
           <div className="dev-ws-sort">
             {groupingNote ? <span className="dev-ws-eyebrow">{groupingNote}</span> : null}
-            <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
+            <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
               {SORTS.map((s) => (
                 <button
                   key={s.key}
@@ -2753,11 +2753,11 @@ export function DevWorkshop(): ReactNode {
             {v.meta.source === 'ai'
               ? aiFootnote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))
               : v.meta.source === 'demo'
-                ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
+                ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
                 : v.meta.pending
                   ? 'Categories are being drafted from the board now. They replace this grouping when they land.'
                   : v.meta.lastError
-                    ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
+                    ? `The last attempt to draft themes failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
                     : 'No AI model is configured, so items are grouped by their voted category.'}
           </div>
           </>

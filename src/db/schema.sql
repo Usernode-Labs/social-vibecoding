@@ -1860,7 +1860,7 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
   app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   target_type VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
   target_ref  INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
-  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category'
+  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category' | 'theme'
   value       TEXT NOT NULL,
   user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1893,6 +1893,64 @@ CREATE TABLE IF NOT EXISTS app_topic_categories (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(app_id, slug)
 );
+
+-- The app's THEME vocabulary: what the work is ABOUT ("Signing in", "Game
+-- Corner"), as opposed to app_topic_categories above, which is what KIND of
+-- work it is ("bug", "docs"). Two axes, deliberately — the discovery prompt
+-- in services/llm.js forbids cutting the board on the second one — but from
+-- here down they share ONE mechanism: a theme is a value of the `theme`
+-- field in topic_attribute_votes, tallied and moved exactly like a category,
+-- so a member's vote and the model's placement meet in the same table.
+--
+-- Before this, the model's grouping lived only in app_workshop_themes'
+-- themes_json/placements_json, which no member could write to: the Workshop
+-- described itself as "drafted by a model and corrected by the group" while
+-- routes/workshop-themes.js exposed a GET and nothing else. The AI placement
+-- is now a SEED and any vote overrides it.
+--
+-- GENERATIONAL, not append-only, and that distinction is the whole reason
+-- this is its own table rather than more rows in app_topic_categories.
+-- Discovery re-drafts an app's entire vocabulary every run (daily, or at a
+-- tenth of the board's churn), while app_topic_categories only ever INSERTs
+-- and is capped at 24. Pointing the model's churn at an append-only registry
+-- would exhaust that cap within weeks, after which ensureCategory throws
+-- CATEGORY_CAP_ERROR for good and the model could never introduce a new
+-- theme again. So:
+--   * discovery may MINT rows and RETIRE ones it no longer draws;
+--   * retirement is a `retired_at` stamp, never a DELETE, so the votes and
+--     placements that point at a theme can never dangle;
+--   * `pinned_at` is set the moment a HUMAN votes for the theme, and a
+--     pinned row is never retired — it rides into the next discovery inside
+--     `previousThemes` carrying `pinned: true`, and services/workshop-themes.js
+--     re-adds it after the call whatever the model answered. The prompt is
+--     told to keep it; the code does not rely on the prompt obeying.
+--   * the cap counts LIVE rows (retired_at IS NULL) only, so model churn
+--     stops consuming the budget members' own themes need.
+--
+-- theme_key is slugify()'d text and IS the literal value written into
+-- topic_attribute_votes.value, so a member typing "Signing in" tallies
+-- byte-for-byte with the model's own `signing-in` id and needs no migration.
+--
+-- NOT staging:private — like topic_attribute_votes and app_topic_categories
+-- this is a shared, governance-style signal everyone in the app sees.
+CREATE TABLE IF NOT EXISTS app_theme_registry (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  theme_key   TEXT NOT NULL,           -- slugified dedupe key + vote value
+  label       TEXT NOT NULL,           -- display casing, as drafted or typed
+  description TEXT NOT NULL DEFAULT '',
+  icon        TEXT NOT NULL DEFAULT '',-- one emoji, or '' for the initial
+  origin      VARCHAR(8) NOT NULL DEFAULT 'ai',  -- 'ai' | 'member'
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pinned_at   TIMESTAMPTZ,             -- first human vote; pinned is forever
+  retired_at  TIMESTAMPTZ,             -- dropped by a draft; never deleted
+  UNIQUE(app_id, theme_key)
+);
+-- The read every list, cap check and discovery hand-off makes: this app's
+-- live vocabulary. Partial, because retired rows are dead weight on it.
+CREATE INDEX IF NOT EXISTS idx_app_theme_registry_live
+  ON app_theme_registry (app_id, created_at) WHERE retired_at IS NULL;
 
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);
@@ -3312,6 +3370,39 @@ CREATE INDEX IF NOT EXISTS idx_issue_screenshots_orphan
 -- screen; staging gets the schema only.
 COMMENT ON TABLE issue_screenshots IS 'staging:private';
 
+-- A local record of what somebody reported through the feedback dialog.
+--
+-- The dialog's real output is a GitHub issue, and that stays the case: this
+-- table is a receipt, not a second source of truth. It exists because the
+-- issue is the only trace a report leaves, and an issue cannot answer the
+-- two questions the season's "send useful feedback" challenge asks — WHO on
+-- this platform wrote it (GitHub sees the platform's bot account, not the
+-- reporter) and WHEN, in a form the scorer can read without a GitHub round
+-- trip per tick.
+--
+-- `target` is 'platform' or 'app'; `app_id` is set only for the second.
+-- The issue coordinates are stamped after the issue is filed, so a report
+-- whose GitHub call failed is simply absent — the scorer must never pay for
+-- feedback that reached nobody. Deliberately no FK to `issues`: a platform
+-- report files into the platform repo and has no `issues` row at all.
+CREATE TABLE IF NOT EXISTS feedback_reports (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target        VARCHAR(16) NOT NULL,
+  app_id        INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  issue_owner   TEXT,
+  issue_repo    TEXT,
+  issue_number  INTEGER,
+  title         VARCHAR(512),
+  description   TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_reports_user_created
+  ON feedback_reports (user_id, created_at DESC);
+-- Private: free text a person wrote about their own use of the product,
+-- and the grader reads it verbatim. Staging gets the schema only.
+COMMENT ON TABLE feedback_reports IS 'staging:private';
+
 -- Group-chat file attachments (#694). Users attach files to group-chat
 -- messages (images, markdown, standalone HTML, anything else as a
 -- download). Same bytea-in-Postgres shape as chat_session_attachments
@@ -3892,6 +3983,112 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_completion_unique
 CREATE UNIQUE INDEX IF NOT EXISTS user_activities_nullifier_unique
   ON user_activities (challenge_id, (metadata->>'nullifier_hex'))
   WHERE metadata->>'nullifier_hex' IS NOT NULL;
+
+-- The same idea for the automatic scorer
+-- (services/topochain/challenge-scorer.js): a credit names the thing it was
+-- paid for in `metadata.source_key` ("app:12", "pr_merged:4417",
+-- "provider:github"), and this index is what makes re-running the scorer
+-- free. A tick re-reads the same app sessions and merged proposals every
+-- ten minutes; without a database-level rule, an interrupted tick or two
+-- instances briefly overlapping would pay twice. INSERT ... ON CONFLICT DO
+-- NOTHING against this index is the whole de-duplication design — the
+-- scorer keeps no cursor and no "already processed" table.
+--
+-- Scoped to (challenge, user) rather than to the key alone because the key
+-- namespace is per-rule: two challenges may legitimately both credit
+-- "app:12", and a weekly challenge re-instantiated next week is a NEW
+-- challenge row that must be able to pay for the same app again.
+CREATE UNIQUE INDEX IF NOT EXISTS user_activities_source_key_unique
+  ON user_activities (challenge_id, user_id, (metadata->>'source_key'))
+  WHERE metadata->>'source_key' IS NOT NULL;
+
+-- `challenge_scoring_rules` — what the automatic scorer is told to do.
+--
+-- One row is one rule: a MEASURE the platform knows how to take, the numbers
+-- it takes it with, and the challenge it pays into. Admins create and edit
+-- these from the programme console's Challenge scoring screen; the scorer
+-- reads them every tick. A challenge with no rule is never scored, which is
+-- what keeps this opt-in rather than something that starts crediting the
+-- moment a template is created.
+--
+-- `measure` is a slug from a fixed list the code implements
+-- (services/topochain/challenge-rules.js: TRY_APPS, USE_APPS_MINUTES,
+-- PROPOSAL_SENT, PROPOSAL_ACCEPTED, USEFUL_FEEDBACK, CONNECT_ACCOUNTS,
+-- BLOCK_PRODUCTION_ON). Deliberately NOT free-form logic: the thing that
+-- decides who gets points has to be reviewable and testable, so what an
+-- admin composes is the CONFIGURATION of a measure, never its body. It is
+-- also NOT `challenges.kind` — that column already means something to the
+-- phone app (which behaviour a card gets) and to the illustration picker,
+-- and overloading it would tie "how this is scored" to "how this is drawn".
+--
+-- Binding, and why a template binding is the useful one: a weekly challenge
+-- is re-instantiated as a NEW `challenges` row every week, so a rule bound to
+-- one challenge would stop working at the week boundary. A rule naming
+-- `challenge_template_id` covers every challenge stamped from that template,
+-- this week's and next week's. `challenge_id` narrows it to a single
+-- instance when an operator wants exactly that. Exactly one of the two is
+-- set, which the CHECK enforces.
+--
+-- `target` and `points` are overrides. Left NULL, the rule uses the
+-- challenge's own `metric_target` and `reward`, so the numbers a participant
+-- reads on the card are the numbers they are paid by — one place to change
+-- them, and no way for the copy and the scoring to drift apart. They exist
+-- because a reward is prose ("Up to 2,000 pts") that does not always parse,
+-- and because a target is sometimes needed where the card shows no counter.
+CREATE TABLE IF NOT EXISTS challenge_scoring_rules (
+  id                     BIGSERIAL PRIMARY KEY,
+  name                   VARCHAR(120) NOT NULL,
+  measure                VARCHAR(40) NOT NULL,
+  challenge_template_id  BIGINT REFERENCES challenge_templates(id) ON DELETE CASCADE,
+  challenge_id           BIGINT REFERENCES challenges(id) ON DELETE CASCADE,
+  target                 NUMERIC(20,4),
+  points                 NUMERIC(10,2),
+  enabled                BOOLEAN NOT NULL DEFAULT TRUE,
+  notes                  TEXT,
+  created_by             INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT challenge_scoring_rules_one_binding CHECK (
+    (challenge_template_id IS NOT NULL AND challenge_id IS NULL)
+    OR (challenge_template_id IS NULL AND challenge_id IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_challenge_scoring_rules_template
+  ON challenge_scoring_rules (challenge_template_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_scoring_rules_challenge
+  ON challenge_scoring_rules (challenge_id);
+-- One enabled rule per binding: two rules on one challenge would both credit
+-- it, and "why did this pay twice" is a bad thing to debug in a live season.
+CREATE UNIQUE INDEX IF NOT EXISTS challenge_scoring_rules_template_unique
+  ON challenge_scoring_rules (challenge_template_id) WHERE challenge_template_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS challenge_scoring_rules_challenge_unique
+  ON challenge_scoring_rules (challenge_id) WHERE challenge_id IS NOT NULL;
+
+-- What the automatic scorer did, each time it ran.
+--
+-- The credits themselves are the ledger rows above; this is the operator's
+-- view of the machine that wrote them. Without it the scorer is invisible
+-- between runs: an admin looking at a quiet week cannot tell whether nobody
+-- earned anything, the tick has been failing since Tuesday, or grading is
+-- off because the API key is missing. `summary` carries the per-challenge
+-- breakdown (credits written, units skipped, grades made) and doubles as
+-- the DRY RUN output — a dry run records what it WOULD have written and
+-- writes no ledger rows at all.
+--
+-- `trigger` is 'schedule' or 'admin'. Rows are small and infrequent (one
+-- per tick), and the admin screen reads only the newest few.
+CREATE TABLE IF NOT EXISTS challenge_scorer_runs (
+  id           BIGSERIAL PRIMARY KEY,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  trigger      VARCHAR(16) NOT NULL DEFAULT 'schedule',
+  dry_run      BOOLEAN NOT NULL DEFAULT FALSE,
+  credits      INTEGER NOT NULL DEFAULT 0,
+  summary      JSONB,
+  error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_challenge_scorer_runs_started
+  ON challenge_scorer_runs (started_at DESC);
 
 -- `onchain_accounts` — a testnet account (address + keys) granted to a
 -- user, scoped to a season or to a single event, mirroring

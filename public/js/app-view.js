@@ -357,7 +357,23 @@ const AppView = {
   // sessionStorage: which way you read the board is a lasting preference,
   // not a scratch narrowing that should quietly expire.
   WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
-  WORKSHOP_GROUPS: ['category', 'stage'],
+  WORKSHOP_GROUPS: ['theme', 'stage'],
+  // The pane used to be called 'category', which was the name of the OTHER
+  // grouping entirely: this one is the app's THEMES (what the work is about,
+  // drafted by the model and now votable), while a category is the kind of
+  // work — feature, bug, docs. Two groupings both labelled "category" is what
+  // the merge of the two systems set out to end.
+  //
+  // The stored value and `?group=` are both public surfaces, so the old
+  // spelling keeps resolving rather than silently falling back to the
+  // default: a viewer who last chose this pane opens on it, and an old link
+  // still lands where it used to. Read-time only, like every other migration
+  // here — the new spelling is written the next time they tap a tab.
+  WORKSHOP_GROUP_ALIASES: { category: 'theme' },
+  _migrateWorkshopGroup(v) {
+    if (AppView.WORKSHOP_GROUPS.includes(v)) return v;
+    return AppView.WORKSHOP_GROUP_ALIASES[v] || null;
+  },
   // `?group=stage`, mirroring `?view=` above — resolved once and cached, so a
   // deep link can reach a pane that is otherwise only a click away. It is
   // what the declared check for the stage pane navigates to: a check run
@@ -374,10 +390,9 @@ const AppView = {
   _readWorkshopGroupOverride() {
     if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
     try {
-      const v = new URLSearchParams(location.search).get('group');
-      AppView._workshopGroupUrlOverride = AppView.WORKSHOP_GROUPS.includes(v)
-        ? v
-        : (AppView._retiredBoardLink() ? 'stage' : null);
+      const v = AppView._migrateWorkshopGroup(new URLSearchParams(location.search).get('group'));
+      AppView._workshopGroupUrlOverride = v
+        || (AppView._retiredBoardLink() ? 'stage' : null);
     } catch { AppView._workshopGroupUrlOverride = null; }
     return AppView._workshopGroupUrlOverride;
   },
@@ -385,19 +400,22 @@ const AppView = {
   // override without a query parameter: `#app/<slug>/board` resolves onto the
   // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
   // exactly as `?group=` is — it does NOT write the stored preference, and a
-  // tap on "By category" clears it through _setWorkshopGroup — so following an
+  // tap on "By theme" clears it through _setWorkshopGroup — so following an
   // old board link shows those columns without re-deciding how this viewer
   // reads the board from then on.
   _overrideWorkshopGroup(group) {
-    if (!AppView.WORKSHOP_GROUPS.includes(group)) return;
-    AppView._workshopGroupUrlOverride = group;
+    const next = AppView._migrateWorkshopGroup(group);
+    if (!next) return;
+    AppView._workshopGroupUrlOverride = next;
   },
   _getWorkshopGroup() {
     try {
       const override = AppView._readWorkshopGroupOverride();
       if (override) return override;
-      const stored = window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY);
-      if (AppView.WORKSHOP_GROUPS.includes(stored)) return stored;
+      const stored = AppView._migrateWorkshopGroup(
+        window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY)
+      );
+      if (stored) return stored;
       // THE RETIRED BOARD PREFERENCE, carried across rather than dropped.
       // `RETIRED_VIEW_MODES` already stops a stored 'kanban' landing on a mode
       // that no longer exists, but on its own it forgets the thing the viewer
@@ -412,11 +430,11 @@ const AppView = {
       // every other migration here: nothing is written back, so the day they
       // do choose a pane, that choice is what persists.
       if (AppView._storedBoardPreference()) return 'stage';
-      return 'category';
-    } catch { return 'category'; }
+      return 'theme';
+    } catch { return 'theme'; }
   },
   _setWorkshopGroup(mode) {
-    const next = AppView.WORKSHOP_GROUPS.includes(mode) ? mode : 'category';
+    const next = AppView._migrateWorkshopGroup(mode) || 'theme';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?group=` would keep winning over every later click.
     AppView._workshopGroupUrlOverride = null;
@@ -4120,6 +4138,9 @@ const AppView = {
     github: '↗',           // ↗ leaves the platform
     priority: '⚑',         // ⚑ the same flag the priority chip uses
     category: '🏷',   // 🏷
+    // The app's THEMES — what the work is about, as opposed to the label
+    // above, which is what KIND of work it is. Two axes, so two glyphs.
+    theme: '◈',            // ◈
     assignee: '@',              // the assignee chip renders "@name"
     progress: '◐',         // ◐ half-filled: in progress
     clear: '○',            // ○ the same circle, emptied
@@ -6699,14 +6720,21 @@ const AppView = {
           unplaced: Number(cov.unplaced) || 0, pending: Number(cov.pending) || 0,
         } : null,
         unplaced: Array.isArray(data.unplaced) ? data.unplaced.map(String) : [],
+        // key -> theme key for the cards the GROUP placed itself, so a row
+        // can say a member put it here rather than the model.
+        votes: (data.votes && typeof data.votes === 'object') ? data.votes : {},
         at: Date.now(),
       };
+      // Seed the theme picker's vocabulary from the same response, so the
+      // ⋯ menu's "Move to theme…" opens on the app's live themes without a
+      // second round-trip. The attribute GET refreshes it on each open.
+      if (Array.isArray(data.registry)) AppView._appThemes = data.registry;
     } catch {
       // A failed fetch names no themes: `failed` keeps _workshopThemeData
       // from reading an empty list as "the themes cover nothing".
       next = {
         slug, themes: [], source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false,
-        pendingStage: null, lastError: null, coverage: null, unplaced: [], failed: true, at: Date.now(),
+        pendingStage: null, lastError: null, coverage: null, unplaced: [], votes: {}, failed: true, at: Date.now(),
       };
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
@@ -6891,7 +6919,7 @@ const AppView = {
     // the heading on every line. It is dropped from the rows this pane draws
     // and kept everywhere else: the stage pane's columns, the Board, and the
     // vote and own-work strips, which are not grouped by category.
-    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
+    const underThemeHeading = AppView._getWorkshopGroup() === 'theme';
     const add = (kind, item, lane, build) => {
       if (!match(kind, item)) return;
       let card = build();
@@ -12814,6 +12842,24 @@ const AppView = {
   _customCategories() {
     return (AppView._appCategories || []).filter((c) => c.custom);
   },
+  // The app's LIVE theme vocabulary, as the Workshop GET last served it
+  // (`registry`) or as the attribute popover's own response refreshed it.
+  // Themes are drafted by the model and pinned by the group, so unlike the
+  // categories there is no built-in set to fall back on — an app whose first
+  // draft has not run yet simply offers a text box.
+  _appThemes: [],
+  _themeOptions() {
+    return AppView._appThemes || [];
+  },
+  // A theme's display label, and its emoji when the model chose one. Falls
+  // back to the raw key so a vote for a theme the registry has since retired
+  // still reads as something rather than as nothing.
+  _themeMeta(value) {
+    const found = AppView._themeOptions().find((t) => t.value === value);
+    const label = (found && found.label) || String(value || '');
+    return { label, icon: (found && found.icon) || '', cls: 'attr-dot-theme' };
+  },
+  ATTR_THEME_MAX_LEN: 48,
 
   // #780: adopt a `categories` payload from any attributes GET/POST (or the
   // dedicated vocabulary endpoint) so a category typed just now can be
@@ -12972,8 +13018,13 @@ const AppView = {
       priority: ['Set priority…', 'Change priority…'],
       category: ['Set category…', 'Change category…'],
       assignee: ['Assign someone…', 'Change assignee…'],
+      // The Workshop groups by theme and a model drafts that grouping; this
+      // row is how a member OVERRIDES the placement it chose. It is the
+      // whole of "corrected by the group" that the Workshop has always
+      // claimed to be — before the merge there was no write path at all.
+      theme: ['Move to theme…', 'Change theme…'],
     };
-    return ['priority', 'category', 'assignee'].map((field) => {
+    return ['priority', 'category', 'assignee', 'theme'].map((field) => {
       const set = !!(it[field] && it[field].top);
       return {
         label: labels[field][set ? 1 : 0],
@@ -12982,7 +13033,9 @@ const AppView = {
         icon: field,
         title: field === 'assignee'
           ? 'Suggest or vote on who should take this'
-          : `Vote on this card's ${field}`,
+          : (field === 'theme'
+            ? 'Vote on which theme this card belongs to'
+            : `Vote on this card's ${field}`),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
     });
@@ -13248,6 +13301,34 @@ const AppView = {
         defaultValue: '',
         suggest: false,
       };
+    } else if (field === 'theme') {
+      // The app's live vocabulary — the model's standing draft plus whatever
+      // the group has pinned — refreshed from this response so a theme
+      // somebody minted a moment ago is already on offer. There is no
+      // built-in set: an app whose first draft has not run shows the box
+      // alone, and typing into it is how the group starts its own.
+      if (Array.isArray(data.themes)) AppView._appThemes = data.themes;
+      const themes = AppView._themeOptions();
+      if (themes.length) {
+        groups.push({
+          head: 'Theme',
+          divided: false,
+          options: themes.map((t) => {
+            const meta = AppView._themeMeta(t.value);
+            return row(t.value, meta.cls, meta.icon ? `${meta.icon} ${meta.label}` : meta.label);
+          }),
+        });
+      } else {
+        emptyNote = 'No themes drafted yet. Type one to start.';
+      }
+      add = {
+        inputId: 'attr-theme-input',
+        buttonId: 'attr-theme-add',
+        placeholder: 'Type a theme…',
+        maxLength: AppView.ATTR_THEME_MAX_LEN,
+        defaultValue: '',
+        suggest: false,
+      };
     } else {
       const opts = data.options || [];
       groups.push({
@@ -13306,6 +13387,21 @@ const AppView = {
         ? lower
         : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
       AppView._castAttrVote(known || typed);
+      return;
+    }
+    if (ctx.field === 'theme') {
+      const input = document.getElementById('attr-theme-input');
+      const typed = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
+      if (!typed) return;
+      // Match an existing theme case-insensitively by LABEL, so typing
+      // "signing in" votes for the model's own `signing-in` rather than
+      // minting a near-duplicate. The server slugs either way; this only
+      // decides which label the registry row keeps.
+      const lower = typed.toLowerCase();
+      const known = AppView._themeOptions()
+        .find((t) => String(t.label || '').toLowerCase() === lower
+          || String(t.value || '').toLowerCase() === lower);
+      AppView._castAttrVote(known ? known.value : typed);
       return;
     }
     const input = document.getElementById('attr-assignee-input');

@@ -43,18 +43,32 @@ import { useSyncExternalStore } from 'react';
 
 export const WORKSHOP_GROUP_STORE_KEY = '__usernodeWorkshopGroup';
 
-export const WORKSHOP_GROUPS = ['category', 'stage'] as const;
+export const WORKSHOP_GROUPS = ['theme', 'stage'] as const;
 
 export type WorkshopGroup = (typeof WORKSHOP_GROUPS)[number];
 
 /**
- * Category is the default: it is what the Workshop has always shown, and the
+ * Theme is the default: it is what the Workshop has always shown, and the
  * stage pane is the board a viewer can already reach from the view strip.
+ *
+ * It was spelled 'category' until the app's two groupings were merged onto
+ * one mechanism. That was the wrong noun for this pane: it groups by the
+ * app's THEMES — what the work is about — while a category is what KIND of
+ * work it is. Both being called "category" is precisely what the merge fixed.
  */
-export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'category';
+export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'theme';
+
+/** The old spelling, still honoured so a stored preference survives. */
+const LEGACY_GROUPS: Record<string, WorkshopGroup> = { category: 'theme' };
 
 export function isWorkshopGroup(value: unknown): value is WorkshopGroup {
   return typeof value === 'string' && (WORKSHOP_GROUPS as readonly string[]).includes(value);
+}
+
+/** A stored or linked value resolved onto a current one, or null. */
+export function migrateWorkshopGroup(value: unknown): WorkshopGroup | null {
+  if (isWorkshopGroup(value)) return value;
+  return (typeof value === 'string' && LEGACY_GROUPS[value]) || null;
 }
 
 export interface WorkshopGroupStore {
@@ -84,7 +98,7 @@ export function getWorkshopGroupStore(): WorkshopGroupStore {
  * `AppView._rerenderWorkshop()` before it publishes the view.
  */
 export function publishWorkshopGroup(mode: string): void {
-  const next = isWorkshopGroup(mode) ? mode : DEFAULT_WORKSHOP_GROUP;
+  const next = migrateWorkshopGroup(mode) || DEFAULT_WORKSHOP_GROUP;
   const store = getWorkshopGroupStore();
   if (store.mode === next) return;
   store.mode = next;

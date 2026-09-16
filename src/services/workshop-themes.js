@@ -418,10 +418,27 @@ function fingerprintKeys(keys) {
 // name, made unique against the ids already in use. Ids are what the
 // client keys a filter and an expanded state on, and what every placement
 // points at, so they must not be the model's to invent freely.
-function slugify(name) {
-  const s = String(name || '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  return s || 'theme';
+// ONE slug function, shared with services/topic-attributes.js, because a
+// theme id the model drafts and a theme name a member types must land on
+// the same key — that identity is what lets a vote override a placement.
+const slugify = topicAttrs.slugifyTheme;
+
+// The model is ASKED to keep a pinned theme (see llm.js's discovery prompt),
+// and this is where that stops being a request. Any previous theme carrying
+// `pinned` that the draft did not return is appended, definition intact, so
+// a theme the group voted for cannot be lost to a model that simply stopped
+// mentioning it. Retirement of everything else happens in syncRegistry.
+function keepPinned(themes, previous) {
+  const drafted = new Set(themes.map((t) => t.id));
+  const kept = themes.slice();
+  for (const p of (previous || [])) {
+    if (!p || !p.pinned || drafted.has(p.id)) continue;
+    kept.push({
+      id: p.id, name: p.name, description: p.description || '',
+      saying: null, icon: p.icon || '', anchors: [],
+    });
+  }
+  return kept;
 }
 
 function assignIds(themes, previous) {
@@ -757,29 +774,163 @@ function diffRow(row, keys) {
 // the placements, in snapshot order. A row written before placements
 // existed carries `items` on the definitions themselves; those serve until
 // the first reconcile replaces them.
-function themesWithItems(row, keys, placements) {
-  const byTheme = new Map(row.themes.map((t) => [t.id, []]));
+//
+// `votes` (key -> theme key, from loadThemeVotes) is the GROUP'S answer and
+// it WINS: the model's placement is a seed, and a card somebody has voted
+// into a theme sits there whatever the placer said. That overlay is applied
+// at read time rather than written back into placements_json on purpose —
+// a re-draft must not be able to quietly overwrite a vote, and a vote must
+// not register as churn and trigger one.
+//
+// `registry` are the app's live vocabulary rows. Any of them the current
+// draft does not contain — a theme a member minted by typing it, or one
+// pinned before the latest draft — is appended, so a card can never be
+// voted into a theme the view then fails to draw.
+function themesWithItems(row, keys, placements, votes = {}, registry = []) {
+  const defs = row.themes.slice();
+  const known = new Set(defs.map((t) => t.id));
+  for (const r of (registry || [])) {
+    if (!r || !r.id || known.has(r.id)) continue;
+    known.add(r.id);
+    defs.push({ id: r.id, name: r.name, description: r.description || '', saying: null, icon: r.icon || '' });
+  }
+
+  const byTheme = new Map(defs.map((t) => [t.id, []]));
   const hasPlacements = Object.keys(row.placements).length > 0;
-  if (hasPlacements) {
+  const hasVotes = votes && Object.keys(votes).length > 0;
+  if (hasPlacements || hasVotes) {
+    // A row written before placements existed carries `items` on the
+    // definitions. That is still the grouping for every card NOBODY has
+    // voted on, so it has to be consulted here rather than only in the
+    // branch below — otherwise the first vote cast on such a board would
+    // drop every other card off it.
+    const legacy = new Map();
+    if (!hasPlacements) {
+      for (const t of defs) {
+        for (const k of (Array.isArray(t.items) ? t.items : [])) {
+          if (!legacy.has(k)) legacy.set(k, t.id);
+        }
+      }
+    }
     for (const k of keys) {
-      const id = placements[k];
+      // The vote first, then the placement it overrides. A vote naming a
+      // theme no longer in the vocabulary falls through to the placement
+      // rather than dropping the card off the board.
+      const voted = votes[k];
+      const id = (voted && byTheme.has(voted))
+        ? voted
+        : (hasPlacements ? placements[k] : legacy.get(k));
       if (id && byTheme.has(id)) byTheme.get(id).push(k);
     }
   } else {
     const keySet = new Set(keys);
-    for (const t of row.themes) {
+    for (const t of defs) {
       for (const k of (Array.isArray(t.items) ? t.items : [])) {
         if (keySet.has(k)) byTheme.get(t.id).push(k);
       }
     }
   }
-  return row.themes.map((t) => ({
+  return defs.map((t) => ({
     id: t.id, name: t.name, description: t.description || '', saying: t.saying || null,
     // '' when the model gave none, or on a row written before icons existed —
     // the client draws the theme's initial rather than a stand-in glyph.
     icon: t.icon || '',
     items: byTheme.get(t.id),
   }));
+}
+
+// ── The registry: minting, retiring and the member overlay ────────────
+//
+// app_theme_registry is the app's live theme vocabulary and the bridge
+// between the model's grouping and the group's votes. `themes_json` on
+// app_workshop_themes remains the DRAFT the placer works against; the
+// registry is what the picker offers and what a vote can name.
+
+// A board key addresses a topic_attribute_votes row. `issue:N` is the
+// GitHub issue number; `session:N` and `gov:N` are both ('proposal', N) —
+// the same collision the Dev board's own card-order overlay carries, since
+// a promoted proposal is keyed by chat_sessions.id and a governance one by
+// issues.id. Nothing here invents a new addressing scheme: on the rare
+// clash the session card wins, which is how the rest of the platform reads
+// a proposal ref.
+function targetOfKey(key) {
+  const [kind, raw] = String(key || '').split(':');
+  const ref = parseInt(raw, 10);
+  if (!Number.isInteger(ref) || ref <= 0) return null;
+  if (kind === 'issue') return { targetType: 'issue', ref };
+  if (kind === 'session' || kind === 'gov') return { targetType: 'proposal', ref };
+  return null;
+}
+
+// The group's theme votes for the cards on the board, as key -> theme key.
+// Ranking is topic-attributes' own (count desc, earliest suggestion, then
+// alphabetical), reused rather than re-implemented so a theme chip and a
+// Workshop row can never disagree about who won.
+async function loadThemeVotes(pool, appId, keys) {
+  const byType = { issue: new Map(), proposal: new Map() };
+  for (const k of keys) {
+    const t = targetOfKey(k);
+    if (!t) continue;
+    // First key wins the ref, so `session:` beats `gov:` as documented.
+    if (!byType[t.targetType].has(t.ref)) byType[t.targetType].set(t.ref, k);
+  }
+  const out = {};
+  for (const targetType of ['issue', 'proposal']) {
+    const refs = [...byType[targetType].keys()];
+    if (!refs.length) continue;
+    const summaries = await topicAttrs.summarizeForTargets(pool, appId, targetType, refs, null);
+    for (const [ref, summary] of summaries) {
+      const top = summary && summary.theme && summary.theme.top;
+      if (!top) continue;
+      const key = byType[targetType].get(ref);
+      if (key) out[key] = top;
+    }
+  }
+  return out;
+}
+
+// The app's live vocabulary, in the shape discovery reads as
+// `previousThemes` — ids, names and, crucially, `pinned`.
+async function registryThemes(pool, appId) {
+  const rows = await topicAttrs.listThemes(pool, appId);
+  return rows.map((r) => ({
+    id: r.value, name: r.label, description: r.description || '',
+    icon: r.icon || '', pinned: !!r.pinned, origin: r.origin || 'ai',
+  }));
+}
+
+// Publish a draft into the registry: mint or revive everything it drew,
+// then retire every live, UNPINNED theme it did not. This is the whole
+// generational contract, and the reason the 24-slot cap survives a model
+// that re-drafts daily — the discards free their slots in the same pass
+// that mints their replacements.
+//
+// Best-effort by design: a registry write that fails must not lose a draft
+// the model was paid for, so the caller logs and carries on with the
+// themes in hand.
+async function syncRegistry(pool, appId, themes) {
+  const keep = [];
+  for (const t of themes) {
+    if (!t || !t.id) continue;
+    keep.push(t.id);
+    try {
+      await topicAttrs.ensureTheme(
+        pool, appId,
+        { slug: t.id, label: t.name || t.id, description: t.description || '', icon: t.icon || '' },
+        null, { pin: false }
+      );
+    } catch (err) {
+      // THEME_CAP_ERROR here means the group has pinned every slot. The
+      // draft still stands for placement; it simply cannot also be offered
+      // in the picker until a pinned theme is freed.
+      log.warn('workshop-themes', 'theme registry write skipped', { appId, theme: t.id, message: err.message });
+    }
+  }
+  const retired = await topicAttrs.retireThemesExcept(pool, appId, keep);
+  if (retired.length) {
+    log.info('workshop-themes', 'themes retired', { appId, count: retired.length, themes: retired });
+  }
+  return { kept: keep, retired };
 }
 
 // ── 3 + 4. The model calls ────────────────────────────────────────────
@@ -825,7 +976,11 @@ async function discover({ pool, app, input, previous }) {
     telemetryContext: { pool, appId: app.id },
   });
   await recordSpend(pool, app, result.usage, result.model);
-  return { themes: assignIds(result.themes, previous), model: result.model };
+  // assignIds keeps a reused id stable; keepPinned then re-adds any theme
+  // the GROUP pinned that the model dropped. Order matters — a pinned theme
+  // re-added here already carries its final id and must not be re-slugged.
+  const themes = keepPinned(assignIds(result.themes, previous), previous);
+  return { themes, model: result.model };
 }
 
 // The status paragraph. Written from the SAME snapshot and the same themes
@@ -1200,11 +1355,37 @@ async function reconcile({ pool, app, reason }) {
     // is not asked on every view.
     let discoveryError = null;
     if (why) {
-      const previous = row.themes.map((t) => ({ id: t.id, name: t.name, description: t.description }));
+      // `previousThemes` now comes from the REGISTRY rather than from the
+      // row's own draft, because the registry is the only place that knows
+      // which themes the group has pinned — and a pinned theme has to reach
+      // the prompt (and keepPinned) or a re-draft would drop it. The row's
+      // draft is folded in for anything the registry write missed, so a
+      // failed registry sync degrades to the old behaviour instead of
+      // losing the standing vocabulary.
+      let previous = [];
+      try {
+        previous = await registryThemes(pool, app.id);
+      } catch (err) {
+        log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
+      }
+      const seenPrev = new Set(previous.map((p2) => p2.id));
+      for (const t of row.themes) {
+        if (seenPrev.has(t.id)) continue;
+        seenPrev.add(t.id);
+        previous.push({ id: t.id, name: t.name, description: t.description, icon: t.icon || '', pinned: false });
+      }
       try {
         const disc = await discover({ pool, app, input, previous });
         themes = disc.themes;
         model = disc.model;
+        // Publish the new vocabulary: mint what it drew, retire the unpinned
+        // themes it dropped. Best-effort — a registry failure must not throw
+        // away a draft the platform has already paid for.
+        try {
+          await syncRegistry(pool, app.id, themes);
+        } catch (err) {
+          log.warn('workshop-themes', 'registry sync failed', { app: app.slug, message: err.message });
+        }
         next.placements = {};
         next.unplaced = new Set();
         for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
@@ -1381,6 +1562,21 @@ async function getThemes({ pool, app }) {
   const enabled = llm.isEnabled();
   if (row) touchViewed(pool, app.id).catch(() => {});
 
+  // The group's own answers, read on every GET so a vote shows immediately
+  // rather than waiting for the next reconcile. Both are non-fatal: with no
+  // registry and no votes this degrades exactly to the model-only grouping
+  // that shipped before, which is also what a brand-new app sees.
+  let votes = {};
+  let registry = [];
+  try {
+    [votes, registry] = await Promise.all([
+      loadThemeVotes(pool, app.id, keys),
+      registryThemes(pool, app.id),
+    ]);
+  } catch (err) {
+    log.warn('workshop-themes', 'theme vote overlay failed', { app: app.slug, message: err.message });
+  }
+
   const hasThemes = !!(row && row.themes.length);
   if (!hasThemes) {
     let pending = inFlight.has(app.id);
@@ -1403,6 +1599,7 @@ async function getThemes({ pool, app }) {
     }
     return {
       themes: fallbackThemes(input), source: 'category', generatedAt: null, discoveredAt: null,
+      registry, votes,
       digest: null, digestCards: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
       lastError: enabled && row ? row.lastError : null, coverage: null, unplaced: [],
@@ -1411,7 +1608,7 @@ async function getThemes({ pool, app }) {
   }
 
   const diff = diffRow(row, keys);
-  const themes = themesWithItems(row, keys, diff.placements);
+  const themes = themesWithItems(row, keys, diff.placements, votes, registry);
   const placedCount = themes.reduce((n, t) => n + t.items.length, 0);
   const unplacedKeys = [...diff.unplaced];
   const pendingCount = Math.max(0, keys.length - placedCount - unplacedKeys.length);
@@ -1443,6 +1640,11 @@ async function getThemes({ pool, app }) {
     lastError: row.lastError,
     coverage: { total: keys.length, placed: placedCount, unplaced: unplacedKeys.length, pending: pendingCount },
     unplaced: unplacedKeys,
+    // The app's live vocabulary, for the theme picker on a card, and the
+    // cards the GROUP placed, so the view can mark a member-placed row
+    // rather than presenting every placement as the model's.
+    registry,
+    votes,
     digest: row.digest || null,
     digestCards: row.digestCards || null,
     digestError: row.digestError || null,
@@ -1452,6 +1654,7 @@ async function getThemes({ pool, app }) {
 module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
+  keepPinned, targetOfKey, loadThemeVotes, registryThemes, syncRegistry,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a

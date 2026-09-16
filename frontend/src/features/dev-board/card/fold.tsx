@@ -274,7 +274,7 @@ export function FoldedRow({
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
-          {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
+          {row.placing ? <span className="dev-ws-placing" title="Being placed into a theme">placing…</span> : null}
         </span>
       </span>
       {/* The card's own meta line, node for node: number · author · when,

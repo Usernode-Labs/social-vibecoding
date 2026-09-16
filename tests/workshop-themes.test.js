@@ -39,8 +39,27 @@ stub(require.resolve('../src/services/github'), {
   fetchPublicIssues: async () => publicIssues,
 });
 let attrSummary = new Map();
+// The theme registry the service now reads and writes through
+// topic-attributes. SPREAD over the real module rather than replaced: the
+// pure halves — slugifyTheme above all — must be the SAME code the service
+// ships, because a member's typed theme and the model's drafted id landing
+// on one key is the feature. Only the four pool-touching functions are
+// faked. topic-attributes requires nothing at load, so this is free.
+const realAttrs = require('../src/services/topic-attributes');
+let themeRegistry = [];
+const registryWrites = [];
+const registryRetires = [];
 stub(require.resolve('../src/services/topic-attributes'), {
+  ...realAttrs,
   summarizeForTargets: async () => attrSummary,
+  listThemes: async () => themeRegistry,
+  ensureTheme: async (_pool, _appId, theme, _userId, opts) => {
+    registryWrites.push({ ...theme, pin: !!(opts && opts.pin) });
+  },
+  retireThemesExcept: async (_pool, _appId, keep) => {
+    registryRetires.push([...(keep || [])]);
+    return [];
+  },
 });
 stub(require.resolve('../src/services/fleet-maintenance'), {
   ensurePlatformUser: async () => 999,
@@ -609,7 +628,11 @@ test('a tenth of churn re-drafts; so does a day-old draft with one change; the p
     assert.deepEqual(m.calls.map((c) => c.kind), ['discovery', 'placement', 'digest'],
       'the paragraph rides the pass that re-drafted the themes, from the same snapshot');
     assert.equal(m.calls[1].cards.length, 11, 'after a draft every card is placed again, bar the anchor');
-    assert.deepEqual(offered[0], [{ id: 'old', name: 'Old', description: 'd' }], 'the previous themes are offered back');
+    // `icon` and `pinned` ride along now: `previousThemes` comes from the
+    // theme registry, and `pinned` is the flag the discovery prompt is told
+    // to honour — and that `keepPinned` enforces whether it does or not.
+    assert.deepEqual(offered[0], [{ id: 'old', name: 'Old', description: 'd', icon: '', pinned: false }],
+      'the previous themes are offered back');
     assert.deepEqual(st.row.themes_json.map((t) => [t.id, t.name]), [['old', 'Old, renamed']], 'the id survived');
     assert.equal(st.row.discovery_key_count, 12);
     assert.equal(st.row.churn_added, 0);
@@ -954,8 +977,14 @@ test('GET workshop-themes serves the themes with coverage and no internal fields
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(Object.keys(body).sort(), [
-      'coverage', 'digest', 'digestCards', 'digestError', 'discoveredAt', 'generatedAt', 'lastError', 'pending', 'pendingStage', 'source', 'stale', 'themes', 'unplaced',
+      'coverage', 'digest', 'digestCards', 'digestError', 'discoveredAt', 'generatedAt', 'lastError', 'pending', 'pendingStage', 'registry', 'source', 'stale', 'themes', 'unplaced', 'votes',
     ]);
+    // The app's live theme vocabulary and the cards the GROUP placed. Both
+    // are served on the same GET so the picker needs no second round-trip;
+    // casting the vote itself rides the topic-attributes POST, which is the
+    // point of merging the two groupings onto one mechanism.
+    assert.deepEqual(body.registry, [], 'no registry rows on a board nobody has voted on');
+    assert.deepEqual(body.votes, {}, 'and no member placements to overlay');
     assert.equal(body.digest, null, 'no draft has run, so there is no paragraph yet');
     assert.equal(body.digestCards, null, 'nor any cards');
     assert.equal(body.stale, false);
@@ -1010,7 +1039,9 @@ test('the status paragraph is written on a discovery pass, and survives one that
     assert.match(call.params.messages[0].content, /LANDED THIS WEEK \(JSON\):/);
     assert.match(call.params.messages[0].content, /THIS WEEK is .* it is a PARTIAL week/);
     assert.match(call.params.messages[0].content, /The LAST WEEK list is COMPLETE/);
-    assert.match(call.params.messages[0].content, /CATEGORIES \(JSON\):/);
+    // THEMES, not CATEGORIES: the digest describes the app's themes, and a
+    // "category" on this platform is the other axis entirely.
+    assert.match(call.params.messages[0].content, /THEMES \(JSON\):/);
     // Placement's budget and effort, for placement's reason: thinking is
     // charged against max_tokens, and 4000 at default effort could be spent
     // before the JSON began.
@@ -1160,7 +1191,7 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.versionBehind(undefined, 2), false);
 });
 
-test('the three versions are positive integers and the digest is on its fourth', () => {
+test('the three versions are positive integers and the digest is on its fifth', () => {
   for (const v of [llm.WORKSHOP_DISCOVERY_VERSION, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION]) {
     assert.ok(Number.isInteger(v) && v >= 1, String(v));
   }
@@ -1172,7 +1203,10 @@ test('the three versions are positive integers and the digest is on its fourth',
   // the fields cannot be recovered from the prose a v2 row holds, so the
   // bump is what re-asks for them rather than migrating anything. 4 halves
   // the length and makes the line lead by count rather than by visibility.
-  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 4);
+  // 5 is vocabulary: the prompt had been telling the model to call the
+  // grouping "categories", which names the OTHER axis (the voted
+  // feature/bug/docs field). The line is user-facing, so the rows re-ask.
+  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 5);
 });
 
 test('a digest version bump rewrites a fresh paragraph now, and only the paragraph', async () => {

@@ -33,18 +33,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // table" half of the summary line, which is suppressed entirely unless
 // EVERY open row's reward is a plain number. Returns null when the string
 // isn't confidently numeric — never a guess.
-function parseRewardPoints(reward) {
-  if (reward == null) return null;
-  const cleaned = String(reward)
-    .trim()
-    .replace(/^up\s+to\s+/i, '')
-    .replace(/\s*(?:pts?|points?)\s*$/i, '')
-    .replace(/,/g, '')
-    .trim();
-  if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
+//
+// The automatic challenge scorer needs the same answer to a much less
+// forgiving question ("how many points is this challenge worth"), so the
+// parser moved to services/topochain/challenge-rules.js and is re-exported
+// here. One parser, because two that drift would mean a challenge whose card
+// promises a number the scorer refuses to pay.
+const { parseRewardPoints } = require('../services/topochain/challenge-rules');
 
 // ─── Progress resolution ─────────────────────────────────────────────
 //
