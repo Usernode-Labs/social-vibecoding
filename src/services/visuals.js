@@ -32,6 +32,7 @@ const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
+const assetRouteCheck = require('./asset-route-check');
 const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
@@ -2779,6 +2780,14 @@ async function settleCaptureRun(config, pool, run) {
     });
   }
   if (unitOutcome) extraRows.push(unitOutcome.row);
+  // #2315: does the preview's own origin serve the hosted assets? Probed at
+  // settlement rather than beside the capture launch so the harvester's
+  // path (a run whose launching process died) reports it too. A deferred
+  // run takes no verdict, so it does not probe. Never throws.
+  const assetOutcome = shotsOnly ? null : await assetRouteCheck.maybeRunAssetRouteCheck({
+    config, pool, appId: app.id, sessionId: session.id, stagingOrigin,
+  });
+  if (assetOutcome) extraRows.push(assetOutcome.row);
 
   if (shotsOnly) {
     // No verdict was taken, so none is stored: the row stays 'pending' in
@@ -2941,7 +2950,7 @@ async function settleCaptureRun(config, pool, run) {
       // pass_count 0 / fail_count 2 for a container that logged zero
       // inbound requests — and, worse, could graduate nothing while
       // permanently colouring the app's history with a platform outage.
-      if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
+      if ((dispatched || unitOutcome || assetOutcome) && checksResult.state !== 'error') {
         const historyRows = [];
         if (dispatched) {
           const byIndex = new Map(dispatched.map((d) => [d.index, d]));
@@ -2966,6 +2975,8 @@ async function settleCaptureRun(config, pool, run) {
         // first observed pass flips it from advisory to merge-blocking,
         // and (recordRun's COALESCE) no later failure demotes it.
         if (unitOutcome) historyRows.push(unitOutcome.history);
+        // The asset-route row graduates the same way (#2315).
+        if (assetOutcome) historyRows.push(assetOutcome.history);
         await checkHistory.recordRun(pool, app.id, historyRows);
       }
       log.info('visuals', 'Checks stored', {
