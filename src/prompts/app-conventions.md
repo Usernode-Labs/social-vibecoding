@@ -118,10 +118,10 @@ Ordered by how badly an agent working offline gets each one wrong.
    `searchUsers()` — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
-   standalone Docker, use exec-form `CMD ["node", "server.js"]`.
-10. **Kubernetes uses kpack/Paketo, not Dockerfiles.** Declare npm `build`
-    and `start` scripts and keep the lockfile current. `ensure:shell`, when
-    present, runs instead of `build`.
+   Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
+10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
+    `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
+    app paths. Keep npm scripts/lockfile for kpack.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -137,23 +137,50 @@ exactly what you are being asked to do.
 Each app is a Node.js / Express server with an HTML + JS + Tailwind
 frontend and its own PostgreSQL database. Apps listen on port 3000.
 
-The build contract depends on the platform runtime:
+The build contract depends on the platform runtime and configured build engine:
 
-- **Kubernetes:** kpack builds the exact Git revision with a platform-owned
-  Paketo builder. It does not execute the app's `Dockerfile`. Declare asset
-  compilation in `package.json`'s `build` script and launch in `start`
-  (normally `node server.js`); commit the matching lockfile. A declared
-  `ensure:shell` script takes precedence over `build`, so it must produce
-  all required assets. The platform self-app uses this ordering.
+- **Kubernetes:** `BUILD_ENGINE` selects how the exact Git revision is built.
+  - `auto`: BuildKit uses the first Dockerfile present from
+    `BUILDKIT_DOCKERFILES` (default: `Dockerfile.kubernetes,Dockerfile`).
+    Trees without a matching Dockerfile use kpack/Paketo. If the BuildKit
+    infrastructure is unavailable, `auto` can also fall back to kpack;
+    a Dockerfile build failure does not trigger that fallback.
+  - `buildkit`: requires a matching Dockerfile and a working BuildKit
+    infrastructure; failures are reported without falling back to kpack.
+  - `kpack` (the code default when unset): uses the platform-owned Paketo
+    builder and ignores Dockerfiles.
+
+  For BuildKit, edit the selected Dockerfile's `RUN`, `COPY`, `ENTRYPOINT`
+  and `CMD` instructions to control the build and launch process. For kpack,
+  declare asset compilation in `package.json`'s `build` script and launch
+  in `start` (normally `node server.js`); commit the matching lockfile.
+  A declared `ensure:shell` script takes precedence over `build` on kpack,
+  so it must produce all required assets.
 - **Standalone Docker:** the platform builds the repository's root
   `Dockerfile`. Keep its asset compilation aligned with `npm run build`
   so both runtimes produce the same assets.
 
-Do not attempt to fix Kubernetes builds by editing Dockerfile `RUN`, `COPY`,
-or `CMD` instructions alone. OS packages or build tools missing from the
-platform builder need a platform-level change; report that requirement.
-The legacy Tailwind compatibility buildpack covers known older app layouts,
-not arbitrary Dockerfile instructions. Prefer an explicit npm build script.
+Check the build logs for the engine actually used before choosing a fix.
+On kpack, Dockerfile edits have no effect: missing OS packages or build tools
+in the platform builder need a platform-level change; report that requirement.
+Its legacy Tailwind compatibility buildpack covers known older app layouts,
+not arbitrary Dockerfile instructions. Keep asset compilation in an explicit
+npm build script and invoke it from the Dockerfile too.
+
+**Kubernetes app and preview images must run as non-root.** Their Pods set
+`runAsNonRoot: true` without supplying a `runAsUser`. In the Dockerfile's
+final runtime stage, declare a numeric non-zero user, such as
+`USER 1000:1000` for the scaffold's Node image. Give that user ownership of
+paths the app must write (for example with `COPY --chown=1000:1000` or a
+targeted `chown`). A missing `USER` on a root-default base image produces
+`CreateContainerConfigError`; a symbolic `USER node` can also be rejected
+because Kubernetes cannot verify its UID. Rootless BuildKit describes the
+builder's isolation, not the output image's runtime user.
+
+Existing app repositories and older proposal branches keep their own
+Dockerfiles when the platform template changes. Update the affected source,
+rebuild and redeploy it; restarting the unchanged image cannot fix its user.
+Keep non-root enforcement enabled.
 
 Required env vars at runtime (provided by the harness):
 
@@ -348,11 +375,14 @@ Rules:
 - **Serve `503` from `/health` once `shuttingDown` is true** so anything
   polling readiness sees the container leaving rotation rather than a
   connection reset.
-- **For standalone Docker, use exec-form `CMD`** — `CMD ["node", "server.js"]`,
-  not `CMD node server.js`. Shell form can interpose `/bin/sh` between the
+- **For Dockerfile builds (BuildKit or standalone Docker), use exec-form
+  `CMD`** — `CMD ["node", "server.js"]`, not `CMD node server.js`.
+  Shell form can interpose `/bin/sh` between the
   init process and Node, and a shell that doesn't `exec` swallows the
-  signal. Kubernetes app images use the Paketo launch process and the npm
-  `start` script; changing the Dockerfile does not change that launch path.
+  signal. Kubernetes images built by kpack use the Paketo launch process
+  and the npm `start` script; Dockerfile edits do not affect that path.
+  Kubernetes images built by BuildKit use the selected Dockerfile's launch
+  instructions.
 
 Apps generated before this convention may have no application-level drain.
 Do not rely on an init process or the runtime to close their transactions.
@@ -2578,8 +2608,9 @@ apps**:
 
 The scaffold ships a `tailwind.config.js`, a `styles/tailwind-input.css`,
 and an **npm build script** that compiles them to `public/tailwind.css`.
-Both the Kubernetes Paketo builder and the standalone Dockerfile invoke
-that script. The HTML just links it:
+The scaffold's Dockerfile invokes that script under BuildKit or standalone
+Docker; the Kubernetes Paketo builder invokes it on the kpack path.
+The HTML just links it:
 
 ```html
 <link rel="stylesheet" href="/tailwind.css">
@@ -2591,7 +2622,8 @@ and the visitor's device does no styling work.
 
 **There is no artifact to keep in sync and no rebuild step to remember.**
 The compile runs during image creation from the requested Git revision,
-through kpack/Paketo on Kubernetes or `docker build` on standalone Docker.
+through BuildKit or kpack/Paketo on Kubernetes, according to `BUILD_ENGINE`,
+or `docker build` on standalone Docker.
 Production and staging may reuse a compatible image of the same revision;
 the stylesheet still comes from the markup in that exact commit.
 Nothing is committed to the repo; `public/tailwind.css` exists only inside
