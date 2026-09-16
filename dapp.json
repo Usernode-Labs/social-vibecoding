@@ -3027,7 +3027,7 @@
       "expectText": "core platform app"
     },
     {
-      "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
+      "name": "Dev '+' menu shows Members & approvals on a managed app (#2304)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
@@ -3035,7 +3035,7 @@
       "name": "Dev '+' menu shows the approver roster on an invited-approvers app (#646)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
-      "expectText": "Members & visibility"
+      "expectText": "Members & approvals"
     },
     {
       "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",

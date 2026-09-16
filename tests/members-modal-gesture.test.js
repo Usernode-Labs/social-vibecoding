@@ -1,5 +1,5 @@
 // Frontend tests for the gesture-safe modal open path that fixes the
-// "Members & visibility does nothing" bug (and its follow-up, "drawer
+// "Members & approvals does nothing" bug (and its follow-up, "drawer
 // closes but no panel").
 //
 // The bug: a drawer row's click handler reveals a full-screen modal, and on
@@ -16,7 +16,7 @@
 //     open, so the backdrop-dismiss handler ignores the trailing ghost click
 //     (this, not the deferral, is what keeps the modal open).
 //   - openMembersModal(): no longer returns silently when no app is loaded —
-//     it warns and surfaces a message in #members-vis-error.
+//     it warns and surfaces a message in #members-load-error.
 //
 // We load the real app-view.js into a vm context (so the tests can't drift
 // from shipped code), drive a controllable clock, and assert behaviour. We
@@ -240,8 +240,8 @@ test('opened members modal is visible immediately and survives the ghost click',
   // point reaches the island, and a reveal stamped now suppresses the ghost
   // click for the whole guard window.
   const modal = makeEl(['hidden']);
-  const visError = makeEl([]);
-  const h = makeHarness({ 'members-modal': modal, 'members-vis-error': visError });
+  const loadError = makeEl([]);
+  const h = makeHarness({ 'members-modal': modal, 'members-load-error': loadError });
   let openedThroughIsland = false;
   h.sandbox.UsernodeReact = {
     dialogs: {
@@ -285,8 +285,8 @@ test('the share entry point opens through the island too', () => {
 
 test('opening with no app shows a message instead of doing nothing', () => {
   const modal = makeEl(['hidden']);
-  const visError = makeEl([]);
-  const h = makeHarness({ 'members-modal': modal, 'members-vis-error': visError });
+  const loadError = makeEl([]);
+  const h = makeHarness({ 'members-modal': modal, 'members-load-error': loadError });
 
   h.AppView.appData = null;
   // With no island registered the entry point falls through to the load half
@@ -294,8 +294,8 @@ test('opening with no app shows a message instead of doing nothing', () => {
   h.AppView.openMembersModal();
 
   assert.equal(h.warnings.length, 1, 'logged a console.warn for diagnosis');
-  assert.match(visError.textContent, /loading/i, 'surfaced a one-line message');
-  assert.match(visError.className, /text-red-400/, 'shown as an error');
+  assert.match(loadError.textContent, /loading/i, 'surfaced a one-line message');
+  assert.match(loadError.className, /text-red-400/, 'shown as an error');
 });
 
 test('opening is a hard no-op only when the modal element is absent', () => {

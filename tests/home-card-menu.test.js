@@ -597,18 +597,25 @@ test('menu: a sole contributor gets App settings without a destructive menu acti
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
 
-test('menu: an ineligible creator or app admin gets no Delete app action (#1897)', () => {
+test('menu: creators and app admins keep App settings without gaining Delete', () => {
   const Home = makeHome({ id: ME });
-  assert.ok(!keys(Home.menuItemsFor(baseApp({
+  const creatorItems = keys(Home.menuItemsFor(baseApp({
     created_by: ME,
+    can_manage: true,
     contributor_count: 2,
     can_delete: false,
-  }))).includes('delete'));
-  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    delete_block: 'shared',
+  })));
+  assert.ok(creatorItems.includes('app-settings'));
+  assert.ok(!creatorItems.includes('delete'));
+  const appAdminItems = keys(Home.menuItemsFor(baseApp({
     created_by: OTHER,
     can_manage: true,
     can_delete: false,
-  }))).includes('delete'), 'general app management does not grant deletion');
+    delete_block: 'not_owner',
+  })));
+  assert.ok(appAdminItems.includes('app-settings'), 'general app management exposes access settings');
+  assert.ok(!appAdminItems.includes('delete'), 'general app management does not grant deletion');
 });
 
 test('menu: locked app offers Unlock', () => {
