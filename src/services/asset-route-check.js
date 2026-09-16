@@ -277,18 +277,25 @@ async function maybeRunAssetRouteCheck({
     if (!config || config.captureRuntime !== 'kubernetes') return null;
     if (typeof stagingOrigin !== 'string' || !/^https:\/\//i.test(stagingOrigin)) return null;
 
-    // Ingress replacement and edge routing converge just after the preview
-    // itself becomes ready. A single probe can therefore observe the old
-    // 403/404/HTML route even though the reconciler has already committed
-    // the replacement. Retry only this synthetic probe for a short bounded
-    // window; a persistent routing failure still produces the same row.
-    const probed = await probeAssetRouteUntilSettled(stagingOrigin, {
+    // Re-check readiness at settlement as well as before launch. Edge state
+    // is distributed: proposal 4408 passed two fresh-connection probes at
+    // launch, then this row reached another listener and saw three 403s more
+    // than a minute later while all 684 browser checks passed. A short retry
+    // here therefore turns an infrastructure race into a false app failure.
+    // Use the same bounded, consecutive-success rule as the launch gate; a
+    // persistently bad route still produces the same blocking row.
+    const probed = await waitForAssetRouteReady(stagingOrigin, {
       fetchImpl,
       ...(probeAttempts === undefined ? {} : { attempts: probeAttempts }),
       ...(probeRetryMs === undefined ? {} : { retryMs: probeRetryMs }),
       ...(sleep === undefined ? {} : { sleep }),
     });
-    const { response, verdict: { passed, reason }, attempts } = probed;
+    const { ready: passed, response, verdict, attempts, consecutivePasses, requiredPasses } = probed;
+    const reason = passed
+      ? null
+      : verdict.reason || `${ASSET_CHECK_PATH} did not stay ready: observed ${consecutivePasses} of `
+        + `${requiredPasses} required consecutive JavaScript responses before the readiness window ended. `
+        + 'This is platform routing, not something in this proposal.';
 
     let graduated = false;
     if (!passed) {

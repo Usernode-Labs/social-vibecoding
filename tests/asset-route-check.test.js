@@ -329,6 +329,35 @@ test('a pass is a non-advisory row plus a passing history entry', async () => {
   assert.equal(out.history.name, check.ASSET_CHECK_NAME);
 });
 
+test('the settlement row survives a mixed edge and requires stable recovery', async () => {
+  const responses = [
+    routeResponse(403, 'text/plain', '', 'Access denied'),
+    routeResponse(403, 'text/plain', '', 'Access denied'),
+    routeResponse(200, 'application/javascript'),
+    routeResponse(200, 'application/javascript'),
+  ];
+  let calls = 0;
+  const out = await check.maybeRunAssetRouteCheck({
+    config: K8S, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
+    fetchImpl: async () => { calls += 1; return responses.shift(); },
+    probeAttempts: 6, probeRetryMs: 0, sleep: async () => {},
+  });
+  assert.equal(out.row.status, 'pass');
+  assert.equal(out.row.advisory, false);
+  assert.equal(calls, 4, 'one success is not enough after the edge recovers');
+});
+
+test('one successful settlement response does not satisfy the stability rule', async (t) => {
+  stub(t, checkHistory, { loadGraduated: async () => new Set() });
+  const out = await check.maybeRunAssetRouteCheck({
+    config: K8S, pool: {}, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
+    fetchImpl: fakeFetch(200, 'application/javascript'),
+    probeAttempts: 1, probeRetryMs: 0, sleep: async () => {},
+  });
+  assert.equal(out.row.status, 'fail');
+  assert.match(out.row.failureReason, /1 of 2 required consecutive/);
+});
+
 test('a failure on an app that never passed it is advisory', async (t) => {
   stub(t, checkHistory, { loadGraduated: async () => new Set() });
   const out = await check.maybeRunAssetRouteCheck({
