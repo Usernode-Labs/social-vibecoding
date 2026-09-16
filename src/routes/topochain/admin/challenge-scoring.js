@@ -216,7 +216,14 @@ function challengeScoringAdminRoutes(config) {
             key,
             label: rules.MEASURES[key].label,
             summary: rules.MEASURES[key].summary,
+            // `phrase` and `payout` are what let the form read a rule back as
+            // a sentence while it is being written. They travel from here
+            // rather than being retyped in the screen, so the sentence cannot
+            // drift from the behaviour it describes.
+            phrase: rules.MEASURES[key].phrase,
+            payout: rules.MEASURES[key].payout,
             target_unit: rules.MEASURES[key].targetUnit,
+            needs_target: rules.MEASURES[key].needsTarget === true,
             counted: rules.MEASURES[key].counted === true,
             graded: rules.MEASURES[key].graded === true,
             windowed: rules.MEASURES[key].windowed === true,

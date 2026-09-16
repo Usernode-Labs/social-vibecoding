@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchJson, send } from './api.ts';
 import { BTN, PANEL_CLS } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List, Options,
-  Panel, ScreenHeader, Select, Skeleton, Textarea, fmt,
+  Badge, CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection,
+  Input, List, Options, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt,
 } from './ui.tsx';
 import type { Column } from './ui.tsx';
 
@@ -31,11 +31,42 @@ type Measure = {
   key: string;
   label: string;
   summary: string;
+  phrase: string;
+  payout: string;
   target_unit: string | null;
+  needs_target: boolean;
   counted: boolean;
   graded: boolean;
   windowed: boolean;
 };
+
+// Only the fields this screen reads. The template list carries the whole
+// challenge definition; what the form needs from it is the name to show, the
+// numbers it would inherit, and the category to tell two similar goals apart.
+type Template = {
+  id: number;
+  goal: string;
+  category: string;
+  reward: string | null;
+  metric_target: number | null;
+};
+
+// The server's reward parser, in the one place the client genuinely needs the
+// same answer: showing the operator which number a blank Points field will
+// use. Kept deliberately strict and identical in behaviour — anything that is
+// not confidently one number reads as "not a plain number" here too, which is
+// exactly when the Points field has to be filled in.
+function parseReward(reward: string | null): number | null {
+  if (reward == null) return null;
+  const cleaned = String(reward).trim()
+    .replace(/^up\s+to\s+/i, '')
+    .replace(/\s*(?:pts?|points?)\s*$/i, '')
+    .replace(/,/g, '')
+    .trim();
+  if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
 
 type Cover = {
   challenge_id: number;
@@ -145,23 +176,77 @@ function RunDetail({ run }: { run: Run | null }) {
   );
 }
 
+// The rule, read back as a sentence while it is being written.
+//
+// This is the part that makes the form composable rather than fillable: seven
+// inputs with labels tell you what you are typing, but not what the thing you
+// are building will DO. The payout shape in particular is invisible in the
+// fields — "500 pts, target 3" does not say whether that is 500 each or 500
+// for the set, and those differ by 1,000 points a person.
+//
+// The phrase comes from the server's measure catalogue, so it cannot drift
+// from the behaviour it describes. Only the arithmetic below is local, and
+// only for display.
+function ruleSentence({ measure, points, target, challenge }: {
+  measure: Measure | null;
+  points: number | null;
+  target: number | null;
+  challenge: string | null;
+}): string | null {
+  if (!measure) return null;
+  const n = target && target > 0 ? target : null;
+  const phrase = (measure.phrase || '').replace('{target}', n == null ? 'enough' : String(n));
+  // The challenge leads, rather than being spliced in after the phrase.
+  // Several phrases end in a preposition ("sends a report worth acting on"),
+  // so "… acting on on Send useful feedback" is what the other order produces.
+  const lead = challenge ? `${challenge}: credits` : 'Credits';
+  const tail = challenge ? '' : ' Pick the challenge it pays into.';
+  if (points == null) {
+    return `${lead} nothing yet: the reward is not a plain number, so fill in Points.`;
+  }
+  const pts = (v: number) => `${Math.round(v).toLocaleString()} pts`;
+  const share = n ? Math.floor(points / n) : points;
+  switch (measure.payout) {
+    case 'per_unit':
+      return `${lead} ${pts(share)} an account, ${pts(points)} for all ${n}.${tail}`;
+    case 'graded':
+      return `${lead} up to ${pts(share)} each time someone ${phrase}, up to ${n} per window. `
+        + `${pts(points)} at most, and a model grades each one.${tail}`;
+    case 'on_target':
+      return `${lead} ${pts(points)} once someone ${phrase}. Nothing before that.${tail}`;
+    default:
+      return `${lead} ${pts(points)} when someone ${phrase}.${tail}`;
+  }
+}
+
 function RuleForm({
   existing, measures, templates, onClose, onSaved,
 }: {
   existing: Rule | null;
   measures: Measure[];
-  templates: { value: number; label: string }[];
+  templates: Template[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isNew = existing == null;
   const [name, setName] = useState(existing?.name || '');
+  // Whether the name is the operator's own words. Until it is, picking a
+  // challenge fills it in — the name is bookkeeping, and making somebody
+  // invent one before they can save is the kind of friction that turns a
+  // form into a chore.
+  const [nameTouched, setNameTouched] = useState(!!existing?.name);
   const [measure, setMeasure] = useState(existing?.measure || (measures[0]?.key || ''));
   const [templateId, setTemplateId] = useState(
     existing?.challenge_template_id != null ? String(existing.challenge_template_id) : ''
   );
   const [challengeId, setChallengeId] = useState(
     existing?.challenge_id != null ? String(existing.challenge_id) : ''
+  );
+  // One choice, not two competing fields. The old form put a template picker
+  // beside a bare id box joined by "…or", which asks the reader to work out
+  // that filling one forbids the other.
+  const [scope, setScope] = useState<'template' | 'challenge'>(
+    existing?.challenge_id != null ? 'challenge' : 'template'
   );
   const [target, setTarget] = useState(existing?.target != null ? String(existing.target) : '');
   const [points, setPoints] = useState(existing?.points != null ? String(existing.points) : '');
@@ -170,25 +255,44 @@ function RuleForm({
   const [error, setError] = useState<string | null>(null);
 
   const spec = measures.find((m) => m.key === measure) || null;
+  const template = templates.find((t) => String(t.id) === templateId) || null;
+
+  // What the rule will actually use: the operator's number, or the
+  // challenge's own. Shown as the input's PLACEHOLDER, so "blank means
+  // inherit" is something you can see rather than a sentence of help text
+  // below an empty box.
+  const inheritedTarget = template?.metric_target ?? null;
+  const inheritedPoints = template ? parseReward(template.reward) : null;
+  const effTarget = target.trim() !== '' ? Number(target) : inheritedTarget;
+  const effPoints = points.trim() !== '' ? Number(points) : inheritedPoints;
+
+  const pickTemplate = useCallback((value: string) => {
+    setTemplateId(value);
+    if (value) setChallengeId('');
+    if (!nameTouched) {
+      const picked = templates.find((t) => String(t.id) === value);
+      setName(picked?.goal || '');
+    }
+  }, [nameTouched, templates]);
 
   const save = useCallback(async () => {
     if (!canWrite()) return;
     setError(null);
     if (!name.trim()) { setError('Give the rule a name.'); return; }
     if (!measure) { setError('Pick what to measure.'); return; }
-    if (!templateId && !challengeId) {
-      setError('Bind the rule to a challenge template, or to one challenge by id.');
-      return;
-    }
-    if (templateId && challengeId) {
-      setError('Bind the rule to a template or to one challenge, not both.');
+    const boundTemplate = scope === 'template' ? templateId : '';
+    const boundChallenge = scope === 'challenge' ? challengeId : '';
+    if (!boundTemplate && !boundChallenge) {
+      setError(scope === 'template'
+        ? 'Pick the challenge template this rule pays into.'
+        : 'Type the id of the challenge this rule pays into.');
       return;
     }
     const body = {
       name: name.trim(),
       measure,
-      challenge_template_id: templateId ? Number(templateId) : null,
-      challenge_id: challengeId ? Number(challengeId) : null,
+      challenge_template_id: boundTemplate ? Number(boundTemplate) : null,
+      challenge_id: boundChallenge ? Number(boundChallenge) : null,
       target: target.trim() === '' ? null : Number(target),
       points: points.trim() === '' ? null : Number(points),
       notes: notes.trim() === '' ? null : notes.trim(),
@@ -204,25 +308,34 @@ function RuleForm({
       return;
     }
     onSaved();
-  }, [name, measure, templateId, challengeId, target, points, notes, enabled, isNew, existing, onSaved]);
+  }, [name, measure, scope, templateId, challengeId, target, points, notes, enabled, isNew, existing, onSaved]);
+
+  const sentence = ruleSentence({
+    measure: spec,
+    points: effPoints,
+    target: effTarget,
+    challenge: scope === 'template' ? (template?.goal || null) : (challengeId ? `challenge #${challengeId}` : null),
+  });
 
   return (
     <Panel
       title={isNew ? 'New scoring rule' : `Edit ${existing.name}`}
-      subtitle="Pick what to measure and which challenge it pays into. Leave Target and Points blank to use the challenge's own numbers."
+      subtitle="Pick what to measure and which challenge it pays into."
       onClose={onClose}
       closeLabel="Close the rule form"
       footer={<FormActions onSave={save} onCancel={onClose} saveLabel="Save rule" />}
     >
+      {/* The rule in one sentence, kept live. It is the first thing in the
+          panel because it is the only part that says what will happen. */}
+      <div
+        id="admin-topo-cs-f-sentence"
+        className="rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50/70 dark:bg-violet-950/30 px-4 py-3 text-sm text-violet-900 dark:text-violet-200"
+      >
+        {sentence || 'Pick what to measure, then the challenge it pays into.'}
+      </div>
+
+      <FormSection label="What to measure" />
       <FormGrid>
-        <Field label="Name *" htmlFor="admin-topo-cs-f-name">
-          <Input
-            id="admin-topo-cs-f-name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </Field>
         <Field label="Measure *" htmlFor="admin-topo-cs-f-measure" help={spec?.summary}>
           <Select
             id="admin-topo-cs-f-measure"
@@ -232,61 +345,102 @@ function RuleForm({
             <Options options={measures.map((m) => ({ value: m.key, label: m.label }))} />
           </Select>
         </Field>
-        <Field
-          label="Applies to a challenge template"
-          htmlFor="admin-topo-cs-f-template"
-          help="The useful binding: it covers every challenge stamped from this template, including next week's."
-        >
+        <Field label="Where the credits go" htmlFor="admin-topo-cs-f-scope">
           <Select
-            id="admin-topo-cs-f-template"
-            value={templateId}
-            onChange={(e) => { setTemplateId(e.target.value); if (e.target.value) setChallengeId(''); }}
+            id="admin-topo-cs-f-scope"
+            value={scope}
+            onChange={(e) => setScope(e.target.value === 'challenge' ? 'challenge' : 'template')}
           >
-            <Options options={templates} blank="None" />
+            <Options
+              options={[
+                { value: 'template', label: 'Every challenge from a template' },
+                { value: 'challenge', label: 'One challenge only' },
+              ]}
+            />
           </Select>
         </Field>
-        <Field
-          label="…or one challenge, by id"
-          htmlFor="admin-topo-cs-f-challenge"
-          help="Only when a single instance should be scored differently from the rest."
-        >
-          <Input
-            id="admin-topo-cs-f-challenge"
-            type="number"
-            min={1}
-            value={challengeId}
-            onChange={(e) => { setChallengeId(e.target.value); if (e.target.value) setTemplateId(''); }}
-          />
-        </Field>
+        {scope === 'template' ? (
+          <Field
+            label="Challenge template *"
+            htmlFor="admin-topo-cs-f-template"
+            help="Covers every challenge stamped from it, including next week's."
+            className="md:col-span-2"
+          >
+            <Select
+              id="admin-topo-cs-f-template"
+              value={templateId}
+              onChange={(e) => pickTemplate(e.target.value)}
+            >
+              <Options
+                options={templates.map((t) => ({ value: t.id, label: `${t.goal} (${t.category})` }))}
+                blank="Pick a challenge"
+              />
+            </Select>
+          </Field>
+        ) : (
+          <Field
+            label="Challenge id *"
+            htmlFor="admin-topo-cs-f-challenge"
+            help="Only when one instance should be scored differently from the rest. It stops working when the challenge is next re-created."
+            className="md:col-span-2"
+          >
+            <Input
+              id="admin-topo-cs-f-challenge"
+              type="number"
+              min={1}
+              value={challengeId}
+              onChange={(e) => { setChallengeId(e.target.value); if (e.target.value) setTemplateId(''); }}
+            />
+          </Field>
+        )}
+      </FormGrid>
+
+      <FormSection label="Numbers" />
+      <p className="-mt-1 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+        {template
+          ? 'Leave these blank. Filled in, they override what the card promises, so the two stop agreeing.'
+          : 'These come from the challenge once you pick one.'}
+      </p>
+      <FormGrid>
         <Field
           label={`Target${spec?.target_unit ? ` (${spec.target_unit})` : ''}`}
           htmlFor="admin-topo-cs-f-target"
-          help="Blank uses the challenge's own metric target."
         >
           <Input
             id="admin-topo-cs-f-target"
             type="number"
             min={1}
             step="any"
+            disabled={!spec?.target_unit}
+            placeholder={inheritedTarget != null ? `${inheritedTarget} (from the challenge)` : 'Not set on the challenge'}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           />
         </Field>
-        <Field
-          label="Points"
-          htmlFor="admin-topo-cs-f-points"
-          help="Blank reads the challenge's reward. Set it when the reward is not a plain number."
-        >
+        <Field label="Points" htmlFor="admin-topo-cs-f-points">
           <Input
             id="admin-topo-cs-f-points"
             type="number"
             min={1}
             step="any"
+            placeholder={inheritedPoints != null ? `${inheritedPoints} (from the reward)` : 'The reward is not a plain number'}
             value={points}
             onChange={(e) => setPoints(e.target.value)}
           />
         </Field>
-        <Field label="Notes" htmlFor="admin-topo-cs-f-notes" className="md:col-span-2">
+      </FormGrid>
+
+      <FormSection label="Bookkeeping" />
+      <FormGrid>
+        <Field label="Name *" htmlFor="admin-topo-cs-f-name" help="For this list only. It is never shown to users.">
+          <Input
+            id="admin-topo-cs-f-name"
+            type="text"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
+          />
+        </Field>
+        <Field label="Notes" htmlFor="admin-topo-cs-f-notes">
           <Textarea
             id="admin-topo-cs-f-notes"
             rows={2}
@@ -294,16 +448,14 @@ function RuleForm({
             onChange={(e) => setNotes(e.target.value)}
           />
         </Field>
-        <Field label="Switched on" htmlFor="admin-topo-cs-f-enabled">
-          <Select
-            id="admin-topo-cs-f-enabled"
-            value={enabled ? '1' : '0'}
-            onChange={(e) => setEnabled(e.target.value === '1')}
-          >
-            <Options options={[{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }]} />
-          </Select>
-        </Field>
       </FormGrid>
+      <CheckField
+        id="admin-topo-cs-f-enabled"
+        label="Score this challenge"
+        help="Off keeps the rule and stops the credits. Credits already written stay."
+        checked={enabled}
+        onChange={setEnabled}
+      />
       <FormError message={error} />
     </Panel>
   );
@@ -313,7 +465,7 @@ function ChallengeScoringScreen() {
   const write = canWrite();
   const [payload, setPayload] = useState<Payload | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
-  const [templates, setTemplates] = useState<{ value: number; label: string }[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   // null = closed, 'new' = the create form, otherwise the rule id being edited.
   const [editing, setEditing] = useState<string | null>(null);
   const [preview, setPreview] = useState<Run | null>(null);
@@ -334,7 +486,13 @@ function ChallengeScoringScreen() {
     (async () => {
       const { ok, data } = await fetchJson('/api/v4/admin/challenge-templates?page=1&per_page=100');
       if (!alive.current || !ok || !data?.success || !Array.isArray(data.data)) return;
-      setTemplates(data.data.map((t: any) => ({ value: t.id, label: `${t.goal} (#${t.id})` })));
+      setTemplates(data.data.map((t: any) => ({
+        id: t.id,
+        goal: t.goal,
+        category: t.category,
+        reward: t.reward ?? null,
+        metric_target: t.metric_target == null ? null : Number(t.metric_target),
+      })));
     })();
   }, []);
 

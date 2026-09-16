@@ -79,6 +79,12 @@ function parseRewardPoints(reward) {
 // the admin form beside the input — "10" means ten minutes for one measure
 // and ten apps for another, and an operator should never have to guess.
 //
+// `phrase` is how the measure reads in a sentence, with {target} filled in.
+// It exists so the admin form can say the rule back to whoever is writing it
+// — "Credits 500 pts on Try 3 apps when someone opens 3 different apps" — and
+// so that sentence comes from the same place as the behaviour rather than
+// being retyped in the UI, where it could drift from what the scorer does.
+//
 // `needsTarget` is a separate question from having a unit, and conflating the
 // two was a real bug: "Sent a proposal" is one proposal and done, so asking
 // an operator to type a target it never reads made the rule report itself as
@@ -87,6 +93,7 @@ function parseRewardPoints(reward) {
 const MEASURES = {
   TRY_APPS: {
     label: 'Tried different apps',
+    phrase: 'opens {target} different apps',
     summary: 'Opened this many different apps and spent at least half a minute in each. Apps they made themselves do not count.',
     unit: 'app',
     targetUnit: 'apps',
@@ -97,6 +104,7 @@ const MEASURES = {
   },
   USE_APPS_MINUTES: {
     label: 'Minutes spent using apps',
+    phrase: 'spends {target} minutes using apps',
     summary: 'Spent this many minutes actively using apps inside the window. Apps they made themselves do not count.',
     unit: 'window',
     targetUnit: 'minutes',
@@ -108,6 +116,7 @@ const MEASURES = {
   },
   PROPOSAL_SENT: {
     label: 'Sent a proposal',
+    phrase: 'sends a proposal',
     summary: 'Put a change to an app to the group vote inside the window. One is enough, so this needs no target.',
     unit: 'proposal',
     targetUnit: null,
@@ -118,6 +127,7 @@ const MEASURES = {
   },
   PROPOSAL_ACCEPTED: {
     label: 'Got a proposal accepted',
+    phrase: 'gets a proposal accepted',
     summary: 'Had a proposal voted through and merged inside the window. Each one is graded on how useful the change is.',
     unit: 'proposal',
     targetUnit: 'accepted proposals',
@@ -128,6 +138,7 @@ const MEASURES = {
   },
   USEFUL_FEEDBACK: {
     label: 'Sent useful feedback',
+    phrase: 'sends a report worth acting on',
     summary: 'Filed a report through the feedback dialog inside the window. Each one is graded on how easy it is to act on.',
     unit: 'report',
     targetUnit: 'reports',
@@ -138,6 +149,7 @@ const MEASURES = {
   },
   CONNECT_ACCOUNTS: {
     label: 'Connected accounts',
+    phrase: 'connects {target} accounts',
     summary: 'Linked this many accounts they already own (X, GitHub). Counts accounts linked before the season too.',
     unit: 'account',
     targetUnit: 'accounts',
@@ -148,6 +160,7 @@ const MEASURES = {
   },
   BLOCK_PRODUCTION_ON: {
     label: 'Turned on block production',
+    phrase: 'turns on block production',
     summary: 'Block production is on, access has been asked for, or the account has already produced. Counts state from before the season too.',
     unit: 'state',
     targetUnit: null,
