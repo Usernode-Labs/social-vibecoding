@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 
+import { pushDismissible } from '../../lib/back-stack';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isDismissGuarded, useStaticModal } from '../../lib/static-modal';
 
@@ -102,16 +103,44 @@ export function useDialog<T = void>(
   // exists to prevent.
   const suspended = useRef(false);
 
+  // THE DEVICE BACK BUTTON (#1521). A dialog is React state with no history
+  // entry, so a back press used to fall straight past it — on Android to the
+  // native shell, which now exits at its root, which would close the whole app
+  // while the viewer was only dismissing a dialog. `pushDismissible` claims
+  // the next press for as long as this dialog is up; lib/back-stack.ts carries
+  // the reasoning and the history bookkeeping.
+  //
+  // Hung off open/close rather than an effect on `isOpen`, because
+  // suspend/resume move that flag WITHOUT being a lifecycle event (a
+  // screenshot round trip). Those must not spend or claim a back press: the
+  // dialog the viewer is looking at has not gone anywhere.
+  const releaseBack = useRef<null | (() => void)>(null);
+
   const open = useCallback((payload?: T) => {
     payloadRef.current = payload;
     // An ordinary open ends any suspension: whatever the round trip was, this
     // presentation is a fresh one and owns its own teardown.
     suspended.current = false;
+    if (!releaseBack.current) {
+      releaseBack.current = pushDismissible(() => {
+        // Answering false leaves the claim in place, so a dialog guarding
+        // unsaved work keeps the NEXT press too rather than handing it on.
+        if (opts.current.canClose && !opts.current.canClose()) return false;
+        releaseBack.current = null;
+        setIsOpen(false);
+        return true;
+      });
+    }
     setIsOpen(true);
   }, []);
 
   const close = useCallback(() => {
     if (opts.current.canClose && !opts.current.canClose()) return;
+    // Dismissed by ✕, the backdrop or a caller rather than by back: hand the
+    // claim back so the next press reaches whatever is underneath.
+    const release = releaseBack.current;
+    releaseBack.current = null;
+    release?.();
     setIsOpen(false);
   }, []);
 
