@@ -669,7 +669,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 666 → 667: the waitlist connect callback's status page, loaded with a
   // state no server has minted, so it renders the "link has expired"
   // outcome without needing provider credentials on the preview.
-  assert.equal(DAPP.tests.length, 667);
+  // 667 → 669: Profile staking (#1551) adds Active and Delegated previews.
+  assert.equal(DAPP.tests.length, 669);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

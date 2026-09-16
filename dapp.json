@@ -547,6 +547,12 @@
       "group": "General",
       "description": "OpenRouter Corp API Key",
       "private": true
+    },
+    {
+      "key": "STAKING_OBSERVABILITY_URL",
+      "group": "Native app",
+      "default": "https://observability.usernodelabs.org",
+      "description": "Observability receiver origin for the admitted native chain. Profile staking epoch history reads this service; it never queries a local node."
     }
   ],
   "tests": [
@@ -4262,6 +4268,18 @@
       "path": "/waitlist/connect/github/callback?state=staging-check-unknown&code=staging-check",
       "expectSelector": "#waitlist-connect-status[data-state=\"expired\"]",
       "expectText": "This link has expired"
+    },
+    {
+      "name": "Profile staking: Active shows observability epoch counts (#1551)",
+      "path": "/?demo=staking-active#profile",
+      "expectSelector": "[data-staking-sheet] [data-staking-epoch=\"128\"]",
+      "expectText": "Won slots"
+    },
+    {
+      "name": "Profile staking: Delegated offers only Undelegate (#1551)",
+      "path": "/?demo=staking-delegated#profile",
+      "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
+      "expectText": "Undelegate"
     }
   ],
   "governance": {
