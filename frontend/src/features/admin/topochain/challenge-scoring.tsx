@@ -187,36 +187,49 @@ function RunDetail({ run }: { run: Run | null }) {
 // The phrase comes from the server's measure catalogue, so it cannot drift
 // from the behaviour it describes. Only the arithmetic below is local, and
 // only for display.
+function payoutClause({ measure, points, target }: {
+  measure: Measure | null;
+  points: number | null;
+  target: number | null;
+}): string | null {
+  if (!measure) return null;
+  const n = target && target > 0 ? target : null;
+  const phrase = (measure.phrase || '').replace('{target}', n == null ? 'enough' : String(n));
+  if (points == null) {
+    return 'nothing yet: the reward is not a plain number, so fill in Points.';
+  }
+  const pts = (v: number) => `${Math.round(v).toLocaleString()} pts`;
+  const share = n ? Math.floor(points / n) : points;
+  switch (measure.payout) {
+    case 'per_unit':
+      return `credits ${pts(share)} an account, ${pts(points)} for all ${n}.`;
+    case 'graded':
+      return `credits up to ${pts(share)} each time someone ${phrase}, up to ${n} per window. `
+        + `${pts(points)} at most, and a model grades each one.`;
+    case 'on_target':
+      return `credits ${pts(points)} once someone ${phrase}. Nothing before that.`;
+    default:
+      return `credits ${pts(points)} when someone ${phrase}.`;
+  }
+}
+
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+// The form's version leads with the challenge, rather than splicing it in
+// after the phrase. Several phrases end in a preposition ("sends a report
+// worth acting on"), so the other order produces "acting on on Send useful
+// feedback".
 function ruleSentence({ measure, points, target, challenge }: {
   measure: Measure | null;
   points: number | null;
   target: number | null;
   challenge: string | null;
 }): string | null {
-  if (!measure) return null;
-  const n = target && target > 0 ? target : null;
-  const phrase = (measure.phrase || '').replace('{target}', n == null ? 'enough' : String(n));
-  // The challenge leads, rather than being spliced in after the phrase.
-  // Several phrases end in a preposition ("sends a report worth acting on"),
-  // so "… acting on on Send useful feedback" is what the other order produces.
-  const lead = challenge ? `${challenge}: credits` : 'Credits';
-  const tail = challenge ? '' : ' Pick the challenge it pays into.';
-  if (points == null) {
-    return `${lead} nothing yet: the reward is not a plain number, so fill in Points.`;
-  }
-  const pts = (v: number) => `${Math.round(v).toLocaleString()} pts`;
-  const share = n ? Math.floor(points / n) : points;
-  switch (measure.payout) {
-    case 'per_unit':
-      return `${lead} ${pts(share)} an account, ${pts(points)} for all ${n}.${tail}`;
-    case 'graded':
-      return `${lead} up to ${pts(share)} each time someone ${phrase}, up to ${n} per window. `
-        + `${pts(points)} at most, and a model grades each one.${tail}`;
-    case 'on_target':
-      return `${lead} ${pts(points)} once someone ${phrase}. Nothing before that.${tail}`;
-    default:
-      return `${lead} ${pts(points)} when someone ${phrase}.${tail}`;
-  }
+  const clause = payoutClause({ measure, points, target });
+  if (clause == null) return null;
+  return challenge
+    ? `${challenge}: ${clause}`
+    : `${capitalise(clause)} Pick the challenge it pays into.`;
 }
 
 function RuleForm({
@@ -530,17 +543,40 @@ function ChallengeScoringScreen() {
     else topo()._alert((res.data && res.data.error) || 'Delete failed.');
   }, [load]);
 
+  // One row per rule, and the row says what the rule DOES.
+  //
+  // It used to take three columns plus a whole second table row to say less
+  // than this: "Measures: Tried different apps", "Pays into: Try 3 apps
+  // (every instance)", and then a detail line repeating the same challenge
+  // with its numbers. Every one of those is in the sentence, which is the
+  // same one the form composes — so the list and the editor describe a rule
+  // in exactly the same words.
+  const measureOf = (r: Rule) => payload?.measures.find((m) => m.key === r.measure) || null;
+
   const columns: Column<Rule>[] = [
     { label: 'Rule', primary: true, cell: (r) => r.name },
     {
-      label: 'Measures',
-      cell: (r) => (payload?.measures.find((m) => m.key === r.measure)?.label || r.measure),
+      label: 'What it does',
+      cell: (r) => {
+        const cover = r.covers[0] || null;
+        const clause = payoutClause({
+          measure: measureOf(r),
+          points: cover ? cover.points : r.points,
+          target: cover ? cover.target : r.target,
+        });
+        return (
+          <>
+            <span>{clause ? capitalise(clause) : 'Nothing yet.'}</span>
+            <span className="block mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              {r.bound_to.kind === 'template'
+                ? `Every challenge from ${r.bound_to.label}`
+                : r.bound_to.label}
+              {r.covers.length > 1 ? `, ${r.covers.length} running now` : ''}
+            </span>
+          </>
+        );
+      },
       tdClass: 'text-xs',
-    },
-    {
-      label: 'Pays into',
-      cell: (r) => `${r.bound_to.label}${r.bound_to.kind === 'template' ? ' (every instance)' : ''}`,
-      tdClass: 'text-xs text-zinc-500 dark:text-zinc-400',
     },
     {
       label: 'Status',
@@ -548,28 +584,27 @@ function ChallengeScoringScreen() {
         if (!r.enabled) return <Badge label="Off" tone="zinc" />;
         if (!r.covers.length) return <Badge label="No live challenge" tone="amber" />;
         const live = r.covers.filter((c) => !c.skipped).length;
-        return live
-          ? <Badge label={`Scoring ${live}`} tone="green" />
-          : <Badge label={r.covers[0].skipped || 'Idle'} tone="amber" />;
+        if (!live) return <Badge label={r.covers[0].skipped || 'Idle'} tone="amber" />;
+        // The count is noise when a rule pays into exactly one challenge,
+        // which is every rule until a season runs two events at once.
+        return <Badge label={live > 1 ? `Scoring ${live}` : 'Scoring'} tone="green" />;
       },
     },
   ];
 
-  // The per-challenge detail under each row: what this rule pays into right
-  // now, with the numbers it resolved and the reason for any it is skipping.
-  const extra = (r: Rule) => (r.covers.length ? (
-    <div className="text-xs text-zinc-500 dark:text-zinc-400">
-      <ul className="list-disc ml-5">
-        {r.covers.map((c) => (
-          <li key={c.challenge_id}>
-            {`${c.goal || `Challenge #${c.challenge_id}`}: `}
-            {c.points != null ? `${c.points} pts` : 'no points'}
-            {c.target != null ? `, target ${c.target}` : ''}
-            {c.skipped ? ` (${c.skipped})` : ' (scoring)'}
-          </li>
-        ))}
-      </ul>
-    </div>
+  // Only when a rule pays into SEVERAL live challenges at once is there
+  // anything the row above has not already said.
+  const extra = (r: Rule) => (r.covers.length > 1 ? (
+    <ul className="list-disc ml-5 text-xs text-zinc-500 dark:text-zinc-400">
+      {r.covers.map((c) => (
+        <li key={c.challenge_id}>
+          {`${c.goal || `Challenge #${c.challenge_id}`}: `}
+          {c.points != null ? `${c.points} pts` : 'no points'}
+          {c.target != null ? `, target ${c.target}` : ''}
+          {c.skipped ? ` (${c.skipped})` : ' (scoring)'}
+        </li>
+      ))}
+    </ul>
   ) : null);
 
   const editingRule = editing === 'new'

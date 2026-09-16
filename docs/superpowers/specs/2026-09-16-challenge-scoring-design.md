@@ -198,6 +198,41 @@ Runs are recorded in `challenge_scorer_runs`
 A dry run records what it would have written, which is what lets the preview
 and the history share one shape.
 
+## Adding a measure later
+
+A measure is code, on purpose: it is the thing that decides what people are
+paid, so it should be reviewable and testable before a season runs on it. But
+it is SMALL code, and adding one needs no migration, no admin action beyond
+creating a rule, and no UI change at all — the measure picker and the form's
+help text are derived from the catalogue the API sends, so a new entry shows
+up by itself.
+
+Three edits, roughly forty lines:
+
+1. An entry in `MEASURES` (`challenge-rules.js`): its label, the one-line
+   summary an operator reads in the form, the `phrase` that makes the rule
+   read back as a sentence, and the four behaviour flags — `payout`,
+   `windowed`, `counted`, `graded`.
+2. A SQL constant and a `case` in `loadCandidates` (`challenge-scorer.js`)
+   returning `{ userId, sourceKey, activityAt, description }` per unit.
+   `sourceKey` must name the thing being paid for, so re-running is free.
+3. A test in `tests/challenge-scoring.test.js`.
+
+It ships with the next deploy like any other change.
+
+**The case worth building before that becomes routine.** Most future
+challenges are "did this thing, this many times", and the platform already
+records twenty-five such things in its `events` table — kudos given, a
+proposal voted on, an app created or favourited, a collaborator invited, a
+dev session started. One generic measure that counts rows of a chosen
+`event_type` inside the window would cover all of them with no new code per
+challenge: the rule would carry the event type the same way it carries a
+target, and an operator could stand up "Give kudos to 5 builders" or "Vote on
+5 proposals" from the admin alone. That keeps the boundary this design is
+built on — an admin configures a measure, never writes one — while removing
+the deploy from the common case. Not in this first scope; worth doing before
+the second season.
+
 ## Schema changes
 
 All in `src/db/schema.sql`, idempotent as the file requires:
