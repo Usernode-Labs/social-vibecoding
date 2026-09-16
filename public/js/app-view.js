@@ -3652,7 +3652,22 @@ const AppView = {
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a public discussion. The agent workspace stays private unless you share it separately.' : null;
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
-    if (!rows.some((r) => r.key === 'preview')) rows.unshift({ key: 'preview', label: 'Preview', tone: item.staging_url ? 'ok' : 'mute', text: [item.staging_url ? 'Available for the submitted build.' : 'No staging preview is available yet.'] });
+    if (!rows.some((r) => r.key === 'preview')) {
+      const previewFailed = item.preview_state === 'failed'
+        || (!item.staging_url && !!item.staging_error);
+      const previewBuilding = item.preview_state === 'building' || !!item.staging_building;
+      const previewReady = item.preview_state === 'ready'
+        || (!item.preview_state && !!item.staging_url);
+      rows.unshift({
+        key: 'preview', label: 'Preview',
+        tone: previewFailed ? 'error' : previewReady ? 'ok' : 'mute',
+        text: [previewFailed
+          ? `The submitted preview did not start${item.staging_error ? `: ${String(item.staging_error).slice(0, 280)}` : '.'}`
+          : previewBuilding ? 'The submitted preview is building.'
+            : previewReady ? 'Available for the submitted build.'
+              : 'No staging preview is available yet.'],
+      });
+    }
     if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
     if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
       const preview = rows.find((r) => r.key === 'preview');
@@ -15067,14 +15082,26 @@ const AppView = {
           : `This proposal no longer merges into main on its own. ${remedy}`,
       });
     }
-    // Checks: the real merge gate.
-    if (p.check_state === 'error') {
+    // Preview lifecycle and checks execution are separate facts. A staging
+    // build failure clears the stale URL and exposes staging_error; a runner
+    // or infrastructure failure after a healthy preview exists carries only
+    // check_state='error'. Conflating those produced #2328's simultaneous
+    // green Preview row and red "Preview won't boot" tag.
+    if (p.preview_state === 'failed' || p.staging_error) {
       out.push({
         key: 'preview_failed',
         label: 'Preview won’t boot',
-        detail: p.check_error_detail
-          ? `The staging preview failed to start, so automated checks can’t run: ${String(p.check_error_detail).slice(0, 300)}`
+        detail: p.staging_error
+          ? `The staging preview failed to start, so automated checks can’t run: ${String(p.staging_error).slice(0, 300)}`
           : 'The staging preview failed to start, so automated checks couldn’t run.',
+      });
+    } else if (p.check_state === 'error') {
+      out.push({
+        key: 'checks_error',
+        label: 'Checks couldn’t run',
+        detail: p.check_error_detail
+          ? `The automated check run ended before it could produce a verdict: ${String(p.check_error_detail).slice(0, 300)}`
+          : 'The automated check run ended before it could produce a verdict. The preview may still be available.',
       });
     } else if (p.check_state === 'failing') {
       const failed = Array.isArray(p.test_results)
@@ -16446,6 +16473,12 @@ const AppView = {
     const live = !!url || canRebuild;
     const label = AppView.PREVIEW_TITLES[kind] || AppView.PREVIEW_TITLES.proposal;
 
+    if (it.preview_state === 'failed' || it.staging_error) {
+      return {
+        state: 'error', iconOnly,
+        title: `Preview unavailable: ${String(it.staging_error || 'the submitted preview did not start').slice(0, 280)}`,
+      };
+    }
     if (live) {
       return {
         state: 'live', sessionId, url, iconOnly,
@@ -16456,12 +16489,6 @@ const AppView = {
       return {
         state: 'building', iconOnly,
         title: 'The staging preview is being built. This usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
-      };
-    }
-    if (it.staging_error) {
-      return {
-        state: 'error', iconOnly,
-        title: `Preview unavailable: ${String(it.staging_error).slice(0, 280)}`,
       };
     }
     return null;
@@ -17182,16 +17209,6 @@ const AppView = {
     // matching false is closeStagingOverlay's.
     window.Improve?.setPreviewActive?.(true);
 
-    // #621: read-only viewers can't trigger a rebuild (the ensure POST is
-    // collab-gated) — open the last-known staging URL directly. If it was
-    // GC'd they see the dead-preview page rather than a rebuild spinner.
-    if (AppView.readOnly) {
-      if (fallbackUrl) return AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
-      // Nothing opened — take the optimistic publish above back.
-      else window.Improve?.setPreviewActive?.(false);
-      return;
-    }
-
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
     staging.open();
@@ -17220,7 +17237,14 @@ const AppView = {
 
     let data;
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/ensure-staging`, { method: 'POST' });
+      // Collaborators use the mutating ensure route, which may rebuild a
+      // reclaimed/stale preview. Read-only reviewers use its GET twin: it
+      // performs the same revision, health and edge verification but never
+      // repairs or rebuilds. Neither path trusts a stored URL on its own.
+      const endpoint = AppView.readOnly
+        ? `/api/sessions/${sessionId}/preview-status`
+        : `/api/sessions/${sessionId}/ensure-staging`;
+      const res = await fetch(endpoint, AppView.readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
         AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
@@ -17247,11 +17271,17 @@ const AppView = {
       });
     }
     if (data.status === 'unavailable') {
+      const unavailableCopy = {
+        demo: 'Live previews can’t be rebuilt in this demo environment.',
+        unhealthy: 'The submitted preview is running but is not answering its health check. Try again in a moment.',
+        edge: 'The submitted preview is not reachable through its public address. Try again in a moment.',
+        missing: AppView.readOnly
+          ? 'This preview is no longer running. A collaborator can rebuild it.'
+          : 'This preview isn’t available right now.',
+      };
       AppView._showStagingUnavailable(
         loadId,
-        data.reason === 'demo'
-          ? 'Live previews can’t be rebuilt in this demo environment.'
-          : 'This preview isn’t available right now.'
+        unavailableCopy[data.reason] || 'This preview isn’t available right now.'
       );
       return;
     }
@@ -17307,7 +17337,15 @@ const AppView = {
       });
       return;
     }
-    if (url) return AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
+    if (url) {
+      // The rebuild event says the server finished writing a URL; it does
+      // not prove the new runtime still answers by the time this browser
+      // receives the event. Re-enter ensure-staging so the exact same
+      // revision/health/edge gate runs before iframe navigation (#2328).
+      return AppView.ensureStaging(sessionId, url, pending.testing, {
+        jump: pending.jump, dock: pending.dock,
+      });
+    }
   },
 
   // Open staging in the overlay (fullscreen, or docked beside dev chat).

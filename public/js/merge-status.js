@@ -264,16 +264,24 @@
           title: 'Main has moved on and this proposal no longer merges on its own. ' + who,
         });
     }
-    // 5a — the staging preview itself couldn't boot, so checks never ran
-    // (#237). Distinct from a test failure: nothing was even exercised. Red,
-    // with the captured crash reason in the tooltip so the owner knows what
-    // to fix rather than facing an unexplained "couldn't run".
-    if (check === 'error') {
+    // 5a — preview boot failure and checks-run infrastructure failure are
+    // separate states (#2328). The former has an explicit derived preview
+    // error; check_state='error' by itself only says the runner did not
+    // produce a verdict and must not accuse the app of failing to boot.
+    if (p.preview_state === 'failed' || p.staging_error) {
       return descriptor('preview_failed', "Preview won't boot", 'red', false, {
         glyph: '⚠', votes: votes,
-        title: p.check_error_detail
-          ? ('The staging preview failed to start, so automated checks can\u2019t run. Merge is blocked. Reason: ' + p.check_error_detail)
+        title: p.staging_error
+          ? ('The staging preview failed to start, so automated checks can\u2019t run. Merge is blocked. Reason: ' + p.staging_error)
           : 'The staging preview failed to start, so automated checks couldn\u2019t run. Merge is blocked until it boots cleanly.',
+      });
+    }
+    if (check === 'error') {
+      return descriptor('checks_error', "Checks couldn't run", 'red', false, {
+        glyph: '⚠', votes: votes,
+        title: p.check_error_detail
+          ? ('The automated check run ended before it produced a verdict. Merge is blocked. Reason: ' + p.check_error_detail)
+          : 'The automated check run ended before it produced a verdict. The preview may still be available; merge is blocked until checks complete.',
       });
     }
     // 5b — checks blocked the merge (a test broke).

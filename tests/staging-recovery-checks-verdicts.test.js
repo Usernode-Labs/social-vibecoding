@@ -266,20 +266,27 @@ test('recordChecksSkipped: writes the verdict, broadcasts checks_ready, re-drive
   } finally { restore(); }
 });
 
-test('recordStagingBootFailure is exported and records an error verdict with the summarized reason', async () => {
+test('recordStagingBootFailure records the verdict and retires every stale preview pointer', async () => {
   const { subject, errorChecks, restore } = loadRecovery();
   const pool = makeRecordingPool();
   try {
     assert.equal(typeof subject.recordStagingBootFailure, 'function', 'exported for the dev-turn tails');
     await subject.recordStagingBootFailure({
       config: {}, pool, session: { ...SESSION },
-      commitHash: 'dead9999', err: new Error('relation "posts" does not exist'),
+      commitHash: 'cafe1234', err: new Error('relation "posts" does not exist'),
     });
     assert.equal(errorChecks.length, 1);
     assert.equal(errorChecks[0].sessionId, 42);
-    assert.equal(errorChecks[0].commitSha, 'dead9999');
+    assert.equal(errorChecks[0].commitSha, 'cafe1234');
     assert.equal(errorChecks[0].result.state, 'error');
     assert.match(errorChecks[0].detail, /does not exist/);
+    const retire = pool.queries.find((q) => /SET staging_container_id = NULL/.test(q.sql));
+    assert.ok(retire, 'a failed new build cannot leave the prior preview advertised');
+    assert.match(retire.sql, /staging_url = NULL/);
+    assert.match(retire.sql, /staging_commit_sha = NULL/);
+    assert.match(retire.sql, /checks_commit_sha IS NOT DISTINCT FROM \$2::text/,
+      'a late failed build cannot clear a newer preview');
+    assert.deepEqual(retire.params, [42, 'cafe1234']);
   } finally { restore(); }
 });
 
