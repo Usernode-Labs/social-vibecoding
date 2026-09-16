@@ -205,11 +205,21 @@ const BLOCK_PRODUCTION_SQL = `
 `;
 
 const isoOf = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
-// A `date` column has no time; noon UTC keeps the credit inside its own day
-// in every timezone a report might be read in.
+// A `date` column has no time, and node-postgres hands it back as a Date at
+// LOCAL midnight. Taking that Date as-is stamps the credit a day early on any
+// server east of UTC — which is not merely cosmetic: activity on the FIRST
+// day of a window would then fall before the window opened, and the window
+// guard in challenge-rules.planCredits would drop the credit entirely.
+// Caught by the first end-to-end run, on a machine two hours ahead of UTC.
+//
+// So take the calendar date the column actually holds and pin it to noon UTC,
+// which keeps the credit inside its own day in every timezone it is read in.
 const dateToIso = (v) => {
   if (v == null) return null;
-  const d = v instanceof Date ? v : new Date(`${String(v).slice(0, 10)}T12:00:00Z`);
+  const ymd = v instanceof Date
+    ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
+    : String(v).slice(0, 10);
+  const d = new Date(`${ymd}T12:00:00Z`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
@@ -616,4 +626,5 @@ module.exports = {
   MAX_CREDITS_PER_RUN,
   MAX_GRADES_PER_RUN,
   RULE_CHALLENGES_SQL,
+  dateToIso,
 };

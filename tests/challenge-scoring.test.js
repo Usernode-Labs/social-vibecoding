@@ -444,6 +444,30 @@ test('the leaderboard is not rebuilt while its last snapshot is fresh', async ()
   assert.equal(fresh, null, 'each rebuild ages out older history — do not do it every tick');
 });
 
+// ─── Dates ─────────────────────────────────────────────────────────────
+
+test('a date column is pinned to noon UTC, whatever timezone the server keeps', () => {
+  // `app_activity.date` is a DATE, and node-postgres hands it back as a Date
+  // at LOCAL midnight. Taking that as-is stamped the credit a day early on a
+  // server east of UTC — which is not cosmetic: activity on the FIRST day of
+  // a window then falls before the window opened, and planCredits drops the
+  // credit. Found by the first end-to-end run, on a machine two hours ahead.
+  const localMidnight = new Date(2026, 8, 16, 0, 0, 0);
+  assert.equal(scorer.dateToIso(localMidnight), '2026-09-16T12:00:00.000Z');
+  assert.equal(scorer.dateToIso('2026-09-16'), '2026-09-16T12:00:00.000Z');
+  assert.equal(scorer.dateToIso(null), null);
+});
+
+test('a credit dated on the first day of the window survives the window guard', () => {
+  const start = Date.parse('2026-09-14T00:00:00Z');
+  const row = challengeRow({ schedule_start: iso(start) });
+  const plan = rules.planCredits(rule(), row, {
+    candidates: [candidate(7, 'app:1', scorer.dateToIso(new Date(2026, 8, 14, 0, 0, 0)))],
+    now: NOW,
+  });
+  assert.equal(plan.length, 1, 'noon on the opening day is inside the window in every timezone');
+});
+
 // ─── The admin API ─────────────────────────────────────────────────────
 
 test('a rule must name exactly one binding', () => {
