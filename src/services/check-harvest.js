@@ -326,6 +326,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       dispatched: Array.isArray(manifest.dispatched) ? manifest.dispatched : null,
       ceilingDropped: Number(manifest.ceilingDropped) || 0,
       stdout: capture ? capture.stdout : '',
+      stderr: capture ? (capture.stderr || '') : '',
       runPartial: capture ? !!capture.partial : false,
       runPartialReason: capture ? (capture.partialReason || '') : '',
       unitOutcome,

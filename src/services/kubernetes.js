@@ -615,6 +615,73 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
   };
 }
 
+function platformAssetPath(prefix) {
+  return {
+    path: prefix,
+    pathType: 'Prefix',
+    backend: { service: { name: PLATFORM_ASSET_NAME, port: { number: 3000 } } },
+  };
+}
+
+function isSelfAppIngressHost(hostname, config) {
+  const slug = String(config?.selfAppSlug || '');
+  const domain = String(config?.kubernetes?.appDomain || '');
+  const host = String(hostname || '');
+  if (!slug || !domain || !host.endsWith(`.${domain}`)) return false;
+  const appLabel = host.slice(0, -(domain.length + 1));
+  if (appLabel === slug) return true;
+  const previewId = appLabel.slice(`${slug}--s`.length);
+  return appLabel.startsWith(`${slug}--s`) && /^\d+$/.test(previewId);
+}
+
+// Heal Ingresses that predate the shared asset backend. A recheck reuses a
+// healthy preview rather than redeploying it, so relying only on
+// deployApplication's Ingress upsert leaves those previews permanently on
+// their old catch-all route. Preserve every unrelated rule/path verbatim,
+// replace only our exact three prefixes, and strip them from the self app:
+// its preview must serve the asset bytes from the revision under review.
+function ingressWithPlatformAssetRoutes(ingress, config) {
+  let changed = false;
+  const rules = (ingress?.spec?.rules || []).map((rule) => {
+    if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
+    const selfApp = isSelfAppIngressHost(rule.host, config);
+    const kept = rule.http.paths.filter((item) =>
+      !PLATFORM_ASSET_PREFIXES.includes(item?.path)
+    );
+    const paths = selfApp
+      ? kept
+      : [...PLATFORM_ASSET_PREFIXES.map(platformAssetPath), ...kept];
+    if (JSON.stringify(paths) === JSON.stringify(rule.http.paths)) return rule;
+    changed = true;
+    return { ...rule, http: { ...rule.http, paths } };
+  });
+  if (!changed) return null;
+  return { ...ingress, spec: { ...ingress.spec, rules } };
+}
+
+async function reconcilePlatformAssetIngresses(config) {
+  const cfg = config.kubernetes;
+  const namespace = cfg.appNamespace;
+  const { networking } = getClients();
+  // Test doubles and non-runtime callers may provide only the APIs they
+  // exercise. A real Kubernetes client always exposes both methods.
+  if (!networking?.listNamespacedIngress || !networking?.replaceNamespacedIngress) return 0;
+  const listed = await networking.listNamespacedIngress({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  let updated = 0;
+  for (const ingress of listed.items || []) {
+    if (ingress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    const body = ingressWithPlatformAssetRoutes(ingress, config);
+    const name = ingress?.metadata?.name;
+    if (!body || !name) continue;
+    await networking.replaceNamespacedIngress({ name, namespace, body });
+    updated += 1;
+  }
+  return updated;
+}
+
 // Memoised for the life of the process, which is the right window rather
 // than just a convenience: the image is read from the RUNNING platform
 // Deployment, and a platform rollout replaces this process, so the next one
@@ -695,6 +762,16 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
     // never becomes ready this throws, the caller logs, and the app deploys
     // with exactly its previous routing.
     await waitForDeployment(namespace, PLATFORM_ASSET_NAME, { timeoutMs: readyTimeoutMs });
+    // The backend is now safe to route to. Reconcile old app/preview
+    // Ingresses as well as the one deployApplication is about to upsert;
+    // otherwise an unchanged preview can be rechecked forever without ever
+    // receiving the new routes. Best-effort so an RBAC/list failure cannot
+    // withhold the known-ready backend from the current deployment.
+    await reconcilePlatformAssetIngresses(config).catch((err) => {
+      log.warn('kubernetes', 'existing platform asset routes could not be reconciled', {
+        namespace, error: err?.message,
+      });
+    });
     return PLATFORM_ASSET_NAME;
   })().catch((err) => {
     // Clear the memo so the next deploy retries rather than this process
@@ -1729,11 +1806,23 @@ async function runCheckJob(config, {
     signal?.throwIfAborted();
     const observed = Buffer.concat(retained).toString('utf8');
     const stdout = boundedOutput(Buffer.byteLength(err.stdout || '', 'utf8') >= retainedBytes ? err.stdout : observed);
-    if (retainPartial && stdout && (err.killed || err.captureLogFailed || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')) {
+    // Capture output is a frame protocol, so every runtime-level ending can
+    // be settled honestly even when it produced zero complete frames. Keep
+    // the Job/container reason alongside the salvaged stream instead of
+    // throwing it past the verdict path and losing the only explanation.
+    // Unit suites retain their throwing contract; their outcome parser has
+    // a separate TAP/stderr path.
+    const captureTerminated = !!err.stderr || Number.isInteger(err.code);
+    if (retainPartial && (err.killed || err.captureLogFailed
+        || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || captureTerminated)) {
+      const termination = [err.stderr, Number.isInteger(err.code) ? `exit code ${err.code}` : '']
+        .filter(Boolean).join(', ');
       return { stdout, stderr: err.stderr || '', runtimeName: name, partial: true,
         partialReason: err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'output over maxBuffer'
           : err.captureLogFailed ? 'capture log unavailable'
-            : err.stderr?.includes('OOMKilled') ? 'capture OOM killed' : 'run timed out' };
+            : err.stderr?.includes('OOMKilled') ? 'capture OOM killed'
+              : err.killed ? 'run timed out'
+                : termination ? `capture terminated (${termination})` : 'capture Job failed' };
     }
     throw err;
   } finally {
@@ -2040,6 +2129,8 @@ module.exports = {
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
+  _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
+  _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
   _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
 };

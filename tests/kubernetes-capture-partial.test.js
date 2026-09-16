@@ -112,10 +112,24 @@ test('capture output truncation is explicit and byte-bounded', async (t) => {
   assert.equal(visuals.parseTests(result.stdout).length, 1);
 });
 
-for (const scenario of ['opt-out', 'ordinary-failure', 'empty-output', 'unit-suite']) {
-  test(`partial salvage preserves throwing behavior for ${scenario}`, async (t) => {
-    setup(t, { ...(scenario === 'ordinary-failure' ? { status: { failed: 1 } } : {}),
+for (const scenario of ['ordinary-failure', 'empty-output']) {
+  test(`partial salvage returns runtime diagnostics for ${scenario}`, async (t) => {
+    setup(t, { status: { failed: 1 }, reason: 'Error',
       ...(scenario === 'empty-output' ? { output: '' } : {}) });
+    const result = await kubernetes.runCaptureJob(config, {
+      sessionId: 42, env: {}, salvagePartial: true,
+    });
+    assert.equal(result.partial, true);
+    assert.match(result.partialReason, /capture terminated/);
+    assert.match(result.partialReason, /Error/);
+    assert.equal(result.stderr, 'Error');
+    if (scenario === 'empty-output') assert.equal(result.stdout, '');
+  });
+}
+
+for (const scenario of ['opt-out', 'unit-suite']) {
+  test(`partial salvage preserves throwing behavior for ${scenario}`, async (t) => {
+    setup(t);
     const run = scenario === 'unit-suite' ? kubernetes.runUnitSuiteJob : kubernetes.runCaptureJob;
     await assert.rejects(run(config, { sessionId: 42, env: {}, salvagePartial: scenario !== 'opt-out' }), /Job .* failed/);
   });
