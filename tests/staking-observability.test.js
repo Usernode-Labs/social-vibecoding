@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { bech32m } = require('bech32');
 const { createStakingObservability } = require('../src/services/staking-observability');
 const { stakingRoutes } = require('../src/routes/staking');
 const wallet = 'ut1examplewallet00000000000000000000000';
@@ -65,6 +66,80 @@ test('simultaneous reads coalesce without changing the returned full response', 
   const args = { wallet, chainId: 'chain-a', epoch: 'current' };
   const [a, b] = await Promise.all([service.epochs(args), service.epochs(args)]);
   assert.deepEqual(a, b); assert.equal(urls.length, 2);
+});
+
+const chain = (byte) => bech32m.encode('utc', bech32m.toWords(Buffer.alloc(32, byte)), 1023);
+
+test('a preview without injected native configuration resolves a canonical chain from its parent', async () => {
+  const urls = [];
+  const chainId = chain(1);
+  const service = createStakingObservability({ stakingObservabilityUrl: config.stakingObservabilityUrl }, {
+    now: () => 1000000,
+    previewPlatformUrl: 'https://parent.example/api/app-platform',
+    read: async (url) => {
+      urls.push(url);
+      return { explorer: { status: 'ok', chainId, at: 999999 } };
+    },
+  });
+  const [first, second] = await Promise.all([service.context(), service.context()]);
+  assert.deepEqual(first, { chainId });
+  assert.deepEqual(second, first);
+  assert.deepEqual(await service.context(), first);
+  assert.deepEqual(urls, ['https://parent.example/api/node-status/full']);
+});
+
+test('preview network refresh rejects a former chain before reading or caching epoch data', async () => {
+  let time = 1000000;
+  let currentChain = chain(1);
+  const urls = [];
+  const service = createStakingObservability({ stakingObservabilityUrl: config.stakingObservabilityUrl }, {
+    now: () => time,
+    previewPlatformUrl: 'https://parent.example/api/app-platform',
+    read: async (url) => {
+      urls.push(url);
+      return { explorer: { status: 'ok', chainId: currentChain, at: time } };
+    },
+  });
+  await service.context();
+  time += 30001;
+  currentChain = chain(2);
+  await assert.rejects(service.epochs({ wallet, chainId: chain(1), epoch: 'current' }), (e) => e.status === 409);
+  assert.deepEqual(await service.context(), { chainId: chain(2) });
+  assert.equal(urls.length, 2);
+  assert.ok(urls.every((url) => url === 'https://parent.example/api/node-status/full'));
+});
+
+test('missing, stale, unhealthy and noncanonical parent identities are never cache keys', async () => {
+  for (const explorer of [undefined,
+    { status: 'ok', chainId: 'testnet', at: 1000000 },
+    { status: 'unreachable', chainId: chain(1), at: 1000000 },
+    { status: 'ok', chainId: chain(1), at: 1 },
+    { status: 'ok', chainId: chain(1) },
+  ]) {
+    let calls = 0;
+    const service = createStakingObservability({ stakingObservabilityUrl: config.stakingObservabilityUrl }, {
+      now: () => 1000000, previewPlatformUrl: 'https://parent.example/api/app-platform',
+      read: async () => { calls++; return { explorer }; },
+    });
+    await assert.rejects(service.context(), (e) => e.status === 503);
+    await assert.rejects(service.context(), (e) => e.status === 503);
+    assert.equal(calls, 2, 'failed discovery stays retryable');
+  }
+});
+
+test('production never discovers a chain from a preview locator', async (t) => {
+  const prior = { USERNODE_ENV: process.env.USERNODE_ENV, USERNODE_PLATFORM_API_URL: process.env.USERNODE_PLATFORM_API_URL };
+  t.after(() => {
+    for (const [key, value] of Object.entries(prior)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  process.env.USERNODE_ENV = 'production';
+  process.env.USERNODE_PLATFORM_API_URL = 'https://parent.example/api/app-platform';
+  const service = createStakingObservability({ stakingObservabilityUrl: config.stakingObservabilityUrl }, {
+    read: async () => assert.fail('production must keep its explicit native chain binding'),
+  });
+  await assert.rejects(service.context(), (e) => e.status === 503);
 });
 
 test('routes require authentication and isolate fixtures to staging', async (t) => {

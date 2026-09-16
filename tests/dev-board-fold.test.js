@@ -670,7 +670,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // state no server has minted, so it renders the "link has expired"
   // outcome without needing provider credentials on the preview.
   // 667 → 669: Profile staking (#1551) adds Active and Delegated previews.
-  assert.equal(DAPP.tests.length, 669);
+  // 669 → 670: real staking context verifies preview network configuration.
+  assert.equal(DAPP.tests.length, 670);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { canonicalNativeSessionV2Network } = require('../config');
+
 // The configured observability receiver serves the deployment's admitted
 // chain. Neither its origin nor the chain binding comes from a client URL.
 class StakingDataError extends Error {
@@ -25,14 +27,48 @@ async function fetchJson(url) {
   } finally { await reader.cancel().catch(() => {}); }
 }
 
-function createStakingObservability(config, { read = fetchJson } = {}) {
+function createStakingObservability(config, {
+  read = fetchJson,
+  now = Date.now,
+  previewPlatformUrl = process.env.USERNODE_ENV === 'staging'
+    ? process.env.USERNODE_PLATFORM_API_URL || process.env.USERNODE_PLATFORM_API_V1_URL : null,
+} = {}) {
   const inFlight = new Map();
-  function context() {
+  let previewNetwork = null;
+  let networkRequest = null;
+  async function context() {
     const chainId = config.nativeSessionV2Network?.chainId;
-    if (!chainId || !config.stakingObservabilityUrl) {
+    if (!config.stakingObservabilityUrl) {
       throw new StakingDataError(503, 'Staking epoch data is not configured for this network.');
     }
-    return { chainId };
+    if (chainId) return { chainId };
+    if (!previewPlatformUrl) {
+      throw new StakingDataError(503, 'Staking epoch data is not configured for this network.');
+    }
+    // Preview environments are built by the deployed parent, not this PR.
+    // Older parents do not inject the native chain ID. Their existing public
+    // status endpoint reports the explorer's cached chain identity, so a
+    // preview can bind its cache without guessing an ID or calling a node.
+    // Only the identity is used here; epoch statistics still come solely
+    // from the configured observability receiver.
+    if (previewNetwork && now() - previewNetwork.checkedAt < 30000) {
+      return { chainId: previewNetwork.chainId };
+    }
+    if (!networkRequest) networkRequest = (async () => {
+      try {
+        const url = new URL('/api/node-status/full', previewPlatformUrl);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error();
+        const { explorer } = await read(url.toString());
+        const network = canonicalNativeSessionV2Network(explorer?.chainId);
+        if (!network || explorer.status !== 'ok' || !Number.isFinite(explorer.at)
+            || now() - explorer.at > 120000 || explorer.at - now() > 30000) throw new Error();
+        previewNetwork = { chainId: network.chainId, checkedAt: now() };
+        return { chainId: network.chainId };
+      } catch {
+        throw new StakingDataError(503, 'Could not read the preview network. Please retry.');
+      }
+    })().finally(() => { networkRequest = null; });
+    return networkRequest;
   }
   function upstream(path, parameters) {
     const url = new URL(config.stakingObservabilityUrl.replace(/\/+$/, '') + '/v1/observability/' + path);
@@ -40,7 +76,7 @@ function createStakingObservability(config, { read = fetchJson } = {}) {
     return read(url.toString());
   }
   async function epochs({ wallet, chainId, epoch }) {
-    const binding = context();
+    const binding = await context();
     if (chainId !== binding.chainId) throw new StakingDataError(409, 'The network changed. Refresh staking data.');
     if (typeof wallet !== 'string' || !/^(?:ut1|B62)[a-zA-Z0-9]{20,120}$/.test(wallet)) {
       throw new StakingDataError(400, 'A valid wallet address is required.');

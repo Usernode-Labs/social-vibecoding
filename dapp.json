@@ -4280,6 +4280,11 @@
       "path": "/?demo=staking-delegated#profile",
       "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
       "expectText": "Undelegate"
+    },
+    {
+      "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
+      "path": "/api/me/staking/context",
+      "expectText": "\"chainId\":\"utc1"
     }
   ],
   "governance": {

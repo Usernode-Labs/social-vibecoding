@@ -1333,6 +1333,14 @@ The receiver must serve the configured chain. Moving its host on the same
 chain preserves completed-epoch device caches; switching networks requires
 the correct new chain ID so those caches stay separate.
 
+Previews created by an older parent that does not yet forward the chain ID
+resolve it from that parent's existing public `/api/node-status/full`
+endpoint, using only a fresh, healthy explorer chain identity. The parent
+URL comes from the already injected `USERNODE_PLATFORM_API_URL`; neither
+the URL nor the identity can be supplied by the browser. Production keeps
+its required native network configuration. No epoch statistics are read
+from this status endpoint or from a local node.
+
 **Mail deserves particular attention**, because it is the one setting
 whose absence is invisible from the outside. Both senders are
 always-success by contract (the OTP endpoint is specified that way so it

@@ -21,9 +21,9 @@ function stakingRoutes(config, { service = createStakingObservability(config) } 
       staking: req.query.state === 'delegated'
         ? { kind: 'delegated', delegate: 'Preview delegate', since: '' } : { kind: 'local' } });
   });
-  router.get('/api/me/staking/context', (req, res) => {
+  router.get('/api/me/staking/context', async (req, res) => {
     if (isPreview(req)) return res.json({ chainId: preview.CHAIN });
-    try { res.json(service.context()); }
+    try { res.json(await service.context()); }
     catch (error) { res.status(error.status || 502).json({ error: error.message }); }
   });
   router.get('/api/me/staking/epochs', async (req, res) => {
