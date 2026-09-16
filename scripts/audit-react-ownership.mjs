@@ -289,6 +289,13 @@ const OWNED = [
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx
   { sel: '#browse-sort-bar' },               // features/apps/browse-screen.tsx (#1383)
+  // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders
+  // and reconciles every node under this root, and no public/js/** module has
+  // ever written inside it — App.navigateToWorkshop drives it through the
+  // controller on `window.UsernodeReact.workshop`, the same seam Messages
+  // uses. Listed on the day it shipped so it cannot acquire a second author
+  // later without the sweep saying so.
+  { sel: '#workshop-screen' },               // features/workshop/index.tsx
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
   { sel: '#leaderboard-event-bar' },         // features/leaderboard/event-bar.tsx
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
@@ -333,7 +340,7 @@ const OWNED = [
 const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
-  '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
+  '#home', '#apps', '#apps/recipebot', '#workshop', '#settings', '#settings/app-ai',
   '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',

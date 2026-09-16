@@ -81,6 +81,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -161,6 +162,23 @@ export function Shell() {
           App.navigateToBrowse, which now shows it through the visibility store.
       */}
       <Island name="BrowseScreen"><BrowseScreen /></Island>
+      {/*
+          Workshop screen (#workshop): the viewer's apps with, on each row, how
+          many items that app's own Workshop page holds for them — what they
+          are working on, and the votes waiting on them. Tapping a row goes to
+          that app's Workshop (/app/<slug>/workshop) and the header's back
+          control comes back here; see App.navigateToWorkshop and
+          App._appBackHref in public/js/app.js.
+
+          A fully React-owned sibling screen like #messages-screen: no
+          `public/js/**` module writes inside this root. It ships hidden and
+          EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts
+          in the controller's open(), never in the first render — so the
+          prerender and the hydration agree. Mounted by App.navigateToWorkshop,
+          which shows it through the visibility store (#workshop-screen is in
+          App.REACT_SCREEN_IDS).
+      */}
+      <Island name="WorkshopScreen"><WorkshopScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos

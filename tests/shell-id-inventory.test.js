@@ -302,6 +302,14 @@ const ADDED_IDS = {
   'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
+  // ── The Workshop screen ──────────────────────────────────────────
+  // The app's own Workshop page answers "what is happening in THIS app";
+  // nothing answered "which of my apps wants something from me", short of
+  // opening each one in turn. This is that page's two numbers, once per app.
+  'switcher-row-workshop': 'The app menu\'s Workshop row, directly under Home and above Discover. Home is the launcher (which app do I want to open); this is which app wants something from me, so it leads the Platform group with Home rather than sitting among the places you go once you know nothing is waiting. The adjacent-sibling check in dapp.json that pinned `#switcher-row-home + #switcher-row-discover` names this row between them now.',
+  'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
+  'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
+  'workshop-empty': 'Its nothing-to-show line, for an account with no apps. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────

@@ -3551,6 +3551,16 @@ const App = {
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
+      if (parts[0] === 'workshop') {
+        // The Workshop screen (#workshop): the viewer's apps with their two
+        // Workshop numbers. No gate beyond the anonymous-shell branch above —
+        // the counts endpoint is me-scoped server-side and answers 401 to a
+        // caller with no session. No second segment: the drill-in is the
+        // app's own /app/<slug>/workshop route, not a level of this screen.
+        App.setChromeless(false);
+        App.navigateToWorkshop();
+        return;
+      }
       if (parts[0] === 'apps') {
         // Browse-all-apps screen (home-screen split). No gate: the list
         // is the visibility-filtered /api/apps payload, and the
@@ -3836,6 +3846,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
+            if (App._inWorkshop) App._exitWorkshop();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
@@ -3951,7 +3962,7 @@ const App = {
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
-    'leaderboard-screen', 'profile-screen', 'admin-screen',
+    'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
@@ -3989,6 +4000,12 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
+    // The app-entry breadcrumb's single clearer (see App._appBackHref): every
+    // reveal of a screen that is not the app view ends the visit it was about.
+    // `app-view` is excluded because navigateToApp does not come through here
+    // at all — it reveals #app-view itself — but a `keepAlso` reveal during a
+    // zoom-out would, and clearing on the way OUT of an app is right anyway.
+    if (revealId !== 'app-view') App._appBackHref = null;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     App.setBackIcon(revealId === 'home-screen' || revealId === 'browse-screen' ? 'none' : 'home');
@@ -4038,6 +4055,10 @@ const App = {
     // one owner. tests/react-screen-ids-consistency.test.js pins the rule
     // for every screen root at once.
     'messages-screen',
+    // Workshop (#workshop). React-owned end to end from the day it shipped —
+    // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
+    // be listed here or the class gets the two owners the note above describes.
+    'workshop-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -4206,6 +4227,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
@@ -4309,6 +4331,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
@@ -4377,6 +4400,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -4400,6 +4424,85 @@ const App = {
     App._inBrowse = false;
     if (window.Browse?.close) Browse.close();
   },
+
+  // The Workshop screen (#workshop): every app you have, with how much of its
+  // own Workshop page is addressed to you.
+  //
+  // A SCREEN, not a sheet, on the same reasoning #1443 gave Messages: it is
+  // a row in the chip's menu, and the rule for that menu is that everything
+  // in it has its own page. It is also what the surface IS — a place you
+  // start from and drill into, which is the shape a screen has and an overlay
+  // does not.
+  //
+  // The re-entry guard exists because popstate AND hashchange both reach
+  // restoreFromHash, so a second run would replay the entry animation on what
+  // is already on screen (#979). There is no level below #workshop — the
+  // drill-in is the app's OWN route — so it has nothing to route and simply
+  // returns.
+  //
+  // `_inWorkshop` IS NOT ENOUGH ON ITS OWN, and neither is the controller's
+  // `isOpen()`. Both stay true while the viewer is inside an app they opened
+  // from here: nothing on the way into an app clears either, because
+  // navigateToApp reveals #app-view through the kit's `after` callback rather
+  // than through an exit chain. A guard built on one of them alone would
+  // refuse to come BACK — the one navigation this screen exists to support.
+  //
+  // `App.currentApp` is what separates the two. It is the slug while an app
+  // is on screen and this method nulls it synchronously, so "on the Workshop"
+  // is the pair: the flag set, and no app open. Both halves are written
+  // BEFORE the transition, which is what the double-run needs — popstate and
+  // hashchange land in the same tick, and `_revealedScreen` is not assigned
+  // until the callback runs, so it would let the second run straight through.
+  navigateToWorkshop() {
+    if (App._inWorkshop && !App.currentApp) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('workshop-screen');
+    App._inWorkshop = true;
+    // Loads into the still-hidden root: the island renders nothing remote
+    // until these fetches land, so the screen is revealed empty and fills,
+    // exactly as Home and Browse do.
+    window.UsernodeReact?.workshop?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('workshop-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Workshop');
+      // The house, like every other platform screen: there is no level above
+      // this one that is not home. _showOnlyScreen has already published the
+      // same default; the call is kept explicit because this is the screen
+      // whose back slot the change is about.
+      App.setBackIcon('home');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only (#979) — see _exitLeaderboard.
+  _exitWorkshop() {
+    App._inWorkshop = false;
+    window.UsernodeReact?.workshop?.close?.();
+  },
+
+  // Where an app view was entered FROM, when that origin is a screen with a
+  // level of its own to go back to. Null everywhere else, which is every
+  // route the platform had before #workshop: an app reached from Home, a
+  // notification or a cold deep link has no level above it but home, and the
+  // house is the honest glyph for that (see features/header/back-button-store.js).
+  //
+  // Exactly one writer (navigateToApp, below) and exactly one clearer
+  // (_showOnlyScreen, which runs on every reveal of a NON-app-view root and so
+  // ends the app visit this breadcrumb was about). AppView._repaintDevBody
+  // reads it on the Dev lander and turns it into `setBackIcon('arrow', href)`,
+  // which is also what enables the native back gesture — see
+  // features/header/native-back-navigation.ts, whose predicate is exactly
+  // "arrow, with an href, and not the App tab".
+  _appBackHref: null,
 
   // Sections of the admin console that were PUBLIC pages before #860
   // folded them in (/status and /node-status). A signed-in non-admin who
@@ -4449,6 +4552,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
@@ -4497,6 +4601,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
@@ -4550,6 +4655,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
@@ -4894,6 +5000,22 @@ const App = {
     // Resolved BEFORE the _exitX flags are cleared — _departingScreen
     // reads them to name whichever screen root is actually on screen.
     const departing = App._departingScreen();
+    // Resolved here for the same reason `departing` is: the _exitX flags below
+    // are what says which screen the viewer is coming FROM. The Workshop
+    // screen is the one origin with a level of its own to return to, so
+    // entering an app from it leaves the Dev lander a real ← rather than the
+    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set,
+    // like `_inBrowse`: the next screen entry clears it, and _showOnlyScreen
+    // clears this the moment any non-app root is revealed.
+    //
+    // A BARE FRAGMENT, not a resolved URL. #back-btn's click handler follows
+    // its own href only when it `startsWith('#')` — anything else falls
+    // through to navigateHome, which is the fallback for a screen that named
+    // no parent, and an arrow that went home would be a lie. Set as the
+    // anchor's href it reads as `/app/<slug>/workshop#workshop`, which
+    // restoreFromHash's mixed-address healing rewrites to `/#workshop`, so a
+    // middle-click into a new tab lands on the screen too.
+    App._appBackHref = App._inWorkshop ? '#workshop' : null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
@@ -5034,6 +5156,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on

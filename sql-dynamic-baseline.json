@@ -759,6 +759,13 @@
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
     },
     {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "930ea21d49f9b0b9c5cb",
+      "count": 1,
+      "preview": "COUNTS_SQL"
+    },
+    {
       "source": "src/services/admin-approval.js",
       "kind": "structural-template",
       "fingerprint": "eccf2f5dfb3499411ebb",

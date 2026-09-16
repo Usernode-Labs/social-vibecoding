@@ -106,6 +106,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
+  BoardIcon,
   ChatBubbleTailIcon,
   ChevronRightIcon,
   CogIcon,
@@ -546,6 +547,20 @@ export function AppsSwitcherSheet(): ReactNode {
               AppContext.dismissForNav();
               (window as any).App?.navigateHome?.();
             }}
+          />
+          {/* Workshop, directly under Home, because it answers the question
+              Home does not: Home is the launcher — which app do I want to
+              OPEN — and this is which app wants something from ME. Every app
+              already has a Workshop page (its Dev lander); this is that page's
+              two numbers, once per app, on one screen. It leads the rest of
+              the group for the same reason Home does: it is where a returning
+              member starts, and Discover, Challenges and Messages are all
+              places you go once you know there is nothing waiting. */}
+          <MenuRow
+            id="switcher-row-workshop"
+            href="#workshop"
+            icon={<BoardIcon />}
+            label="Workshop"
           />
           <MenuRow
             id="switcher-row-discover"

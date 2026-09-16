@@ -1,0 +1,383 @@
+/**
+ * `#workshop-screen` — the Workshop across all of your apps.
+ *
+ * ── What it is for ─────────────────────────────────────────────────────
+ *
+ * Every app has a Workshop page: its Dev lander, which opens on "What you
+ * are working on" and carries a "Needs you" tab beside it
+ * (features/dev-board/workshop/workshop.tsx). That page answers "what is
+ * happening in THIS app", and it is the right page — but the question a
+ * person actually arrives with is one level up: WHICH of my apps wants
+ * something from me right now. Answering it meant opening each app's
+ * Workshop in turn, which is how a good screen becomes a chore.
+ *
+ * So this is the same two numbers, once per app, on one screen. A row says
+ * how many items that app's own Workshop holds for you, and tapping it goes
+ * to that Workshop — the existing page, not a copy of it. The header's back
+ * control then points back here (see App.navigateToWorkshop and
+ * `App._appBackHref` in public/js/app.js), so the two screens read as one
+ * level and its drill-in rather than as two places that happen to link.
+ *
+ * ── Where the numbers come from ────────────────────────────────────────
+ *
+ * GET /api/workshop/counts (src/routes/workshop-overview.js), which answers
+ * for every app in one query. NOT the board's own load: that is eight
+ * requests per app, and at forty apps it is not a page. Its module header
+ * documents the two populations and the one thing the "needs you" number
+ * leaves out — the unclaimed GitHub issues at the tail of that deck, which
+ * are not in Postgres — which is why this screen's own legend says "votes
+ * waiting" rather than claiming the whole tab.
+ *
+ * The APP LIST is a second read, and deliberately a different one:
+ * GET /api/apps plus `Home.partitionApps(...).yours`, exactly as the app
+ * chip's menu composes its strip (features/app-context/app-context-sheet.tsx).
+ * "Which apps are mine" is a decision the platform already makes once, and a
+ * count endpoint that re-answered it in SQL would be a second copy of it that
+ * could drift. The counts arrive keyed by slug and are joined onto those rows
+ * here; a slug the endpoint said nothing about is two zeroes.
+ *
+ * ── The island rules it keeps ──────────────────────────────────────────
+ *
+ * Nothing in `public/js/**` writes inside this root, so the region may hold
+ * state. Its FIRST render is the shipped document — `hidden`, an empty list,
+ * no rows — and both fetches run from `open()`, never during render. Screen
+ * visibility is the shell's store (`#workshop-screen` is in
+ * App.REACT_SCREEN_IDS) and the root's `className` is a constant, so the
+ * class has exactly one owner.
+ */
+
+import { useRef, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
+
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppsLoadError } from '../apps/load-error';
+import { useStoreState } from '../../lib/use-store-state';
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { workshopStore } from './workshop-store.js';
+
+// The legacy router reads the DOM on the line after it routes — the ?shot=
+// capture fixtures assert the revealed screen inside the same task — so the
+// store's notification has to land synchronously. Same install, same reason,
+// as features/header/mount.ts.
+workshopStore.setFlush(flushSync);
+
+type WorkshopRow = {
+  slug: string;
+  name?: string;
+  icon_url?: string | null;
+  icon_emoji?: string | null;
+  working: number;
+  needs: number;
+};
+
+type Counts = Record<string, { working?: number; needs?: number } | undefined>;
+
+/** The demo flag the board's own fetches forward, in the same spelling. */
+function demoQuery(): string {
+  try {
+    return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The viewer's apps with their two counts, newest question first.
+ *
+ * Exported and pure so tests can drive the ordering without a fetch. The
+ * order is the argument this screen makes: an app that needs a decision from
+ * you outranks one where you have work of your own outstanding, which
+ * outranks a quiet one — and inside each band the platform's own "Your apps"
+ * order (favourite order, then activity) is preserved, because `sort` is
+ * stable and this comparator answers 0 for two rows in the same band.
+ */
+export function orderRows(apps: WorkshopRow[]): WorkshopRow[] {
+  const band = (row: WorkshopRow) => (row.needs > 0 ? 0 : (row.working > 0 ? 1 : 2));
+  return apps.slice().sort((a, b) => band(a) - band(b));
+}
+
+/** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
+export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, counts: Counts): WorkshopRow[] {
+  return apps.map((app) => {
+    const found = counts[app.slug];
+    return {
+      ...app,
+      working: Number(found?.working) || 0,
+      needs: Number(found?.needs) || 0,
+    };
+  });
+}
+
+/**
+ * One number with its glyph.
+ *
+ * TINTED ONLY WHEN IT IS NOT ZERO. A row of grey zeroes is the common case on
+ * a big account, and painting those in the accent would make every app look
+ * like it was asking for something. The glyphs are the ones the app's own
+ * Workshop uses for the same two things — the raised hand for your own work,
+ * the bubble-with-a-tick for the Needs-you deck — so the number here and the
+ * pane it counts wear the same mark.
+ */
+function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label: string }) {
+  const lit = n > 0;
+  const tint = kind === 'needs'
+    ? 'text-violet-700 dark:text-violet-300 bg-violet-500/10'
+    : 'text-zinc-700 dark:text-zinc-200 bg-zinc-500/10';
+  return (
+    <span
+      {...{ [`data-workshop-${kind}`]: String(n) }}
+      // ONE accessible name, not a glyph plus a bare digit. The pill reads
+      // "2 items you are working on" to a screen reader and carries the same
+      // sentence as its pointer tooltip; the glyph is decoration, which is
+      // what a legend a thumb cannot hover is for.
+      aria-label={`${n} ${label}`}
+      title={`${n} ${label}`}
+      className={'shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 '
+        + 'text-xs font-semibold tabular-nums '
+        + (lit ? tint : 'text-zinc-400 dark:text-zinc-500')}
+    >
+      {kind === 'needs'
+        ? <SpeechCheckIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        : <HandRaisedIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+      {n}
+    </span>
+  );
+}
+
+/**
+ * One app, as a grouped-list row.
+ *
+ * `ListRow` from @/components/ui/grouped-list is the widget language's primary
+ * content shape, and this is the shape it is for: a leading app tile, the
+ * app's name as the row's subject, something on the trailing edge and a
+ * disclosure chevron. It draws the inset hairline between rows (a
+ * pseudo-element, so the last row has none without this file knowing which
+ * one is last) and the `active:` press state.
+ *
+ * AN ANCHOR, which is what `as="a"` on that primitive is for: cmd/ctrl-click,
+ * middle-click, "open in new tab" and the context menu are the browser's to
+ * give, and the shell takes that seriously enough that #back-btn and the app
+ * chip's own menu rows are anchors. `/app/<slug>/workshop` is App._appUrl's
+ * spelling for that page (`boardView: 'workshop'`), so a copied address
+ * restores the same screen cold.
+ *
+ * A plain primary click routes in place through `App.navigateToApp`, which is
+ * also what records the back breadcrumb — it reads `App._inWorkshop`, so the
+ * arrow appears because the visit came from here rather than because this row
+ * asked for it. A modified click never reaches the handler: the browser
+ * handles it natively, which is the whole reason this is an anchor.
+ *
+ * The leading tile is `.app-icon-tile` at the primitive's own `sm` geometry
+ * (2.75rem, `rounded-xl`), exactly as features/apps/browse-list.tsx draws it —
+ * app.css owns that face, and a call site must not repaint it.
+ */
+function AppRow({ row }: { row: WorkshopRow }) {
+  return (
+    <ListRow
+      as="a"
+      href={`/app/${encodeURIComponent(row.slug)}/workshop`}
+      data-workshop-app={row.slug}
+      onClick={(event) => {
+        const win = window as any;
+        if (win.NavLink?.isNativeClick?.(event)) return;
+        event.preventDefault();
+        win.App?.navigateToApp?.(row.slug, 'dev');
+      }}
+      leading={(
+        <div
+          className={'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
+            + 'flex items-center justify-center font-bold text-lg'}
+          data-icon={appIconKind(row as any)}
+        >
+          <AppIconContent app={row as any} />
+        </div>
+      )}
+      title={row.name || row.slug}
+      trailing={(
+        /* ONE trailing group, with its own tight gap. `ListRow` sets `gap-4`
+           between every element it lays out, which is right between the tile,
+           the title and the trailing edge and is 16px too much BETWEEN two
+           numbers that read as one column. Grouping them also buys the title
+           that width back, and at phone width the title is what truncates. */
+        <span className="flex shrink-0 items-center gap-1.5">
+          <Count kind="working" n={row.working} label="items you are working on" />
+          <Count kind="needs" n={row.needs} label="votes waiting on you" />
+        </span>
+      )}
+    />
+  );
+}
+
+/**
+ * Four rows of the real geometry, so the list does not change shape on load.
+ *
+ * The bars sit in a `ListRow` rather than a hand-built div, which is what
+ * keeps "the real geometry" true when the row's padding or its tile size
+ * changes. `chevron={false}` because a disclosure arrow on a row that
+ * discloses nothing yet is the one part of the shape worth NOT reproducing.
+ */
+function RowSkeletons(): ReactNode {
+  return (
+    <SkeletonGroup label="Loading your apps">
+      {[0, 1, 2, 3].map((i) => (
+        <ListRow
+          key={i}
+          chevron={false}
+          leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
+          title={<Skeleton className="max-w-[40%]" />}
+          trailing={(
+            <>
+              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
+              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
+            </>
+          )}
+        />
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+export function WorkshopScreen() {
+  const screenRef = useRef<HTMLElement | null>(null);
+  const state = useStoreState(workshopStore) as {
+    open: boolean; rows: WorkshopRow[] | null; error: boolean;
+  };
+  useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
+  const rows = state.rows ? orderRows(state.rows) : null;
+  const empty = !!rows && rows.length === 0 && !state.error;
+
+  return (
+    <main
+      ref={screenRef}
+      id="workshop-screen"
+      className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      style={{ position: 'relative' }}
+    >
+      {/* SECTION LABEL over a card of hairline-separated rows — the widget
+          language's primary content shape, drawn by @/components/ui/grouped-list
+          rather than by hand. The card carries no border: the language
+          separates by figure/ground, and this route paints the wallpaper
+          ground (see the `:is(...)` list in app.css) that the white card
+          floats on. `max-w-2xl mx-auto` is the only thing here that is this
+          screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
+      <div className="max-w-2xl mx-auto pb-8">
+        <SectionHeader>Your apps</SectionHeader>
+        {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
+            read, and the per-pill tooltip is not available to a thumb — so the
+            two glyphs are named once, here, in the muted line the language
+            uses under a section label. */}
+        <p className="px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
+          <span className="inline-flex items-center gap-1">
+            <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            You are working on
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            Votes waiting on you
+          </span>
+        </p>
+        <GroupedList id="workshop-list">
+          {/* FIRST, not last, and that is load-bearing: the row separator is
+              `[&:not(:last-child)]:after:*` on the row itself, so a note after
+              the rows would leave the last one drawing a hairline under
+              nothing. Ahead of them it changes which element is last not at
+              all. It ships in the prerender — hidden — because the shell's id
+              inventory resolves against that document. */}
+          <p
+            id="workshop-empty"
+            className={(empty ? '' : 'hidden ')
+              + 'px-4 py-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-500'}
+          >
+            You have no apps yet. Discover finds the ones you can join.
+          </p>
+          {state.error
+            ? (
+              <AppsLoadError
+                title="Couldn't load your workshop"
+                onRetry={() => { void workshopController.reload(); }}
+              />
+            )
+            : rows === null
+              ? <RowSkeletons />
+              : rows.map((row) => <AppRow key={row.slug} row={row} />)}
+        </GroupedList>
+      </div>
+    </main>
+  );
+}
+
+/**
+ * The legacy seam, the same shape as `window.UsernodeReact.messages`.
+ *
+ * `App.navigateToWorkshop()` calls `open()` on the still-hidden root and
+ * `_exitWorkshop` calls `close()` on the way out. `open` is not decoration:
+ * it is the LIVENESS flag a load checks before it publishes, so a fetch that
+ * lands after the viewer has left cannot paint rows into a screen they are no
+ * longer on — and cannot race the next entry's own load. The re-entry guard
+ * is the router's (see App.navigateToWorkshop), not this flag's, for the
+ * reason its note gives.
+ *
+ * Both reads are fired together and the counts are tolerated as missing: an
+ * app list with no numbers is a usable launcher, a screen that refuses to
+ * draw because one of two requests failed is not. Losing the LIST is the
+ * error card, because there is then nothing to draw.
+ */
+export const workshopController = {
+  open() {
+    workshopStore.set({ open: true });
+    return workshopController.reload();
+  },
+  close() {
+    workshopStore.set({ open: false });
+  },
+  isOpen() {
+    return workshopStore.get().open;
+  },
+  async reload() {
+    const demo = demoQuery();
+    workshopStore.set({ error: false });
+    let apps: Array<Omit<WorkshopRow, 'working' | 'needs'>> | null = null;
+    let counts: Counts = {};
+    try {
+      const [appsRes, countsRes] = await Promise.all([
+        fetch(`/api/apps${demo}`),
+        fetch(`/api/workshop/counts${demo}`).catch(() => null),
+      ]);
+      if (appsRes.ok) {
+        const data = await appsRes.json();
+        const home = (window as any).Home;
+        apps = home?.partitionApps
+          ? home.partitionApps(data.apps || []).yours
+          : (data.apps || []);
+      }
+      if (countsRes && countsRes.ok) {
+        const data = await countsRes.json().catch(() => null);
+        if (data && data.counts && typeof data.counts === 'object') counts = data.counts;
+      }
+    } catch {
+      // Offline is a state, not a crash: fall through to the error card,
+      // which offers the same load again rather than a page reload.
+    }
+    // Left the screen while this was in flight: say nothing. The rows are
+    // kept as they were, so a re-entry paints the last list at once and
+    // refreshes under it — the app strip in the chip's menu takes the same
+    // view of a stale answer.
+    if (!workshopStore.get().open) return;
+    if (!apps) {
+      workshopStore.set({ error: true });
+      return;
+    }
+    workshopStore.set({ rows: joinCounts(apps, counts), error: false });
+  },
+};
+
+if (typeof window !== 'undefined') {
+  const host = (window as unknown as { UsernodeReact?: Record<string, unknown> });
+  const bridge = (host.UsernodeReact ||= {});
+  bridge.workshop = workshopController;
+}
+
+export { workshopStore };
