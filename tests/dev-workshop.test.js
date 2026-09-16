@@ -2321,11 +2321,11 @@ test('the grouping is a two-tab control, and theme is what an untouched Workshop
     dapp.tests.some((t) => /\[data-ws-ear\] > \.dev-ws-group/.test(t.expectSelector || '')),
     'one names the ear',
   );
-  // The head it left, and `:first-child` is the stronger claim now that the
-  // eyebrow is gone: the tools LEAD the head, with neither the strip nor a
-  // title line before them.
+  // The head it left. `:first-child` said this once and cannot any more: the
+  // ear is the head's first child now, so the claim is spelled out instead —
+  // no grouping strip in the head's own flow, and no title line either.
   assert.ok(
-    dapp.tests.some((t) => /pane-head:not\(:has\(> \.dev-ws-group\)\) > #dev-actions:first-child/
+    dapp.tests.some((t) => /pane-head:not\(:has\(> \.dev-ws-group\)\):not\(:has\(> \.dev-ws-eyebrow\)\) > #dev-actions/
       .test(t.expectSelector || '')),
     'and one names the head it left',
   );
@@ -2869,15 +2869,17 @@ test('the grouping strip is one node, in the ear above 768px and the head below'
     'above the breakpoint it is the ear');
   assert.match(WORKSHOP, /\{earUp \? null : <GroupStrip group=\{group\} \/>\}/,
     'below it, the pane head, exactly as before');
-  // A CHILD OF THE PANE, not of the nav, and that is the whole point of the
-  // absolute positioning: on By stage the pane runs edge to edge while the
-  // nav keeps the reading column, so an ear in the nav would detach from the
-  // card's corner the moment you switched panes.
-  const paneOpen = WORKSHOP.indexOf('<section className="dev-ws-pane" data-ws-pane="">');
-  const earAt = WORKSHOP.indexOf('data-ws-ear=""');
+  // A CHILD OF THE HEAD, and that is what makes it TRAVEL. The head pins
+  // while the list scrolls under it and the ear hangs off the head's top edge,
+  // so an ear anchored to the pane scrolled away and left the pinned controls
+  // with their own grouping tabs gone. The head is positioned, so it is the
+  // containing block; unscrolled its top edge IS the pane's top edge, which is
+  // why this reads exactly as it did when the pane owned it.
   const headAt = WORKSHOP.indexOf('className="dev-ws-pane-head"');
-  assert.ok(paneOpen > 0 && earAt > paneOpen && earAt < headAt,
-    'the ear is the pane\'s first child, before the head');
+  const earAt = WORKSHOP.indexOf('data-ws-ear=""');
+  const actionsAt = WORKSHOP.indexOf('<DevActionsRow');
+  assert.ok(headAt > 0 && earAt > headAt && earAt < actionsAt,
+    'the ear is the head\'s first child, ahead of the tools');
 });
 
 test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
@@ -2912,9 +2914,9 @@ test('the ear abuts the pane and wears its face, on its own breakpoint', () => {
   // flush with the pane's right edge and 22px on By stage, where the pane runs
   // on past it. See the junction test below.
   assert.match(CSS,
-    /\.dev-ws-pane:has\(> \.dev-ws-ear\) > \.dev-ws-pane-head \{\n\s*border-top-right-radius: var\(--dev-ws-ear-tr, 0px\);/);
+    /\.dev-ws-pane:has\(\.dev-ws-ear\) > \.dev-ws-pane-head \{\n\s*border-top-right-radius: var\(--dev-ws-ear-tr, 0px\);/);
   // The containing block is scoped, so a pane without an ear is untouched.
-  assert.match(CSS, /\.dev-ws-pane:has\(> \.dev-ws-ear\) \{ position: relative; \}/);
+  assert.match(CSS, /\.dev-ws-pane:has\(\.dev-ws-ear\) \{ position: relative; \}/);
   // STRETCHED TO THE PILL, and the tabs divide what that gives them. The ear
   // hugged its two labels for one round and the pair sat in a wide band of
   // dead air — 83px of it at every width, because both boxes were
@@ -3924,10 +3926,17 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // `order: 0` is the whole move — the nav is already first in the DOM, so
   // dropping the phone's `order: 1` paints it where it is written.
   assert.match(rail[1], /order: 0;/, 'it paints where it is written');
-  // RELATIVE, not static: nothing to stick to at the head of a column, but the
-  // bar must stay the containing block for the selection marker and the
-  // element its tabs' offsetLeft/offsetTop resolve against.
-  assert.match(rail[1], /position: relative;/, 'still the containing block for the marker');
+  // STICKY, not static — and sticky is positioned, so it remains the
+  // containing block for the selection marker and the element its tabs'
+  // offsetLeft/offsetTop resolve against, which is all `relative` was ever
+  // here for. The strip PINS now: it is one band with the ear and the head.
+  assert.match(rail[1], /position: sticky;/, 'still the containing block for the marker');
+  // The offset is set AFTER `inset: auto`, or the shorthand resets it and the
+  // strip pins to nothing. Measured when it was written above: the strip's top
+  // went to -890 on a 900px scroll while the head it travels with stayed.
+  const insetAt = rail[1].indexOf('inset: auto;');
+  const topAt = rail[1].indexOf('top: 0;');
+  assert.ok(insetAt > 0 && topAt > insetAt, '`top: 0` comes after `inset: auto`');
   // THE PHONE BAR'S BOX DOES NOT COME UP HERE, and all three of these are
   // regressions, not tidying. `left/right/bottom` place a FIXED pill against
   // the viewport; `position: relative` does not ignore them, it SHIFTS by
@@ -4400,7 +4409,7 @@ test('no line runs between the ear and the pane, and the two right edges are one
   // on a card. A shadow cannot be drawn on part of a side, so the ring gives
   // up its top here and a pseudo-element puts it back, clipped to stop where
   // the ear starts.
-  const scoped = CSS.slice(CSS.indexOf('  .dev-ws-pane:has(> .dev-ws-ear) {'));
+  const scoped = CSS.slice(CSS.indexOf('  .dev-ws-pane:has(.dev-ws-ear) {'));
   const ring = scoped.slice(0, scoped.indexOf('::before'));
   assert.match(ring, /inset 1px 0 0 var\(--app-sheet-line\)/);
   assert.match(ring, /inset -1px 0 0 var\(--app-sheet-line\)/);
@@ -4414,7 +4423,7 @@ test('no line runs between the ear and the pane, and the two right edges are one
   // along its top edge. `::before` is the run to its left, which always
   // exists; `::after` is the run to its right, which exists only on By stage,
   // where the pane continues past the ear.
-  assert.match(CSS, /\.dev-ws-pane:has\(> \.dev-ws-ear\)::before,\n  \.dev-ws-pane:has\(> \.dev-ws-ear\)::after \{/);
+  assert.match(CSS, /\.dev-ws-pane:has\(\.dev-ws-ear\)::before,\n  \.dev-ws-pane:has\(\.dev-ws-ear\)::after \{/);
   assert.match(CSS, /box-shadow: inset 0 1px 0 var\(--app-sheet-line\);/);
   assert.match(CSS, /clip-path: inset\(0 calc\(100% - var\(--dev-ws-ear-left, 100%\) - 1px\) 0 0\);/);
   // A zero-width tail clips to nothing, which is how "no segment to the right"
@@ -4428,8 +4437,8 @@ test('no line runs between the ear and the pane, and the two right edges are one
   // round on By stage, where the pane runs on past the ear and the corner is
   // nowhere near it. Squaring it unconditionally would leave a squared corner
   // on a pane the ear has nothing to do with.
-  for (const sel of ['\\.dev-ws-pane:has\\(> \\.dev-ws-ear\\) > \\.dev-ws-pane-head',
-    '\\.dev-ws-pane:has\\(> \\.dev-ws-ear\\)']) {
+  for (const sel of ['\\.dev-ws-pane:has\\(\\.dev-ws-ear\\) > \\.dev-ws-pane-head',
+    '\\.dev-ws-pane:has\\(\\.dev-ws-ear\\)']) {
     assert.match(CSS, new RegExp(`${sel} \\{[^}]*border-top-right-radius: var\\(--dev-ws-ear-tr, 0px\\)`));
   }
 });
@@ -4457,4 +4466,50 @@ test('the ear stays beside the pill when By stage widens the pane', () => {
   assert.match(ear, /bottom: 100%/);
   assert.match(ear, /right: var\(--dev-ws-ear-right, 0px\)/);
   assert.ok(!/left: 0|right: 0;/.test(ear), 'neither edge is pinned to the pane');
+});
+
+test('the tab strip, the ear and the head pin as one band (#2339 follow-up)', () => {
+  // WHAT THIS EXISTS FOR. A first cut read "have the controls scroll with the
+  // page" as "let them scroll away" and removed the stickiness the head
+  // already had — the opposite of the ask, and it shipped. The controls belong
+  // WITH the list you are narrowing: all three stay put while it scrolls.
+  //
+  // Three elements, three mechanisms, and the test is that all three are
+  // present — no single declaration expresses "one band".
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // 1. THE STRIP pins to the scroller's top. `top` after `inset: auto`, or the
+  //    shorthand resets it — measured, the strip went to -890 on a 900px
+  //    scroll while the head stayed.
+  const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(decls);
+  assert.ok(rail, 'the rail is restyled for width');
+  assert.match(rail[1], /position: sticky;/);
+  assert.ok(rail[1].indexOf('top: 0;') > rail[1].indexOf('inset: auto;'),
+    '`top: 0` is set after `inset: auto`');
+
+  // 2. THE HEAD keeps the base rule's `position: sticky` and only moves where
+  //    it rests: under the strip, by the strip's MEASURED height plus the
+  //    column gap. `top: 0` would slide it under the strip.
+  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: var\(--dev-ws-head-top, 0px\)/);
+  assert.match(WORKSHOP, /const WS_GAP_PX = 10;/);
+  assert.match(WORKSHOP,
+    /setProperty\('--dev-ws-head-top', `\$\{Math\.round\(n\.height\) \+ WS_GAP_PX\}px`\)/);
+  assert.ok(WORKSHOP.includes("'--dev-ws-head-top'"), 'and it is cleared with the rest');
+
+  // 3. ABOVE THE STRIP in paint order. The head's `z-index: 20` makes it a
+  //    stacking context, so the ear's own z-index counts only inside it and
+  //    the strip's 30 covered the ear until the head outranked it.
+  const headBlock = /#dev-workshop \.dev-ws-pane-head \{([^}]*)\}/.exec(decls);
+  const headZ = Number(/z-index: (\d+)/.exec(headBlock[1])[1]);
+  const navZ = Number(/z-index: (\d+)/.exec(decls.slice(decls.indexOf('.dev-ws-tabs {')))[1]
+    || /z-index: (\d+)/.exec(CSS.replace(/\/\*[\s\S]*?\*\//g, '')
+      .slice(CSS.replace(/\/\*[\s\S]*?\*\//g, '').indexOf('.dev-ws-tabs {')))[1]);
+  assert.ok(headZ > navZ, `the head (${headZ}) paints above the strip (${navZ})`);
+
+  // The head must NOT be un-stuck: that was the inverted change, and this is
+  // the assertion that would have caught it.
+  assert.ok(!/#dev-workshop \.dev-ws-pane-head \{[^}]*position: relative/.test(decls),
+    'the head is never un-stuck here');
 });

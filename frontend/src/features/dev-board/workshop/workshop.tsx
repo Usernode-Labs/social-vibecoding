@@ -2048,7 +2048,11 @@ const EAR_GAP_PX = 10;
  */
 const EAR_PROPS = [
   '--dev-ws-ear-left', '--dev-ws-ear-right', '--dev-ws-ear-tail', '--dev-ws-ear-tr',
+  '--dev-ws-head-top',
 ];
+
+/** The column gap between the tab strip and the pane below it (`.dev-ws`). */
+const WS_GAP_PX = 10;
 
 /**
  * The narrowest the ear is allowed to be, which is what its labels need.
@@ -2157,6 +2161,13 @@ function useEarInset(
       // is expressed without a second rule.
       host.style.setProperty('--dev-ws-ear-tail', tail ? `${tail + 1}px` : '0px');
       host.style.setProperty('--dev-ws-ear-tr', tail ? '22px' : '0px');
+      // WHERE THE HEAD COMES TO REST, which is under the pinned tab strip
+      // rather than at the top of the scroller. Both stick, so the offset has
+      // to be the strip's own height — three text labels and a glyph, so a
+      // measurement again rather than a literal — plus the column gap between
+      // them. Pinned too high, the head would slide under the strip; too low
+      // and a band of the list shows through between the two.
+      host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
     };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
@@ -2845,19 +2856,6 @@ export function DevWorkshop(): ReactNode {
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
-          {/* THE EAR, on a wide window: the grouping strip on its own surface
-              at the pane's top-right corner, level with the tab pill. It is a
-              child of the PANE and absolutely positioned against it, so it
-              tracks whichever width the pane has — the 760px reading column
-              on By category, the full-bleed card on By stage. See app.css.
-
-              Rendered only when it is up, so the strip below is the same one
-              node moved rather than a second copy of it. */}
-          {earUp ? (
-            <div className="dev-ws-ear" data-ws-ear="">
-              <GroupStrip group={group} />
-            </div>
-          ) : null}
           {/* ── The sticky head: the controls that act on what is below ──
               The search, the filters and the "+" used to sit in the frame's
               chrome above the scroller, two strips away from the list they
@@ -2874,6 +2872,25 @@ export function DevWorkshop(): ReactNode {
               with the switch also gives the head a title bar — the two-state
               choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
+          {/* THE EAR, on a wide window: the grouping strip on its own surface
+              at the pane's top-right corner, level with the tab pill.
+
+              A CHILD OF THE HEAD, not of the pane, and that is what makes it
+              travel. The head PINS while the list scrolls under it, and the
+              ear hangs off the head's top edge (`bottom: 100%`) — so an ear
+              anchored to the pane would have scrolled away and left the
+              pinned controls with their own grouping tabs gone. The head is
+              positioned, so it is the containing block; unscrolled, its top
+              edge IS the pane's top edge, which is why this reads exactly as
+              it did when the pane owned it.
+
+              Rendered only when it is up, so the strip below is the same one
+              node moved rather than a second copy of it. */}
+          {earUp ? (
+            <div className="dev-ws-ear" data-ws-ear="">
+              <GroupStrip group={group} />
+            </div>
+          ) : null}
           {/* NO TITLE LINE HERE. The head used to open with an "All items"
               eyebrow, on the argument that the tabs named the CHOICE without
               naming what the choice was being made about. The selected TAB
