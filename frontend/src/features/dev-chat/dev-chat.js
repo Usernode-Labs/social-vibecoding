@@ -335,8 +335,20 @@ const DevChat = {
     // A stale saved id is not an option. The server recommendation is GLM by
     // default, so this is also the first-use fallback the user asked for.
     const preferredId = byId.has(savedId) ? savedId : recommendedId;
-    const openRouterSession = DevChat._isOpenRouterSession();
-    const currentOpenRouterId = openRouterSession
+    const pendingChoice = DevChat.currentSession?.pending
+      ? DevChat.currentSession.pending_agent_choice
+      : null;
+    // An unsent change has no server row, so _agentBackend() deliberately
+    // falls back to Claude. That fallback is not the provider the first send
+    // will use: with no explicit pending choice, POST /sessions resolves the
+    // saved server default. Reflect that same default in the picker while
+    // keeping pending_agent_choice null, so merely opening the screen still
+    // performs no write and sends no explicit backend override.
+    const selectedBackend = DevChat.currentSession?.pending
+      ? (pendingChoice?.backend || data?.defaultBackend || 'claude_code')
+      : DevChat._agentBackend(DevChat.currentSession);
+    const openRouterSelected = selectedBackend === 'codex_openrouter';
+    const currentOpenRouterId = openRouterSelected
       ? String(DevChat.currentSession?.agent_model || '').trim()
       : '';
 
@@ -361,7 +373,7 @@ const DevChat = {
       };
     });
     let selectedOpenRouterId = currentOpenRouterId || preferredId;
-    if (openRouterSession && !selectedOpenRouterId) {
+    if (openRouterSelected && !selectedOpenRouterId) {
       // Old/incomplete rows should say that they are still loading rather
       // than make the select visually fall into Anthropic's first option.
       selectedOpenRouterId = '__loading__';
@@ -376,7 +388,7 @@ const DevChat = {
     // Before the async read lands, keep the catalog door available. Once the
     // capability response says OpenRouter is unavailable, omit a dead group
     // unless this is an existing OpenRouter session that must remain visible.
-    if (!data || data.codexAvailable || data.loadError || openRouterSession) {
+    if (!data || data.codexAvailable || data.loadError || openRouterSelected) {
       groups.push({
         id: 'openrouter',
         label: 'OpenRouter key',
@@ -399,7 +411,7 @@ const DevChat = {
         : (Object.keys(DevChat.MODELS)[0] || ''));
     return {
       groups,
-      selected: openRouterSession
+      selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
       changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
