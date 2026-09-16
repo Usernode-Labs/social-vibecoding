@@ -122,6 +122,19 @@ test('#2154: a terminal status is preserved when it beats the first app detail r
   assert.deepEqual(pending, [event], 'open() can reconcile the event after its fetch settles');
 });
 
+test('#1883: a terminal status is preserved when creation finishes before the app is opened', () => {
+  const { App, pending } = makeApp();
+  assert.equal(App.currentApp, null, 'the creation dialog is still over the launcher');
+
+  const event = {
+    slug: 'fresh-app', status: 'running', url: 'https://fresh-app.example.test',
+  };
+  App.handleAppStatusUpdate(event);
+
+  assert.deepEqual(pending, [event],
+    'a later open can reject a cached creating snapshot without waiting for another event');
+});
+
 test('#2154: awaiting secrets also replaces a loaded spinning-up state immediately', () => {
   const { App, appView, renders } = makeApp();
   App.currentApp = 'fresh-app';

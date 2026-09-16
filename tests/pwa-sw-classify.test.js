@@ -130,6 +130,14 @@ test('native notification invalidations bypass stale API-cache fallbacks', () =>
   assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
 });
 
+test('explicit app-status rechecks bypass stale app-detail snapshots', () => {
+  assert.equal(classify('GET', '/api/apps/fresh-app?status_recheck=1'), 'bypass');
+  assert.equal(classify('GET', '/api/apps/fresh-app'), 'api',
+    'ordinary first-paint detail reads keep the boot-cache lane');
+  assert.equal(classify('GET', '/api/apps/fresh-app/issues?status_recheck=1'), 'api',
+    'the freshness tag is scoped to the detail route only');
+});
+
 test('the key-filtered OpenRouter catalog always reaches the network', () => {
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter'), 'bypass');
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1'), 'bypass');
