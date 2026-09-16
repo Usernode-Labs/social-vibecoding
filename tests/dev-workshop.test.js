@@ -4178,3 +4178,37 @@ test('#1933: the declared check reads the chip off a demo issue card on the boar
   assert.ok(route.includes("name: '[Mock] Appearance & theming'"));
   assert.ok(/items: \['issue:900001'/.test(route));
 });
+
+// ─── #2227: your own governance proposal is your work too ─────────────
+
+test('a propose-to-close you opened yourself joins "What you are working on"', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // Three rows in review: a code proposal of mine, a governance
+  // propose-to-close of MINE, and a governance one of somebody else's.
+  AppView._proposals = [
+    { id: 61, pr_number: 61, pr_title: 'Mine', status: 'promoted', username: 'me', user_id: 1,
+      created_at: at(3), promoted_at: at(3), last_message_at: at(3), linked_issues: [], my_vote: null },
+  ];
+  AppView._govProposals = [
+    { id: 71, kind: 'close_issue', title: 'Close it', status: 'open', created_by: 1,
+      created_by_username: 'me', payload: { issueNumber: 12, issueTitle: 'Dark mode resets' },
+      created_at: at(1), last_message_at: at(1), up_count: 0, down_count: 0, my_vote: null },
+    { id: 72, kind: 'close_issue', title: 'Theirs', status: 'open', created_by: 9,
+      created_by_username: 'carol', payload: { issueNumber: 13, issueTitle: 'Keyboard voting' },
+      created_at: at(2), last_message_at: at(2), up_count: 0, down_count: 0, my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.deepEqual(plain(v.mine.rows).map((r) => r.key),
+    ['mine:gov:71', 'mine:proposal:61'],
+    'my governance proposal rides beside my code proposal, most recent first');
+  assert.equal(v.mine.count, 2, 'mine, not carol’s');
+
+  // And it is not ALSO owed a vote from me — same de-dup the code
+  // proposal already gets, since "waiting on you" asks whether you have
+  // voted, not whose it is.
+  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('gov:71')),
+    'your own governance proposal is not also owed a vote from you');
+  assert.ok(plain(v.votes.rows).some((r) => r.key.includes('gov:72')),
+    'but somebody else’s still is');
+});
