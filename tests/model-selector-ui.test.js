@@ -26,6 +26,7 @@ const vm = require('node:vm');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { SW_VERSION } = require('../public/sw.js');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -401,6 +402,12 @@ test('an explicit pending Anthropic pick overrides a saved OpenRouter default', 
   const selected = render({ session: pending });
 
   assert.equal(selected.view().models.selected, 'anthropic:claude-opus-5');
+});
+
+test('the saved OpenRouter default ships through a fresh shell cache', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 29,
+    `expected the OpenRouter-default shell cache, got ${SW_VERSION}`);
 });
 
 test('the declared checks follow the grouped native selector', () => {

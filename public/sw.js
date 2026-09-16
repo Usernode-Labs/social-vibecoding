@@ -237,7 +237,13 @@
 // v10 the bump belongs here — and per v15 an installed client holding v27
 // would otherwise keep serving the old document and never take the meta at
 // all, which is the one asset where a stale copy hides the whole change.
-const SW_VERSION = 'v28';
+//
+// v29 (#2307 follow-up): #2311 taught an unsent change's model picker to use
+// the saved OpenRouter backend, but that fix lives entirely in the React shell
+// bundle and omitted the cache retirement required by v10. Existing clients
+// therefore kept drawing the pre-fix Anthropic default even though production
+// was running the merged commit. Retire that stale shell now.
+const SW_VERSION = 'v29';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
