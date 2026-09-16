@@ -78,6 +78,12 @@ function parseRewardPoints(reward) {
 // `targetUnit` is what the rule's Target field counts, and it is shown in
 // the admin form beside the input — "10" means ten minutes for one measure
 // and ten apps for another, and an operator should never have to guess.
+//
+// `needsTarget` is a separate question from having a unit, and conflating the
+// two was a real bug: "Sent a proposal" is one proposal and done, so asking
+// an operator to type a target it never reads made the rule report itself as
+// misconfigured. A counted measure always needs one (it is the cap); beyond
+// that, only a measure whose own query reads the number says so here.
 const MEASURES = {
   TRY_APPS: {
     label: 'Tried different apps',
@@ -94,6 +100,7 @@ const MEASURES = {
     summary: 'Spent this many minutes actively using apps inside the window. Apps they made themselves do not count.',
     unit: 'window',
     targetUnit: 'minutes',
+    needsTarget: true,
     counted: false,
     payout: 'full',
     windowed: true,
@@ -101,9 +108,9 @@ const MEASURES = {
   },
   PROPOSAL_SENT: {
     label: 'Sent a proposal',
-    summary: 'Put a change to an app to the group vote inside the window.',
+    summary: 'Put a change to an app to the group vote inside the window. One is enough, so this needs no target.',
     unit: 'proposal',
-    targetUnit: 'proposals',
+    targetUnit: null,
     counted: false,
     payout: 'full',
     windowed: true,
@@ -234,8 +241,8 @@ function skipReason(rule, row, { now = Date.now() } = {}) {
   if (spec.counted && !(effectiveTarget(rule, row) > 1)) {
     return 'no target: this measure counts, so set Target on the rule';
   }
-  if (spec.targetUnit && !spec.counted && !(effectiveTarget(rule, row) > 0)) {
-    return 'no target: set Target on the rule';
+  if (spec.needsTarget && !(effectiveTarget(rule, row) > 0)) {
+    return 'no target: this measure reads the number, so set Target on the rule';
   }
   return null;
 }

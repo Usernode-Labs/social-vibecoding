@@ -141,6 +141,24 @@ test('every skip names the thing the operator has to change', () => {
   );
 });
 
+test('a measure that never reads a target does not ask for one', () => {
+  // Found in the first live preview: "Sent a proposal" is one proposal and
+  // done, and demanding a number it never reads made a correct rule report
+  // itself as misconfigured. Having a target UNIT and needing a target are
+  // different questions.
+  const sent = rule({ measure: 'PROPOSAL_SENT' });
+  const row = challengeRow({
+    measure: 'PROPOSAL_SENT', metric_target: null, t_metric_target: null,
+    reward: '1,000 pts', t_reward: '1,000 pts',
+  });
+  assert.equal(rules.skipReason(sent, row, { now: NOW }), null);
+
+  // The minutes measure DOES read the number, so it still says so.
+  const minutes = rule({ measure: 'USE_APPS_MINUTES' });
+  assert.match(rules.skipReason(minutes, row, { now: NOW }), /^no target/);
+  assert.equal(rules.skipReason(rule({ measure: 'USE_APPS_MINUTES', target: 10 }), row, { now: NOW }), null);
+});
+
 test('a rule\'s own numbers win over the challenge\'s, and blank falls back', () => {
   const row = challengeRow();
   assert.equal(rules.effectiveTarget(rule(), row), 3);
