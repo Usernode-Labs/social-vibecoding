@@ -669,23 +669,36 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 666 → 667: the waitlist connect callback's status page, loaded with a
   // state no server has minted, so it renders the "link has expired"
   // outcome without needing provider credentials on the preview.
+  // 667 → 669: Profile staking (#1551) adds Active and Delegated previews.
+  // 669 → 670: real staking context verifies preview network configuration.
   //
-  // 667 → 672: the Workshop screen (#workshop) — the app chip's Workshop row
-  // beside the amended Home-to-Discover adjacency check, and four on the
-  // screen itself, all read through `?demo=1#workshop` so the numbers come
-  // from the fixed demo rows rather than a cloned database whose
-  // `chat_sessions` the staging clone leaves empty. The four are not one
-  // claim four times: the visual one reads a row's identity, its link to that
-  // app's own Workshop page and its votes number together (it is also the
-  // scenario the before/after screenshots are shot on); the second reads the
-  // OTHER number beside it, which no screenshot can be asserted on; the third
-  // reads the ORDER, which is the screen's own argument — an app with a
-  // decision waiting leads; and the fourth reads the empty line's absence,
-  // which is the one thing a populated screenshot cannot show. Room remains
-  // against MAX_DECLARED_TESTS (710).
+  // 667 → 672: independently on main, the Workshop screen (#workshop) — the
+  // app chip's Workshop row beside the amended Home-to-Discover adjacency
+  // check, and four on the screen itself, all read through `?demo=1#workshop`
+  // so the numbers come from the fixed demo rows rather than a cloned
+  // database whose `chat_sessions` the staging clone leaves empty. The four
+  // are not one claim four times: the visual one reads a row's identity, its
+  // link to that app's own Workshop page and its votes number together (it is
+  // also the scenario the before/after screenshots are shot on); the second
+  // reads the OTHER number beside it, which no screenshot can be asserted on;
+  // the third reads the ORDER, which is the screen's own argument — an app
+  // with a decision waiting leads; and the fourth reads the empty line's
+  // absence, which is the one thing a populated screenshot cannot show. Room
+  // remains against MAX_DECLARED_TESTS (710).
   //
-  // 672 → 674: the Workshop's grouping strip moves out of the All-items pane
-  // head and up beside the tab pill on a wide window, so the check that read
+  // 670 → 675, 672 → 675: the tallies above were computed on either side of
+  // THIS merge against the same shared 667 and do not reconcile through the
+  // comment trail alone. This branch's staking pair added 3; main's Workshop
+  // screen added 5; neither set overlaps the other, so the merged manifest
+  // holds every one of them: 667 + 3 + 5 = 675.
+  //
+  // 675 → 680: this branch's two All-items chunks, which computed their own
+  // tallies (672 → 674 → 677) against the pre-staking manifest and so cannot
+  // be read as continuing the line above; +2 and +3 are what each chunk
+  // actually adds, and neither touches a staking check.
+  //
+  // +2 — the Workshop's grouping strip moves out of the All-items pane head
+  // and up beside the tab pill on a wide window, so the check that read
   // `.dev-ws-group + #dev-actions` inside the head describes an arrangement
   // that no longer exists at the capture's 1280px viewport. It is REPLACED
   // rather than removed — one check on the ear (the visual one, since this is
@@ -695,10 +708,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // one. tests/dev-workshop.test.js pins that no check still expects the old
   // adjacency, so the swap cannot be half-done.
   //
-  // 674 → 677: the "Assigned to you" / "Created by you" quick filters move
-  // into the Filters dialog when the filter row cannot hold them on one
-  // line, which is a state the capture runner's fixed 1280x800 viewport
-  // cannot reach on its own — hence `?shot=quick-in-dialog`, which pins the
+  // +3 — the "Assigned to you" / "Created by you" quick filters move into
+  // the Filters dialog when the filter row cannot hold them on one line,
+  // which is a state the capture runner's fixed 1280x800 viewport cannot
+  // reach on its own — hence `?shot=quick-in-dialog`, which pins the
   // handover on and opens the dialog. Three, because the move has three
   // separately falsifiable halves: the dialog GROWS the two switches (the
   // visual one, and the only one a screenshot can carry), the strip DROPS
@@ -706,7 +719,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // them is two owners of one value), and with room on the line the strip
   // KEEPS them while the dialog does not offer them — the default, which is
   // what a measurement bug would break first.
-  assert.equal(DAPP.tests.length, 677);
+  assert.equal(DAPP.tests.length, 680);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

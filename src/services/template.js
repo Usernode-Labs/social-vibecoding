@@ -78,8 +78,12 @@ const DEV_CONSOLE_FORWARDER = `
 // platform that hosts them (the "Open in Homeroom" landing page) and
 // reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
 // fork running at a different domain templates the right URL into its
-// child apps. Fallback is the canonical standalone deploy.
-const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+// child apps. The fallback is deliberately not a real host (the same
+// placeholder src/config.js uses): falling back to the canonical deploy's
+// domain is how scaffolds kept naming the platform's retired domain after
+// the platform had left it (#2322). Only the CLAUDE.md documentation
+// link uses this now — generated code reads the injected origin.
+const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'apps.example.invalid';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
 // The hosted connector's canonical name and the read-only allow rules built
@@ -547,16 +551,17 @@ app.use(express.json());
 // public: the platform serves them anonymously from any app origin, and a
 // login redirect arriving where a <script> was expected is exactly the
 // failure a relative path is meant to avoid.
-// The platform's origin, at RUNTIME. The value baked in here is only a
-// fallback for a container that was not handed the env var (local
-// development, mainly) — the injected one wins, so this app keeps working
-// when the platform's domain moves instead of pointing at wherever it used
-// to be. That is the failure mode that broke the whole fleet once already.
-const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '${PLATFORM_BASE_URL}')
+// The platform's origin, at RUNTIME, and ONLY from the variable the platform
+// injects. No hostname is written into this file: a baked-in one is what left
+// the whole fleet pointing at a domain the platform had moved away from.
+// Unset only outside the platform (a plain local \`node server.js\`) — set
+// USERNODE_PLATFORM_ORIGIN there too if you want the hosted assets locally.
+const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
   .replace(/\\/+$/, '');
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
+    if (!PLATFORM_ORIGIN) return res.sendStatus(503);
     const upstream = await fetch(PLATFORM_ORIGIN + req.path);
     if (!upstream.ok) return res.sendStatus(upstream.status);
     const type = upstream.headers.get('content-type');
@@ -662,7 +667,7 @@ app.get('*', (req, res) => {
     // unusual falls back to the bare link.
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
-    if (req.get('sec-fetch-dest') === 'document') {
+    if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
       return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
@@ -715,7 +720,7 @@ start().catch(err => { console.error(err); process.exit(1); });
        class assembled from fragments at runtime (e.g. "bg-" + tone + "-500")
        is invisible to the compiler. If you genuinely need runtime-generated
        classes, swap this link for the platform-hosted engine instead:
-       <script src="${PLATFORM_BASE_URL}/usernode-tailwind/v1/tailwind.js"></script> -->
+       <script src="/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">

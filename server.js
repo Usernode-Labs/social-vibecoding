@@ -41,6 +41,7 @@ const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const { avatarRoutes } = require('./src/routes/avatars');
 const { profileRoutes } = require('./src/routes/profile');
+const { stakingRoutes } = require('./src/routes/staking');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -667,6 +668,7 @@ app.use(homeLayoutRoutes(config));
 // Me-scoped, so behind authMiddleware — the avatar READ side is the
 // separate public avatarRoutes mounted above.
 app.use(profileRoutes(config));
+app.use(stakingRoutes(config));
 // #940: saved dev-chat drafts, now server-backed so they follow a user
 // across devices. Owner-scoped per session, like the /api/sessions/* family
 // in routes/sessions.js.

@@ -1580,7 +1580,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    trade in this sheet's favour, and it costs less than the panel's does: a
    VERTICAL drag anywhere still reaches the kit's pointer handler, so
    drag-to-dismiss survives intact here. */
-.un-sheet:has(#apps-switcher-sheet) {
+.un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has([data-staking-sheet]) {
   touch-action: pan-x;
 }
 

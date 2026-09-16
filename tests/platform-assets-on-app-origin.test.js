@@ -268,42 +268,44 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
   }
 });
 
-test('the hard-coded hostname fallbacks that remain have not grown', () => {
-  // Six `process.env.USERNODE_DOMAIN || '<literal>'` defaults predate this
-  // change and are NOT fixed by it. They are listed rather than tolerated
-  // silently: a seventh fails this test, and the two that matter most are
-  // named here so the debt is visible instead of folklore.
+test('no platform code names the retired domain, not even as a fallback', () => {
+  // This used to be a ratchet over six `process.env.USERNODE_DOMAIN ||
+  // '<literal>'` defaults, template.js the worst of them: a deployment that
+  // left USERNODE_DOMAIN unset baked the dead host into every app it
+  // created. #2322 removed them all — a fallback is now a placeholder
+  // (`apps.example.invalid`, as src/config.js uses) or the injected origin
+  // alone — so the list is empty and stays empty.
   //
-  //   template.js  — scaffolds NEW apps, so a deployment that leaves
-  //                  USERNODE_DOMAIN unset bakes the dead host into every
-  //                  app it creates. This is the defect repeating itself.
-  //   caddy.js     — the docker runtime's app hostname suffix.
-  //
-  // The other four (a migration's staging fixtures, a claude.md link, a
-  // User-Agent string) are inert by comparison.
-  const KNOWN = [
-    'src/db/migrate.js',
-    'src/routes/sessions.js',
-    'src/services/anthropic-credits.js',
-    'src/services/caddy.js',
-    'src/services/template.js',
-  ];
+  // Allowed, because none of them uses the name as the PLATFORM's address:
+  //   e2e-results-data.js   a record of past test runs, quoting it as history
+  //   *-remote-db.sh        SSH to that machine by its own hostname
+  //                         (DEPLOY_HOST overrides it) — a server name, not a
+  //                         platform origin a domain move invalidates
+  const ALLOWED = new Set([
+    'frontend/src/features/admin/e2e-results-data.js',
+    'scripts/pull-remote-db.sh',
+    'scripts/push-remote-db.sh',
+  ]);
+  const root = path.join(__dirname, '..');
   const found = new Set();
+  const visit = (full) => {
+    const rel = path.relative(root, full).split(path.sep).join('/');
+    if (ALLOWED.has(rel)) return;
+    if (DEAD_HOST.test(fs.readFileSync(full, 'utf-8'))) found.add(rel);
+  };
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
-      if (!/\.(js|md)$/.test(entry.name)) continue;
-      if (DEAD_HOST.test(fs.readFileSync(full, 'utf-8'))) {
-        found.add(path.relative(path.join(__dirname, '..'), full).split(path.sep).join('/'));
-      }
+      if (!/\.(js|mjs|cjs|ts|tsx|md|sh)$/.test(entry.name)) continue;
+      visit(full);
     }
   };
-  walk(path.join(__dirname, '..', 'src'));
-  walk(path.join(__dirname, '..', 'scripts'));
-  assert.deepEqual([...found].sort(), KNOWN,
-    'derive the origin from USERNODE_DOMAIN rather than naming a host a domain move invalidates');
+  for (const dir of ['src', 'scripts', 'public/js', 'frontend/src']) walk(path.join(root, dir));
+  visit(path.join(root, 'server.js'));
+  assert.deepEqual([...found].sort(), [],
+    'derive the origin from USERNODE_DOMAIN (or use a relative path) rather than naming a host a domain move invalidates');
 });
 
 test('the platform\'s own app keeps serving its own asset trees', async (t) => {

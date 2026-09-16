@@ -12,6 +12,13 @@
 //    exactly the shape that rots, so the assertions below pin the query
 //    against the statuses and predicates those endpoints use rather than
 //    against a number somebody typed.
+//    It rotted once already, and the `issues` table is where. That table
+//    holds governance proposals AND a `general` twin row per request filed
+//    through the platform, so a query over it with no `kind` predicate counts
+//    the whole request board as votes owed — which is what put forty-six
+//    votes waiting on an app whose board had three open requests. The kinds
+//    are pinned below too: in this query, and in each of the four places the
+//    list is still written out by hand.
 //
 // 2. THE QUERY CAN ANSWER FOR THE WRONG VIEWER. Every predicate names `$1`;
 //    with a NULL viewer `IS DISTINCT FROM` is true for every row and the
@@ -96,6 +103,62 @@ test('a vote counts as cast only under the proposal\'s current approval epoch', 
     route.COUNTS_SQL.includes(currentVotePredicateSql('pv', 'cs')),
     'the rendered query carries the shared predicate, whatever it currently says',
   );
+});
+
+test('the two `issues` CTEs read governance proposals, never the request board', () => {
+  // `issues` is two populations wearing one table name. Beside the governance
+  // proposals it holds a `general` TWIN row per request filed through the
+  // platform — the row that remembers who filed it, because GitHub files every
+  // platform-authored issue as the bot. Nothing votes on a twin, and
+  // `AppView._govProposals` drops them before the lander's deck ever sees one.
+  // Counting them here is not a rounding error: a twin is only ever closed by
+  // a passed close-issue vote, so it outlives its GitHub issue indefinitely
+  // and the pile only grows.
+  const src = read('src/routes/workshop-overview.js');
+  assert.match(src, /require\('\.\.\/services\/governance-kinds'\)/);
+  assert.equal((src.match(/\$\{governanceKindsSql\('i'\)\}/g) || []).length, 2,
+    'both `issues` CTEs interpolate the shared predicate rather than spelling the kinds out');
+
+  const { GOVERNANCE_KINDS, governanceKindsSql } = require('../src/services/governance-kinds');
+  const cte = (name) => new RegExp(`${name} AS \\(([\\s\\S]*?)\\n  \\)`).exec(route.COUNTS_SQL)[1];
+  for (const name of ['my_governance', 'owed_governance']) {
+    assert.ok(
+      cte(name).includes(governanceKindsSql('i')),
+      `${name} renders the shared predicate, whatever it currently says`,
+    );
+  }
+  // Named, never negated: a sixth kind added to the table becomes a vote
+  // somebody owes only once somebody lists it here, which is the safe
+  // direction for a number that asks people to do something.
+  assert.ok(!GOVERNANCE_KINDS.includes('general'),
+    'the request board\'s twin kind is not a thing anybody votes on');
+});
+
+test('every hand-written copy of the governance kinds still agrees with the constant', () => {
+  const { GOVERNANCE_KINDS } = require('../src/services/governance-kinds');
+  const expected = [...GOVERNANCE_KINDS].sort();
+  const quoted = (text) => (text.match(/'([a-z_]+)'/g) || []).map((q) => q.slice(1, -1)).sort();
+
+  // Four sites still spell the list out, on purpose. Three are static query
+  // text, which scripts/check-sql.js validates against a real schema —
+  // interpolating would move them into the reviewed dynamic-SQL baseline, a
+  // weaker guarantee than the duplication costs. The fourth is browser script
+  // with no module loader. Duplication is the cheaper trade only while
+  // something notices drift, which is this test.
+  const sqlCopies = [
+    ...(read('src/routes/issues.js').match(/kind IN \([\s\S]*?\)/g) || []),
+    ...(read('src/services/shared-objects.js').match(/kind IN \([\s\S]*?\)/g) || []),
+  ];
+  assert.equal(sqlCopies.length, 3,
+    'a query reading `issues` by kind was added or removed; pin it here too');
+  for (const copy of sqlCopies) assert.deepEqual(quoted(copy), expected);
+
+  // And the client's, which is what the lander's "Needs your vote" deck is
+  // actually built from. A kind missing there is a proposal nobody is asked
+  // to vote on, however right the server's count is.
+  const clientFilter = /_govProposals = [\s\S]*?\.filter\(\(i\) =>([\s\S]*?)\);/.exec(appViewJs);
+  assert.ok(clientFilter, 'the client still filters `_govProposals` by kind');
+  assert.deepEqual(quoted(clientFilter[1]), expected);
 });
 
 test('every predicate names the viewer, and the route refuses one it has not got', async () => {
