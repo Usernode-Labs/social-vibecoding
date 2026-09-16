@@ -4381,6 +4381,12 @@
       "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
       "path": "/api/me/staking/context",
       "expectText": "\"chainId\":\"utc1"
+    },
+    {
+      "name": "#2344 diagnostic: browser worker reaches the preview bridge asset",
+      "path": "/usernode-bridge/v1/bridge.js",
+      "expectText": "window.__usernodeBridge",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {
