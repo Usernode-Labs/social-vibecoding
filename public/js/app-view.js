@@ -18252,17 +18252,38 @@ const AppView = {
 
   // Pure. Px of the LAYOUT viewport hidden behind the keyboard. A pinch-zoomed
   // visual viewport is not a keyboard, so it reports nothing.
+  //
+  // Measured against the LAYOUT viewport, and with no pan term — the kit's
+  // `keyboardInset` carries the measurements and the reasoning (#1938). The
+  // short version: on iOS `window.innerHeight` collapses to the visual
+  // viewport when the keyboard opens and the page is panned, so
+  // `innerHeight - vvHeight - vvOffsetTop` came out negative there and this
+  // reported 0 — no keyboard, on every iOS device, in Safari and in the
+  // installed PWA alike. This copy has to agree with the kit's: the shell
+  // reads the inset and FORWARDS it to app frames, which cannot read it
+  // themselves, so a disagreement would hand every app a different answer
+  // from the one the shell acts on.
   _keyboardInsetFrom(input) {
     if (!input) return 0;
     const scale = input.scale == null ? 1 : Number(input.scale);
     if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
-    const innerHeight = Number(input.innerHeight);
+    const layoutHeight = Number(
+      input.layoutHeight == null ? input.innerHeight : input.layoutHeight
+    );
     const vvHeight = Number(input.vvHeight);
-    const offsetTop = Number(input.vvOffsetTop || 0);
-    if (!Number.isFinite(innerHeight) || !Number.isFinite(vvHeight)) return 0;
-    const occluded = innerHeight - vvHeight - offsetTop;
+    if (!Number.isFinite(layoutHeight) || !Number.isFinite(vvHeight)) return 0;
+    const occluded = layoutHeight - vvHeight;
     if (!(occluded > 0) || occluded < AppView.KB_MIN_INSET) return 0;
     return Math.round(occluded);
+  },
+
+  // The layout viewport's height — the frame of reference the keyboard cannot
+  // move. Mirrors the kit's `layoutViewportHeight()`.
+  _layoutViewportHeight() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return 0;
+    const docEl = document.documentElement;
+    const client = docEl && docEl.clientHeight ? docEl.clientHeight : 0;
+    return Math.max(window.innerHeight || 0, client);
   },
 
   // Pure. How much of ONE frame's bottom edge the keyboard covers. A frame
@@ -18286,9 +18307,8 @@ const AppView = {
     if (typeof window === 'undefined' || !window.visualViewport) return 0;
     const vv = window.visualViewport;
     return AppView._keyboardInsetFrom({
-      innerHeight: window.innerHeight,
+      layoutHeight: AppView._layoutViewportHeight(),
       vvHeight: vv.height,
-      vvOffsetTop: vv.offsetTop,
       scale: vv.scale,
     });
   },

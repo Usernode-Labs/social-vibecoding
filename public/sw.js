@@ -211,7 +211,17 @@
 //
 // This is the conflict the v24 entry predicted, resolved the way it asked:
 // both notes kept, the version advanced rather than one side silently won.
-const SW_VERSION = 'v25';
+//
+// v26 (#1938): /usernode-native/v1/native.js, which is precached in
+// SHELL_ASSETS, so the bump belongs in this same proposal per v10. The kit's
+// keyboardInset() measured the keyboard against window.innerHeight, which iOS
+// collapses to the visual viewport when the keyboard opens — the expression
+// went negative there and reported NO keyboard, which left every iOS client
+// (Safari and installed PWA alike) with --un-kb-inset pinned at 0 and every
+// keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
+// that, so per v15 an installed client holding any of them would keep serving
+// the old kit from cache and stay broken however correct the new one is.
+const SW_VERSION = 'v26';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
