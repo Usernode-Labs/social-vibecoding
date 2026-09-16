@@ -157,4 +157,22 @@ function meta(page, perPage, total) {
   };
 }
 
-module.exports = { ok, fail, iso, num, paginate, meta, ValidationError };
+// CSV-formula-injection guard (code-review finding): a value whose FIRST
+// character is one Excel/Sheets/LibreOffice treat as "this cell is a
+// formula" (`=`, `+`, `-`, `@`) gets a leading `'` — the standard
+// spreadsheet convention for "force plain text", stripped on display but
+// never evaluated. Shared by the admin CSV exports (users, waitlist): each
+// writes strings this system did not generate — admin-entered, CSV-imported,
+// or typed into a public form — into a file a human is likely to open in a
+// spreadsheet.
+const FORMULA_INJECTION_PREFIX_RE = /^[=+\-@]/;
+
+function csvField(v) {
+  let s = v == null ? '' : String(v);
+  if (FORMULA_INJECTION_PREFIX_RE.test(s)) s = `'${s}`;
+  // `\r` alone (no `\n`) still starts a new line in most CSV readers, so
+  // it must trigger quoting the same as `\n`/`,`/`"` do.
+  return /["\n\r,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+module.exports = { ok, fail, iso, num, paginate, meta, csvField, ValidationError };

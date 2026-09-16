@@ -1179,3 +1179,19 @@ test('the SQL result and API response areas use the shared empty/panel treatment
   assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripComments(apiTesterTsx)),
     'the screen renders no raw HTML — the response body is a text child');
 });
+
+// ─── Waitlist Export CSV ───────────────────────────────────────────────────
+
+// The export endpoint sits behind the WRITE gate (a whole-list download is a
+// different exposure class from reading pages), so the button renders only
+// for an admin the server will actually serve — a view-only admin would
+// otherwise click through to a 403 body. It carries the screen's own filters,
+// so the file holds the rows the selects describe.
+test('waitlist Export CSV renders only for a write admin and carries the active filters', () => {
+  const waitlist = stripAllComments(fs.readFileSync(path.join(REACT_DIR, 'waitlist.tsx'), 'utf8'));
+  assert.match(waitlist,
+    /exportCsv=\{write\s*\?\s*\{ id: 'admin-topo-wl-export', path: '\/api\/v4\/admin\/waitlist\/export-csv' \}\s*:\s*undefined\}/,
+    'the button is wired only when canWrite() allowed it');
+  assert.match(waitlist, /const query = filterParams\(\)\.toString\(\);/,
+    'the download reuses the same status/only params as the page fetch');
+});
