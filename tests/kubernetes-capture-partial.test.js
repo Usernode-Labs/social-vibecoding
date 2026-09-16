@@ -107,6 +107,22 @@ test('already-followed frames survive a successful empty final pod log read', as
   assert.ok(events.includes('abort-follow'));
 });
 
+test('already-followed frames survive a successful shorter final pod log read', async (t) => {
+  setup(t, {
+    status: n => n < 2 ? {} : { succeeded: 1 },
+    output: frame.slice(0, frame.indexOf('\n') + 1),
+    streamOutput: frame,
+  });
+  const pending = kubernetes.runCaptureJob(config, {
+    sessionId: 42, env: {}, salvagePartial: true,
+  });
+  await flush();
+  t.mock.timers.tick(2000);
+  const result = await pending;
+  assert.equal(result.stdout, frame);
+  assert.equal(visuals.parseTests(result.stdout).length, 1);
+});
+
 test('a stalled salvage read cannot block timed-out Job cleanup', async (t) => {
   const { events } = setup(t, { status: {}, logStall: true, streamOutput: frame });
   const pending = kubernetes.runCaptureJob(config, { sessionId: 42, env: {}, stdinPayload: '{}', timeoutMs: 1, salvagePartial: true });
