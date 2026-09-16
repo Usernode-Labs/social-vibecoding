@@ -4336,3 +4336,66 @@ test('a propose-to-close you opened yourself joins "What you are working on"', (
   assert.ok(plain(v.votes.rows).some((r) => r.key.includes('gov:72')),
     'but somebody else’s still is');
 });
+
+test('the ear outranks the nav, or the grouping strip is decorative', () => {
+  // A REAL BUG, found by a reader clicking it and not by any check here:
+  // neither grouping responded, in this version or the one before it.
+  // `.dev-ws-tabs` is `z-index: 30` for its phone life as a floating pill,
+  // and on the wide layout it is back in flow spanning the whole reading
+  // column — the same column the pane has — so its box covers the band the
+  // ear hangs in. Positioned with a z-index against an ear that had none, it
+  // won every hit test: `elementFromPoint` at both buttons' centres returned
+  // `.dev-ws-tabs`.
+  //
+  // So this is a RELATION, not a number: read both out of the stylesheet and
+  // require the ear to be above. Asserting `31` alone would keep passing the
+  // day somebody raises the bar, which is exactly how this broke.
+  // COMMENTS OFF FIRST. The rule's own note quotes the nav's `z-index: 30` to
+  // say what it is clearing, and a regex over the raw text reads that quote
+  // as the declaration — which made this test pass the wrong number before it
+  // ever saw the real one.
+  const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const navBlock = decls.slice(decls.indexOf('.dev-ws-tabs {'));
+  const navZ = Number(/z-index: (\d+)/.exec(navBlock)[1]);
+  const earBlock = decls.slice(decls.indexOf('  .dev-ws-ear {'));
+  const earZ = Number(/z-index: (\d+)/.exec(earBlock)[1]);
+  assert.ok(earZ > navZ, `the ear (${earZ}) must sit above .dev-ws-tabs (${navZ})`);
+  // Nothing in the overlay tiers is crossed: the sheets and modals sit at 45
+  // and above, so the ear clears the nav without reaching them.
+  assert.ok(earZ < 45, `and below the overlay tiers (${earZ})`);
+  // The buttons are real buttons with a real handler — the hit test is what
+  // was broken, not the wiring.
+  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'category'\)\}/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'stage'\)\}/);
+});
+
+test('no line runs between the ear and the pane, and the two right edges are one', () => {
+  // The pane's ring is a single inset shadow, so its TOP side ran the full
+  // width — straight under the ear, which made the ear read as a pill resting
+  // on a card. A shadow cannot be drawn on part of a side, so the ring gives
+  // up its top here and a pseudo-element puts it back, clipped to stop where
+  // the ear starts.
+  const scoped = CSS.slice(CSS.indexOf('  .dev-ws-pane:has(> .dev-ws-ear) {'));
+  const ring = scoped.slice(0, scoped.indexOf('::before'));
+  assert.match(ring, /inset 1px 0 0 var\(--app-sheet-line\)/);
+  assert.match(ring, /inset -1px 0 0 var\(--app-sheet-line\)/);
+  assert.match(ring, /inset 0 -1px 0 var\(--app-sheet-line\)/);
+  assert.ok(!/inset 0 1px 0/.test(ring), 'the pane keeps no top side of its own');
+  // Put back, clipped, and by the SAME measured offset the ear is positioned
+  // by — so the line and the ear cannot disagree about where the ear starts.
+  // The `+ 1px` is the width of the ear's own left edge, which it draws as an
+  // inset shadow: clipping at the offset exactly left a one-pixel notch.
+  assert.match(CSS, /\.dev-ws-pane:has\(> \.dev-ws-ear\)::before \{/);
+  assert.match(CSS, /box-shadow: inset 0 1px 0 var\(--app-sheet-line\);/);
+  assert.match(CSS, /clip-path: inset\(0 calc\(100% - var\(--dev-ws-ear-left, 100%\) - 1px\) 0 0\);/);
+  // With the property unset the clip is the whole width, so the top line is
+  // simply continuous — the pre-ear appearance rather than a broken one.
+  assert.match(CSS, /border-radius: inherit;/);
+  // BOTH corners squared. Squaring the head alone left the pane's 22px ring
+  // curving away inside the ear's straight right edge, which is what read as
+  // the ear being inset: the two right edges measure flush to the pixel, but
+  // the pane's outline turned its corner 22px before the ear's did.
+  assert.match(CSS,
+    /\.dev-ws-pane:has\(> \.dev-ws-ear\) > \.dev-ws-pane-head \{ border-top-right-radius: 0; \}/);
+  assert.match(CSS, /\.dev-ws-pane:has\(> \.dev-ws-ear\) \{ border-top-right-radius: 0; \}/);
+});

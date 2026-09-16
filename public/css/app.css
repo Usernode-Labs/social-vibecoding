@@ -13683,8 +13683,53 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
      this containing block takes nothing away from them. */
   .dev-ws-pane:has(> .dev-ws-ear) { position: relative; }
+  /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
+     shadow, so its top side used to run the full width — straight under the
+     ear, which is what made the ear read as a pill resting on a card rather
+     than part of it. A shadow cannot be drawn on part of a side, so the ring
+     gives up its TOP here and the pseudo-element below puts it back, clipped
+     to stop where the ear starts.
+
+     Covering it was the other candidate and is worse: the ear's fill is
+     semi-transparent over a backdrop-filter, so a 1px overlap leaves the line
+     dimmed and smeared rather than gone — and two of these fills stacked is
+     the lighter band the pane's own note is about. */
+  .dev-ws-pane:has(> .dev-ws-ear) {
+    box-shadow:
+      inset 1px 0 0 var(--app-sheet-line),
+      inset -1px 0 0 var(--app-sheet-line),
+      inset 0 -1px 0 var(--app-sheet-line);
+  }
+  .dev-ws-pane:has(> .dev-ws-ear)::before {
+    content: '';
+    position: absolute; inset: 0;
+    /* `inherit` carries the squared top-right corner below with it, so the
+       line follows the rounded top-LEFT corner and nothing else. */
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 var(--app-sheet-line);
+    /* Stop at the ear. The same measured offset the ear is positioned by, so
+       the two cannot disagree about where that is; with the property unset
+       (no ResizeObserver, or the frame before the measurement) the clip is
+       the whole width and the top line is simply continuous, which is the
+       pre-ear appearance rather than a broken one. */
+    /* Plus the 1px the ear's own left edge occupies: the ear draws that side
+       as an INSET shadow, so its line sits in [left, left+1] and a clip that
+       stopped at `left` exactly left a one-pixel notch between the two. */
+    clip-path: inset(0 calc(100% - var(--dev-ws-ear-left, 100%) - 1px) 0 0);
+    pointer-events: none;
+  }
   .dev-ws-ear {
     position: absolute; right: 0; bottom: 100%;
+    /* ABOVE THE NAV, or the strip is decorative. `.dev-ws-tabs` is
+       `z-index: 30` for its phone life as a floating bar, and up here it is
+       back in flow spanning the whole reading column — the same column the
+       pane has — so its box covers the band the ear hangs in. Positioned with
+       a z-index against an ear with none, it won every hit test: both
+       `elementFromPoint` probes at the buttons' centres returned
+       `.dev-ws-tabs`, and clicking either grouping did nothing at all. The
+       nav paints no fill of its own here (the pill is `.dev-ws-tabtrack`
+       inside it), so this changes hit-testing and not the picture. */
+    z-index: 31;
     /* STRETCHED TO MEET THE PILL. The custom property is measured and
        published on `.dev-ws` by `useEarInset` (workshop.tsx) — the pill lives
        in a different subtree, so no selector can hand this one its width. The
@@ -13708,6 +13753,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   /* Square where the two meet, so the ear and the card read as one surface
      rather than a pill resting on a rounded corner. */
   .dev-ws-pane:has(> .dev-ws-ear) > .dev-ws-pane-head { border-top-right-radius: 0; }
+  /* AND THE PANE'S OWN CORNER WITH IT. Squaring the head alone left the
+     pane's 22px ring curving away inside the ear's straight right edge, which
+     is what read as the ear being "slightly inset" — the two right edges
+     measure flush to the pixel, but the pane's outline turned the corner 22px
+     before the ear's did. Square, they are one edge. */
+  .dev-ws-pane:has(> .dev-ws-ear) { border-top-right-radius: 0; }
 }
 
 /* ── The working pane ──────────────────────────────────────────────────
