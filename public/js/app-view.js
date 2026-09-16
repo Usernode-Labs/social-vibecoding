@@ -6914,6 +6914,16 @@ const AppView = {
       ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
         && String(x.item.user_id) === String(meId))
         .map((x) => ({ kind: 'proposal', item: x.item })),
+      // #2227: a governance proposal you opened — a propose-to-close, a
+      // rename, a secret change — is your work in flight exactly as a code
+      // proposal is, and it was the one kind of thing you could start and
+      // then not find here. Same bucket, same review lane, same de-dup
+      // against "Needs your vote" below; only the author column differs,
+      // because `issues` rows carry `created_by` where a session carries
+      // `user_id`.
+      ...mineOf(buckets.inReview, (x) => x.kind === 'gov' && meId != null
+        && String(x.item.created_by) === String(meId))
+        .map((x) => ({ kind: 'gov', item: x.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
@@ -6927,7 +6937,9 @@ const AppView = {
       rows: mineList.map(({ kind, item }) => {
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
-          : AppView._proposalCardModel(item);
+          : kind === 'gov'
+            ? AppView._govCardModel(item)
+            : AppView._proposalCardModel(item);
         if (!card) return null;
         return AppView._attachRowConversation(
           { t: 'card', key: `mine:${card.key}`, card }, kind, item,
