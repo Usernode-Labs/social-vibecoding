@@ -13020,10 +13020,22 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    title, sub, x, body) are the deck's either way — they appear in no folded
    card — as are the breakpoint rules further down, which were already keyed
    on the -vote / -ask / -comments modifiers. */
-/* The floor lifts by what the on-screen keyboard took (workshop.tsx measures
-   the visual viewport into `--ws-kb` while a sheet is up), so the field being
-   typed into is above the keys rather than under them. */
-.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--ws-kb, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
+/* The floor lifts by what the on-screen keyboard took, so the field being
+   typed into is above the keys rather than under them.
+
+   THE NUMBER IS THE KIT'S, not this screen's. workshop.tsx used to measure the
+   visual viewport itself and publish `--ws-kb` — a third copy of
+   `innerHeight - vv.height - vv.offsetTop`, which is the expression #1938
+   found to be wrong on iOS: `innerHeight` collapses to the visual viewport
+   there, so it came out negative, the `Math.max(0, …)` around it clamped to 0,
+   and this sheet never moved on an iPhone. `--un-kb-inset` is one tracker's
+   answer for the whole page (usernode-native/v1/native.js), which is what
+   keeps this surface and the composer columns from drifting apart again.
+
+   It resolves to 0 with no keyboard, so no `html.un-kb` guard is needed here.
+   The wide block below makes these panels `position: relative; inset: auto`,
+   which drops this `bottom` with it — a docked panel has no floor to lift. */
+.dev-ws-sheet-modal { position: fixed; inset: 0; z-index: 30; bottom: var(--un-kb-inset, 0px); display: flex; flex-direction: column; justify-content: flex-end; }
 .dev-ws-scrim {
   position: absolute; inset: 0; border: 0; padding: 0; margin: 0; cursor: default;
   background: var(--pane-scrim);
