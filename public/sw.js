@@ -229,7 +229,15 @@
 // installed client would pair the NEW shell.js (which no longer sets --ws-kb)
 // with a CACHED app.css (which still reads it) — the sheet would stop lifting
 // on every platform, not just iOS, which is worse than the bug being fixed.
-const SW_VERSION = 'v27';
+//
+// v28 (#1929): frontend/src/head.html gains
+// `apple-mobile-web-app-status-bar-style: black-translucent`, so an installed
+// iOS web app gives the PAGE the status-bar strip instead of letting iOS draw
+// it. /index.html carries that meta and is precached in SHELL_ASSETS, so per
+// v10 the bump belongs here — and per v15 an installed client holding v27
+// would otherwise keep serving the old document and never take the meta at
+// all, which is the one asset where a stale copy hides the whole change.
+const SW_VERSION = 'v28';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
