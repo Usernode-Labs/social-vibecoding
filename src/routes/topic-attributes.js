@@ -86,6 +86,13 @@ function topicAttributeRoutes(config) {
       if (field === 'category') {
         data.categories = await attrs.listCategories(pool, app.id);
       }
+      // Same contract for themes: the picker offers the app's LIVE
+      // vocabulary, which is the model's standing draft plus whatever the
+      // group has pinned, so a member can move a card into a theme the
+      // model drafted without retyping its name.
+      if (field === 'theme') {
+        data.themes = await attrs.listThemes(pool, app.id);
+      }
       res.json(data);
     } catch (err) {
       log.error('topic-attrs', 'Failed to list attribute options', { message: err.message });
@@ -113,14 +120,21 @@ function topicAttributeRoutes(config) {
       // the casing the user typed, while the vote itself stores the slug.
       const category = field === 'category'
         ? attrs.normalizeCategoryInput(req.body?.value) : null;
-      const value = field === 'category'
-        ? (category && category.slug) : attrs.normalizeValue(field, req.body?.value);
+      // A theme keeps its typed label the same way, for the same reason:
+      // the vote stores the slug, the registry row shows the casing.
+      const theme = field === 'theme'
+        ? attrs.normalizeThemeInput(req.body?.value) : null;
+      const typed = category || theme;
+      const value = typed
+        ? typed.slug : attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
         let error;
         if (field === 'priority') {
           error = 'Priority must be low, medium or high';
         } else if (field === 'category') {
           error = `Category must be 1–${attrs.MAX_CATEGORY_LEN} characters`;
+        } else if (field === 'theme') {
+          error = `Theme must be 1–${attrs.MAX_THEME_LEN} characters`;
         } else {
           error = `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`;
         }
@@ -132,7 +146,7 @@ function topicAttributeRoutes(config) {
       try {
         data = await attrs.castVote(
           pool, app.id, t.targetType, t.targetRef, field, value, req.user.id, linkedIssues,
-          category ? category.label : null
+          typed ? typed.label : null
         );
       } catch (err) {
         // The app is already at its custom-category cap and this is a NEW
@@ -142,10 +156,21 @@ function topicAttributeRoutes(config) {
             error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} custom categories.`,
           });
         }
+        // The theme cap counts LIVE rows, so this one is reachable only when
+        // the group itself is holding every slot — the model's own discards
+        // retire themselves. Saying so is more useful than the raw number.
+        if (err.message === attrs.THEME_CAP_ERROR) {
+          return res.status(400).json({
+            error: `This app already has the maximum of ${attrs.MAX_THEMES_PER_APP} themes in use. Retire one by moving its cards elsewhere.`,
+          });
+        }
         throw err;
       }
       if (field === 'category') {
         data.categories = await attrs.listCategories(pool, app.id);
+      }
+      if (field === 'theme') {
+        data.themes = await attrs.listThemes(pool, app.id);
       }
       res.json(data);
     } catch (err) {

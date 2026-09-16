@@ -343,11 +343,14 @@ test('?view=kanban resolves onto the Workshop, with the stage pane up', () => {
 
 test('an explicit ?group= wins over the retired ?view=kanban beside it', () => {
   // `?group=` is the parameter still being offered, so it names the pane.
+  // `category` is the RETIRED spelling of the theme pane and still resolves:
+  // the two groupings were merged onto one mechanism and this one is the
+  // app's themes, but the links that named it are in the wild.
   const AppView = makeAppView({
     search: '?view=kanban&group=category',
     matchMedia: () => ({ matches: false }),
   });
-  assert.equal(AppView._getWorkshopGroup(), 'category');
+  assert.equal(AppView._getWorkshopGroup(), 'theme');
 });
 
 test('?view=workshop wins over a stored kanban preference', () => {
@@ -398,8 +401,8 @@ test('choosing a pane retires the ?view=kanban override so the click sticks', ()
   });
   assert.equal(AppView._getViewMode(), 'workshop', 'the stored value migrates too');
   assert.equal(AppView._getWorkshopGroup(), 'stage');
-  AppView._setWorkshopGroup('category');
-  assert.equal(AppView._getWorkshopGroup(), 'category',
+  AppView._setWorkshopGroup('theme');
+  assert.equal(AppView._getWorkshopGroup(), 'theme',
     'the explicit choice wins over the URL');
 });
 

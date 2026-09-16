@@ -221,7 +221,7 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
   assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuLabels(AppView, html).join('|'),
-    'Change priority…|Change category…|Change assignee…|View PR on GitHub|View checks',
+    'Change priority…|Change category…|Change assignee…|Move to theme…|View PR on GitHub|View checks',
     'the menu edits proposal attributes without exposing dev-session actions');
   assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
 });

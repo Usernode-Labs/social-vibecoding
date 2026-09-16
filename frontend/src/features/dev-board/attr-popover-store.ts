@@ -1,5 +1,5 @@
 /**
- * `#attr-popover` — the priority / category / assignee picker a card's
+ * `#attr-popover` — the priority / category / assignee / theme picker a card's
  * metadata chip opens — as a view model.
  *
  * ── The host is the module's, the children are React's ────────────────
@@ -28,7 +28,7 @@
 
 import { createStore } from '../../lib/plain-store.js';
 
-export type AttrField = 'priority' | 'category' | 'assignee';
+export type AttrField = 'priority' | 'category' | 'assignee' | 'theme';
 
 /** One row. `dot` is the tint class pair, absent on an assignee row. */
 export interface AttrOptionView {

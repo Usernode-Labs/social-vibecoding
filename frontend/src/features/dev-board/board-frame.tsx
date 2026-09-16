@@ -306,7 +306,7 @@ export function DevBoardFrame({
           it. `_renderKanbanFilterBar()` fills the shared Board/Activity strip.
       */}
       {/* The toolbar. On the WORKSHOP it renders inside that surface's own
-          pane, directly above its By category / By stage tabs and sticky with
+          pane, directly above its By theme / By stage tabs and sticky with
           them — see ./workshop/workshop.tsx — so this row would be an empty
           strip of chrome here. Rendering exactly one of the two is also what
           keeps #dev-actions / #dev-plus-btn / #dev-plus-menu unique ids. */}
