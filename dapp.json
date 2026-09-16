@@ -4155,7 +4155,7 @@
     },
     {
       "name": "#2327: an author can edit an underway proposal title",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/990101",
+      "path": "/?demo=1&conversation=activity#app/usernode-2d5619/dev/proposals/990101",
       "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
       "expectText": "Your in-progress session"
     },

@@ -429,6 +429,28 @@ const recheckInFlight = new Set();
 // staging that they do NOT render in the read-only view. Because the mock
 // goes through sanitizeTranscript exactly like a real read, that check
 // exercises the real allowlist rather than a hand-written "safe" payload.
+function stagingMockOwnSession(userId, appSlug) {
+  return {
+    id: 990101, branch_name: 'mock/my-session', pr_number: null,
+    user_id: userId,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Your in-progress session',
+    // Reverse "#N" issue chip demo on the own-session card: links
+    // to mock issue 900002, which stagingMockIssues serves.
+    status: 'active', linked_issues: [900002], shared_at: null,
+    created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+    // #1959: this one is WAITING ON ITS OWNER — a spec that ended
+    // with open questions — so the Improve panel's "Ready for your
+    // input" pill is reviewable in a preview, right under the busy
+    // row's "Working"; every other idle mock row reads plain
+    // "Ready". Hand-set, like `busy` on 990102: the mocks are
+    // appended after the map that computes the real verdict.
+    awaiting_input: true,
+  };
+}
+
 function stagingMockSharedSessions() {
   return [
           {
@@ -1615,9 +1637,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       const { rows } = await pool.query(
         `UPDATE chat_sessions cs
-            SET session_title = $1,
-                proposed_pr_title = $1,
-                pr_title = CASE WHEN cs.pr_number IS NULL THEN cs.pr_title ELSE $1 END,
+            SET session_title = $1::text,
+                proposed_pr_title = $1::text,
+                pr_title = CASE WHEN cs.pr_number IS NULL THEN cs.pr_title ELSE $1::text END,
                 pr_title_fallback = CASE
                   WHEN cs.pr_number IS NULL THEN cs.pr_title_fallback ELSE FALSE END
            FROM apps a
@@ -1823,29 +1845,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // board's pinned block (caption + "Make visible" button) renders
       // for ANY viewer in a demo preview — the real seeded sessions
       // belong to the first admin only. Appended AFTER totals so the
-      // "(x/y)" headers stay honest; fake 99xxxx id, read-only (its
-      // buttons 404 server-side).
+      // "(x/y)" headers stay honest; fake 99xxxx id whose writes still 404
+      // server-side. Its read-only detail projection exists so declared
+      // checks can open the full change page without a console-erroring 404.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
-          {
-            id: 990101, branch_name: 'mock/my-session', pr_number: null,
-            user_id: req.user.id,
-            pr_url: null, pr_title: null,
-            session_title: '[Mock] Your in-progress session',
-            // Reverse "#N" issue chip demo on the own-session card: links
-            // to mock issue 900002, which stagingMockIssues serves.
-            status: 'active', linked_issues: [900002], shared_at: null,
-            created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            app_slug: config.selfAppSlug, app_name: 'Homeroom', busy: false,
-            // #1959: this one is WAITING ON ITS OWNER — a spec that ended
-            // with open questions — so the Improve panel's "Ready for your
-            // input" pill is reviewable in a preview, right under the busy
-            // row's "Working"; every other idle mock row reads plain
-            // "Ready". Hand-set, like `busy` on 990102: the mocks are
-            // appended after the map that computes the real verdict.
-            awaiting_input: true,
-          },
+          stagingMockOwnSession(req.user.id, config.selfAppSlug),
           // Card-as-pointer revision: a PRIVATE session that already has a
           // PR, so the muted/draft shell renders WITH the icon Preview
           // affordance beside its ⋯. Both other private rows have
@@ -2978,7 +2983,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
     try {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id));
+        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
+          || (Number(req.params.id) === 990101
+            ? stagingMockOwnSession(req.user.id, config.selfAppSlug) : null);
         if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
       }
       const { rows } = await pool.query(
