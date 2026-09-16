@@ -3332,17 +3332,23 @@ const AppView = {
     }
   },
 
-  // #665: pure predicate behind _renderTopicHead's repaint guard — true
-  // when the repaint must be SKIPPED because the inline issue-title editor
-  // (beginIssueTitleEdit) is open on the mounted topic. Blocks only when
-  // the topic is the issue being edited AND the editor element is actually
-  // in the DOM; the caller supplies that DOM lookup so this stays
-  // node-testable (tests/issue-title-edit-guard.test.js).
-  _titleEditBlocksRepaint(topic, editingIssueNumber, editorInDom) {
-    return !!(topic && topic.kind === 'issue'
+  // #665/#2327: pure predicate behind _renderTopicHead's repaint guard.
+  // A live refresh must not remount whichever inline title editor is open
+  // and discard the author's typed text. Open changes have both
+  // /sessions/:id and unified /proposals/:id URLs, hence the two accepted
+  // kinds for a session editor. DOM presence keeps a stale flag self-healing.
+  _titleEditBlocksRepaint(topic, editingIssueNumber, issueEditorInDom,
+    editingSessionId, sessionEditorInDom) {
+    if (!topic) return false;
+    const issueBlocked = topic.kind === 'issue'
       && editingIssueNumber != null
       && editingIssueNumber === topic.id
-      && editorInDom);
+      && issueEditorInDom;
+    const sessionBlocked = (topic.kind === 'session' || topic.kind === 'proposal')
+      && editingSessionId != null
+      && editingSessionId === topic.id
+      && sessionEditorInDom;
+    return !!(issueBlocked || sessionBlocked);
   },
 
   // Paint (or live-refresh) the topic title + header card + body.
@@ -3368,8 +3374,12 @@ const AppView = {
     // this one guard covers them all. Data still refreshes in the background
     // (_loadDevData runs regardless); save/cancel clear the flag and repaint
     // from the fresh cache.
-    const editorInDom = !!document.getElementById('dev-issue-title-input');
-    if (AppView._titleEditBlocksRepaint(t, AppView._editingIssueTitle, editorInDom)) return;
+    const issueEditorInDom = !!document.getElementById('dev-issue-title-input');
+    const sessionEditorInDom = !!document.getElementById('dev-session-title-input');
+    if (AppView._titleEditBlocksRepaint(
+      t, AppView._editingIssueTitle, issueEditorInDom,
+      AppView._editingSessionTitle, sessionEditorInDom
+    )) return;
     // The flag is NOT cleared here any more. It used to be, because the
     // paint wiped the editor's markup and a still-set flag would have frozen
     // every future repaint; the editor is rendered FROM the flag now
@@ -4658,6 +4668,7 @@ const AppView = {
     // #665: an inline title edit never carries across topics — a stale
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
+    AppView._editingSessionTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
       return App.switchTab('dev', { kind, id }, 'topic');
     }
@@ -9058,8 +9069,14 @@ const AppView = {
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
+    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
     const owner = s.username || 'someone';
     const imported = s.source === 'imported';
+    const canEditTitle = !!(noNav && !AppView.readOnly && !imported
+      && ['active', 'paused'].includes(s.status)
+      && typeof App !== 'undefined' && App.user
+      && Number(s.user_id) === Number(App.user.id));
+    const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(s.id);
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
@@ -9079,7 +9096,14 @@ const AppView = {
       cls: `${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}`,
       attrs,
       icon: AppView._devCardIcon('session'),
-      title: { text: label, title: label },
+      title: {
+        text: label,
+        title: label,
+        edit: canEditTitle && !editingTitle ? { session: Number(s.id) } : undefined,
+        editing: editingTitle
+          ? { session: Number(s.id), initial: editableTitle }
+          : undefined,
+      },
       meta: [{
         t: 'text',
         s: imported
@@ -9863,6 +9887,14 @@ const AppView = {
     // #687: an imported PR has no platform-owned dev session — its code is
     // maintained on GitHub by an external author.
     const imported = pr.source === 'imported';
+    const canEditTitle = !!(noNav && !AppView.readOnly && mine && !imported
+      && ['promoted', 'merging'].includes(pr.status));
+    const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(pr.id);
+    title.edit = canEditTitle && !editingTitle ? { session: Number(pr.id) } : undefined;
+    title.editing = editingTitle ? {
+      session: Number(pr.id),
+      initial: String(pr.pr_title || pr.session_title || title.text),
+    } : undefined;
 
     // ── Badges: at most four metadata chips ──
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
@@ -14124,6 +14156,7 @@ const AppView = {
   // Cleared on cancel, on save success/no-op (NOT on save error — the
   // editor stays open showing the error), and on openTopic.
   _editingIssueTitle: null,
+  _editingSessionTitle: null,
 
   // The editor is the title band's own markup now (card/dev-card.tsx's
   // `TitleContent`, keyed on the model's `editing`), so this sets the flag
@@ -14134,6 +14167,7 @@ const AppView = {
     const issue = (AppView._ghIssues || []).find((i) => i.number === n);
     if (!issue) return;
     AppView._editingIssueTitle = n;
+    AppView._editingSessionTitle = null;
     // Not blocked by the guard: no editor is in the DOM yet, which is the
     // second half of its predicate.
     AppView._renderTopicHead();
@@ -14174,6 +14208,92 @@ const AppView = {
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
       AppView._editingIssueTitle = null;
+      AppView._renderTopicHead();
+    } catch {
+      showError('Network error');
+    }
+  },
+
+  // #2327: the proposal counterpart to the issue editor above. It lives on
+  // the full change page throughout Underway and In review; dense cards
+  // remain one unambiguous tap target.
+  // Save updates every cached copy because a visible own session can also be
+  // present in the shared-row map, and an active unified /proposals URL may
+  // have resolved through either cache.
+  _cacheSessionTitle(sessionId, title, prTitle) {
+    const id = Number(sessionId);
+    const rows = [];
+    for (const list of [
+      AppView._mySessions, AppView._sharedSessions, AppView._proposals,
+      AppView._merged,
+    ]) {
+      if (!Array.isArray(list)) continue;
+      for (const row of list) if (row && Number(row.id) === id) rows.push(row);
+    }
+    if (AppView._sharedById && AppView._sharedById[id]) rows.push(AppView._sharedById[id]);
+    if (AppView._topicProposal && Number(AppView._topicProposal.id) === id) {
+      rows.push(AppView._topicProposal);
+    }
+    if (typeof DevChat !== 'undefined' && DevChat.currentSession
+      && Number(DevChat.currentSession.id) === id) rows.push(DevChat.currentSession);
+
+    for (const row of new Set(rows)) {
+      row.session_title = title;
+      row.proposed_pr_title = title;
+      if (prTitle) {
+        row.pr_title = prTitle;
+        row.pr_title_fallback = false;
+      }
+    }
+  },
+
+  beginSessionTitleEdit(sessionId) {
+    const id = Number(sessionId);
+    const session = AppView._findItem('session', id);
+    if (!session) return;
+    AppView._editingIssueTitle = null;
+    AppView._editingSessionTitle = id;
+    AppView._renderTopicHead();
+  },
+
+  cancelSessionTitleEdit() {
+    AppView._editingSessionTitle = null;
+    AppView._renderTopicHead();
+  },
+
+  async saveSessionTitle(sessionId) {
+    const id = Number(sessionId);
+    const input = document.getElementById('dev-session-title-input');
+    const errEl = document.getElementById('dev-session-title-error');
+    const session = AppView._findItem('session', id);
+    if (!input || input.disabled || !session) return;
+    const newTitle = input.value.replace(/\s+/g, ' ').trim();
+    const currentTitle = String(
+      session.session_title || session.pr_title || session.branch_name || `Session #${id}`
+    );
+    if (!newTitle || newTitle === currentTitle) {
+      AppView._editingSessionTitle = null;
+      AppView._renderTopicHead();
+      return;
+    }
+    input.disabled = true;
+    const showError = (message) => {
+      input.disabled = false;
+      if (errEl) {
+        errEl.textContent = message;
+        errEl.classList.remove('hidden');
+      }
+    };
+    try {
+      const res = await fetch(`/api/sessions/${id}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      AppView._cacheSessionTitle(id, data.title || newTitle, data.prTitle || null);
+      AppView._editingSessionTitle = null;
       AppView._renderTopicHead();
     } catch {
       showError('Network error');

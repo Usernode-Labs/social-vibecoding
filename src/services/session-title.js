@@ -10,6 +10,9 @@
 //      pr_title into session_title and owns the name from then on —
 //      every UPDATE here is guarded on `pr_number IS NULL` so a slow
 //      in-flight early-title call can never clobber a PR-mirrored one.
+//      A manual proposal rename also sets `proposed_pr_title`; that is an
+//      author choice, so the same guard keeps later automatic refreshes from
+//      replacing it before the PR is created.
 //   4. Headless auto sessions get the deterministic, LLM-free
 //      "#N · issue title" at creation (headlessTitle), inherited by
 //      clones.
@@ -61,13 +64,15 @@ function deterministicTitle(text) {
 }
 
 // Guarded persist + broadcast shared by every title source. The
-// `pr_number IS NULL` guard: once applyPrMetadata mirrored a PR title in,
-// a slower in-flight early-title call must lose the race. `send` is the
-// chat turn's event emitter (SSE + global WS + session bus), so open
+// Two guards make an explicit title authoritative: once applyPrMetadata
+// mirrored a PR title in, or once an author manually chose the future PR
+// title, a slower in-flight generated title must lose the race. `send` is
+// the chat turn's event emitter (SSE + global WS + session bus), so open
 // session lists update live via the `session_titled` event.
 async function persistTitle({ pool, session, title, send }) {
   const { rowCount } = await pool.query(
-    `UPDATE chat_sessions SET session_title = $1 WHERE id = $2 AND pr_number IS NULL`,
+    `UPDATE chat_sessions SET session_title = $1
+      WHERE id = $2 AND pr_number IS NULL AND proposed_pr_title IS NULL`,
     [title, session.id]
   );
   if (!rowCount) return null;

@@ -692,12 +692,20 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // screen added 5; neither set overlaps the other, so the merged manifest
   // holds every one of them: 667 + 3 + 5 = 675.
   //
-  // 675 → 676: the programme console's Challenge scoring screen, which has to
-  // render its schedule card and its rules list as siblings — the check
-  // selects across the two, because a screen that drew only one of them would
-  // still look loaded. Computed against the same shared 667 as the two sets
-  // above and overlapping neither, so the merged manifest is 667 + 3 + 5 + 1.
-  assert.equal(DAPP.tests.length, 676);
+  // 675 → 677: #2327 declares the author-only title editor once while a
+  // change is Underway and once while it is In review. They are distinct
+  // lifecycle renderers (_sharedSessionCardModel / _proposalCardModel), so
+  // pinning both prevents one half of the feature disappearing unnoticed.
+  //
+  // 675 → 676, 675 → 677: the tallies above were computed on either side of
+  // THIS merge against the same shared 675 and do not reconcile through the
+  // comment trail alone. This branch's title-editor pair added 2; main's
+  // Challenge scoring screen — which has to render its schedule card and its
+  // rules list as siblings, the check selecting across the two because a
+  // screen that drew only one of them would still look loaded — added 1;
+  // neither set overlaps the other, so the merged manifest holds both:
+  // 675 + 2 + 1 = 678.
+  assert.equal(DAPP.tests.length, 678);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

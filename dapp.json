@@ -4159,6 +4159,18 @@
       "expectText": "Change overview"
     },
     {
+      "name": "#2327: an author can edit an underway proposal title",
+      "path": "/?demo=1&conversation=activity#app/usernode-2d5619/dev/proposals/990101",
+      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectText": "Your in-progress session"
+    },
+    {
+      "name": "#2327: an author can also edit a proposal title in review",
+      "path": "/#app/usernode-2d5619/dev/proposals/900801",
+      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectText": "Staging demo: pills fall back after a build"
+    },
+    {
       "name": "A full underway change card has Discussion, Build and Activity tabs",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tablist\"]:has([data-conversation-tab=\"discussion\"][aria-selected=\"true\"]):has([data-conversation-tab=\"workspace\"]):has([data-conversation-tab=\"activity\"])",
