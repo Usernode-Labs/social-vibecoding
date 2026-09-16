@@ -14,12 +14,14 @@
 // row says so by name instead of leaving an app author to read platform
 // source.
 //
-// What it does. After the preview is up, one unauthenticated GET of the
-// bridge on the preview's public origin. The prefixes are public by design
+// What it does. After the preview is up, a bounded sequence of unauthenticated
+// GETs of the bridge on the preview's public origin. Ingress changes can
+// converge just after workload readiness, so an initial miss gets two short
+// retries; a persistent miss still fails. The prefixes are public by design
 // (they bypass the per-app visibility gate), so no token is sent — a 401
-// here is itself evidence that the prefix was not routed. The verdict is
-// the status plus the content type, never the bytes: a 200 that is not
-// JavaScript is exactly the failure this row exists for.
+// here is itself evidence that the prefix was not routed. The verdict is the
+// status plus the content type, never the bytes: a 200 that is not JavaScript
+// is exactly the failure this row exists for.
 //
 // Where it runs. Kubernetes capture only. There the preview origin is the
 // public ingress hostname, which is what a browser sees. On the docker
@@ -46,6 +48,8 @@ const ASSET_CHECK_PATH = '/usernode-bridge/v1/bridge.js';
 const ASSET_CHECK_INDEX = -4;
 
 const PROBE_TIMEOUT_MS = parseInt(process.env.ASSET_ROUTE_CHECK_TIMEOUT_MS, 10) || 10 * 1000;
+const PROBE_ATTEMPTS = parseInt(process.env.ASSET_ROUTE_CHECK_ATTEMPTS, 10) || 3;
+const PROBE_RETRY_MS = parseInt(process.env.ASSET_ROUTE_CHECK_RETRY_MS, 10) || 2 * 1000;
 // Enough of the body to show WHAT answered (an HTML shell, a JSON error)
 // without carrying a page into test_results.
 const BODY_PREVIEW_CHARS = 80;
@@ -122,6 +126,27 @@ async function probeAssetRoute(origin, { fetchImpl = globalThis.fetch, timeoutMs
   }
 }
 
+async function probeAssetRouteUntilSettled(origin, {
+  fetchImpl = globalThis.fetch,
+  timeoutMs = PROBE_TIMEOUT_MS,
+  attempts = PROBE_ATTEMPTS,
+  retryMs = PROBE_RETRY_MS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  const limit = Math.max(1, Number.isInteger(attempts) ? attempts : PROBE_ATTEMPTS);
+  let response;
+  let verdict;
+  for (let attempt = 1; attempt <= limit; attempt += 1) {
+    response = await probeAssetRoute(origin, { fetchImpl, timeoutMs });
+    verdict = classifyAssetResponse(response);
+    if (verdict.passed || attempt === limit) {
+      return { response, verdict, attempts: attempt };
+    }
+    await sleep(retryMs);
+  }
+  return { response, verdict, attempts: limit };
+}
+
 function shapeOutcome({ passed, reason, graduated }) {
   const checkKey = appManifest.checkKey(ASSET_CHECK_NAME, ASSET_CHECK_PATH);
   return {
@@ -140,14 +165,27 @@ function shapeOutcome({ passed, reason, graduated }) {
 
 // Returns { row, history } or null when the check does not apply. Never
 // throws: the checks run must not die because this probe did.
-async function maybeRunAssetRouteCheck({ config, pool, appId, sessionId = null, stagingOrigin, fetchImpl } = {}) {
+async function maybeRunAssetRouteCheck({
+  config, pool, appId, sessionId = null, stagingOrigin, fetchImpl,
+  probeAttempts, probeRetryMs, sleep,
+} = {}) {
   try {
     if (!isEnabled()) return null;
     if (!config || config.captureRuntime !== 'kubernetes') return null;
     if (typeof stagingOrigin !== 'string' || !/^https:\/\//i.test(stagingOrigin)) return null;
 
-    const response = await probeAssetRoute(stagingOrigin, { fetchImpl });
-    const { passed, reason } = classifyAssetResponse(response);
+    // Ingress replacement and edge routing converge just after the preview
+    // itself becomes ready. A single probe can therefore observe the old
+    // 403/404/HTML route even though the reconciler has already committed
+    // the replacement. Retry only this synthetic probe for a short bounded
+    // window; a persistent routing failure still produces the same row.
+    const probed = await probeAssetRouteUntilSettled(stagingOrigin, {
+      fetchImpl,
+      ...(probeAttempts === undefined ? {} : { attempts: probeAttempts }),
+      ...(probeRetryMs === undefined ? {} : { retryMs: probeRetryMs }),
+      ...(sleep === undefined ? {} : { sleep }),
+    });
+    const { response, verdict: { passed, reason }, attempts } = probed;
 
     let graduated = false;
     if (!passed) {
@@ -163,7 +201,8 @@ async function maybeRunAssetRouteCheck({ config, pool, appId, sessionId = null, 
     log.info('asset-route-check', 'Asset route probed', {
       sessionId, appId, origin: stagingOrigin, passed,
       status: response.status, contentType: response.contentType || undefined,
-      error: response.error || undefined, graduated: passed ? undefined : graduated,
+      error: response.error || undefined, attempts,
+      graduated: passed ? undefined : graduated,
     });
     return shapeOutcome({ passed, reason, graduated });
   } catch (err) {
@@ -181,5 +220,6 @@ module.exports = {
   isEnabled,
   classifyAssetResponse,
   probeAssetRoute,
+  probeAssetRouteUntilSettled,
   maybeRunAssetRouteCheck,
 };

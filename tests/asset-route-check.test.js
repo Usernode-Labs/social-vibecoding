@@ -13,6 +13,8 @@
 //     local server in both shapes: routed (bridge served as JS) and
 //     unrouted (a catch-all serving the app's page for every path, which is
 //     what an Ingress without the asset prefixes produces).
+//   * A transient miss is retried for a bounded window, while a persistent
+//     bad route still produces the same blocking/advisory failure row.
 //   * It runs only where the probe means something: Kubernetes capture, an
 //     https preview origin. The docker capture origin is the bare container,
 //     with the edge that routes these prefixes out of the path.
@@ -142,6 +144,41 @@ test('a hung origin times out into a failure instead of stalling the run', async
   assert.match(response.error, /no response within/);
 });
 
+test('a route that converges after an initial 403 is retried and passes', async () => {
+  let calls = 0;
+  const out = await check.probeAssetRouteUntilSettled('https://a--s1.example.invalid', {
+    fetchImpl: async () => {
+      calls += 1;
+      return calls === 1
+        ? { status: 403, headers: { get: () => 'text/plain' }, text: async () => 'Access denied' }
+        : { status: 200, headers: { get: () => 'application/javascript' }, text: async () => '' };
+    },
+    attempts: 3,
+    retryMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(calls, 2);
+  assert.equal(out.attempts, 2);
+  assert.equal(out.verdict.passed, true);
+});
+
+test('a persistent bad route still fails after the bounded retry window', async () => {
+  let calls = 0;
+  const out = await check.probeAssetRouteUntilSettled('https://a--s1.example.invalid', {
+    fetchImpl: async () => {
+      calls += 1;
+      return { status: 403, headers: { get: () => 'text/plain' }, text: async () => 'Access denied' };
+    },
+    attempts: 3,
+    retryMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(calls, 3);
+  assert.equal(out.attempts, 3);
+  assert.equal(out.verdict.passed, false);
+  assert.match(out.verdict.reason, /403 text\/plain/);
+});
+
 // ── maybeRunAssetRouteCheck ────────────────────────────────────────────
 
 function fakeFetch(status, contentType, body = '') {
@@ -185,7 +222,7 @@ test('a failure on an app that never passed it is advisory', async (t) => {
   stub(t, checkHistory, { loadGraduated: async () => new Set() });
   const out = await check.maybeRunAssetRouteCheck({
     config: K8S, pool: {}, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
-    fetchImpl: fakeFetch(200, 'text/html', '<!doctype html>'),
+    fetchImpl: fakeFetch(200, 'text/html', '<!doctype html>'), probeAttempts: 1,
   });
   assert.equal(out.row.status, 'fail');
   assert.equal(out.row.advisory, true);
@@ -197,7 +234,7 @@ test('a failure on an app that has passed it before blocks', async (t) => {
   stub(t, checkHistory, { loadGraduated: async () => new Set([out0().history.checkKey]) });
   const out = await check.maybeRunAssetRouteCheck({
     config: K8S, pool: {}, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
-    fetchImpl: fakeFetch(503, 'text/plain'),
+    fetchImpl: fakeFetch(503, 'text/plain'), probeAttempts: 1,
   });
   assert.equal(out.row.advisory, false);
 });
@@ -211,12 +248,12 @@ test('a graduation lookup error falls back to advisory, and nothing throws', asy
   stub(t, checkHistory, { loadGraduated: async () => { throw new Error('db down'); } });
   const out = await check.maybeRunAssetRouteCheck({
     config: K8S, pool: {}, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
-    fetchImpl: fakeFetch(200, 'text/html'),
+    fetchImpl: fakeFetch(200, 'text/html'), probeAttempts: 1,
   });
   assert.equal(out.row.advisory, true);
   const thrown = await check.maybeRunAssetRouteCheck({
     config: K8S, pool: {}, appId: 7, stagingOrigin: 'https://a--s1.example.invalid',
-    fetchImpl: async () => { throw new Error('socket hang up'); },
+    fetchImpl: async () => { throw new Error('socket hang up'); }, probeAttempts: 1,
   });
   assert.equal(thrown.row.status, 'fail');
   assert.match(thrown.row.failureReason, /socket hang up/);
