@@ -88,6 +88,25 @@ test('already-followed frames survive when the final pod log cannot be read', as
   assert.ok(events.includes('abort-follow'));
 });
 
+test('already-followed frames survive a successful empty final pod log read', async (t) => {
+  const { events } = setup(t, {
+    status: n => n < 2 ? {} : { succeeded: 1 },
+    output: '',
+    streamOutput: frame,
+  });
+  const seen = [];
+  const pending = kubernetes.runCaptureJob(config, {
+    sessionId: 42, env: {}, salvagePartial: true, onStdoutLine: line => seen.push(line),
+  });
+  await flush();
+  t.mock.timers.tick(2000);
+  const result = await pending;
+  assert.equal(result.stdout, frame);
+  assert.equal(result.partial, undefined, 'a successful Job with complete retained output stays successful');
+  assert.equal(seen.filter(line => line.startsWith('__USERNODE_TEST__')).length, 1);
+  assert.ok(events.includes('abort-follow'));
+});
+
 test('a stalled salvage read cannot block timed-out Job cleanup', async (t) => {
   const { events } = setup(t, { status: {}, logStall: true, streamOutput: frame });
   const pending = kubernetes.runCaptureJob(config, { sessionId: 42, env: {}, stdinPayload: '{}', timeoutMs: 1, salvagePartial: true });
@@ -109,6 +128,7 @@ test('capture output truncation is explicit and byte-bounded', async (t) => {
   const result = await kubernetes.runCaptureJob(config, { sessionId: 42, env: {}, salvagePartial: true, maxBuffer });
   assert.equal(result.partialReason, 'output over maxBuffer');
   assert.ok(Buffer.byteLength(result.stdout) <= maxBuffer);
+  assert.equal(result.stdout.includes('\uFFFD'), false, 'the byte cap never cuts a UTF-8 sequence');
   assert.equal(visuals.parseTests(result.stdout).length, 1);
 });
 
