@@ -739,7 +739,7 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  * floor over a scrim and the tab pill hides under it. Above, Ask and the
  * comments take a PANEL beside the rail and the stage slides over, so the
  * item stays readable while you use them, and Vote is a popover on its own
- * button. `useWideLayout` is that breakpoint in the other language; the keys
+ * button. `useMediaFlag(WIDE_QUERY)` is that breakpoint in the other language; the keys
  * (↑ ↓ move, V vote, A ask, C comments, T try it, M more) work everywhere
  * and are only LISTED on the wide layout, where a keyboard is likely.
  *
@@ -1213,7 +1213,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const endScrollRef = useRef<boolean>(endOnOpen);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
-  const wide = useWideLayout();
+  const wide = useMediaFlag(WIDE_QUERY);
 
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
@@ -1933,6 +1933,45 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
 }
 
 /**
+ * The grouping strip — "By category" / "By stage".
+ *
+ * ONE NODE, RENDERED IN ONE OF TWO PLACES, which is the arrangement the tab
+ * bar above it already uses (see `useRailHost`). Below 768px it is a row of
+ * the pane's sticky head, full width, as it has always been. From 768px up it
+ * moves into `.dev-ws-ear` — a surface hanging off the pane's top-right
+ * corner, beside the lander's tab pill — and app.css shrinks it to its labels
+ * there. Rendered in ONE place at a time rather than twice with one hidden:
+ * `[data-ws-group]` is what the declared checks and `querySelector` reach
+ * for, and a hidden twin is the copy they would find first.
+ */
+function GroupStrip({ group }: { group: string }): ReactNode {
+  return (
+    <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
+      <button
+        type="button"
+        role="tab"
+        className="dev-ws-group-tab"
+        data-ws-group="category"
+        aria-selected={group === 'category'}
+        onClick={() => callAppView('_setWorkshopGroup', 'category')}
+      >
+        By category
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className="dev-ws-group-tab"
+        data-ws-group="stage"
+        aria-selected={group === 'stage'}
+        onClick={() => callAppView('_setWorkshopGroup', 'stage')}
+      >
+        By stage
+      </button>
+    </div>
+  );
+}
+
+/**
  * The breakpoint, in one place. app.css's `@media (min-width: 700px)` block is
  * the same decision written in the other language, and the two move together:
  * above it the tab strip is a segmented control at the head of the column and
@@ -1941,10 +1980,23 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
  */
 const WIDE_QUERY = '(min-width: 700px)';
 
+/**
+ * The OTHER breakpoint, and it is deliberately not that one.
+ *
+ * From 768px up the grouping strip leaves the pane head and sits beside the
+ * tab pill as an ear on the pane's top-right corner (app.css, "The grouping
+ * strip as an EAR"). 768 rather than 700 because the reading column tops out
+ * at 760px there: above it the row has exactly one appearance — a 444px pill,
+ * a 233px ear, 83px of air — at every width, and below it the two would close
+ * on each other through a 60px band before the rail breakpoint took the pill
+ * away. Those three numbers are measured, not chosen.
+ */
+const EAR_QUERY = '(min-width: 768px)';
+
 /** `matchMedia` where there is one — the vm the tests render in has none. */
-function matchesWide(): boolean {
+function matchesQuery(query: string): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia(WIDE_QUERY).matches
+    ? window.matchMedia(query).matches
     : false;
 }
 
@@ -1964,17 +2016,17 @@ function matchesWide(): boolean {
  * The effect is still there for the CROSSING — a rotated phone, a resized
  * window — which the seed alone cannot see.
  */
-function useWideLayout(): boolean {
-  const [wide, setWide] = useState(matchesWide);
+function useMediaFlag(query: string): boolean {
+  const [on, setOn] = useState(() => matchesQuery(query));
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(WIDE_QUERY);
-    const apply = () => setWide(mq.matches);
+    const mq = window.matchMedia(query);
+    const apply = () => setOn(mq.matches);
     apply();
     mq.addEventListener('change', apply);
     return () => mq.removeEventListener('change', apply);
-  }, []);
-  return wide;
+  }, [query]);
+  return on;
 }
 
 /**
@@ -2187,6 +2239,9 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
+  // Where the grouping strip renders: beside the tab pill from 768px up, in
+  // the pane's sticky head below it. See `EAR_QUERY` and `GroupStrip`.
+  const earUp = useMediaFlag(EAR_QUERY);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -2642,6 +2697,19 @@ export function DevWorkshop(): ReactNode {
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
+          {/* THE EAR, on a wide window: the grouping strip on its own surface
+              at the pane's top-right corner, level with the tab pill. It is a
+              child of the PANE and absolutely positioned against it, so it
+              tracks whichever width the pane has — the 760px reading column
+              on By category, the full-bleed card on By stage. See app.css.
+
+              Rendered only when it is up, so the strip below is the same one
+              node moved rather than a second copy of it. */}
+          {earUp ? (
+            <div className="dev-ws-ear" data-ws-ear="">
+              <GroupStrip group={group} />
+            </div>
+          ) : null}
           {/* ── The sticky head: the controls that act on what is below ──
               The search, the filters and the "+" used to sit in the frame's
               chrome above the scroller, two strips away from the list they
@@ -2664,28 +2732,9 @@ export function DevWorkshop(): ReactNode {
               were the first thing in the pane and named only the CHOICE,
               leaving what the choice was being made about unsaid. */}
           <span className="dev-ws-eyebrow dev-ws-pane-eyebrow">All items</span>
-          <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-group-tab"
-              data-ws-group="category"
-              aria-selected={group === 'category'}
-              onClick={() => callAppView('_setWorkshopGroup', 'category')}
-            >
-              By category
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-group-tab"
-              data-ws-group="stage"
-              aria-selected={group === 'stage'}
-              onClick={() => callAppView('_setWorkshopGroup', 'stage')}
-            >
-              By stage
-            </button>
-          </div>
+          {/* The strip's narrow home. Above the breakpoint it is in the ear
+              instead — one node, two places. */}
+          {earUp ? null : <GroupStrip group={group} />}
             <DevActionsRow
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}

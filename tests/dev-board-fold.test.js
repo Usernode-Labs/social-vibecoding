@@ -683,7 +683,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // decision waiting leads; and the fourth reads the empty line's absence,
   // which is the one thing a populated screenshot cannot show. Room remains
   // against MAX_DECLARED_TESTS (710).
-  assert.equal(DAPP.tests.length, 672);
+  //
+  // 672 → 674: the Workshop's grouping strip moves out of the All-items pane
+  // head and up beside the tab pill on a wide window, so the check that read
+  // `.dev-ws-group + #dev-actions` inside the head describes an arrangement
+  // that no longer exists at the capture's 1280px viewport. It is REPLACED
+  // rather than removed — one check on the ear (the visual one, since this is
+  // the change a voter has to see), one on the head it left, one on the ear
+  // in the By-stage state, where the pane runs edge to edge and the ear has
+  // to track its right edge — which is net +2 against a manifest that loses
+  // one. tests/dev-workshop.test.js pins that no check still expects the old
+  // adjacency, so the swap cannot be half-done.
+  assert.equal(DAPP.tests.length, 674);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
