@@ -4431,7 +4431,11 @@ test('#1933: the declared check reads the chip off a demo issue card on the boar
   // `data-issue-row`, not `data-ref-issue`: the Board draws FOLDED rows, and
   // a folded row carries only the item hooks (fold.tsx ITEM_HOOKS), which is
   // the one the first run of this check learned the hard way.
-  assert.match(check.expectSelector, /#dev-kanban \[data-issue-row="900001"\] \[data-theme-chip="demo-appearance"\]/);
+  // The chip is a real attribute chip now, not a flat badge, so the check
+  // selects the hooks that make it votable rather than the retired
+  // `data-theme-chip` marker — a stronger assertion than the one it replaces.
+  assert.match(check.expectSelector,
+    /#dev-kanban \[data-issue-row="900001"\] \[data-attr-chip\]\[data-attr-field="category"\]/);
   assert.equal(check.expectText, '[Mock] Appearance & theming');
   // The name and the placement it asserts are the staging demo theme's.
   const route = read('src/routes/workshop-themes.js');

@@ -12640,8 +12640,12 @@ const AppView = {
         AppView._govApplyBadgeSpec(applyState),
         // Governance cards carry no other attribute chips, so the category
         // is added on its own rather than by pulling in priority and
-        // assignee they have never shown.
-        AppView._attrChipSpec('category', 'proposal', issue.id, issue && issue.category, AppView.readOnly),
+        // assignee they have never shown — and only once it HAS one, since
+        // an unset chip here would be a "Set category" call to action on a
+        // card type that has never offered one.
+        ((issue && issue.category && issue.category.top) || AppView._placedCategoryFor('proposal', issue.id))
+          ? AppView._attrChipSpec('category', 'proposal', issue.id, issue && issue.category, AppView.readOnly)
+          : null,
       ].filter(Boolean),
       chatCount: parseInt(issue.chat_count) || 0,
       actions,

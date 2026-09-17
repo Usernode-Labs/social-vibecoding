@@ -930,7 +930,9 @@ test('staging seeds a custom-category vocabulary + cards using it', () => {
   // One mock ISSUE and one mock PROPOSAL carry a custom category, so the
   // chip colour + the filter narrowing are reviewable on both card types.
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
-  assert.match(issuesSrc, /category: \{ top: 'staging demo perf'/, 'a mock issue leads with a custom category');
+  // The key is slugified since the merge, so the mock has to name the key the
+  // vocabulary actually offers or the chip falls back to a capitalised slug.
+  assert.match(issuesSrc, /category: \{ top: 'staging-demo-perf'/, 'a mock issue leads with a custom category');
   const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
   assert.match(votesSrc, /category: \{ top: 'staging demo onboarding'/, 'a mock proposal too');
 });

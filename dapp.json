@@ -1252,8 +1252,8 @@
     },
     {
       "name": "Board cards name the auto-drafted category they were placed in (#1933)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-kanban [data-issue-row=\"900001\"] [data-theme-chip=\"demo-appearance\"]",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-issue-row=\"900001\"] [data-attr-chip][data-attr-field=\"category\"][data-attr-target-type=\"issue\"][data-attr-target-ref=\"900001\"]",
       "expectText": "[Mock] Appearance & theming"
     },
     {
@@ -2162,7 +2162,7 @@
       "id": "workshop.grouping-ear",
       "name": "The grouping strip sits beside the tabs, on a surface joined to the pane",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"theme\"][aria-selected=\"true\"]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"category\"][aria-selected=\"true\"]",
       "expectText": "By category",
       "visual": true,
       "impact": [

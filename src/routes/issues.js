@@ -1829,7 +1829,7 @@ function issueRoutes(config) {
           [900007, {
             priority: { top: 'high', count: 1, myValue: null },
             assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'staging demo perf', count: 2, myValue: null },
+            category: { top: 'staging-demo-perf', count: 2, myValue: null },
           }],
           // 900002 deliberately left untouched → muted "Set priority" /
           // "Unassigned" / "Set category"; opening its assignee dropdown
