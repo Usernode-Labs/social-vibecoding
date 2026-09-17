@@ -366,7 +366,9 @@ test('a fork adds the scaffold without clobbering what the source carried', () =
   // Written into the working tree BEFORE the single squashed commit, so it
   // needs no second push.
   const writeAt = FORKER_SRC.indexOf('writeConnectorScaffold(tempDir)');
-  const commitAt = FORKER_SRC.indexOf('git init -q -b main');
+  // The init step is one git process of its own now, not a line of a bash
+  // script; the scaffold still has to be on disk before it runs.
+  const commitAt = FORKER_SRC.indexOf("['init', '-q', '-b', 'main']");
   assert.ok(writeAt > 0 && commitAt > writeAt,
     'the scaffold lands before the commit that captures the tree');
 });
