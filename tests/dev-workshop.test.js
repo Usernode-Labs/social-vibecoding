@@ -869,6 +869,48 @@ test('the walk’s depth belongs to the pane, because two controls read it', () 
   assert.ok(!at(2).includes('data-ws-week-more'), 'and the control goes when the walk is spent');
 });
 
+test('the discussion row is a button, so its branch runs BEFORE the control guard', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const html = workshopHtml(AppView);
+
+  // The two facts that made this row dead, pinned together because neither
+  // is a bug on its own.
+  //
+  // ONE: the row is a `<button>`. #2341 retired the card around it, and with
+  // the card gone the row IS the control — so it stopped being a `div` with
+  // a click hook and became the element it behaves like.
+  assert.match(html, /<button[^>]*class="dev-ws-chat-row"[^>]*data-discussion-row="1"/);
+
+  // TWO: the delegated `#dev-body` handler opens with
+  // `if (e.target.closest('a, button, input, form')) return;` — the guard
+  // that stops a vote button or a PR link inside a card also opening the
+  // card. A row that IS a button matches it, so every click returned there
+  // and the branch below was unreachable. Nothing failed loudly: the row
+  // just did nothing, on pointer AND on Enter, since Enter on a button
+  // fires the same click.
+  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("bodyEl.addEventListener('click'"));
+  const handler = body.slice(0, body.indexOf('{ signal: devBodySignal }'));
+  const guard = handler.indexOf("e.target.closest('a, button, input, form')");
+  const branch = handler.indexOf("e.target.closest('[data-discussion-row]')");
+  assert.ok(guard > 0 && branch > 0, 'both the guard and the branch are in the handler');
+  assert.ok(branch < guard,
+    'the discussion branch must be reached before the guard that swallows buttons');
+  // Exactly one branch: the fix moved the check rather than adding a second.
+  assert.equal(handler.split("e.target.closest('[data-discussion-row]')").length - 1, 1);
+
+  // AND THE FOLD CHECK STAYS AHEAD OF BOTH. A folded discussion card on the
+  // Board carries the same hook (card/fold.tsx `ITEM_HOOKS`) and belongs to
+  // its fold, which opens and closes it in place — hoisting the branch past
+  // that would make a folded card switch screens instead.
+  const fold = handler.indexOf('AppView._inFoldWrapper(e)');
+  assert.ok(fold > 0 && fold < branch, 'the fold owns its own card first');
+
+  // The same precedent this follows, three lines up: a `<button>` inside a
+  // card is handled before the guard, not after it.
+  assert.ok(handler.indexOf('gc-explore-chat-btn') < guard);
+});
+
 test('the discussion row says whose chat it is, over the last thing said', () => {
   const AppView = makeAppView();
   seed(AppView);
