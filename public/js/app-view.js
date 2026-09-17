@@ -11860,6 +11860,18 @@ const AppView = {
       // The re-run escape hatch only appears once the proposal is old enough
       // (10 min, mirroring the server's stale-checks sweep) that "starting"
       // has plausibly wedged.
+      // #2368: a change that is still being worked on and has no check state
+      // has never started a run — every push pends its checks before the
+      // build — so there is nothing starting to wait for. Say when they will
+      // run instead of spinning on a draft with no changes.
+      if (['active', 'paused'].includes(pr.status)) {
+        return [{
+          key: 'checks', tone: 'neutral', spinner: false,
+          heading: 'No checks yet',
+          rows: [{ t: 'line', parts: ['Checks run once the agent commits a change: a staging preview is built, then the automated tests run against it.'] }],
+          action: null,
+        }];
+      }
       if (!pr.console_check_state) {
         const stale = AppView._checksRunStale(pr.created_at);
         const rows = [{ t: 'line', parts: ['The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.'] }];

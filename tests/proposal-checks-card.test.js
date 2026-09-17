@@ -246,6 +246,29 @@ test('a stale fresh-NULL row (old created_at) offers the re-run escape hatch to 
   assert.match(html, /Re-run checks/);
 });
 
+// #2368: a change still being worked on with no check state has never started
+// a run (every push pends its checks first), so nothing is "starting".
+test('an underway change with nothing pushed says when checks will run, with no spinner', () => {
+  const AppView = makeAppView(ME);
+  for (const status of ['active', 'paused']) {
+    const html = checksHtml(AppView, baseProposal({
+      user_id: ME, status, pr_number: null, check_state: null,
+      created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    }));
+    assert.doesNotMatch(html, /Checks are starting/, status);
+    assert.doesNotMatch(html, /dc-status-spinner-arc/, `${status}: no spinner`);
+    assert.doesNotMatch(html, /Re-run checks/, `${status}: nothing to re-run`);
+    assert.match(html, /No checks yet/, status);
+    assert.match(html, /once the agent commits a change/, status);
+  }
+  // Once a push pends the checks, the running state is unchanged.
+  const pending = checksHtml(AppView, baseProposal({
+    user_id: ME, status: 'active', check_state: 'pending', test_results: [],
+    checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+  }));
+  assert.match(pending, /Checks are still running/);
+});
+
 test('a FRESH pending run shows the spinner + started line and hides the re-run button', () => {
   const AppView = makeAppView(ME);
   const html = checksHtml(AppView, baseProposal({
