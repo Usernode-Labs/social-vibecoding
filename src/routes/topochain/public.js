@@ -791,7 +791,7 @@ function topochainPublicRoutes(config) {
       // Fetch one extra row to know whether more remain beyond this page.
       const { rows: entryRows } = await pool.query(
         `SELECT ua.user_id, SUM(ua.points) AS points, u.discord, u.display_name,
-                u.email, u.telegram, u.exclude_podium, ls.event_success_rate
+                u.email, u.telegram, u.username, u.exclude_podium, ls.event_success_rate
            FROM user_activities ua
            JOIN users u ON u.id = ua.user_id
            LEFT JOIN LATERAL (
@@ -801,7 +801,7 @@ function topochainPublicRoutes(config) {
            ) ls ON TRUE
           WHERE ua.challenge_id = $1
           GROUP BY ua.user_id, u.discord, u.display_name, u.email, u.telegram,
-                   u.exclude_podium, ls.event_success_rate
+                   u.username, u.exclude_podium, ls.event_success_rate
           ORDER BY SUM(ua.points) DESC
           LIMIT $3 OFFSET $4`,
         [challengeId, eventId, limit + 1, offset]
@@ -849,7 +849,7 @@ function topochainPublicRoutes(config) {
       // migrated pre-enrollment data) preserves that intent; a
       // non-participant id returns this exact same 404 as an unknown id.
       const { rows: userRows } = await pool.query(
-        `SELECT u.id, u.email, u.telegram, u.discord, u.display_name
+        `SELECT u.id, u.email, u.telegram, u.discord, u.display_name, u.username
            FROM users u
           WHERE u.id = $1
             AND (EXISTS (SELECT 1 FROM user_enrollments ue WHERE ue.user_id = u.id)

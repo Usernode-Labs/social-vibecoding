@@ -37,10 +37,10 @@ const { num } = require('../../routes/topochain/helpers');
 //     in-scope events has the latest `starts_at` (their most recent
 //     event), picked via a ROW_NUMBER() window over the same `latest`
 //     CTE the aggregate already builds.
-//   - identity columns (`email`, `telegram`, `discord`, `display_name`)
-//     and `is_non_podium` (`users.exclude_podium`) — every caller needs
-//     these to mask/format a row, so they're joined once here instead of
-//     N times by each consumer.
+//   - identity columns (`email`, `telegram`, `discord`, `display_name`,
+//     `username`) and `is_non_podium` (`users.exclude_podium`) — every
+//     caller needs these to mask/format a row, so they're joined once here
+//     instead of N times by each consumer.
 const STANDINGS_SQL = `
   WITH latest AS (
     SELECT DISTINCT ON (ls.season_event_id, ls.user_id)
@@ -65,11 +65,12 @@ const STANDINGS_SQL = `
          SUM(l.event_total_produced_blocks)        AS total_produced_blocks,
          MAX(le.total_produced_blocks_last_event)  AS total_produced_blocks_last_event,
          u.exclude_podium AS is_non_podium,
-         u.email, u.telegram, u.discord, u.display_name
+         u.email, u.telegram, u.discord, u.display_name, u.username
     FROM latest l
     JOIN users u ON u.id = l.user_id
     LEFT JOIN last_event le ON le.user_id = l.user_id
-   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name
+   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name,
+            u.username
    ORDER BY SUM(l.total_points) DESC, l.user_id ASC
 `;
 
@@ -114,6 +115,7 @@ async function computeStandings(pool, { seasonId = null } = {}) {
     telegram: r.telegram,
     discord: r.discord,
     display_name: r.display_name,
+    username: r.username,
   }));
   return assignSharedRanks(cast);
 }

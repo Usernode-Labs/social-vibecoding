@@ -57,6 +57,7 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
+const { resolveDisplayName } = require('../../services/topochain/event-standings');
 const { nativeSessionRoutes } = require('./native-session');
 const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
@@ -127,38 +128,11 @@ function pctLocal(numerator, denominator) {
   return Math.round((n / d) * 10000) / 100;
 }
 
-function maskGeneric(value) {
-  return `${String(value).slice(0, 3)}***`;
-}
-
-function resolveIdentifier(user) {
-  if (user.email) return { type: 'email', value: user.email };
-  if (user.telegram) return { type: 'telegram', value: user.telegram };
-  if (user.discord) return { type: 'discord', value: user.discord };
-  return { type: null, value: null };
-}
-
-function maskIdentifier({ type, value }) {
-  if (!value) return null;
-  if (type === 'email') {
-    const at = value.indexOf('@');
-    if (at === -1) return maskGeneric(value);
-    const local = value.slice(0, at);
-    const domain = value.slice(at + 1);
-    const dot = domain.lastIndexOf('.');
-    const tld = dot === -1 ? '' : domain.slice(dot);
-    return `${local.slice(0, 3)}***@***${tld}`;
-  }
-  return maskGeneric(value);
-}
-
-// discord -> display_name -> masked identifier (SPEC 1859's fallback
-// chain for breakdown's `display_name`; also used for leaderboard rows).
-function resolveDisplayName(user) {
-  if (user.discord) return user.discord;
-  if (user.display_name) return user.display_name;
-  return maskIdentifier(resolveIdentifier(user));
-}
+// The display-name chain (discord -> display_name -> masked identifier ->
+// platform username; SPEC 1859 for breakdown's `display_name`, also used for
+// leaderboard rows) is the shared one in services/topochain/event-standings.js.
+// This file kept its own copy until #2394, and the copy is how a fix to the
+// public board would have skipped the mobile one.
 
 // ─── Terms gate (SPEC 1791/2957: un-gates /me/ranking's total_tokens) ───
 //
@@ -354,7 +328,7 @@ async function fetchEventScopeLeaderboard(pool, eventId) {
        SELECT DISTINCT ON (ls.user_id) ls.user_id, ls.rank, ls.total_points, ls.extra_points,
               ls.event_total_produced_blocks AS total_produced_blocks, ls.vrf_total_won_slots,
               ls.event_success_rate, u.exclude_podium AS is_non_podium, u.email, u.telegram,
-              u.discord, u.display_name
+              u.discord, u.display_name, u.username
          FROM leaderboard_snapshots ls
          JOIN users u ON u.id = ls.user_id
         WHERE ls.season_event_id = $1
@@ -376,6 +350,7 @@ async function fetchEventScopeLeaderboard(pool, eventId) {
     telegram: r.telegram,
     discord: r.discord,
     display_name: r.display_name,
+    username: r.username,
   }));
 }
 
@@ -414,10 +389,12 @@ const SEASON_LEADERBOARD_SQL = `
          COUNT(DISTINCT l.season_event_id) AS events_participated,
          SUM(l.event_total_produced_blocks) AS total_produced_blocks,
          SUM(l.vrf_total_won_slots) AS vrf_total_won_slots,
-         u.exclude_podium AS is_non_podium, u.email, u.telegram, u.discord, u.display_name
+         u.exclude_podium AS is_non_podium, u.email, u.telegram, u.discord, u.display_name,
+         u.username
     FROM latest l
     JOIN users u ON u.id = l.user_id
-   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name
+   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name,
+            u.username
    ORDER BY SUM(l.total_points) DESC, l.user_id ASC
 `;
 
@@ -435,6 +412,7 @@ async function fetchSeasonScopeLeaderboard(pool, seasonId) {
     telegram: r.telegram,
     discord: r.discord,
     display_name: r.display_name,
+    username: r.username,
   }));
   return assignSharedRanks(cast);
 }
@@ -981,7 +959,7 @@ function topochainMobileRoutes(config) {
       const includeActivity = parseBoolDefaultTrue(req.query.include_activity);
 
       const { rows: userRows } = await pool.query(
-        'SELECT discord, display_name, email, telegram FROM users WHERE id = $1',
+        'SELECT discord, display_name, email, telegram, username FROM users WHERE id = $1',
         [req.user.id]
       );
       const displayName = resolveDisplayName(userRows[0] || {});

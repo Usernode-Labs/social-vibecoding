@@ -54,8 +54,16 @@ function maskIdentifier({ type, value }) {
   return maskGeneric(value);
 }
 
-// discord -> display_name -> masked identifier (SPEC 1246's fallback
-// chain, reused everywhere a display name is shown).
+// discord -> display_name -> masked identifier -> platform username
+// (SPEC 1246's fallback chain, reused everywhere a display name is shown).
+//
+// The username tail is #2394: an account created on the platform itself
+// (signup, wallet sign-in) carries none of the first three, so its row
+// rendered as points with no name. Usernames are already public (the Kudos
+// board, /#leaderboard/users/<name>, chat), so unlike email/telegram it is
+// shown unmasked. It sits LAST so every row that resolved a name before
+// keeps it. The admin console's generated `topochain_<hex>` handles are not
+// a name anyone chose, and stay null.
 //
 // `includeDiscord: false` (security-review finding) drops the raw discord
 // handle from the head of the chain — used ONLY by /leaderboard/global for
@@ -68,7 +76,15 @@ function maskIdentifier({ type, value }) {
 function resolveDisplayName(user, { includeDiscord = true } = {}) {
   if (includeDiscord && user.discord) return user.discord;
   if (user.display_name) return user.display_name;
-  return maskIdentifier(resolveIdentifier(user));
+  return maskIdentifier(resolveIdentifier(user)) || publicUsername(user.username);
+}
+
+// A platform username fit to show, or null. Admin-created topochain users
+// get a random `topochain_<24 hex>` one (routes/topochain/admin/users.js).
+const GENERATED_USERNAME_RE = /^topochain_[0-9a-f]+$/i;
+function publicUsername(username) {
+  if (!username || GENERATED_USERNAME_RE.test(username)) return null;
+  return username;
 }
 
 // ─── GET /leaderboard: per-event row shape + fetch ───────────────────────
@@ -95,7 +111,7 @@ const EVENT_LEADERBOARD_SQL = `
                 AND oa.season_id = (SELECT season_id FROM season_events WHERE id = $1)))
      ORDER BY oa.user_id, (oa.season_event_id IS NULL) ASC, oa.id DESC
   )
-  SELECT l.*, u.email, u.telegram, u.discord, u.display_name, u.exclude_podium,
+  SELECT l.*, u.email, u.telegram, u.discord, u.display_name, u.username, u.exclude_podium,
          a.public_key AS wallet_address, a.address AS bech32m
     FROM latest l
     JOIN users u ON u.id = l.user_id
@@ -137,6 +153,7 @@ async function fetchEventLeaderboardRows(pool, event) {
     telegram: s.telegram,
     discord: s.discord,
     display_name: s.display_name,
+    username: s.username,
     wallet_address: null,
     bech32m: null,
     bug_report_points: 0,

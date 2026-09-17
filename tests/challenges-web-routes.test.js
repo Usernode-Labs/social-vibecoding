@@ -90,7 +90,7 @@ function makeMockPool() {
     }
 
     // /me/breakdown: display-name row for the AUTHENTICATED user.
-    if (sql.includes('SELECT discord, display_name, email, telegram FROM users WHERE id = $1')) {
+    if (sql.includes('SELECT discord, display_name, email, telegram, username FROM users WHERE id = $1')) {
       if (Number(params[0]) !== WEB_USER.id) return { rows: [] };
       return {
         rows: [{
@@ -98,6 +98,7 @@ function makeMockPool() {
           display_name: WEB_USER.display_name,
           email: WEB_USER.email,
           telegram: WEB_USER.telegram,
+          username: WEB_USER.username,
         }],
       };
     }

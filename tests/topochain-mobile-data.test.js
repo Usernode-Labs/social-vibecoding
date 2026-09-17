@@ -29,23 +29,35 @@ function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
+// A user's identity columns as a query that SELECTs them returns them —
+// `username` only when the select list (the text before GROUP BY) really
+// names `u.username`, so a query that drops the column is caught here.
+function identityCols(sql, user) {
+  const cols = { email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name };
+  if (sql.split(' GROUP BY ')[0].includes('u.username')) cols.username = user.username;
+  return cols;
+}
+
 // alice: no discord/display_name -> falls back to masked email.
 // bob: has a discord handle -> display_name resolves to it directly.
+// Every user also has a platform `username`, which sits after the masked
+// identifier in the chain (#2394) and so changes none of their names; the
+// username-only account is added by its own test at the end of the file.
 // carol: podium-excluded (exclude_podium), used to exercise the
 // shared-rank rule (SPEC 959) in the mobile leaderboard's season scope.
 const USERS = [
   {
-    id: 1, email: 'alice@example.com', telegram: null, discord: null, display_name: null,
+    id: 1, username: 'alice', email: 'alice@example.com', telegram: null, discord: null, display_name: null,
     github: 'alicegh', x: 'aliceX', is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: false,
   },
   {
-    id: 2, email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null,
+    id: 2, username: 'bob', email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null,
     github: null, x: null, is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: false,
   },
   {
-    id: 3, email: 'carol@example.com', telegram: null, discord: null, display_name: 'Carol D',
+    id: 3, username: 'carol', email: 'carol@example.com', telegram: null, discord: null, display_name: 'Carol D',
     github: null, x: null, is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: true,
   },
@@ -53,7 +65,7 @@ const USERS = [
   // consent rows at all anywhere — the genuine "no data" fixture used to
   // exercise /me/ranking's "still 200, rank null, zeroed totals" rule.
   {
-    id: 4, email: 'dave@example.com', telegram: null, discord: null, display_name: null,
+    id: 4, username: 'dave', email: 'dave@example.com', telegram: null, discord: null, display_name: null,
     github: null, x: null, is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: false,
   },
@@ -65,7 +77,7 @@ const USERS = [
   // based tests that share this fixture set (see the comment on season
   // 30 below for why she still shows up in /me/ranking's global scope).
   {
-    id: 5, email: 'erin@example.com', telegram: null, discord: null, display_name: null,
+    id: 5, username: 'erin', email: 'erin@example.com', telegram: null, discord: null, display_name: null,
     github: null, x: null, is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: false,
   },
@@ -210,7 +222,7 @@ function latestPerUserForEvent(eventId) {
 // Mirrors services/topochain/standings.js's STANDINGS_SQL (the §4.10
 // shared aggregate) over the fixtures above — used for /me/ranking's
 // season and global scopes.
-function computeStandingsRows(seasonId) {
+function computeStandingsRows(seasonId, sql) {
   const events = SEASON_EVENTS.filter((e) => !e.internal && (seasonId == null || e.season_id === seasonId));
   const byUser = new Map();
   for (const e of events) {
@@ -235,7 +247,7 @@ function computeStandingsRows(seasonId) {
       total_produced_blocks: acc.total_produced_blocks,
       total_produced_blocks_last_event: acc.total_produced_blocks,
       is_non_podium: user.exclude_podium,
-      email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name,
+      ...identityCols(sql, user),
     };
   });
   rows.sort((a, b) => Number(b.total_points) - Number(a.total_points) || a.user_id - b.user_id);
@@ -245,7 +257,7 @@ function computeStandingsRows(seasonId) {
 // Mirrors mobile.js's own SEASON_LEADERBOARD_SQL (the extended aggregate
 // that also sums vrf_total_won_slots) — used by the mobile GET
 // /leaderboard endpoint's season scope.
-function computeSeasonLeaderboardRows(seasonId) {
+function computeSeasonLeaderboardRows(seasonId, sql) {
   // Code review fix mirrored here: display_leaderboard = false events are
   // excluded from the season-scope aggregate, same as SEASON_LEADERBOARD_SQL
   // in mobile.js now requires (previously only `!e.internal` was checked).
@@ -275,7 +287,7 @@ function computeSeasonLeaderboardRows(seasonId) {
       total_produced_blocks: acc.total_produced_blocks,
       vrf_total_won_slots: acc.vrf_total_won_slots,
       is_non_podium: user.exclude_podium,
-      email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name,
+      ...identityCols(sql, user),
     };
   });
   rows.sort((a, b) => Number(b.total_points) - Number(a.total_points) || a.user_id - b.user_id);
@@ -356,7 +368,7 @@ function makeMockPool() {
 
     // ── standings.js's shared §4.10 aggregate (STANDINGS_SQL) ───────────
     if (sql.includes('last_event AS')) {
-      return { rows: computeStandingsRows(params[0] ?? null) };
+      return { rows: computeStandingsRows(params[0] ?? null, sql) };
     }
 
     // ── token_allocation ─────────────────────────────────────────────────
@@ -374,9 +386,9 @@ function makeMockPool() {
     }
 
     // ── /me/breakdown: user identity for display_name ───────────────────
-    if (sql.includes('SELECT discord, display_name, email, telegram FROM users WHERE id = $1')) {
+    if (sql.includes('SELECT discord, display_name, email, telegram, username FROM users WHERE id = $1')) {
       const u = USERS.find((x) => x.id === params[0]);
-      return { rows: u ? [{ discord: u.discord, display_name: u.display_name, email: u.email, telegram: u.telegram }] : [] };
+      return { rows: u ? [{ discord: u.discord, display_name: u.display_name, email: u.email, telegram: u.telegram, username: u.username }] : [] };
     }
 
     // ── /me/breakdown: challenge_progress (challenges+templates) ───────
@@ -452,14 +464,14 @@ function makeMockPool() {
             user_id: s.user_id, rank: s.rank, total_points: s.total_points, extra_points: s.extra_points,
             total_produced_blocks: s.event_total_produced_blocks, vrf_total_won_slots: s.vrf_total_won_slots,
             event_success_rate: s.event_success_rate, is_non_podium: u.exclude_podium,
-            email: u.email, telegram: u.telegram, discord: u.discord, display_name: u.display_name,
+            ...identityCols(sql, u),
           };
         });
       return { rows };
     }
     // ── mobile /leaderboard: season-scope rows (extended aggregate) ─────
     if (sql.includes('SUM(l.vrf_total_won_slots)')) {
-      return { rows: computeSeasonLeaderboardRows(params[0]) };
+      return { rows: computeSeasonLeaderboardRows(params[0], sql) };
     }
 
     throw new Error(`Unhandled mock query: ${sql}`);
@@ -469,11 +481,13 @@ function makeMockPool() {
 
 // ─── Test app wiring ──────────────────────────────────────────────────
 
-function withApp(fn) {
+// `wrapPool` (optional) receives the fixture pool and returns the one the
+// routes get — how a test adds rows the shared fixtures deliberately lack.
+function withApp(fn, wrapPool = (pool) => pool) {
   const poolModulePath = require.resolve('../src/db/pool');
   const original = require.cache[poolModulePath];
   require.cache[poolModulePath] = {
-    exports: { getPool: () => makeMockPool() },
+    exports: { getPool: () => wrapPool(makeMockPool()) },
     loaded: true, id: poolModulePath, filename: poolModulePath, paths: original ? original.paths : [],
   };
   const mobileModulePath = require.resolve('../src/routes/topochain/mobile');
@@ -491,7 +505,7 @@ function withApp(fn) {
   }
 }
 
-async function withServer(fn) {
+async function withServer(fn, wrapPool) {
   return withApp(async (app) => {
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
@@ -501,7 +515,7 @@ async function withServer(fn) {
     } finally {
       server.close();
     }
-  });
+  }, wrapPool);
 }
 
 function bearer(raw) {
@@ -974,4 +988,42 @@ test('mobile leaderboard: pagination — per_page=1 slices the leaderboard array
     assert.equal(body.data.leaderboard[0].user_id, 3, 'page 2 of a per_page=1 slice is the 2nd-ranked row');
     assert.deepEqual(body.data.pagination, { page: 2, per_page: 1, total: 3, total_pages: 3 });
   });
+});
+
+// ─── Accounts whose only name is a platform username (#2394) ─────────────
+
+test('mobile leaderboard: a username-only account is named by its username in both scopes; a generated topochain_ handle is not', async () => {
+  // Kept out of the shared USERS fixture so no count above moves. henry
+  // signed up on the platform (username + password only); the second was
+  // made by the admin console, which fills the column with a random handle.
+  const henry = { id: 8, username: 'henry', email: null, telegram: null, discord: null, display_name: null };
+  const generated = { id: 9, username: 'topochain_0123456789abcdef01234567', email: null, telegram: null, discord: null, display_name: null };
+  const wrap = (pool) => ({
+    async query(rawSql, params = []) {
+      const sql = collapse(rawSql);
+      const { rows } = await pool.query(rawSql, params);
+      if (!sql.includes('ls.event_total_produced_blocks AS total_produced_blocks') && !sql.includes('SUM(l.vrf_total_won_slots)')) {
+        return { rows };
+      }
+      const extra = (u, rank, points) => ({
+        user_id: u.id, rank, total_points: points, extra_points: '0.00', events_participated: 1,
+        total_produced_blocks: 0, vrf_total_won_slots: 0, event_success_rate: '0.00', is_non_podium: false,
+        ...identityCols(sql, u),
+      });
+      return { rows: [...rows, extra(henry, 4, '2.00'), extra(generated, 5, '1.00')] };
+    },
+  });
+  await withServer(async (base) => {
+    for (const path of ['/api/v4/mobile/leaderboard?season_id=10&season_event_id=100', '/api/v4/mobile/leaderboard?season_id=10']) {
+      const res = await getJson(base, path, ALICE);
+      assert.equal(res.status, 200, path);
+      const rows = (await res.json()).data.leaderboard;
+      assert.equal(rows.find((r) => r.user_id === 8).display_name, 'henry', `${path}: named by the username`);
+      assert.equal(rows.find((r) => r.user_id === 9).display_name, null, `${path}: a generated handle is no name`);
+      // The username is the LAST resort: every name that rendered before stays.
+      assert.equal(rows.find((r) => r.user_id === 1).display_name, 'ali***@***.com', path);
+      assert.equal(rows.find((r) => r.user_id === 2).display_name, 'bobdiscord', path);
+      assert.equal(rows.find((r) => r.user_id === 3).display_name, 'Carol D', path);
+    }
+  }, wrap);
 });
