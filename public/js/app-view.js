@@ -10220,10 +10220,9 @@ const AppView = {
     if (prAge) meta.push(prAge);
     // Live proposals link their "Closes #N" pills to the issue's IN-APP
     // discussion (votes/bounty/thread live there; the GitHub link stays one
-    // click away in the issue topic head). Merged cards keep the external
-    // GitHub links — those issues are closed, so the in-app topic (resolved
-    // from the open-issues cache) would dead-end and GitHub is their
-    // permanent record.
+    // click away in the issue topic head). The merged DETAIL head keeps the
+    // external GitHub links; the Board's compact Done card is built by
+    // _mergedCardModel below and uses the closed-issue topic route instead.
     //
     // These are pills, and they go in the PILL band, not on the end of the
     // meta line where they used to sit: that line is one ellipsising row, so
@@ -14789,7 +14788,13 @@ const AppView = {
       title: { text: mergedLabel, title: mergedQuoteTitle },
       meta,
       pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
-      linked: AppView.closesPillSpecs(pr),
+      // #2423: closed issues resolve on demand in the platform now (#2365),
+      // so the Board's "Closed #N" links can open their Homeroom topic just
+      // like live proposal links do. Keep the completed-card emerald tone.
+      linked: AppView.issueChipSpecs(pr.linked_issues, {
+        label: 'Closed',
+        cls: 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400',
+      }),
       badges: [
         ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
       ].filter(Boolean),
@@ -16833,11 +16838,13 @@ const AppView = {
   // per linked issue, opening the issue's IN-APP discussion topic (the
   // same navigation as tapping the issue row). Unlike closesPillHtml
   // below this never needs pr_url (session cards have none pre-PR) and
-  // never leaves the app. opts.label prefixes each chip (the live
-  // proposal card passes 'Closes' to keep its established wording).
+  // never leaves the app. opts.label prefixes each chip (proposal cards use
+  // 'Closes' / 'Closed'); opts.cls preserves the completed card's emerald
+  // tone while reusing the same navigation behavior.
   issueChipSpecs(linkedIssues, opts) {
     const prefix = opts && opts.label ? `${opts.label} ` : '';
-    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+    const cls = (opts && opts.cls)
+      || 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
       t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
       title: `Open issue #${n}'s discussion`,
@@ -16859,9 +16866,9 @@ const AppView = {
     return nums;
   },
 
-  // The GitHub "Closes #N" links, as SPECS. Merged cards use these (their
-  // issues are closed, so the in-app topic would dead-end and GitHub is
-  // the permanent record); live proposals use issueChipSpecs instead.
+  // The GitHub "Closes #N" links, as SPECS. The merged proposal DETAIL head
+  // and the dev-chat session header use these as explicit external links;
+  // Board cards use issueChipSpecs so their linked issues stay in-platform.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';

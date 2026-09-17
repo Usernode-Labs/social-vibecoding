@@ -7,8 +7,8 @@
 //      chip's clickable-vs-informational variants.
 //   3. _renderIssueRow — chip placement, the claim/release button, the
 //      topic-head work note (#1112) and the topic-view admin claim list.
-//   4. Session cards + proposal cards — reverse chips (live proposals go
-//      in-app; merged cards keep external GitHub links).
+//   4. Session cards + proposal cards — reverse chips (live proposals and
+//      merged kanban cards go in-app; the merged detail head stays external).
 //   5. _bucketDevItems — kanban routing of in-progress issues.
 //
 // Same harness as tests/archive-proposal-card.test.js: app-view.js is a
@@ -531,13 +531,24 @@ test('LIVE proposal card links "Closes #N" to the in-app issue topic', () => {
   assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on live cards');
 });
 
-test('MERGED proposal card keeps the external GitHub "Closed #N" links', () => {
+test('MERGED proposal detail head keeps the external GitHub "Closed #N" links', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(baseProposal({ status: 'merged' }));
   const html = cardHtml(model);
   assert.ok(!html.includes('data-issue-chip'), 'merged cards do not use in-app chips');
   assert.match(html, /github\.com\/o\/r\/issues\/6/);
   assert.match(html, /Closed #6/);
+});
+
+test('MERGED kanban card opens "Closed #N" in the Homeroom issue topic', () => {
+  const AppView = makeAppView();
+  const model = AppView._mergedCardModel(baseProposal({ status: 'merged' }), 1);
+  const html = cardHtml(model);
+  assert.match(html, /data-issue-chip="6"/);
+  assert.match(html, /Closed #6/);
+  assert.match(html, /bg-emerald-500\/10/, 'keeps the completed-card tone');
+  assert.ok(hasAction(model, 'openTopic', 'issue', 6), 'opens the issue topic in-app');
+  assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on the kanban card');
 });
 
 // ── 5. kanban routing ────────────────────────────────────────────────────
