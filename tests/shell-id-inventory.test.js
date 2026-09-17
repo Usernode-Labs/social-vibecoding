@@ -302,6 +302,11 @@ const ADDED_IDS = {
   'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
   'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
+  // ── #2382: Wallet and Validator under the app chip ───────────────
+  // Profile's native account rows stay where they are; these are second
+  // entrances in the menu's You group, between Profile and Settings.
+  'switcher-row-wallet': '#2382: the app menu\'s Wallet row. Ships `hidden` with a constant className and is revealed from walletSheetStore.visible, which WalletSheet.init() sets for a native top frame only. A plain tap awaits the menu\'s dismissal, then calls WalletSheet.openFromRow() — the same sheet #account-row-wallet opens; its #profile href is only the modified-click fallback.',
+  'switcher-row-validator': '#2382: the app menu\'s Validator row, to #settings/usernode, where the native block-production card asks to produce blocks. Ships `hidden` with a constant className and is revealed from nodePillStore.visible (NodePill.init(), native top frame only).',
   // ── The Workshop screen ──────────────────────────────────────────
   // The app's own Workshop page answers "what is happening in THIS app";
   // nothing answered "which of my apps wants something from me", short of

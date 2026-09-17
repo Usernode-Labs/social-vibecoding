@@ -10,6 +10,19 @@
  * Messages ROW is here. A row that is neither is the signal this menu is
  * decaying back into the hamburger it replaced.
  *
+ * ── Wallet and Validator are the rule bent on purpose (#2382) ──────────
+ *
+ * On the native app the menu also lists Wallet and Validator, under Profile.
+ * Neither has a page of its own: Wallet opens the kit sheet Profile's
+ * #account-row-wallet opens, and Validator lands on Settings › Homeroom app,
+ * where block production is asked for. They were kept OUT of this menu once,
+ * on exactly the rule above (see ../profile/account-panel.tsx), and that left
+ * the two things a phone member most often comes back for two screens deep —
+ * behind Profile, or behind Settings › Advanced. An admin asked for them here
+ * (#2382), and the cost is bounded: two rows, native only, each going to one
+ * place. Profile and Settings keep theirs; these are extra ways in, not moves.
+ * A third row that reports rather than navigates is still the decay signal.
+ *
  * ── What #1431 built and what #1443 changed ────────────────────────────
  *
  * #1431 made this the Apps sheet: a title row with "Create New", a strip of
@@ -115,13 +128,18 @@ import {
   SearchIcon,
   ShieldCheckIcon,
   TrophyIcon,
+  StakingIcon,
   UserIcon,
+  WalletIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { nodePillStore } from '../header/node-pill-store';
+import { walletSheetStore } from '../header/wallet-sheet-store';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -260,6 +278,18 @@ export function AppsSwitcherSheet(): ReactNode {
   const byokRef = useRef<HTMLSpanElement | null>(null);
   useVisibilityHiddenClass(adminRef, 'switcher-row-admin', false);
   useVisibilityHiddenClass(byokRef, 'switcher-byok-dot', false);
+
+  // Wallet and Validator (#2382) follow Profile's own native rows: the same
+  // two stores, revealed by NodePill.init() / WalletSheet.init() for a native
+  // top frame and never otherwise — so a desktop browser and a child-app
+  // iframe never show them, in staging or production alike. Same constant
+  // className as Admin; only the `hidden` class moves.
+  const { visible: walletVisible } = useStoreState(walletSheetStore);
+  const { visible: nodeVisible } = useStoreState(nodePillStore);
+  const walletRef = useRef<HTMLAnchorElement | null>(null);
+  const validatorRef = useRef<HTMLAnchorElement | null>(null);
+  useHiddenClass(walletRef, !walletVisible);
+  useHiddenClass(validatorRef, !nodeVisible);
 
   const close = useCallback(() => AppContext.close(), []);
 
@@ -507,6 +537,43 @@ export function AppsSwitcherSheet(): ReactNode {
             href="#profile"
             icon={<UserIcon />}
             label="Profile"
+          />
+          {/* #2382: the native Wallet and Validator, under Profile because
+              Profile's account group is where they already were. Both ship
+              hidden and native only (see the store read above).
+
+              Wallet has no page, so the anchor's #profile is only what a
+              modified click opens — the screen whose row opens the same
+              sheet. A plain tap presents the sheet itself, AFTER this one has
+              torn down: the kit cannot present a sheet while it is still
+              dismissing another, the ordering "Create New" awaits above. */}
+          <MenuRow
+            elRef={walletRef}
+            shipsHidden
+            id="switcher-row-wallet"
+            href="#profile"
+            icon={<WalletIcon />}
+            label="Wallet"
+            onClick={(e) => {
+              const win = window as any;
+              if (win.NavLink?.isNativeClick?.(e)) return;
+              e.preventDefault();
+              void AppContext.dismissForNav().then(() => {
+                win.WalletSheet?.openFromRow?.();
+              });
+            }}
+          />
+          {/* Validator is block production: Settings › Homeroom app, whose
+              "Ask to produce blocks" is how this device becomes one. Gated on
+              the node's store rather than the wallet's because that section
+              is the embedded node's. */}
+          <MenuRow
+            elRef={validatorRef}
+            shipsHidden
+            id="switcher-row-validator"
+            href="#settings/usernode"
+            icon={<StakingIcon />}
+            label="Validator"
           />
           <MenuRow
             id="switcher-row-settings"
