@@ -2193,9 +2193,10 @@ const EAR_GAP_PX = 10;
  * stale one left on the host would be inherited by the next crossing, which
  * is why this is a list rather than four remove calls written out.
  */
-const EAR_PROPS = [
-  '--dev-ws-ear-left', '--dev-ws-ear-right', '--dev-ws-ear-tail', '--dev-ws-ear-tr',
-];
+const EAR_PROPS = ['--dev-ws-ear-left', '--dev-ws-head-top'];
+
+/** The column gap between the tab strip and the pane below it (`.dev-ws`). */
+const WS_GAP_PX = 10;
 
 /**
  * The narrowest the ear is allowed to be, which is what its labels need.
@@ -2211,26 +2212,25 @@ const EAR_PROPS = [
 const EAR_MIN_PX = 240;
 
 /**
- * The ear's RIGHT edge belongs to the tab strip's column, not the pane's.
+ * WHY THE SURFACE MAY GROW AND THE LABELS MAY NOT.
  *
- * `right: 0` was the obvious anchor and it was wrong on By stage: the pane
- * goes full-bleed there while the tab pill stays centred on its own 760px
- * column, so the ear slid out from beside the pill and off to the window's
- * edge — it "shifted right with the rest of the pane growth". Anchored to the
- * NAV instead, the ear's box is identical under both groupings (714..1020 at
- * 1280) and it stays where the pill is, which is the only place it means
- * anything.
+ * The ear's right edge is the pane's, in CSS (`right: 0` on a child of the
+ * head), so on By stage — where the pane goes full-bleed — the surface grows
+ * with it. For one round it was measured off the tab strip's column instead,
+ * to stop it "shifting right with the pane growth"; that held the ear at a
+ * fixed 306px and needed three more custom properties to put the pane's
+ * outline back to the right of it.
  *
- * That is also what retired the width cap this constant replaced. The cap
- * existed to stop By stage stretching the ear to 722px and its two tabs to
- * 348px apiece; with the right edge on the nav the ear simply cannot grow
- * past the column, so the ceiling has nothing left to catch and the width is
- * one number — the column, less the pill, less the seam — at every width.
+ * What makes the simpler anchor work now is that the TABS no longer share the
+ * surface (`flex: 0 0 auto`, app.css). Sharing it is what made a full-bleed
+ * pane produce 268px and 348px tabs — a title bar with a label in it — and
+ * what the retired width cap existed to prevent. With the labels hugging at
+ * the surface's left end, the control sits at the same coordinates under
+ * either grouping and only the surface behind it changes width, so there is
+ * nothing left for a cap to catch.
  *
- * The consequence is that on By stage the ear is NO LONGER at the pane's
- * corner: the pane continues underneath and past it. So the pane keeps its
- * rounded top-right corner there and its top line resumes to the RIGHT of the
- * ear, which is what `--dev-ws-ear-tail` and `--dev-ws-ear-tr` are for.
+ * The cost is deliberate: on By theme the labels no longer fill their
+ * surface, leaving empty ear to the right of "By stage".
  */
 
 /**
@@ -2282,28 +2282,21 @@ function useEarInset(
       const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
       if (!t.width || !n.width || !p.width) return;
-      // How far the pane reaches past the tab strip's column: 0 on By
-      // category, where they are the same 760px box, and half the slack on By
-      // stage, where the pane is full-bleed and the nav stays centred.
-      const tail = Math.max(0, Math.round(p.right - n.right));
-      // The ear's right edge, as an x against the pane's left edge.
-      const rightEdge = p.width - tail;
-      // Reach the pill, unless that would leave the ear narrower than its
-      // labels — then stop and let the seam widen instead.
+      // ONE NUMBER LEFT. The ear's right edge is the pane's, in CSS, so only
+      // its left bound needs measuring: reach the pill, unless that would
+      // leave the surface narrower than the two labels — then stop and let
+      // the seam widen instead. `right` and the two the pane's outline used
+      // to need went with the column anchoring that produced them.
       const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
-      const left = Math.min(wanted, Math.max(0, rightEdge - EAR_MIN_PX));
+      const left = Math.min(wanted, Math.max(0, p.width - EAR_MIN_PX));
       host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
-      host.style.setProperty('--dev-ws-ear-right', `${tail}px`);
-      // The two the pane's outline needs, and both are about the SAME fact —
-      // whether the ear is standing at the pane's corner or part-way along its
-      // top edge. Flush (By category): no line to the right of the ear and a
-      // squared corner, so the two right edges read as one. Inset (By stage):
-      // the top line resumes for the `tail`, plus the 1px the ear's own right
-      // edge occupies, and the corner stays round because the ear is nowhere
-      // near it. A zero-width tail clips to nothing, which is how "no segment"
-      // is expressed without a second rule.
-      host.style.setProperty('--dev-ws-ear-tail', tail ? `${tail + 1}px` : '0px');
-      host.style.setProperty('--dev-ws-ear-tr', tail ? '22px' : '0px');
+      // WHERE THE HEAD COMES TO REST, which is under the pinned tab strip
+      // rather than at the top of the scroller. Both stick, so the offset has
+      // to be the strip's own height — three text labels and a glyph, so a
+      // measurement again rather than a literal — plus the column gap between
+      // them. Pinned too high, the head would slide under the strip; too low
+      // and a band of the list shows through between the two.
+      host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
     };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
@@ -2314,11 +2307,24 @@ function useEarInset(
     // when the grouping does.
     ro.observe(pane);
     return () => ro.disconnect();
-    // The observer covers what changes WITHIN a layout: the pill's width and
-    // the pane's, which is the grouping switch. Re-running the effect is only
-    // for the three things that change WHICH boxes are read — the nav node
-    // arriving from its ref callback, the breakpoint crossing, and the host.
-  }, [bar, hostRef, earUp]);
+    // NO DEPENDENCY ARRAY, deliberately: this runs after EVERY render, and a
+    // narrow one is what broke it. With `[bar, hostRef, earUp]` the effect
+    // could not re-run on a grouping switch, so the number measured against
+    // the 760px column — where the pane's left edge is 260 at 1280 — was
+    // still in force once By stage made the pane full-bleed and moved that
+    // edge to 4. The ear then began 250px further left than it should and
+    // overlapped the tab pill.
+    //
+    // It is also what covers a pane or a pill that arrives AFTER the first
+    // run (the observer is attached to whatever is there at the time) and any
+    // viewport change the observed boxes do not register, since a centred
+    // column can MOVE without changing size and a ResizeObserver reports
+    // size alone.
+    //
+    // The cost is one observer teardown and setup per render of the Workshop,
+    // which re-renders on data changes rather than on a timer. Correctness
+    // over that: the version with deps shipped a visible bug.
+  });
 }
 
 /**
@@ -3038,19 +3044,6 @@ export function DevWorkshop(): ReactNode {
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
-          {/* THE EAR, on a wide window: the grouping strip on its own surface
-              at the pane's top-right corner, level with the tab pill. It is a
-              child of the PANE and absolutely positioned against it, so it
-              tracks whichever width the pane has — the 760px reading column
-              on By category, the full-bleed card on By stage. See app.css.
-
-              Rendered only when it is up, so the strip below is the same one
-              node moved rather than a second copy of it. */}
-          {earUp ? (
-            <div className="dev-ws-ear" data-ws-ear="">
-              <GroupStrip group={group} />
-            </div>
-          ) : null}
           {/* ── The sticky head: the controls that act on what is below ──
               The search, the filters and the "+" used to sit in the frame's
               chrome above the scroller, two strips away from the list they
@@ -3067,6 +3060,25 @@ export function DevWorkshop(): ReactNode {
               with the switch also gives the head a title bar — the two-state
               choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
+          {/* THE EAR, on a wide window: the grouping strip on its own surface
+              at the pane's top-right corner, level with the tab pill.
+
+              A CHILD OF THE HEAD, not of the pane, and that is what makes it
+              travel. The head PINS while the list scrolls under it, and the
+              ear hangs off the head's top edge (`bottom: 100%`) — so an ear
+              anchored to the pane would have scrolled away and left the
+              pinned controls with their own grouping tabs gone. The head is
+              positioned, so it is the containing block; unscrolled, its top
+              edge IS the pane's top edge, which is why this reads exactly as
+              it did when the pane owned it.
+
+              Rendered only when it is up, so the strip below is the same one
+              node moved rather than a second copy of it. */}
+          {earUp ? (
+            <div className="dev-ws-ear" data-ws-ear="">
+              <GroupStrip group={group} />
+            </div>
+          ) : null}
           {/* NO TITLE LINE HERE. The head used to open with an "All items"
               eyebrow, on the argument that the tabs named the CHOICE without
               naming what the choice was being made about. The selected TAB

@@ -2162,7 +2162,7 @@
       "id": "workshop.grouping-ear",
       "name": "The grouping strip sits beside the tabs, on a surface joined to the pane",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"theme\"][aria-selected=\"true\"]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > [data-ws-ear] > .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"theme\"][aria-selected=\"true\"]",
       "expectText": "By theme",
       "visual": true,
       "impact": [
@@ -2176,12 +2176,12 @@
     {
       "name": "...and the pane head leads with the tools, the strip having left it",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:not(:has(> .dev-ws-group)) > #dev-actions:first-child"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:not(:has(> .dev-ws-group)):not(:has(> .dev-ws-eyebrow)) > #dev-actions"
     },
     {
       "name": "The ear is the pane's own child, so it tracks the pane's right edge on By stage too",
       "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > [data-ws-ear] [data-ws-group=\"stage\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > [data-ws-ear] [data-ws-group=\"stage\"][aria-selected=\"true\"]"
     },
     {
       "name": "The Workshop offers the two groupings as tabs at the head of All items, on theme by default",

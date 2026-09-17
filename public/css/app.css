@@ -13304,31 +13304,27 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
       - var(--ws-gap)
     );
   }
-  /* NOTHING PINS UP HERE. The tab strip is in flow at the head of the column
-     from this breakpoint, and the ear hangs off the pane's top-right corner,
-     so both scroll away with the page — and a head that stayed pinned left
-     the search box and the "+" floating over the list with the tabs they
-     belong to gone from the screen. The three are one control surface; they
-     scroll together.
+  /* EVERYTHING PINS UP HERE, as one band: the tab strip, the ear hanging off
+     the head's top edge, and the head itself with the search, the filters and
+     the "+". The controls belong WITH the list you are narrowing, so they
+     stay reachable however far down it you are.
 
-     SCOPED BY `#dev-workshop`, and that is the load-bearing part. The base
-     rule is `.dev-ws-pane-head { position: sticky }` six hundred lines BELOW
-     this block, and on equal specificity the later rule wins — so an override
-     written as a bare class here would silently lose. The id makes
-     specificity, not source order, decide it. (A second `@media
-     (min-width: 700px)` block after the base rule would also work and is
-     wrong: the test over this block reads the FIRST match only, so rules in a
-     second one go unchecked.)
+     THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
+     it comes to rest: under the pinned strip, at the strip's measured height
+     plus the column gap. `top: 0` would slide it under the strip.
 
-     `relative` rather than `static`, so `z-index: 20` still applies — the
-     pane's outline pseudo-elements are positioned, and against a static head
-     they would paint over its fill instead of under it.
+     ABOVE THE STRIP IN PAINT ORDER, because the ear is the head's child and
+     sits in the strip's own band. The head's `z-index: 20` made it a stacking
+     context, so the ear's 31 counted only INSIDE the head and the strip's 30
+     covered it.
 
-     The frost stays. It no longer does the job its own note describes, since
-     rows no longer pass beneath a pinned head, but head and body carry the
-     SAME fill over the same backdrop and that is what makes them one colour
-     by construction. */
-  #dev-workshop .dev-ws-pane-head { position: relative; top: auto; }
+     Scoped by `#dev-workshop`: the base rule is `.dev-ws-pane-head` six
+     hundred lines BELOW this block, and on equal specificity the later one
+     wins — a bare-class override here would apply to nothing. */
+  #dev-workshop .dev-ws-pane-head {
+    top: var(--dev-ws-head-top, 0px);
+    z-index: 31;
+  }
   .dev-ws-tabs {
     order: 0;
     /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
@@ -13338,7 +13334,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
        phone `position: fixed` gives that for free; here it has to be asked
        for, and `static` would send both the marker and the measurement to
        whatever ancestor happened to be positioned. */
-    position: relative;
+    /* STICKY, NOT MERELY RELATIVE. Relative kept the containing block the
+       selection marker and `offsetLeft` need, which is all this rule used to
+       want; pinning needs the same thing and keeps it, since a sticky element
+       is positioned too. The offset itself is set BELOW `inset: auto`, which
+       would otherwise reset it — see the note on it. */
+    position: sticky;
     /* THE PHONE BAR'S OFFSETS ARE NOT THIS BAR'S, and leaving them in place
        is what made the strip sit crooked in both axes.
 
@@ -13358,6 +13359,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
        higher specificity (`#dev-workshop:has(.dev-ws-board) > .dev-ws > …`),
        which is the one place they are wanted up here. */
     inset: auto;
+    /* AFTER `inset: auto`, and that ordering is the whole of it. Written
+       above, `top: 0` was reset to `auto` by the shorthand three lines later:
+       the strip stayed `sticky`, pinned to nothing, and scrolled away while
+       the head it is supposed to travel with stayed. Measured — the strip's
+       top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
+       there is no chrome inside it to clear. */
+    top: 0;
     max-width: none;
     /* LEFT-ALIGNED, not centred. The pill is `.dev-ws-tabtrack` inside this
        nav and it is content-width, so whatever positions the pill is what
@@ -13810,7 +13818,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      and the vote sheet are absolutely positioned against their own local
      wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
      this containing block takes nothing away from them. */
-  .dev-ws-pane:has(> .dev-ws-ear) { position: relative; }
+  .dev-ws-pane:has(.dev-ws-ear) { position: relative; }
   /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
      shadow, so its top side used to run the full width — straight under the
      ear, which is what made the ear read as a pill resting on a card rather
@@ -13822,21 +13830,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      semi-transparent over a backdrop-filter, so a 1px overlap leaves the line
      dimmed and smeared rather than gone — and two of these fills stacked is
      the lighter band the pane's own note is about. */
-  .dev-ws-pane:has(> .dev-ws-ear) {
+  .dev-ws-pane:has(.dev-ws-ear) {
     box-shadow:
       inset 1px 0 0 var(--app-sheet-line),
       inset -1px 0 0 var(--app-sheet-line),
       inset 0 -1px 0 var(--app-sheet-line);
   }
-  /* TWO SEGMENTS, because the ear may stand at the pane's corner or part-way
-     along its top edge. `::before` is the run to its left, which always
-     exists; `::after` is the run to its right, which exists only on By stage
-     — there the pane continues past the ear, so its top line has to come back
-     and its rounded corner has to stay. On By category the tail measures 0,
-     the clip keeps nothing, and the corner is squared instead so the ear's
-     right edge and the pane's read as one. */
-  .dev-ws-pane:has(> .dev-ws-ear)::before,
-  .dev-ws-pane:has(> .dev-ws-ear)::after {
+  /* ONE SEGMENT: the run to the LEFT of the ear. There was a second one for
+     the run to its right, for the round when the ear was anchored to the tab
+     strip's column and the pane continued past it on By stage. The surface
+     reaches the pane's right edge again, so there is never anything to the
+     right of it and the corner below is squared unconditionally. */
+  .dev-ws-pane:has(.dev-ws-ear)::before {
     content: '';
     position: absolute; inset: 0;
     /* `inherit` carries the squared top-right corner below with it, so the
@@ -13851,22 +13856,19 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     /* Plus the 1px the ear's own left edge occupies: the ear draws that side
        as an INSET shadow, so its line sits in [left, left+1] and a clip that
        stopped at `left` exactly left a one-pixel notch between the two. */
-    pointer-events: none;
-  }
-  .dev-ws-pane:has(> .dev-ws-ear)::before {
     clip-path: inset(0 calc(100% - var(--dev-ws-ear-left, 100%) - 1px) 0 0);
-  }
-  .dev-ws-pane:has(> .dev-ws-ear)::after {
-    clip-path: inset(0 0 0 calc(100% - var(--dev-ws-ear-tail, 0px)));
+    pointer-events: none;
   }
   .dev-ws-ear {
     position: absolute; bottom: 100%;
-    /* The right edge follows the TAB STRIP'S column, not the pane's. `right: 0`
-       slid the ear off to the window's edge on By stage, where the pane goes
-       full-bleed and the pill stays centred on its own 760px box — the ear
-       shifted right with the pane's growth and left the pill behind. Measured
-       by `useEarInset`; 0 on By category, where the two boxes are the same. */
-    right: var(--dev-ws-ear-right, 0px);
+    /* THE SURFACE REACHES THE PANE'S RIGHT EDGE, in both groupings — so on By
+       stage, where the pane goes full-bleed, the ear grows with it. It was
+       anchored to the tab strip's column for one round, which kept the ear a
+       fixed 306px and stopped it following the pane; the surface follows the
+       pane again and the TABS are what stay put (see the strip's rule below).
+       Nothing measured: the ear is a child of the head, whose right edge is
+       the pane's. */
+    right: 0;
     /* ABOVE THE NAV, or the strip is decorative. `.dev-ws-tabs` is
        `z-index: 30` for its phone life as a floating bar, and up here it is
        back in flow spanning the whole reading column — the same column the
@@ -13891,23 +13893,35 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
       inset 1px 0 0 var(--app-sheet-line),
       inset -1px 0 0 var(--app-sheet-line);
   }
-  /* SHARE THE EAR, which is the pane head's rule again now that the ear is a
-     full-width surface rather than a pill beside one. The tabs hugged their
-     labels while the ear hugged them back, and the pair sat in a wide band of
-     dead air; with the ear reaching the pill there is a row to divide, and a
-     two-state control divides it in two. */
-  .dev-ws-ear .dev-ws-group-tab { flex: 1 1 0; }
+  /* THE TABS DO NOT GROW WITH IT. The surface stretches to the pane's right
+     edge and the two labels stay exactly where they are, which is what keeps
+     them in ONE PLACE across the grouping switch: By theme and By stage put
+     the control at the same coordinates and only the surface behind it
+     changes width. Sharing the surface instead (`flex: 1 1 0`) made each tab
+     268px on a full-bleed pane — a title bar with a label in it.
+
+     The cost is visible and deliberate: on By theme the labels no longer
+     fill their surface, so there is empty ear to the right of "By stage". */
+  /* A FLEX ROW, which is what makes the rule below mean anything. The ear was
+     a BLOCK box, so `justify-content` was inert and `.dev-ws-group` — itself a
+     flex container, and block-level inside a block — stretched to the ear's
+     full width. The tabs hugged their labels inside it (the rule below did
+     work), so what grew was the PILL around them: on a full-bleed By stage
+     pane, a 1200px rounded container with two 90px labels at its left end.
+     Measuring the tabs is what hid it; the pill is a separate box. */
+  .dev-ws-ear { display: flex; justify-content: flex-start; align-items: center; }
+  .dev-ws-ear .dev-ws-group-tab { flex: 0 0 auto; }
   /* Square where the two meet, so the ear and the card read as one surface
      rather than a pill resting on a rounded corner. */
-  .dev-ws-pane:has(> .dev-ws-ear) > .dev-ws-pane-head {
-    border-top-right-radius: var(--dev-ws-ear-tr, 0px);
+  .dev-ws-pane:has(.dev-ws-ear) > .dev-ws-pane-head {
+    border-top-right-radius: 0;
   }
   /* AND THE PANE'S OWN CORNER WITH IT. Squaring the head alone left the
      pane's 22px ring curving away inside the ear's straight right edge, which
      is what read as the ear being "slightly inset" — the two right edges
      measure flush to the pixel, but the pane's outline turned the corner 22px
      before the ear's did. Square, they are one edge. */
-  .dev-ws-pane:has(> .dev-ws-ear) { border-top-right-radius: var(--dev-ws-ear-tr, 0px); }
+  .dev-ws-pane:has(.dev-ws-ear) { border-top-right-radius: 0; }
 }
 
 /* ── The working pane ──────────────────────────────────────────────────
@@ -14013,7 +14027,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the same pair at reading width — the strip in particular reads as pulled
    apart rather than as a segmented pair. So the head still spans the pane, as
    a pinned edge must, while what sits IN it keeps the reading column. */
-#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
+/* THE EAR IS EXEMPT, and the note above says why the rest is not: a two-tab
+   strip stretched across 1200px reads as pulled apart. That objection is
+   about the TABS, and they no longer stretch — they hug at the surface's left
+   end, so the surface behind them is free to follow the pane's width without
+   pulling the control apart. Left in the bound, the ear took `max-width:
+   740px` against a `left`/`right` pair that wanted 562, and an
+   over-constrained box keeps `left`: its right edge overshot the pane's by
+   178px at 1280. */
+#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > *:not(.dev-ws-ear) {
   /* 760px is the reading column; the 20px is the head's own left+right
      padding. Bounding to the column's OUTER width instead made the controls
      20px wider on By stage than on By category — a toolbar that grew slightly
