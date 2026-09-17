@@ -108,7 +108,10 @@ async function withDispatchTimeout(promise, { timeoutMs, onTimeout }) {
         'The visual evidence agent exceeded its bounded exploration time.'
       ));
     }, bounded);
-    timer.unref?.();
+    // Keep this timer referenced. If the underlying dispatch promise is inert,
+    // this may be the only live handle left in its process/test worker. An
+    // unref'ed timer lets that worker exit before the bound fires, which both
+    // defeats cancellation and surfaces as cancelled tests instead of a timeout.
   });
   try {
     return await Promise.race([promise, timeout]);
