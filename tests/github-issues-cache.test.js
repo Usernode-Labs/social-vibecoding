@@ -311,7 +311,11 @@ test('fetchPublicIssue falls through to the single-issue endpoint on a cache mis
         ok: true,
         status: 200,
         headers: { get: () => null },
-        json: async () => fakeIssue(77, 'closed but fetchable', '2026-06-09T00:00:00Z'),
+        json: async () => ({
+          ...fakeIssue(77, 'closed but fetchable', '2026-06-09T00:00:00Z'),
+          state: 'closed',
+          closed_at: '2026-06-09T12:00:00Z',
+        }),
       };
     };
     const res = await github.fetchPublicIssue('MissOwner', 'miss-repo', 77);
@@ -320,7 +324,55 @@ test('fetchPublicIssue falls through to the single-issue endpoint on a cache mis
     assert.strictEqual(res.issue.number, 77);
     assert.strictEqual(res.issue.title, 'closed but fetchable');
     assert.strictEqual(res.issue.body, 'body of #77');
+    // #2365: the normalized shape says which it is, so the topic view can
+    // tell a closed issue from an open one.
+    assert.strictEqual(res.issue.state, 'closed');
+    assert.strictEqual(res.issue.closedAt, '2026-06-09T12:00:00Z');
   } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('normalized issues default to open with no close time (#2365)', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(60, 'plain open', '2026-06-09T00:00:00Z')]);
+    const res = await github.fetchPublicIssues('StateOwner', 'state-repo');
+    assert.strictEqual(res.issues[0].state, 'open');
+    assert.strictEqual(res.issues[0].closedAt, null);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchPublicIssue asks GitHub about a known-closed number the open cache still holds (#2365)', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(61, 'merged away', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('KcOwner', 'kc-repo');
+
+    // Before the merge path records it, the cache answers without a call.
+    let calls = 0;
+    global.fetch = async () => {
+      calls += 1;
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({
+          ...fakeIssue(61, 'merged away', '2026-06-09T00:00:00Z'),
+          state: 'closed', closed_at: '2026-06-10T00:00:00Z',
+        }),
+      };
+    };
+    assert.strictEqual((await github.fetchPublicIssue('KcOwner', 'kc-repo', 61)).issue.state, 'open');
+    assert.strictEqual(calls, 0);
+
+    // Once it is known closed, the stale OPEN cache row is not the answer.
+    github.noteIssuesClosed('KcOwner', 'kc-repo', [61]);
+    const res = await github.fetchPublicIssue('KcOwner', 'kc-repo', 61);
+    assert.strictEqual(calls, 1, 'the single-issue endpoint was asked');
+    assert.strictEqual(res.issue.state, 'closed');
+  } finally {
+    github.unsuppressIssues('KcOwner', 'kc-repo', [61]);
     global.fetch = origFetch;
   }
 });
