@@ -491,8 +491,19 @@ test('the quiet fixture app holds two settled submissions with their merges, two
   assert.ok(visual && visual.id === 'group-chat.proposal-event');
   assert.ok(visual.impact.includes('frontend/src/features/group-chat/**'));
   assert.ok(visual.impact.includes('src/db/migrate.js'), 'the fixture is part of what the shot shows');
-  assert.match(visual.expectSelector, /\.gc-event\[data-event="submitted"\]\[data-open\]\[data-msg-id="900117"\] \[data-event-sender\] ~ \.gc-msg-time\[title\]/, 'the sender and the stamp on the header line');
-  assert.match(visual.expectSelector, /a\.gc-event-box\[href\$="\/dev\/proposals\/900110"\] > \.dev-card-icon \+ \.gc-event-text/, 'the box: glyph, text, a door');
+  // One selector asserting the whole row, not an OR of two halves. The
+  // header line is the row primitive's markup (chat.tsx `ChatMessageRow`):
+  // the name and the stamp each sit in their OWN wrapper span, so the sender
+  // and `.gc-msg-time` are cousins, never siblings — a `~` between them
+  // could not match anything, and did not. The box is asserted through
+  // `:has()` on the row, and its href by SUBSTRING: the check runner opens
+  // every page as `…/dev/chat?token=<jwt>` (capture/capture.js), and
+  // App._appUrl carries the page's query onto every link it serialises, so on
+  // staging the door reads `/dev/proposals/900110?token=…` and `href$=` fails
+  // where `href*=` holds.
+  assert.match(visual.expectSelector, /^#gc-messages > \.gc-event\[data-event="submitted"\]\[data-open\]\[data-msg-id="900117"\]:has\(a\.gc-event-box\[href\*="\/dev\/proposals\/900110"\] > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/, 'the row: open, its box a door with a glyph and a line, the sender then the stamp on the header line');
+  assert.doesNotMatch(visual.expectSelector, /href\$=/, 'never the suffix match: the runner\'s ?token= rides on every link');
+  assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
   assert.equal(visual.expectText, 'Proposed PR #900110 for a vote');
   const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
   assert.ok(sender && /\[data-event-sender\]/.test(sender.expectSelector));

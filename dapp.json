@@ -4145,7 +4145,7 @@
       "id": "group-chat.proposal-event",
       "name": "General chat: a proposal still up for a vote is a message from whoever proposed it, name and stamp on the header line, and one Current-status box with a glyph and a line of text that opens the proposal; the two notices of other kinds are not drawn",
       "path": "/app/staging-demo-quiet/dev/chat",
-      "expectSelector": "#gc-messages > .gc-event[data-event=\"submitted\"][data-open][data-msg-id=\"900117\"] [data-event-sender] ~ .gc-msg-time[title], #gc-messages > .gc-event[data-msg-id=\"900117\"] a.gc-event-box[href$=\"/dev/proposals/900110\"] > .dev-card-icon + .gc-event-text",
+      "expectSelector": "#gc-messages > .gc-event[data-event=\"submitted\"][data-open][data-msg-id=\"900117\"]:has(a.gc-event-box[href*=\"/dev/proposals/900110\"] > .dev-card-icon + .gc-event-text) span:has(> [data-event-sender]) + span > .gc-msg-time[title]",
       "expectText": "Proposed PR #900110 for a vote",
       "visual": true,
       "impact": [
