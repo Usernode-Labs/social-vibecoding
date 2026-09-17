@@ -56,12 +56,12 @@ type BodyView =
   | { state: 'private'; disclaimer: string | null }
   | {
       state: 'noentries';
-      challengeLine: { completed: string; total: string } | null;
+      challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
     }
   | {
       state: 'table';
-      challengeLine: { completed: string; total: string } | null;
+      challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
       isSeason: boolean;
       columns: ColumnKey[];
@@ -121,12 +121,16 @@ function Disclaimer({ text }: { text: string | null }): ReactNode {
  * event selection survives it.
  */
 function ChallengeLine(
-  { line }: { line: { completed: string; total: string } | null },
+  { line }: { line: { done: string | null; total: string } | null },
 ): ReactNode {
   if (!line) return null;
   return (
     <p id="tc-lb-challenge-link" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-      {`${line.completed} of ${line.total} challenges completed `}
+      {/* The tally is the VIEWER's, and a signed-out reader has none — then
+          the cross-link stands on its own rather than carrying a zero that
+          reads as theirs. "done" is the word Home uses for this same number;
+          the two must not drift apart again. */}
+      {line.done == null ? null : `${line.done} of ${line.total} challenges done `}
       <span className="text-zinc-500 dark:text-zinc-500">·</span>
       <button
         id="tc-lb-to-challenges"

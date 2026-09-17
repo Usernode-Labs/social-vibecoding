@@ -174,6 +174,40 @@ function ScheduleCard({ schedule, write, busy, onRun }: {
   );
 }
 
+// The runs behind the newest one.
+//
+// The API has always returned the last ten; the screen showed one and dropped
+// the rest. That is the difference between "the scorer ran" and "the scorer is
+// running", and it is the question an operator actually has — a service that
+// ticks every ten minutes is trusted by its rhythm, not by its latest line. A
+// row of quiet zeroes is the healthy state, and seeing nine of them is how you
+// know the one credit above is new rather than stuck.
+//
+// Collapsed by default: it is reassurance, not the headline.
+function RunHistory({ runs }: { runs: Run[] }) {
+  const rest = runs.slice(1);
+  if (!rest.length) return null;
+  return (
+    <details id="admin-topo-cs-run-history" className="mt-3">
+      <summary className="cursor-pointer text-xs text-zinc-600 hover:underline dark:text-zinc-300">
+        {`Earlier runs (${rest.length})`}
+      </summary>
+      <ul className="mt-2 space-y-1">
+        {rest.map((r) => (
+          <li key={r.id} className="flex flex-wrap gap-x-2 text-xs text-zinc-600 dark:text-zinc-300">
+            <span className="tabular-nums">{fmt(r.started_at)}</span>
+            <span>
+              {r.dry_run ? 'dry run, ' : ''}
+              {plural(r.credits, 'credit')}
+            </span>
+            {r.error ? <span className="text-red-700 dark:text-red-400">{r.error}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 // One run, unpacked. The summary is the same shape a dry run produces, which
 // is what lets the preview and the history share this component.
 function RunDetail({ run }: { run: Run | null }) {
@@ -191,7 +225,7 @@ function RunDetail({ run }: { run: Run | null }) {
         <ul className="list-disc ml-5 mt-1">
           {scored.map((r) => (
             <li key={`${r.rule_id}-${r.challenge_id}`}>
-              {`${r.goal || r.rule}: ${r.credits} credit(s)`}
+              {`${r.goal || r.rule}: ${plural(r.credits, 'credit')}`}
               {r.points ? `, ${r.points} pts` : ''}
               {r.to_grade ? `, ${r.to_grade} waiting to be graded` : ''}
             </li>
@@ -223,6 +257,11 @@ function RunDetail({ run }: { run: Run | null }) {
 // The phrase comes from the server's measure catalogue, so it cannot drift
 // from the behaviour it describes. Only the arithmetic below is local, and
 // only for display.
+// "1 credit(s)" is a form field's plural, not a sentence's. An operator reads
+// this line to find out what a tick did; it should read like something a
+// person wrote.
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 function payoutClause({ measure, points, target }: {
   measure: Measure | null;
   points: number | null;
@@ -238,7 +277,9 @@ function payoutClause({ measure, points, target }: {
   const share = n ? Math.floor(points / n) : points;
   switch (measure.payout) {
     case 'per_unit':
-      return `credits ${pts(share)} an account, ${pts(points)} for all ${n}.`;
+      // `for all ${n}` reads as a placeholder that nobody filled in when n is
+      // two, which is every case this measure actually has today.
+      return `credits ${pts(share)} an account, ${pts(points)} ${n === 2 ? 'for both' : `for all ${n}`}.`;
     case 'graded':
       return `credits up to ${pts(share)} each time someone ${phrase}, up to ${n} per window. `
         + `${pts(points)} at most, and a model grades each one.`;
@@ -670,7 +711,7 @@ function ChallengeScoringScreen() {
       {preview ? (
         <div id="admin-topo-cs-preview" className="mb-4">
           <Panel
-            title={`Dry run: ${preview.credits} credit(s) would be written`}
+            title={`Dry run: ${plural(preview.credits, 'credit')} would be written`}
             subtitle="Nothing was written and no grading was spent."
             onClose={() => setPreview(null)}
             closeLabel="Close the preview"
@@ -741,11 +782,12 @@ function ChallengeScoringScreen() {
           <div className="text-sm font-semibold">
             {`Last run ${fmt(lastRun.started_at)}`}
             {lastRun.dry_run ? ' (dry run)' : ''}
-            {`: ${lastRun.credits} credit(s)`}
+            {`: ${plural(lastRun.credits, 'credit')}`}
           </div>
           <div className="mt-1">
             <RunDetail run={lastRun} />
           </div>
+          <RunHistory runs={payload?.runs || []} />
         </div>
       ) : null}
     </>

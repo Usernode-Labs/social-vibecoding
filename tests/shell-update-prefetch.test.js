@@ -86,6 +86,7 @@ ${sliceMethod(appJs, '_ensureShellPrefetch(sha) {')},
 ${sliceMethod(appJs, 'async loadVersion() {')},
 ${sliceMethod(appJs, 'async platformMovedOn() {')},
 ${sliceMethod(appJs, '_refreshOrReload(refresh) {')},
+${sliceMethod(appJs, '_announceRefreshIntent() {')},
 ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
 })`;
 
@@ -128,7 +129,12 @@ function harness({
           postMessage: (msg, transfer) => {
             if (postThrows) throw new Error('port refused');
             posted.push(msg);
-            port = transfer && transfer[0];
+            // KEEP the port when a message carries no transfer. A real
+            // postMessage does not revoke a MessageChannel the page already
+            // handed over, and not every message wants a reply — a pull posts
+            // `refresh-intent` with no port at all, and clobbering here made
+            // the drawer's in-flight prefetch unanswerable.
+            if (transfer && transfer[0]) port = transfer[0];
           },
         },
       } : {},
@@ -489,11 +495,44 @@ test('the document is refreshed under the key the navigation actually reads', ()
 const PULLED = { current: 0 };
 const pull = (h) => h.App._refreshOrReload(() => { PULLED.current += 1; });
 
+// Every pull also posts `refresh-intent`, which shuts the worker's boot lane
+// so the refresh reaches the network instead of last visit's cached answer.
+// The tests below are about the DOWNLOAD, so they read the prefetch asks
+// alone; the announcement has its own test at the end.
+const prefetches = (h) => h.posted.filter((m) => m.type === 'prefetch-shell');
+
+test('a pull announces itself to the worker before it does anything else', async () => {
+  const h = harness({ serverSha: BOOTED });
+  h.App.loadedPlatformSha = BOOTED;
+  await pull(h);
+  assert.equal(h.posted[0]?.type, 'refresh-intent',
+    'the announcement goes out first, or the reads it covers have already left');
+  assert.equal(h.posted.filter((m) => m.type === 'refresh-intent').length, 1,
+    'exactly once per pull');
+});
+
+test('a pull with no worker at all still refreshes', async () => {
+  const h = harness({ serverSha: BOOTED, controller: false });
+  h.App.loadedPlatformSha = BOOTED;
+  const before = PULLED.current;
+  await pull(h);
+  assert.equal(PULLED.current, before + 1, 'the data refresh is not conditional on a worker');
+  assert.equal(h.posted.length, 0, 'and nothing was posted to a worker that is not there');
+});
+
+test('a worker that refuses the message never breaks the pull', async () => {
+  const h = harness({ serverSha: BOOTED, postThrows: true });
+  h.App.loadedPlatformSha = BOOTED;
+  const before = PULLED.current;
+  await pull(h);
+  assert.equal(PULLED.current, before + 1, 'a refused announcement is not a failed refresh');
+});
+
 test('a pull with the platform still where it was reloads nothing', async () => {
   const h = harness({ serverSha: BOOTED });
   h.App.loadedPlatformSha = BOOTED;
   await pull(h);
-  assert.equal(h.posted.length, 0, 'nothing to download');
+  assert.equal(prefetches(h).length, 0, 'nothing to download');
   assert.equal(h.reloads.length, 0, 'and nothing to reload onto');
 });
 
@@ -505,8 +544,7 @@ test('a pull on a moved-on platform downloads the build BEFORE reloading', async
   // One turn of the loop is enough for the fetch and the prefetch ask; the
   // reload must NOT have happened yet — that is the whole point.
   await new Promise((r) => setImmediate(r));
-  assert.equal(h.posted.length, 1, 'the worker was asked for the new build');
-  assert.equal(h.posted[0].type, 'prefetch-shell');
+  assert.equal(prefetches(h).length, 1, 'the worker was asked for the new build');
   assert.equal(h.reloads.length, 0,
     'reloading here is the exact mistake: sw.js would race it and serve the old document back');
 
@@ -550,11 +588,11 @@ test('the pull joins a download the drawer already started, rather than restarti
   h.App.loadedPlatformSha = BOOTED;
   h.App._lastVersionInfo = STALE;
   h.App.renderPlatformVersionPill(STALE);
-  assert.equal(h.posted.length, 1);
+  assert.equal(prefetches(h).length, 1);
 
   const settled = pull(h);
   await new Promise((r) => setImmediate(r));
-  assert.equal(h.posted.length, 1, 'one download, two waiters');
+  assert.equal(prefetches(h).length, 1, 'one download, two waiters');
   assert.equal(h.reloads.length, 0, 'and the pull waits on it like anyone else');
 
   h.reply({ ok: true, sha: STALE.sha });
@@ -572,7 +610,7 @@ test('a pull after the download already settled reloads without asking again', a
 
   const settled = pull(h);
   await Promise.race([settled, new Promise((r) => setImmediate(r))]);
-  assert.equal(h.posted.length, 1, 'the build is already in the cache');
+  assert.equal(prefetches(h).length, 1, 'the build is already in the cache');
   assert.equal(h.reloads.length, 1);
 });
 

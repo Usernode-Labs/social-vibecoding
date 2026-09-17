@@ -419,6 +419,37 @@ function apiTimeoutFor(url, selfOrigin) {
   return isBootReadRequest(url, selfOrigin) ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 }
 
+// How long an announced refresh keeps the lane shut. One pull re-pulls a
+// screen's several endpoints, not one, and on a slow link they do not all
+// leave within a few hundred ms — so the window has to outlast the request
+// fan-out. It is bounded because a stuck flag would turn every later boot
+// into a cold one.
+const REFRESH_INTENT_WINDOW_MS = 10_000;
+
+// Does this request get the fast lane?
+//
+// The rule is already stated where `correcting` is declared: THE FAST LANE
+// ANSWERS A BOOT, NOT A REFRESH. `correcting` enforces it reactively — one
+// URL at a time, and only after a stale answer has already been served and
+// noticed. That is enough for the case it was written for, a body that
+// changes every call.
+//
+// It is not enough for a PULL. A pull is the same rule known in advance:
+// somebody has asked for the current state with their thumb, on the one
+// gesture people reach for when they suspect a screen is stale. Serving it
+// from cache is exactly backwards, and the correction that undoes it cannot
+// fire until the network answer it compares against arrives — so the defect
+// hides on a fast link and shows on a slow one, which is the wrong way round.
+// A phone on mobile data is both the slowest case and where pulls happen.
+//
+// So an announced refresh shuts the lane outright for a short window, and
+// every read in it pays the ordinary deadline. Offline is unaffected: that
+// deadline still falls back to the cache when the network fails.
+function bootLaneApplies(url, selfOrigin, now, refreshUntil) {
+  if (refreshUntil && now < refreshUntil) return false;
+  return apiTimeoutFor(url, selfOrigin) === BOOT_API_TIMEOUT_MS;
+}
+
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
 // local script/stylesheet index.html references — the precache-list sync
@@ -916,6 +947,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
     apiTimeoutFor,
+    bootLaneApplies,
+    REFRESH_INTENT_WINDOW_MS,
     isBootReadRequest,
     BOOT_READ_PATHS,
     BOOT_READ_PATTERNS,
@@ -1304,6 +1337,8 @@ if (typeof module !== 'undefined' && module.exports) {
   // request per correction and nothing after — a second tab booting later
   // pays for one request, not for the lane.
   const correcting = new Set();
+  // Set by the page's `refresh-intent` message; see bootLaneApplies.
+  let refreshIntentUntil = 0;
   // A URL corrected and then never requested again would sit here forever.
   // The live set is one entry per boot read per app visited; this only ever
   // trips on a pathological session, and dropping it wholesale is harmless —
@@ -1327,7 +1362,7 @@ if (typeof module !== 'undefined' && module.exports) {
     // Consume the correction mark, if any: this request pays the ordinary
     // deadline once and the next one is back in the lane.
     const laned = !correcting.delete(event.request.url)
-      && apiTimeoutFor(event.request.url, ORIGIN) === BOOT_API_TIMEOUT_MS;
+      && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
     const timeoutMs = laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
@@ -1582,6 +1617,13 @@ if (typeof module !== 'undefined' && module.exports) {
         const port = event.ports && event.ports[0];
         if (port) port.postMessage({ done: true });
       })());
+    }
+    // A pull-to-refresh, or the drawer's reload button, announcing itself
+    // before the screen's loader runs. Deliberately fire-and-forget: a
+    // refresh must never wait on the worker, and a message that arrives
+    // late only costs one lane-served request.
+    if (type === 'refresh-intent') {
+      refreshIntentUntil = Date.now() + REFRESH_INTENT_WINDOW_MS;
     }
     if (type === 'prefetch-shell') {
       event.waitUntil((async () => {
