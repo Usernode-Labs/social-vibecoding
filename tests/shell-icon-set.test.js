@@ -177,7 +177,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
-    'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
@@ -233,10 +232,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // (SquaresPlusIcon left this list and the icon set with #2320: the app
     // menu's "Add to Home Screen" row became an item in the app's hold /
     // right-click menu, which draws no glyphs.)
+    // (WalletIcon and StakingIcon left this list with #2382: the app chip
+    // menu's Wallet and Validator rows ship hidden but in the static
+    // document, so both glyphs prerender now.)
   ];
-  // StakingIcon (#1551) is revealed only after a native wallet snapshot.
-  expected.push('M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
-    'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6');
   assert.deepEqual(absent.sort(), expected.sort());
 });
 
