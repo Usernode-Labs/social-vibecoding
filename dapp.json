@@ -2106,9 +2106,10 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
-      "name": "A task moved to Done keeps its priority/assignee/type chips",
+      "name": "Done keeps task attributes and opens a completed change's Closed issue inside Homeroom (#2423)",
       "path": "/?demo=1&view=kanban&col=done&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-done [data-gov-row=\"9100060\"] .attr-chip"
+      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"])",
+      "expectText": "Closed #900006"
     },
     {
       "name": "?view=kanban still reaches the board's columns, whatever is stored (#814)",
