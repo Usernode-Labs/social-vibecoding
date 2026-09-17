@@ -97,6 +97,35 @@ export interface Quote {
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
 
 /**
+ * One of the two proposal events the general chat draws: a proposal put up
+ * for a vote, or a proposal merged. Decided by `GroupChat._proposalEvent`
+ * from the row's kind and the server's own wording, which is that module's
+ * vocabulary; ./proposal-event.tsx only draws it, as a message from whoever
+ * did it. `sender` is that name: the actor where there is one, else the app
+ * itself announcing a merge its vote decided. `icon` is the Dev board's glyph
+ * for the same proposal, from its own table, or null where app-view.js is
+ * not loaded.
+ */
+export interface ProposalEvent {
+  type: 'submitted' | 'merged';
+  /** The session id from the row's metadata tag, or '' on an older row. */
+  sessionId: string;
+  prNumber: string;
+  /** The PR title parsed out of the line, or '' when it carried none. */
+  title: string;
+  /** Who put it up for a vote, or the admin who force-merged it; '' otherwise. */
+  actor: string;
+  /** The name on the row's header line: `actor`, or the app's name. */
+  sender: string;
+  /** True when the actor is the viewer: the row sits on the right, as their messages do. */
+  mine: boolean;
+  force: boolean;
+  /** "a/b", the tally the merge announced; '' on a submission. */
+  votes: string;
+  icon: { tint: string; path: string; small?: boolean; title?: string } | null;
+}
+
+/**
  * One file on a message, as its chip draws it.
  *
  * Resolved by the module, which owns the app slug the URL is built from and
@@ -176,6 +205,30 @@ export interface TranscriptMessage {
   voteRef: VoteRef | null;
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
+  /**
+   * Vote rows only: whether the pull request this row is about is still up
+   * for a vote. `open` is what the general chat's event row marks as still
+   * wanting the reader (./proposal-event.tsx); `settled` is merged, merging,
+   * or gone from the votable set; `unknown` means the vote snapshot has not
+   * arrived and reads as open, since a vote shown as over when it is not is
+   * the failure that matters. Written by `_messageView` and patched by
+   * `refreshVoteControls` in public/js/group-chat.js, which is where
+   * `AppView.voteState` lives. Absent on every other kind.
+   */
+  votePhase?: 'open' | 'settled' | 'unknown';
+  /**
+   * The proposal event the general chat draws this row as, or null. The
+   * general chat draws a row of kind `system` or `vote` ONLY when this is
+   * set; the thread transcript ignores it and draws every row.
+   */
+  event?: ProposalEvent | null;
+  /**
+   * Where the event row leads — the proposal's page — or null while the
+   * session behind it is unknown, in which case the row is not a link. A
+   * field of its own, patched by `refreshVoteControls`, because a patch
+   * compares by identity and `event` is an object.
+   */
+  eventHref?: string | null;
 }
 
 /**
@@ -210,6 +263,18 @@ export interface TranscriptLead {
   earlier: boolean;
   /** The placeholder line, or null when there are messages to show. */
   placeholder: string | null;
+  /**
+   * The general chat's quiet card, drawn AFTER the rows when nobody has
+   * posted a message of their own among the loaded ones — the activity
+   * notices land in this stream on their own, so "empty" is rare and "no
+   * conversation" is what a visitor actually meets. The module supplies the
+   * three facts the card cannot know: whether it has paged back to the
+   * beginning (`exhausted`, which is the difference between "yet" and
+   * "lately"), whether the viewer has a composer to answer with, and the
+   * app's name. Null or absent on the thread transcript, which has its own
+   * placeholder above.
+   */
+  quiet?: { exhausted: boolean; canPost: boolean; appName: string } | null;
 }
 
 export interface TranscriptView {

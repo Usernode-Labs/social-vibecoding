@@ -752,7 +752,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // independently took the same 675 to 678, with the Challenge scoring check
   // (+1) and the title-editor pair (+2). Neither set overlaps the other, so
   // the merged manifest holds every one of them: 675 + 2 + 3 + 1 + 2 = 683.
-  assert.equal(DAPP.tests.length, 683);
+  // 683 → 688: the general chat's proposal events — the open one as a
+  // message with its box, its header's sender, a merge from the app — a
+  // person's message in a bubble, and the quiet card.
+  assert.equal(DAPP.tests.length, 688);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

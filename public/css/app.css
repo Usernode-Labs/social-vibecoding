@@ -6639,6 +6639,77 @@ span.gc-vote-btn-icon { cursor: default; }
    cursor so it reads as interactive (chat bubbles keep the text cursor so
    drag-to-select still feels natural). */
 .gc-msg-system { cursor: pointer; }
+
+/* ── The general chat's proposal events ────────────────────────
+   A proposal put up for a vote, and a proposal merged, are the two notices
+   the general chat draws (features/group-chat/proposal-event.tsx). Each is a
+   MESSAGE from whoever did it — the transcript's named row, avatar, name and
+   stamp where a person's message puts them — with one box under the header
+   in the language of the Workshop's Current status panes: the frosted sheet
+   fill and hairline of `.dev-ws-strip`, not a white card with a shadow,
+   holding one glyph and one line of simple text. The glyph is the Dev
+   board's for the proposal, bare — the general discussion row
+   (`.dev-ws-chat-row`) drops the tinted plate the same way, because on a row
+   this size the plate is the largest thing in the line. The chevron is the
+   door's; a box whose proposal is not known yet is a div and has none. */
+.gc-event-box {
+  display: flex; align-items: center; gap: 9px;
+  max-width: min(100%, 640px);
+  margin-top: 4px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  font-size: 13px; line-height: 1.4; color: var(--text-secondary);
+  text-decoration: none;
+}
+a.gc-event-box { cursor: pointer; }
+a.gc-event-box:hover { text-decoration: none; }
+a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
+a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-event-box > .dev-card-icon {
+  flex: none; width: 20px; height: 20px;
+  background: transparent; border-radius: 0;
+}
+.gc-event-box > .dev-card-icon > svg { width: 17px; height: 17px; }
+.gc-event-box > .gc-event-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.gc-event-box > svg { flex: none; }
+/* A submission whose vote is still open reads in the text ink rather than
+   the muted one: the one thing on the line that still wants the reader. */
+.gc-event[data-open] .gc-event-box { color: var(--text-primary); }
+
+/* ── Bubbles in the general chat ─────────────────────────────────
+   A person's message in the general chat sits in a bubble — the Messages
+   screen's own (`.messages-bubble` above: the same corner, surface and
+   padding), because that screen is where the product already draws a
+   conversation in bubbles — and the viewer's own message sits on the RIGHT
+   (ChatMessageRow from="me": the row runs right to left, no avatar), in the
+   accent tint the dev chat gives your turns (.dc-msg-user) and the Messages
+   screen gives yours (.messages-message-self). The side says who is
+   speaking. Only the general chat: a topic thread keeps its flat named rows
+   and tints yours in place (`#dev-topic-thread .gc-msg-self` below). */
+.gc-bubble {
+  display: block;
+  max-width: min(78%, 640px);
+  border-radius: 20px;
+  padding: 8px 14px;
+  /* The raised neutral surface, not the Messages screen's white: that
+     screen's bubbles sit on a grey ground, and this transcript sits on the
+     frosted sheet, where a white bubble is the sheet's own colour and
+     disappears. Same surface the dev chat's PR card and the dark-mode
+     Messages bubble already use. */
+  background: var(--dc-raised);
+  color: var(--text-primary);
+}
+.gc-bubble > .gc-msg-content { color: var(--text-primary); }
+.gc-bubble-self { background: var(--accent-tint); }
+/* Your own row runs right to left, so the hover react disc — absolute at the
+   row's top-right for every other row — would land on your name there. It
+   crosses to the side your row leaves empty. */
+#gc-messages .gc-msg-self .gc-react-add { right: auto; left: 6px; }
+
 .gc-quote-pr { cursor: pointer; }
 @media (hover: hover) {
   .gc-quote-pr:hover { text-decoration: underline; }

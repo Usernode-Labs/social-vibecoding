@@ -611,6 +611,11 @@ const GroupChat = {
     const q = meta.quote;
     const atts = meta.attachments;
     const stamp = GroupChat._stamp(msg.createdAt || msg.created_at);
+    // The general chat's two proposal events, or null — see _proposalEvent.
+    const event = GroupChat._proposalEvent(msg, kind);
+    // Resolved ONCE for the vote facts below — the row's tint, its phase and
+    // the event's link all read the same live PR out of AppView.voteState.
+    const pr = (isVote || event) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       kind,
@@ -652,8 +657,31 @@ const GroupChat = {
         return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
       }),
       attachments: GroupChat._attachmentsView(msg),
-      voteRowClass: isVote
-        ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '',
+      voteRowClass: isVote ? GroupChat._rowVoteClass(pr) : '',
+      // Whether the vote is still open, which the general chat's event row
+      // marks (features/group-chat/proposal-event.tsx). Vote rows only, so
+      // the key is absent — not null — on every other kind.
+      ...(isVote ? { votePhase: GroupChat._votePhase(pr) } : {}),
+      // The event the general chat draws this row as — a message from
+      // whoever did it, with the glyph the Dev board gives the same proposal;
+      // null for every other row, which the general chat then does not draw.
+      // The sender is the actor where the wording names one, else the app
+      // itself, announcing a merge its vote decided. The link is a separate
+      // field because it is PATCHED (refreshVoteControls) once the vote
+      // snapshot names the session behind an older row, and a patch compares
+      // fields by identity — an object rebuilt on every refresh would repaint
+      // the transcript forever.
+      event: event ? {
+        ...event,
+        sender: event.actor
+          || (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+          || 'System',
+        // Yours when you are the actor — the row then sits on the right, as
+        // your messages do. A merge the vote decided is nobody's.
+        mine: !!(event.actor && App.user && event.actor === App.user.username),
+        icon: GroupChat._eventIcon(event.type),
+      } : null,
+      eventHref: event ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
       // The controls host is module-filled, but only the message knows WHICH
       // pull request it is about — so the pair rides on the view model and
       // lands on the host as the two data-* attributes refreshVoteControls
@@ -679,7 +707,25 @@ const GroupChat = {
     // AppView.renderDevChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
-    GroupChat._react()?.publishTranscript(GroupChat.messages.map(GroupChat._messageView));
+    GroupChat._react()?.publishTranscript(
+      GroupChat.messages.map(GroupChat._messageView),
+      'main',
+      {
+        earlier: false,
+        placeholder: null,
+        // The quiet card's three facts (features/group-chat/quiet-card.tsx).
+        // Whether the card SHOWS is the transcript's call — it knows whether a
+        // person's message is among the rows, including one that lands live —
+        // but "paged back to the beginning", "can this viewer post" and the
+        // app's name are this module's to know.
+        quiet: {
+          exhausted: !GroupChat.hasMore,
+          canPost: !GroupChat._readOnly(),
+          appName: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+            || 'this app',
+        },
+      },
+    );
   },
 
   appendMessage(msg) {
@@ -2163,7 +2209,11 @@ const GroupChat = {
     if (prNum && Array.isArray(typeof AppView !== 'undefined' && AppView._merged)) {
       const merged = AppView._merged.find((m) => m
         && (String(m.pr_number) === String(prNum) || (sid && String(m.session_id || m.id) === String(sid))));
-      if (merged) return { status: 'merged', pr_number: merged.pr_number, _settled: true };
+      // `id` rides along so a merged proposal's event row can link to its
+      // page (_eventHref) even when the row predates the metadata tag.
+      if (merged) {
+        return { status: 'merged', pr_number: merged.pr_number, id: merged.session_id || merged.id, _settled: true };
+      }
     }
     return null;
   },
@@ -2195,6 +2245,84 @@ const GroupChat = {
     return pr.my_vote === 'yes' || pr.my_vote === 'no' ? 'gc-vote-voted' : 'gc-vote-unvoted';
   },
 
+  // Whether a vote row still asks something of the reader, which the general
+  // chat's event row marks (features/group-chat/proposal-event.tsx):
+  //   'open'    — the PR is promoted and votable;
+  //   'settled' — merged, merging, or gone from the votable set (withdrawn /
+  //               closed / long merged: a plain activity line by now);
+  //   'unknown' — AppView.voteState has not arrived yet. The transcript
+  //               treats it as open: a mark that fades a moment later is
+  //               fine, a live vote shown as over is not.
+  // `pr` is what _resolvePr returned for the row, or null.
+  _votePhase(pr) {
+    const st = (typeof AppView !== 'undefined' && AppView.voteState) || null;
+    if (!st) return 'unknown';
+    return pr && !pr._settled && pr.status === 'promoted' ? 'open' : 'settled';
+  },
+
+  // ── The general chat's proposal events ───────────────────────────
+  //
+  // The general chat draws only two of the notices that land in it: a
+  // proposal put up for a vote, and a proposal merged. Each is drawn as a
+  // message from whoever did it (features/group-chat/proposal-event.tsx).
+  // WHICH rows those are is decided here, from the row's kind and its
+  // wording, because this module already owns that vocabulary (_voteRef
+  // parses the same "PR #N"). Everything else — a request closing, a check
+  // verdict, main's suite going red, a visibility change — stays in the
+  // transcript's data and in the topic thread it was dual-posted to, and is
+  // not drawn in the general chat at all: a stream of thirty such lines was
+  // what made a quiet app's Discussion unreadable.
+  //
+  // The wordings are the server's own (routes/votes.js). A promote or an
+  // import posts "<who> promoted PR #N: <title> for voting" as a `vote` row;
+  // a merge posts "<title> is live (PR #N). Thanks to everyone who voted
+  // (a/b votes)", or "PR #N: <title> force-merged by admin <who> (a/b votes
+  // at the time)". Every vote row is a submission whatever its wording (the
+  // number comes from _voteRef then); a system row that matches neither
+  // merge wording is not an event.
+  _proposalEvent(msg, kind) {
+    const text = String(msg.content == null ? '' : msg.content);
+    const [sessionId, prFromText] = GroupChat._voteRef(msg);
+    if (kind === 'vote') {
+      const m = /^(\S+) (?:promoted|imported) PR #(\d+)(?:: ([\s\S]*?))? for (?:voting|a vote)$/.exec(text);
+      return {
+        type: 'submitted', sessionId, prNumber: m ? m[2] : prFromText,
+        title: (m && m[3]) || '', actor: m ? m[1] : '', force: false, votes: '',
+      };
+    }
+    if (kind !== 'system') return null;
+    let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return { type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[3] };
+    m = /^PR #(\d+) is live\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return { type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[2] };
+    m = /^PR #(\d+)(?:: ([\s\S]*?))? force-merged by admin (\S+) \((\d+\/\d+) votes? at the time\)$/.exec(text);
+    if (m) return { type: 'merged', sessionId, prNumber: m[1], title: m[2] || '', actor: m[3], force: true, votes: m[4] };
+    return null;
+  },
+
+  // The glyph the Dev board gives the same proposal — the "done" tick once
+  // it has merged, the proposal glyph while it is up for a vote — from the
+  // board's own table, so the two surfaces cannot draw one thing two ways.
+  // Null where app-view.js has not loaded (a test), and the row draws none.
+  _eventIcon(type) {
+    if (typeof AppView === 'undefined' || typeof AppView._devCardIcon !== 'function') return null;
+    return AppView._devCardIcon(type === 'merged' ? 'done' : 'proposal', { small: true });
+  },
+
+  // Where an event row leads: the proposal's own page, which is where its
+  // Preview, the vote and the discussion live. Needs the session id — from
+  // the row's metadata tag, else from the live PR the snapshot resolved —
+  // and null until one is known, in which case the row is not a link.
+  _eventHref(sessionId, pr) {
+    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || GroupChat.appSlug;
+    const id = sessionId || (pr && pr.id != null ? String(pr.id) : '');
+    if (!slug || !id) return null;
+    return (typeof App !== 'undefined' && App._appUrl)
+      ? App._appUrl(slug, 'dev', { kind: 'proposal', id: Number(id) }, 'topic')
+      : `/app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
+  },
+
   // Re-fill every inline vote-control wrapper from the current
   // AppView.voteState. Called by AppView.loadVotePanel after it reloads on
   // a vote/session update (and on first open, covering the race where the
@@ -2218,8 +2346,29 @@ const GroupChat = {
       const row = el.closest('.gc-msg-vote[data-msg-id]');
       const id = row && parseInt(row.dataset.msgId || '', 10);
       if (id) {
-        GroupChat._react()?.patchTranscriptMessage(id, { voteRowClass: GroupChat._rowVoteClass(pr) });
+        // The phase rides along for the same reason: a row that was 'unknown'
+        // at first paint learns here whether it stands or folds. A settled
+        // row already inside a collapsed digest has no host in the DOM and
+        // is not visited — it has nothing left to learn.
+        GroupChat._react()?.patchTranscriptMessage(id, {
+          voteRowClass: GroupChat._rowVoteClass(pr),
+          votePhase: GroupChat._votePhase(pr),
+        });
       }
+    });
+    // The general chat's proposal events carry no host — their controls live
+    // on the proposal's page — so they are visited by row: a submission's
+    // phase says whether it is still open, which its row marks, and the link
+    // is resolved once the snapshot names the session behind a row that
+    // predates the metadata tag.
+    document.querySelectorAll('#gc-messages .gc-event[data-msg-id]').forEach((el) => {
+      const id = parseInt(el.dataset.msgId || '', 10);
+      if (!id) return;
+      const sid = el.dataset.sessionId || '';
+      const pr = GroupChat._resolvePr(sid, el.dataset.prNumber || '');
+      const patch = { eventHref: GroupChat._eventHref(sid, pr) };
+      if (el.dataset.event === 'submitted') patch.votePhase = GroupChat._votePhase(pr);
+      GroupChat._react()?.patchTranscriptMessage(id, patch);
     });
   },
 
