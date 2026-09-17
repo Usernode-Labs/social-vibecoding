@@ -313,6 +313,12 @@ export interface TopicBody {
   aboutTitle?: string | null;
   /** An issue's markdown body, already rendered and sanitised. */
   issueBodyHtml?: string | null;
+  /** #2427 — raw Markdown and author-only edit permission for the issue body. */
+  issueBodyEditor?: {
+    issue: number;
+    markdown: string;
+    canEdit: boolean;
+  } | null;
   /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */

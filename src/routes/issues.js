@@ -62,6 +62,25 @@ function creatorFromSourceLine(body) {
   return null;
 }
 
+// Durable authorship for issue edits. Platform-created issue rows are the
+// strongest record; feedback reports are the equivalent record for issues
+// filed directly into GitHub by routes/feedback.js. The Source line remains
+// the compatibility fallback for older reports. Keeping the feedback row in
+// the check means an author who deliberately clears the whole body can still
+// add a new description later.
+async function isIssueAuthor(pool, appId, parsed, issueNumber, user, currentBody) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM issues
+      WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3
+     UNION ALL
+     SELECT 1 FROM feedback_reports
+      WHERE issue_owner = $4 AND issue_repo = $5 AND issue_number = $2 AND user_id = $3
+     LIMIT 1`,
+    [appId, issueNumber, user.id, parsed.owner, parsed.repo]
+  );
+  return rows.length > 0 || creatorFromSourceLine(currentBody) === user.username;
+}
+
 // Renames are no longer an issue kind — they open a dapp.json `name` PR
 // via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
 // path below (maybeApplyRenameProposal) is retained only so any rename
@@ -93,6 +112,10 @@ const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
+// Matches the issue-draft service and feedback form. Empty is valid: GitHub
+// issues may deliberately have no description, but an accidental novel must
+// not ride through the app's JSON limit or make the topic unusable.
+const MAX_ISSUE_BODY_LENGTH = 10000;
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
 // Env-var change proposals (kind='secret_change') are in-app governance —
@@ -1410,20 +1433,30 @@ function issueRoutes(config) {
       );
       const byNumber = new Map(bountyRows.map((r) => [r.n, r]));
 
-      // #133/#136: resolve each issue's creating user so the panel can show
+      // #133/#136/#2427: resolve each issue's creating user so the panel can show
       // it next to the title the way PR rows show their author. Platform-
       // filed issues record created_by in the local issues table; feedback-
-      // filed ones carry the creator in the body's "**Source:**" line
-      // (the "usernode user (name)" / "usernode admin (name)" forms, plus
-      // the legacy bare "usernode admin" written before #140);
+      // filed ones use feedback_reports, with the body's "**Source:**" line
+      // as the compatibility fallback for older rows (the "usernode user
+      // (name)" / "usernode admin (name)" forms, plus the legacy bare
+      // "usernode admin" written before #140);
       // issues opened directly on GitHub fall back to the GitHub login —
       // but never the platform bot account itself, which would just name
       // "usernode-bot" on every platform-filed row.
       const { rows: creatorRows } = await pool.query(
-        `SELECT i.github_issue_number AS n, u.username
-           FROM issues i JOIN users u ON u.id = i.created_by
-          WHERE i.app_id = $1 AND i.github_issue_number IS NOT NULL`,
-        [app.id]
+        `SELECT DISTINCT ON (n) n, username
+           FROM (
+             SELECT i.github_issue_number AS n, u.username, 0 AS source_rank
+               FROM issues i JOIN users u ON u.id = i.created_by
+              WHERE i.app_id = $1 AND i.github_issue_number IS NOT NULL
+             UNION ALL
+             SELECT fr.issue_number AS n, u.username, 1 AS source_rank
+               FROM feedback_reports fr JOIN users u ON u.id = fr.user_id
+              WHERE fr.issue_owner = $2 AND fr.issue_repo = $3
+                AND fr.issue_number IS NOT NULL
+           ) creators
+          ORDER BY n, source_rank`,
+        [app.id, parsed?.owner || null, parsed?.repo || null]
       );
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
@@ -1920,12 +1953,19 @@ function issueRoutes(config) {
         [app.id, number, req.user.id]
       );
       const { rows: creatorRows } = await pool.query(
-        `SELECT u.username
-           FROM issues i JOIN users u ON u.id = i.created_by
-          WHERE i.app_id = $1 AND i.github_issue_number = $2
-          ORDER BY i.id DESC
+        `SELECT username
+           FROM (
+             SELECT u.username, 0 AS source_rank, i.id AS source_id
+               FROM issues i JOIN users u ON u.id = i.created_by
+              WHERE i.app_id = $1 AND i.github_issue_number = $2
+             UNION ALL
+             SELECT u.username, 1 AS source_rank, fr.id AS source_id
+               FROM feedback_reports fr JOIN users u ON u.id = fr.user_id
+              WHERE fr.issue_owner = $3 AND fr.issue_repo = $4 AND fr.issue_number = $2
+           ) creators
+          ORDER BY source_rank, source_id DESC
           LIMIT 1`,
-        [app.id, number]
+        [app.id, number, parsed?.owner || null, parsed?.repo || null]
       );
       const { rows: chatRows } = await pool.query(
         `SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
@@ -2054,10 +2094,11 @@ function issueRoutes(config) {
   // the cache-bust + issue_update broadcast that live-refreshes open
   // panels (same pair title-heal uses).
   //
-  // Authorship: platform-filed issues record created_by in the local
-  // issues table; feedback-filed ones carry the creator in the body's
-  // "**Source:**" line. GitHub-native issues match neither and stay
-  // read-only — author-only by design, no admin override.
+  // Authorship: platform-filed issues record created_by in the local issues
+  // table; feedback-filed ones record user_id in feedback_reports, with the
+  // body's "**Source:**" line as a compatibility fallback. GitHub-native
+  // issues match neither and stay read-only — author-only by design, no admin
+  // override.
   // ----------------------------------------------------------------
   router.patch('/api/apps/:slug/github-issues/:number/title', async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
@@ -2102,13 +2143,9 @@ function issueRoutes(config) {
         });
       }
 
-      const { rows: authorRows } = await pool.query(
-        `SELECT 1 FROM issues
-          WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3`,
-        [app.id, issueNumber, req.user.id]
+      const isAuthor = await isIssueAuthor(
+        pool, app.id, parsed, issueNumber, req.user, target.body
       );
-      const isAuthor = authorRows.length > 0
-        || creatorFromSourceLine(target.body) === req.user.username;
       if (!isAuthor) {
         return res.status(403).json({ error: "Only the issue's author can edit its title" });
       }
@@ -2157,6 +2194,101 @@ function issueRoutes(config) {
       res.json({ ok: true, title: newTitle });
     } catch (err) {
       log.error('issues', 'Issue title edit failed', { issueNumber, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // PATCH /api/apps/:slug/github-issues/:number/body
+  //
+  // #2427: author-only editing of an open GitHub issue's Markdown body from
+  // its Homeroom topic. This deliberately mirrors the title route's access,
+  // open-issue verification and authorship rules. GitHub remains the source
+  // of truth: it is written first, then the optional local mirror, thread
+  // audit note, cache and live viewers are updated best-effort.
+  // ----------------------------------------------------------------
+  router.patch('/api/apps/:slug/github-issues/:number/body', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+    const rawBody = req.body?.body;
+    if (typeof rawBody !== 'string') {
+      return res.status(400).json({ error: 'Body must be a string' });
+    }
+    if (rawBody.length > MAX_ISSUE_BODY_LENGTH) {
+      return res.status(400).json({
+        error: `Body too long (max ${MAX_ISSUE_BODY_LENGTH} chars)`,
+      });
+    }
+    const newBody = github.safeMention(rawBody);
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const target = (ghResult.issues || []).find((i) => i.number === issueNumber);
+      if (!target) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
+
+      const isAuthor = await isIssueAuthor(
+        pool, app.id, parsed, issueNumber, req.user, target.body
+      );
+      if (!isAuthor) {
+        return res.status(403).json({ error: "Only the issue's author can edit its body" });
+      }
+
+      const oldBody = String(target.body || '');
+      if (newBody === oldBody) {
+        return res.json({ ok: true, unchanged: true, body: oldBody });
+      }
+
+      try {
+        await github.patchIssueBody(parsed.owner, parsed.repo, issueNumber, newBody);
+      } catch (err) {
+        log.warn('issues', 'GitHub issue body PATCH failed', { issueNumber, message: err.message });
+        return res.status(502).json({
+          error: "Couldn't update the body on GitHub. Try again in a moment.",
+        });
+      }
+
+      await pool.query(
+        `UPDATE issues SET description = $3 WHERE app_id = $1 AND github_issue_number = $2`,
+        [app.id, issueNumber, newBody]
+      ).catch((err) => log.warn('issues', 'Local issue body update failed', { issueNumber, err: err.message }));
+
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} edited the issue description`,
+        'system', null, { type: 'issue', ref: issueNumber }
+      ).catch((err) => log.warn('issues', 'Issue body chat message failed', { err: err.message }));
+
+      github.invalidateIssuesCache(parsed.owner, parsed.repo);
+      pushIssueUpdate({
+        action: 'updated', source: 'github',
+        appSlug: app.slug, appId: app.id, issueNumber,
+      });
+
+      log.info('issues', 'Issue body edited', { appId: app.id, issueNumber, by: req.user.username });
+      res.json({ ok: true, body: newBody });
+    } catch (err) {
+      log.error('issues', 'Issue body edit failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

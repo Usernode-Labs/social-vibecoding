@@ -1434,6 +1434,18 @@ async function updateIssueTitle(owner, repo, issueNumber, title) {
   return data;
 }
 
+// Replace an existing issue's Markdown body. Kept beside updateIssueTitle so
+// every issue edit goes through the same authenticated Octokit path and the
+// same mention-safety rule as issue creation.
+async function updateIssueBody(owner, repo, issueNumber, body) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, body: safeMention(body),
+  });
+  log.info('github', 'Issue body updated', { repo: `${owner}/${repo}`, issue: issueNumber });
+  return data;
+}
+
 // PATCH a title onto a GitHub issue, PAT-first. Platform-repo issues were
 // filed with the PAT (routes/feedback.js), app-repo issues via the GitHub
 // App installation — try the PAT first (covers both on the canonical
@@ -1458,6 +1470,30 @@ async function patchIssueTitle(owner, repo, issueNumber, title) {
     });
   }
   await updateIssueTitle(owner, repo, issueNumber, title);
+}
+
+// PATCH a body onto a GitHub issue, PAT-first, matching patchIssueTitle's
+// credential fallback. The route has already authorised the platform author;
+// this helper owns only the remote write and mention safety.
+async function patchIssueBody(owner, repo, issueNumber, body) {
+  const safeBody = safeMention(body);
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `token ${pat}`,
+        'User-Agent': 'usernode-social-vibecoding',
+      },
+      body: JSON.stringify({ body: safeBody }),
+    });
+    if (res.ok) return;
+    log.warn('github', 'PAT issue body PATCH failed; trying installation token', {
+      repo: `${owner}/${repo}`, issueNumber, status: res.status,
+    });
+  }
+  await updateIssueBody(owner, repo, issueNumber, safeBody);
 }
 
 async function closeIssue(owner, repo, issueNumber) {
@@ -2268,6 +2304,8 @@ module.exports = {
   createIssueComment,
   updateIssueTitle,
   patchIssueTitle,
+  updateIssueBody,
+  patchIssueBody,
   closeIssue,
   getCloneUrl,
   safeMention,

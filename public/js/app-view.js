@@ -3592,6 +3592,11 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('issue', item),
         issueBodyHtml: AppView._issueBodyHtml(item),
+        issueBodyEditor: {
+          issue: item.number,
+          markdown: String(item.body || ''),
+          canEdit: AppView._canEditIssueAuthor(item),
+        },
         comments: true,
       };
     } else if (t.kind === 'proposal') {
@@ -9863,6 +9868,32 @@ const AppView = {
       : '';
   },
 
+  // #2427: the author predicate shared by the issue title and body editors.
+  // It is only an affordance gate; both PATCH routes repeat the authoritative
+  // collab/open/authorship checks. Keeping it here prevents the two pencils
+  // from disagreeing after a live refresh or on a closed issue topic.
+  _canEditIssueAuthor(issue) {
+    return !!(issue && issue.state !== 'closed' && !AppView.readOnly
+      && issue.created_by_username
+      && typeof App !== 'undefined' && App.user
+      && issue.created_by_username === App.user.username);
+  },
+
+  // Update every issue cache the topic may have resolved through, then return
+  // the same rendered/sanitised HTML the next server refresh will produce.
+  // The React body editor uses this for an immediate post-save repaint while
+  // the websocket refresh takes care of other viewers.
+  _cacheIssueBody(issueNumber, body) {
+    const n = Number(issueNumber);
+    for (const issue of (AppView._ghIssues || [])) {
+      if (issue && Number(issue.number) === n) issue.body = body;
+    }
+    if (AppView._topicIssue && Number(AppView._topicIssue.number) === n) {
+      AppView._topicIssue.body = body;
+    }
+    return AppView._issueBodyHtml({ body });
+  },
+
   // #396: is this comment author the platform bot? GitHub App actors
   // comment as `<name>[bot]`; the platform bot account is `usernode-bot`.
   // Tolerant of both so the bot's earlier auto-proposal questions are
@@ -14231,9 +14262,7 @@ const AppView = {
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
-    const canEditTitle = !!(noNav && !closed && !AppView.readOnly && issue.created_by_username
-      && typeof App !== 'undefined' && App.user
-      && issue.created_by_username === App.user.username);
+    const canEditTitle = !!(noNav && AppView._canEditIssueAuthor(issue));
     const editing = canEditTitle && AppView._editingIssueTitle === n;
 
     const attrs = { 'data-ref-issue': String(n) };
