@@ -1,30 +1,61 @@
 'use strict';
 
 const { canonicalNativeSessionV2Network } = require('../config');
+const log = require('./logger');
 
 // The configured observability receiver serves the deployment's admitted
 // chain. Neither its origin nor the chain binding comes from a client URL.
 class StakingDataError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, details = {}) {
+    super(message);
+    this.status = status;
+    Object.assign(this, details);
+  }
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(15000), redirect: 'error',
-    headers: { accept: 'application/json' } });
-  if (!response.ok) throw new StakingDataError(502, 'Epoch data is temporarily unavailable.');
-  const reader = response.body.getReader();
-  const chunks = [];
-  let length = 0;
+async function fetchJson(url, { fetchImpl = fetch } = {}) {
+  let reader;
   try {
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(15000), redirect: 'error',
+      headers: { accept: 'application/json' } });
+    reader = response.body?.getReader();
+    if (!response.ok) throw new StakingDataError(502,
+      `Epoch data service returned HTTP ${response.status}. Please retry.`,
+      { code: 'observability_http_error', upstreamStatus: response.status });
+    if (!reader) throw new StakingDataError(502, 'Epoch data service returned an empty response.',
+      { code: 'observability_invalid_response' });
+    const chunks = [];
+    let length = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > 8 * 1024 * 1024) throw new Error('Response too large');
+      if (length > 8 * 1024 * 1024) throw new StakingDataError(502,
+        'Epoch data response is too large. Please retry.', { code: 'observability_response_too_large' });
       chunks.push(Buffer.from(value));
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } finally { await reader.cancel().catch(() => {}); }
+    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+    catch { throw new StakingDataError(502, 'Epoch data service returned an invalid response.',
+      { code: 'observability_invalid_response' }); }
+  } catch (error) {
+    let failure = error;
+    if (!(error instanceof StakingDataError)) {
+      const reason = error?.cause?.code || error?.code;
+      const code = ['ENOTFOUND', 'EAI_AGAIN'].includes(reason) ? 'observability_dns_error'
+        : /^(?:CERT_|ERR_TLS_|ERR_SSL_|DEPTH_ZERO_|SELF_SIGNED_|UNABLE_TO_)/.test(reason || '') ? 'observability_tls_error'
+          : ['TimeoutError', 'AbortError'].includes(error?.name) ? 'observability_timeout'
+            : 'observability_connection_error';
+      failure = new StakingDataError(502, 'Could not reach the epoch data service. Please retry.', { code });
+    }
+    // Log only server-owned destination metadata. The query carries a wallet;
+    // raw fetch errors, URL credentials and upstream bodies must never escape.
+    const destination = new URL(url);
+    log.warn('staking-observability', 'Epoch receiver request failed', {
+      host: destination.host, endpoint: destination.pathname,
+      code: failure.code, upstreamStatus: failure.upstreamStatus || null,
+    });
+    throw failure;
+  } finally { if (reader) await reader.cancel().catch(() => {}); }
 }
 
 function createStakingObservability(config, {
@@ -39,11 +70,13 @@ function createStakingObservability(config, {
   async function context() {
     const chainId = config.nativeSessionV2Network?.chainId;
     if (!config.stakingObservabilityUrl) {
-      throw new StakingDataError(503, 'Staking epoch data is not configured for this network.');
+      throw new StakingDataError(503, 'Staking epoch data is not configured for this network.',
+        { code: 'observability_not_configured' });
     }
     if (chainId) return { chainId };
     if (!previewPlatformUrl) {
-      throw new StakingDataError(503, 'Staking epoch data is not configured for this network.');
+      throw new StakingDataError(503, 'Staking epoch data is not configured for this network.',
+        { code: 'staking_network_not_configured' });
     }
     // Preview environments are built by the deployed parent, not this PR.
     // Older parents do not inject the native chain ID. Their existing public
@@ -139,4 +172,4 @@ function createStakingObservability(config, {
   return { context, epochs };
 }
 
-module.exports = { createStakingObservability, StakingDataError };
+module.exports = { createStakingObservability, StakingDataError, fetchJson };

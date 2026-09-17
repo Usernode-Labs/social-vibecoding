@@ -4,10 +4,48 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { bech32m } = require('bech32');
-const { createStakingObservability } = require('../src/services/staking-observability');
+const { createStakingObservability, fetchJson } = require('../src/services/staking-observability');
 const { stakingRoutes } = require('../src/routes/staking');
 const wallet = 'ut1examplewallet00000000000000000000000';
 const config = { stakingObservabilityUrl: 'https://observability.example', nativeSessionV2Network: { chainId: 'chain-a' } };
+
+test('real HTTP receiver failures carry a bounded reason and remain retryable', async (t) => {
+  const upstream = express();
+  let status = 503;
+  upstream.get('/data', (_req, res) => status === 200
+    ? res.json({ epoch: 28, fullResponse: { retained: true } })
+    : res.status(status).send('private upstream diagnostic: never expose this'));
+  const server = upstream.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}/data?sender=private-wallet`;
+  await assert.rejects(fetchJson(url), (error) => {
+    assert.equal(error.status, 502);
+    assert.equal(error.code, 'observability_http_error');
+    assert.equal(error.upstreamStatus, 503);
+    assert.ok(!JSON.stringify(error).includes('private'));
+    return true;
+  });
+  status = 200;
+  assert.deepEqual(await fetchJson(url), { epoch: 28, fullResponse: { retained: true } });
+});
+
+test('DNS, TLS, timeout and malformed responses have distinct safe failure codes', async () => {
+  for (const [cause, code] of [
+    ['ENOTFOUND', 'observability_dns_error'],
+    ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'observability_tls_error'],
+    ['ECONNREFUSED', 'observability_connection_error'],
+    ['TimeoutError', 'observability_timeout'],
+  ]) {
+    await assert.rejects(fetchJson('https://receiver.example/data?sender=private-wallet', {
+      fetchImpl: async () => { throw Object.assign(new Error('raw private error'),
+        { name: cause === 'TimeoutError' ? cause : 'TypeError', cause: { code: cause } }); },
+    }), (error) => error.code === code && !error.message.includes('private'));
+  }
+  await assert.rejects(fetchJson('https://receiver.example/data', {
+    fetchImpl: async () => new Response('<html>private error</html>'),
+  }), (error) => error.code === 'observability_invalid_response' && !error.message.includes('private'));
+});
 
 function mock({ partial = false, closed = true, noParticipant = false, unobserved = false, incompleteRange = false } = {}) {
   const urls = [];
@@ -155,6 +193,8 @@ test('routes require authentication and isolate fixtures to staging', async (t) 
   const context = await fetch(origin + '/api/me/staking/context', { headers });
   assert.deepEqual(await context.json(), { chainId: 'chain-a' });
   assert.equal(context.headers.get('cache-control'), 'private, no-store');
+  const verified = await fetch(origin + '/api/me/staking/context?verify=1', { headers });
+  assert.deepEqual(await verified.json(), { chainId: 'chain-a', receiverReachable: true, epoch: 10 });
   const old = process.env.USERNODE_ENV;
   t.after(() => { if (old === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = old; });
   process.env.USERNODE_ENV = 'production';

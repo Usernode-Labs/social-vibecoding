@@ -4381,6 +4381,14 @@
       "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
       "path": "/api/me/staking/context",
       "expectText": "\"chainId\":\"utc1"
+    },
+    {
+      "id": "profile-staking.real-receiver",
+      "name": "Profile staking: real receiver serves current epoch data without demo responses (#1551)",
+      "path": "/api/me/staking/context?verify=1",
+      "expectText": "\"receiverReachable\":true",
+      "visual": true,
+      "impact": ["src/routes/staking.js", "src/services/staking-observability.js", "src/services/staging-env.js", "src/config.js"]
     }
   ],
   "governance": {
