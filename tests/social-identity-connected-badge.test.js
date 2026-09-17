@@ -54,7 +54,7 @@ test('a legacy link that still needs a reconnect is not called Connected', () =>
 
 test('the badge renders as read-only text, not as a pressable control', () => {
   const row = VIEW.slice(VIEW.indexOf('function ProviderRow'));
-  const head = row.slice(0, row.indexOf('row.state.text'));
+  const head = row.slice(row.indexOf('const title = '), row.indexOf('let head;'));
   assert.match(head, /<span/, 'a span, not a button');
   assert.doesNotMatch(head, /aria-pressed/,
     'announcing a status as a pressed button is wrong on a screen reader');
@@ -67,11 +67,12 @@ test('the badge renders as read-only text, not as a pressable control', () => {
 });
 
 test('the heading still truncates beside it', () => {
-  // The badge is shrink-0 and the heading min-w-0/truncate, so a long
-  // "GitHub · @a-very-long-handle" loses characters rather than pushing the
-  // badge out of the row.
+  // The badge is shrink-0 and the heading min-w-0/truncate, so the title
+  // loses characters rather than pushing the badge out of the row. #2370
+  // moved the handle to the row's second line, so the title is one word
+  // today — the guard stays, because a provider name is not ours to keep short.
   const row = VIEW.slice(VIEW.indexOf('function ProviderRow'));
-  const head = row.slice(0, row.indexOf('row.state.text'));
+  const head = row.slice(row.indexOf('const title = '), row.indexOf('let head;'));
   assert.match(head, /min-w-0/);
   assert.match(head, /truncate/);
   assert.match(VIEW, /BADGE_BASE =\s*\n?\s*'shrink-0/);

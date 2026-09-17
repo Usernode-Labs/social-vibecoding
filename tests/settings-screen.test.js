@@ -2023,28 +2023,96 @@ test('the social block renders its four host states', () => {
     /Could not load social accounts/);
 });
 
-test('the tier card carries its tone as well as its wording', () => {
-  const locked = socialHtml({ ...socialBase, tier: { tone: 'warn', title: 'Layer 1 locked · $0/day', detail: 'Connect either.' } });
-  assert.match(locked, /border-amber-300/, 'a locked tier is amber');
-  assert.match(locked, /Layer 1 locked · \$0\/day/);
-  const open = socialHtml({ ...socialBase, tier: { tone: 'ok', title: 'Layer 1 unlocked · $10.00/day', detail: 'Verified.' } });
-  assert.match(open, /border-emerald-300/, 'an unlocked one is emerald');
-  // The three neutral states (unavailable, legacy policy, admin override)
-  // share the plain card — they are statements of fact, not outcomes.
-  const plain = socialHtml({ ...socialBase, tier: { tone: 'plain', title: 'Administrator-set allowance: $25.00/day', detail: 'Override.' } });
-  assert.doesNotMatch(plain, /border-amber-300|border-emerald-300/);
+// #2370: the tier is the FIRST ROW of one list now, not a tinted card over
+// two more cards. These drive the real view builder rather than hand-written
+// fixtures, because the defect worth catching is the builder and the markup
+// disagreeing about what a state says.
+const tierView = () => new Function(`return ({${[
+  sliceMethod(settingsJs, '_socialIdentityMoney'),
+  sliceMethod(settingsJs, '_socialIdentityTierView'),
+].join(',')}})`)();
+
+test('the head row says where the account stands, in words a reader has', () => {
+  const view = tierView();
+  const locked = view._socialIdentityTierView({
+    policy: 'tiered', limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+  });
+  const html2 = socialHtml({ ...socialBase, tier: locked });
+  assert.match(html2, />Signed in</);
+  assert.match(html2, />\$0 \/ day</);
+  assert.match(html2, /id="github-link-tier-note"[^>]*>Either one is enough\./,
+    'the one sentence the ladder needs sits under the list');
+  assert.doesNotMatch(html2, /Layer 1/,
+    'the policy\'s internal tier name means nothing without a Layer 0 or 2 beside it');
+  assert.doesNotMatch(html2, /border-amber-300/,
+    'a locked ladder is the next thing to do, not a warning');
 });
 
-test('a demo Connect control is inert but present, and matches the live one', () => {
+test('off the credit ladder the list promises nothing a connection cannot deliver', () => {
+  const view = tierView();
+  // `legacy` is IDENTITY_CREDIT_POLICY's default, so this is the state most
+  // deployments are in: a flat allowance that connecting does not change.
+  const legacy = view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+  });
+  assert.equal(legacy.title, 'Your credits');
+  assert.equal(legacy.amount, '$25 / day');
+  assert.match(legacy.note, /do not depend on a connected account/);
+  const override = view._socialIdentityTierView({
+    policy: 'tiered', tier: 'override', limitCents: 5050, entitlementAvailable: true,
+  });
+  assert.equal(override.amount, '$50.50 / day', 'a part-dollar amount keeps its cents');
+  assert.match(override.note, /administrator set this amount/i);
+  for (const tier of [legacy, override]) {
+    assert.doesNotMatch(socialHtml({ ...socialBase, tier }), /Signed in|Either one is enough/);
+  }
+
+  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const unlinked = { available: true, linked: false };
+  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy' }, false).amount, null,
+    'no "$10 / day" beside Connect where connecting unlocks no $10');
+  assert.equal(
+    rows._socialIdentityRowView('github', unlinked, { policy: 'tiered', verificationRequired: true }, false).amount,
+    '$10 / day');
+});
+
+test('a second proof never reads as a second $10', () => {
+  // src/services/limits.js: "provider proofs replace one another; they do
+  // not stack". Two rows each saying "$10 / day" would say the opposite.
+  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false };
+  const github = { available: true, linked: true, handle: 'octo' };
+  const x = { available: true, linked: true, handle: 'octo' };
+  const both = { github, x };
+  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$10 / day');
+  const second = rows._socialIdentityRowView('x', x, tiered, false, both);
+  assert.equal(second.amount, null);
+  assert.equal(second.state.text, 'No extra credits');
+  // …and an unconnected X beside a connected GitHub carries no figure either.
+  assert.equal(
+    rows._socialIdentityRowView('x', { available: true }, tiered, false, { github, x: {} }).amount, null);
+});
+
+test('an unverifiable entitlement is the one head row that reads as a fault', () => {
+  const down = tierView()._socialIdentityTierView({ entitlementAvailable: false });
+  assert.equal(down.amount, null, 'no figure is shown when none could be checked');
+  const html2 = socialHtml({ ...socialBase, tier: down });
+  assert.match(html2, /text-amber-800[^"]*"[^>]*>Daily credits unavailable</);
+  assert.match(html2, /Your own API key still works/);
+});
+
+test('a not-connected row is one full-width control, inert but present in a fixture', () => {
   const row = {
     provider: 'github',
     name: 'GitHub',
     heading: 'GitHub',
-    state: { tone: 'muted', text: 'Not connected.' },
+    state: { tone: 'muted', text: '' },
+    amount: '$10 / day',
+    done: false,
     linkedAt: null,
     noToken: null,
     connect: {
-      label: 'Connect GitHub',
+      label: 'Connect',
       href: '/api/me/social-identities/github/connect?intent=connect',
       intent: 'connect',
     },
@@ -2057,18 +2125,29 @@ test('a demo Connect control is inert but present, and matches the live one', ()
     diagnostics: null,
   };
   const live = socialHtml({ ...socialBase, providers: [row] });
-  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect\?intent=connect"/,
+  assert.match(live, /<a [^>]*href="\/api\/me\/social-identities\/github\/connect\?intent=connect"/,
     'the real control is an ANCHOR — the OAuth flow is a top-level navigation');
+  // The WHOLE row is that anchor (#2370): title, figure and the Connect
+  // affordance are inside it, and nothing interactive is nested in it.
+  const anchor = live.slice(live.indexOf('<a '), live.indexOf('</a>'));
+  assert.match(anchor, />GitHub</);
+  assert.match(anchor, />\$10 \/ day</);
+  assert.match(anchor, /<span[^>]*>Connect<\/span>/, 'an affordance, not a nested control');
+  assert.doesNotMatch(anchor.slice(3), /<button|<a /);
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled
-  // button — and it has to LOOK the same, which one shared constant is what
-  // guarantees (see the file's header and the primitive allow-list entry).
+  // button — and it has to LOOK the same. One component (ListRow) spells both,
+  // so with the tag, the href and the fixture's dimmed pill set aside the two
+  // renders are the same string.
   const demo = socialHtml({
     ...socialBase,
-    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null, intent: 'connect' } }],
+    providers: [{ ...row, connect: { label: 'Connect', href: null, intent: 'connect' } }],
   });
-  assert.match(demo, /<button type="button" disabled/);
-  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
-  assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+  assert.match(demo, /<button type="button"[^>]* disabled=""/);
+  const shape = (html3) => html3
+    .replace('<a ', '<ROW ').replace(/ href="[^"]*"/, '').replace('</a>', '</ROW>')
+    .replace('<button type="button" ', '<ROW ').replace('</button>', '</ROW>')
+    .replace(' disabled=""', '').replace(' opacity-50', '');
+  assert.equal(shape(demo), shape(live), 'one surface, both spellings');
 });
 
 test('a connected provider offers refresh, safe replacement, visibility and disconnect separately', () => {
@@ -2126,6 +2205,9 @@ test('a verified replacement is reviewable and cancellable before the active acc
 
   assert.match(html2, /id="github-replacement-confirmation"/);
   assert.match(html2, /Nothing changes until you confirm/);
+  // #2370: a connected row folds its actions away, but NOT while a decision is
+  // waiting — dapp.json reads the sentence above as rendered text.
+  assert.match(html2, /<details[^>]* open=""/, 'a row with a decision pending arrives open');
   assert.match(html2, /Current[\s\S]*@octo-current/);
   assert.match(html2, /Verified replacement[\s\S]*@octo-next/);
   assert.match(html2, /Show the replacement on my public profile/);
@@ -2174,4 +2256,10 @@ test('the reviewable claims travel with the row that makes them', () => {
     'top-level, because the shell is framed and github.com is not frameable');
   assert.match(html2, /id="github-link-pending-note"/, 'the stranded-attempt note keeps its id');
   assert.match(html2, />Disconnect</);
+  // #2370: Disconnect lives in the row's panel, never on the row. The summary
+  // is the row's whole width, and a destructive action must not be what a
+  // stray thumb lands on.
+  const summary = html2.slice(html2.indexOf('<summary'), html2.indexOf('</summary>'));
+  assert.doesNotMatch(summary, /Disconnect|<button|<a /);
+  assert.doesNotMatch(html2, /<details[^>]* open=""/, 'and a settled row stays folded');
 });

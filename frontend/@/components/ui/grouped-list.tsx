@@ -101,6 +101,13 @@ export interface ListRowProps
    * it keeps `div` plus NavLink's modified-click interception instead.
    */
   as?: 'div' | 'button' | 'a';
+  /**
+   * For `as="button"` only. Anchor attributes have no `disabled`, so it is
+   * named here rather than smuggled through a cast: a ?demo= fixture renders
+   * the control it cannot let navigate as a real, inert button
+   * (features/settings/social-identity.tsx).
+   */
+  disabled?: boolean;
   /** The leading rounded-square glyph tile. */
   leading?: React.ReactNode;
   title: React.ReactNode;

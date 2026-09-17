@@ -988,7 +988,7 @@
       "name": "Identity credits show the actionable zero-credit state before verification (#538)",
       "path": "/?demo=identity-unverified#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-body",
-      "expectText": "Layer 1 locked"
+      "expectText": "$0 / day"
     },
     {
       "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
@@ -1012,19 +1012,19 @@
       "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-case-cc-web:not(.hidden) #connector-repo-allow-rules",
-      "expectText": "fresh container each time"
+      "expectText": "Stop the permission prompts"
     },
     {
       "name": "Each allow-rules block spans the panel under its own Copy row (#1290)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "#connector-case-cc-local > pre#connector-allow-rules",
-      "expectText": "mcp__homeroom__whoami"
+      "expectText": "Stop the permission prompts"
     },
     {
       "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
       "path": "/?demo=connectors-chatgpt#settings/connectors",
       "expectSelector": "#connector-prompt-help #connector-case-cc-local.hidden",
-      "expectText": "Nothing to do"
+      "expectText": "Stop the permission prompts"
     },
     {
       "name": "The setup tip's status says when it was last sent in chat (#1219)",
