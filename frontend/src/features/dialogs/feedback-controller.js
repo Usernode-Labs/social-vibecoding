@@ -72,8 +72,45 @@ function dialogController() {
 // change without the lifecycle. (Before this chunk the capture path wrote
 // `hidden` on the root directly and `adoptStaticModal`'s observer turned that
 // into a dismiss + re-present; this is that round trip, made explicit.)
-function suspendDialog() { dialogController()?.suspend(); }
+//
+// `suspendDialog()` hands back the controller's promise that the dialog has
+// finished leaving the screen — see captureBehindHiddenDialog below.
+function suspendDialog() { return dialogController()?.suspend(); }
 function resumeDialog() { dialogController()?.resume(); }
+
+// #2346: how long a native capture waits for the suspended dialog's exit.
+// The kit fades the card out over ~180ms and falls back to a 300ms timer when
+// no transitionend arrives (animateDialog, public/usernode-native/v1/
+// native.js); twice that fallback covers a slow render on either side. The
+// bound is what matters: an exit callback that never lands must cost the
+// viewer a dialog in the photo, not a capture that never happens.
+export const DIALOG_EXIT_WAIT_MS = 600;
+
+// #2346: one native capture, with the dialog out of the picture.
+//
+// The phone photographs whatever the web view shows at the moment of the
+// call. Suspending the dialog used to remove its card on the spot, so two
+// animation frames were enough to get it out of frame. Since the card rides
+// the kit's exit animation (#1474) it is still on screen, mid-fade, for the
+// length of that animation — and the screenshot attached to the feedback was
+// a picture of the feedback dialog. So: wait for the exit, bounded, then for
+// the frame that paints the page without it, then shoot.
+//
+// Exported for tests/feedback-mobile-screenshot.test.js, which runs this exact
+// sequence rather than a copy of it.
+export async function captureBehindHiddenDialog(
+  hide, capture, waitForPaint, exitWaitMs = DIALOG_EXIT_WAIT_MS,
+) {
+  let timer;
+  const bound = new Promise((resolve) => { timer = setTimeout(resolve, exitWaitMs); });
+  try {
+    await Promise.race([hide(), bound]);
+  } finally {
+    clearTimeout(timer);
+  }
+  await waitForPaint();
+  return capture();
+}
 
 // The two halves the island calls back into, populated by `init()`.
 export const Feedback = {
@@ -586,13 +623,16 @@ export function init() {
         if (framesLeft > 0) requestAnimationFrame(() => restoreCaret(framesLeft - 1));
       };
       let modalHidden = false;
+      // Returns the suspension's exit promise, which only the native attempt
+      // waits on — see captureBehindHiddenDialog.
       const hideDialog = () => {
-        if (modalHidden) return;
+        if (modalHidden) return undefined;
         // Armed before the dialog goes away, because from here on the page
         // itself might not come back.
         stashCaptureDraft();
-        suspendDialog();
+        const exited = suspendDialog();
         modalHidden = true;
+        return exited;
       };
       const restoreDialog = () => {
         if (!modalHidden) return;
@@ -607,10 +647,11 @@ export function init() {
       try {
         let blob;
         if (nativeAttempt) {
-          hideDialog();
-          await waitForHiddenDialogPaint();
-          blob = await capture();
+          blob = await captureBehindHiddenDialog(hideDialog, capture, waitForHiddenDialogPaint);
         } else {
+          // Not waited on here: the share has only just been granted, and
+          // the frame comes from the selection overlay the viewer still has
+          // to drag and confirm — long after the exit has finished.
           blob = await capture(hideDialog);
         }
         restoreDialog();
