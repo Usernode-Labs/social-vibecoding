@@ -774,6 +774,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // staging fork fixture; the building state is the note and spinner the
   // platform-updating check already photographs, and the manifest is one
   // slot from its ceiling (tests/improve-session-spinner.test.js).
+  // #2423 extends the existing Done-column check above rather than consuming
+  // the final reserved slot: the same fixture now covers the completed
+  // change's in-app Closed-issue chip too.
   assert.equal(DAPP.tests.length, 690);
 });
 
