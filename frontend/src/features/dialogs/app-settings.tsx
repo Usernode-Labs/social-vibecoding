@@ -19,6 +19,11 @@ type AppSettings = {
   can_delete: boolean;
   delete_block?: 'core' | 'shared' | 'not_owner' | null;
   contributor_count?: number;
+  // Demo mode (routes/demo-mode.js): the creator has switched this app into
+  // a recording mode where a synthetic partner proposes and votes. Marked
+  // here so nobody who opens the settings mistakes those for a person's.
+  demo_mode?: boolean;
+  demo_partner?: string | null;
 };
 
 type AccessMode = 'public' | 'public-invite' | 'private';
@@ -219,6 +224,14 @@ export function AppSettingsDialog() {
     <DialogCard size="sm">
       <h2 className="text-lg font-bold mb-2">App settings</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">{app?.name}</p>
+      {app?.demo_mode ? <p
+        id="app-demo-mode-notice"
+        role="status"
+        className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200"
+      >
+        This app is in demo mode. Proposals and votes from <b>@{app.demo_partner || 'its demo partner'}</b> are
+        synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.
+      </p> : null}
       {loading ? <p role="status">Loading app settings…</p> : null}
       {error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p> : null}
       {!loading && !app && error ? <Button onClick={() => void load(slug.current)}>Retry</Button> : null}

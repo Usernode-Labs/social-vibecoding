@@ -752,7 +752,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // independently took the same 675 to 678, with the Challenge scoring check
   // (+1) and the title-editor pair (+2). Neither set overlaps the other, so
   // the merged manifest holds every one of them: 675 + 2 + 3 + 1 + 2 = 683.
-  assert.equal(DAPP.tests.length, 683);
+  //
+  // 683 → 684: demo mode (routes/demo-mode.js) marks an app in demo mode in
+  // its settings dialog — a synthetic partner's proposals and votes must be
+  // seen for what they are — and that notice gets its own declared check, on
+  // the staging fork fixture the seed switches into demo mode.
+  assert.equal(DAPP.tests.length, 684);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

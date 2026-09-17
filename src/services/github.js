@@ -791,6 +791,34 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
   return { previousSha: currentSha, sha: updated.object.sha, updated: true };
 }
 
+// Move a branch to an exact commit whether or not that is a fast-forward.
+//
+// This is deliberately not the module's general ref-update path. It exists
+// for exactly one caller, demo mode's reset (routes/demo-mode.js),
+// which puts a demo app's main back to where it stood before a recorded
+// take. That app is in demo mode, its creator asked, and the commits being
+// discarded are the partner's own demo proposals — the one situation where
+// rewinding main is the point rather than an accident.
+async function forceBranchToSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  const previousSha = ref.object.sha;
+  if (String(previousSha).toLowerCase() === String(sha).toLowerCase()) {
+    return { previousSha, sha: previousSha, updated: false };
+  }
+  const { data: updated } = await octokit.request(
+    'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+    { owner, repo, ref: `heads/${branchName}`, sha, force: true }
+  );
+  log.info('github', 'Branch force-moved', {
+    repo: `${owner}/${repo}`, branch: branchName, from: previousSha, to: updated.object.sha,
+  });
+  return { previousSha, sha: updated.object.sha, updated: true };
+}
+
 function proposalCommitMessage(message, localCommitSha) {
   const body = safeMention(String(message || 'Local proposal update').trim())
     || 'Local proposal update';
@@ -2205,6 +2233,7 @@ module.exports = {
   getBranchSha,
   getRepoHead,
   advanceBranchToSha,
+  forceBranchToSha,
   createProposalCommit,
   createPR,
   describeGithubError,

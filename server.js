@@ -20,6 +20,7 @@ const { conversationRoutes } = require('./src/routes/conversations');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
+const { demoModeRoutes } = require('./src/routes/demo-mode');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
 const { publicProfileRoutes } = require('./src/routes/profiles');
@@ -586,6 +587,10 @@ app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
 app.use(voteRoutes(config));
+// Demo mode: a creator's synthetic partner proposes, votes and resets, on a
+// demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
+// it borrows recordVote/checkAndMerge from.
+app.use(demoModeRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in

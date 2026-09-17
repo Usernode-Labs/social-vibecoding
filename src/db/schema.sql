@@ -8188,3 +8188,20 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
+
+-- ── Demo mode ──────────────────────────────────────────────────────────
+--
+-- A recording of the proposal flow needs a second participant who proposes
+-- and votes on cue, and a way to put the app back afterwards. That
+-- participant is a SYNTHETIC user: a users row that cannot sign in (random
+-- discarded password, no OAuth, and refused by the session middleware and the
+-- login route even if a session row somehow named it) and that acts only
+-- through routes/demo-mode.js — every route of which checks the app is in
+-- demo mode and the caller is its creator. It counts for nothing on an app
+-- that is not in demo mode.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
+-- The per-app switch, its partner, and where main stood when it was switched
+-- on — which is what a reset puts main back to.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_mode BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_base_sha VARCHAR(40);

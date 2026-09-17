@@ -3112,6 +3112,12 @@
       "expectText": "core platform app"
     },
     {
+      "name": "App settings: an app in demo mode says so, and names the synthetic partner its proposals and votes come from",
+      "path": "/?shot=app-settings#app/staging-demo-fork",
+      "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-demo-mode-notice",
+      "expectText": "demo mode"
+    },
+    {
       "name": "Dev '+' menu shows Members & approvals on a managed app (#2304)",
       "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"

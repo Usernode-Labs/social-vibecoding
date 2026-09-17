@@ -35,6 +35,13 @@ const VOTES_SRC = fs.readFileSync(
 test('the allowlist permits exactly the routes the tools need', () => {
   const allowed = [
     ['GET', '/api/apps'],
+    // Demo mode (routes/demo-mode.js): creator-only and demo-mode-only; the
+    // gate test at the end of this file is what earns these their entries.
+    ['POST', '/api/apps/recipe-box/demo-mode'],
+    ['GET', '/api/apps/recipe-box/demo'],
+    ['POST', '/api/apps/recipe-box/demo/propose'],
+    ['POST', '/api/apps/recipe-box/demo/vote'],
+    ['POST', '/api/apps/recipe-box/demo/reset'],
     ['GET', '/api/apps/recipe-box'],
     ['GET', '/api/apps/recipe-box/github-issues'],
     // A request's GitHub comments — the half of its discussion that does not
@@ -428,4 +435,34 @@ test('the tip’s throttle state is readable by the browser, never by the connec
   // throttle. A "show it again" control is a control for making the
   // connector nag, so there is deliberately none to route to.
   assert.doesNotMatch(REMOTE_SRC, /resetHint|clearHint|hint\/reset/);
+});
+
+// ── Demo mode: on the list only because every route is gated on demo mode and the creator ──
+
+test('the demo routes are on the list only because every one of them is gated on demo mode and the creator', () => {
+  const DEMO_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/demo-mode.js'), 'utf8');
+  // The gate, in one place: the platform app, anyone but the creator, and an
+  // app not in demo mode are each refused before a handler does anything.
+  // If any of these loosens — an admin override, say — these entries have to
+  // come back off the list.
+  assert.match(DEMO_SRC, /if \(app\.self_hosted\) \{\s*res\.status\(403\)/, 'the platform app is refused');
+  assert.match(DEMO_SRC,
+    /if \(req\.user\?\.id == null \|\| app\.created_by !== req\.user\.id\) \{\s*res\.status\(403\)/,
+    'anyone but the creator is refused');
+  assert.match(DEMO_SRC, /if \(requireDemoMode && !app\.demo_mode\) \{\s*res\.status\(403\)/,
+    'an app not in demo mode is refused');
+  // …and every route goes through it.
+  const routes = [...DEMO_SRC.matchAll(/router\.(?:get|post)\('(\/api\/apps\/:slug\/demo[^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(routes.sort(), [
+    '/api/apps/:slug/demo', '/api/apps/:slug/demo-mode', '/api/apps/:slug/demo/propose',
+    '/api/apps/:slug/demo/reset', '/api/apps/:slug/demo/vote',
+  ]);
+  assert.equal((DEMO_SRC.match(/await loadDemoApp\(req, res/g) || []).length, routes.length,
+    'every handler loads the app through the gate');
+  // Only the switch and the status may answer for an app NOT in demo mode.
+  assert.equal((DEMO_SRC.match(/requireDemoMode: false/g) || []).length, 2);
+  // The general vote stays off the list; only the partner's demo vote is on it.
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/sessions/9/vote'), false);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/vote'), true);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });

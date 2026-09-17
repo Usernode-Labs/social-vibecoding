@@ -82,7 +82,7 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "e52a15616bffc02ac3e4",
+      "fingerprint": "606caceff13d515fd418",
       "count": 1,
       "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale"
     },
