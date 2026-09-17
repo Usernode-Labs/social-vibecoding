@@ -3814,10 +3814,13 @@ function registerTools(server, ctx) {
 
   server.registerTool('demo_propose', {
     title: 'Demo mode: the partner proposes a change',
-    description: 'Open a proposal as the app\'s synthetic partner from a branch ALREADY pushed to the app\'s repository, and put it straight up for the vote — which sends the real "please come vote" notification to the app\'s creator. The pull request is opened by the platform\'s own bot, as every connector submission is; the proposal is the partner\'s. A staging preview and the checks follow, as for any proposal. One demo proposal at a time: refused while one is open, so demo_reset between takes. `summary` is what a voter reads first — plain English, what changes on screen; `description` is the technical half and becomes the pull request body.',
+    description: 'Open a proposal as the app\'s synthetic partner from a branch already on the app\'s repository or from a `patch` (`git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB) that the platform applies there itself — the usual way in, because an app\'s repository is the platform\'s own and its creator cannot push to it — and put it straight up for the vote — which sends the real "please come vote" notification to the app\'s creator. The pull request is opened by the platform\'s own bot, as every connector submission is; the proposal is the partner\'s. A staging preview and the checks follow, as for any proposal. One demo proposal at a time: refused while one is open, so demo_reset between takes. `summary` is what a voter reads first — plain English, what changes on screen; `description` is the technical half and becomes the pull request body.',
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
-      branch: z.string().describe('A branch that already exists on the app\'s repository and holds the change.'),
+      branch: z.string().optional()
+        .describe('A branch that already exists on the app\'s repository and holds the change. Pass this or `patch`.'),
+      patch: z.string().optional()
+        .describe('The change as a patch: `git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB. Homeroom applies it at main\'s current head in the app\'s own repository and pushes the branch itself. Pass this or `branch`.'),
       title: z.string().describe('The proposal\'s title, as the card and the notification will show it.'),
       summary: z.string().optional()
         .describe('The user-facing half: one to three plain sentences on what changes for somebody using the app.'),
@@ -3834,10 +3837,22 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, branch, title, summary, description, testingPaths }) => {
+  }, async ({ slug, branch, patch, title, summary, description, testingPaths }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const branchIn = typeof branch === 'string' ? branch.trim() : '';
+    const patchIn = typeof patch === 'string' && patch.trim() ? patch : '';
+    if (branchIn && patchIn) return toolError('invalid_request', 'Pass either branch or patch, not both.');
+    if (!branchIn && !patchIn) return toolError('invalid_request', 'Pass branch (already on the app\'s repository) or patch (the change as git diff or git format-patch output).');
+    // Refused here, before the platform is asked, with the numbers: the route
+    // applies the same cap, but a 256 KB body that was never going to land
+    // is not worth the round trip.
+    const patchLimits = require('./external-agent-patch');
+    const patchBytes = patchIn ? Buffer.byteLength(patchIn, 'utf8') : 0;
+    if (patchBytes > patchLimits.MAX_PATCH_BYTES) {
+      return toolError('patch_too_large', `That patch is ${Math.round(patchBytes / 1024)} KB, over the ${Math.round(patchLimits.MAX_PATCH_BYTES / 1024)} KB a patch can be. Nothing was proposed.`, { limitBytes: patchLimits.MAX_PATCH_BYTES, actualBytes: patchBytes });
+    }
     const titleCheck = checkWriteLength(title == null ? '' : String(title).trim(), {
       field: 'title', max: MAX_REQUEST_TITLE_CHARS, hint: 'Shorten the title.',
     });
@@ -3849,7 +3864,8 @@ function registerTools(server, ctx) {
     });
     if (!bodyCheck.ok) return writeLengthError(bodyCheck);
     const r = await callPlatform(baseUrl, accessToken, 'POST', demoPath(slug, '/propose'), {
-      branch: String(branch || '').trim(),
+      branch: branchIn || undefined,
+      patch: patchIn || undefined,
       title: titleCheck.value,
       summary: summary == null ? undefined : String(summary),
       description: bodyCheck.value || '',

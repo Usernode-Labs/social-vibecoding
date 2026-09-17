@@ -54,6 +54,11 @@ function resetWorld() {
   state.voteRowCount = 1;
   state.tally = [];
   state.mainMoves = true;
+  state.patchResult = {
+    ok: true, branch: 'usernode/patch-u50-tdemo-1-abc123', headSha: 'd'.repeat(40),
+    cleanup: async () => { record('patchCleanup')(); },
+  };
+  state.prFails = false;
   for (const k of Object.keys(calls)) delete calls[k];
 }
 resetWorld();
@@ -79,6 +84,7 @@ stubModule('../src/services/github', {
   },
   createPR: async (...args) => {
     record('createPR')(...args);
+    if (state.prFails) throw new Error('422 Validation Failed');
     return { number: 42, html_url: 'https://github.com/usernode-bot/demo-app/pull/42' };
   },
   getBotUsername: async () => 'usernode-bot',
@@ -112,6 +118,10 @@ stubModule('../src/services/notifications', {
   },
 });
 stubModule('../src/services/pr-import-sync', { kickImportedChecks: record('kickImportedChecks') });
+stubModule('../src/services/external-agent-patch', {
+  MAX_PATCH_BYTES: 256 * 1024,
+  applyPatch: async (...args) => { record('applyPatch')(...args); return state.patchResult; },
+});
 stubModule('../src/services/session-lifecycle', {
   teardownStagingForSession: async (...args) => {
     record('teardownStagingForSession')(...args);
@@ -522,4 +532,63 @@ test('branch names are refs, never paths', () => {
   assert.equal(validBranch('x/'), false);
   assert.equal(validBranch('x.lock'), false);
   assert.equal(validBranch(''), false);
+});
+
+// ── Propose from a patch ──────────────────────────────────────────────
+
+test('a patch is applied at the live head as the bot, and the proposal opens from the branch it made', async () => {
+  // The app's repository is bot-owned and the creator cannot push to it, so
+  // this is the usual way a change arrives. Same service submit_work's patch
+  // shape uses; what is pinned here is what it is handed.
+  const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const r = await post('/api/apps/demo-app/demo/propose', { patch, title: 'Smooth category animations' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.headSha, 'd'.repeat(40), 'the head the patch produced');
+
+  const [[applied]] = calls.applyPatch;
+  assert.equal(`${applied.owner}/${applied.repo}`, 'usernode-bot/demo-app');
+  assert.equal(applied.patch, patch, 'the patch, byte for byte');
+  assert.equal(applied.baseSha, 'a'.repeat(40), 'main\'s LIVE head, not the recorded base or the deployed sha');
+  assert.equal(applied.userId, 50, 'attributed to the partner');
+  assert.equal(calls.getBranchSha, undefined, 'no branch was looked up: the patch made one');
+  const [[, , pr]] = calls.createPR;
+  assert.equal(pr.branch, 'usernode/patch-u50-tdemo-1-abc123', 'the PR opens from the branch applyPatch pushed');
+  const [insert] = queriesLike('INSERT INTO chat_sessions');
+  assert.equal(insert.params[2], 'usernode/patch-u50-tdemo-1-abc123');
+  assert.equal(insert.params[6], 'd'.repeat(40));
+  assert.equal(calls.patchCleanup, undefined, 'the branch is kept: the PR opened');
+});
+
+test('a patch the platform refuses proposes nothing, with the platform\'s own reason', async () => {
+  state.patchResult = { ok: false, code: 'patch_too_large', message: 'That patch is 300 KB, over the 256 KB a patch can be.' };
+  let r = await post('/api/apps/demo-app/demo/propose', { patch: 'diff --git a/x b/x', title: 'x' });
+  assert.equal(r.status, 413);
+  assert.match(r.body.error, /300 KB/);
+  assert.equal(r.body.code, 'patch_too_large');
+  assert.equal(calls.createPR, undefined);
+  assert.equal(queriesLike('INSERT INTO chat_sessions').length, 0);
+
+  state.patchResult = { ok: false, code: 'patch_did_not_apply', message: 'The patch does not apply at that commit.' };
+  r = await post('/api/apps/demo-app/demo/propose', { patch: 'diff --git a/x b/x', title: 'x' });
+  assert.equal(r.status, 409);
+});
+
+test('when the PR does not open, the branch the patch pushed is removed again', async () => {
+  state.prFails = true;
+  const r = await post('/api/apps/demo-app/demo/propose', { patch: 'diff --git a/x b/x', title: 'x' });
+  assert.equal(r.status, 502);
+  assert.equal(calls.patchCleanup.length, 1, 'applyPatch\'s cleanup ran');
+  assert.equal(queriesLike('INSERT INTO chat_sessions').length, 0, 'and nothing was proposed');
+  assert.equal(calls.createPrProposedNotifications, undefined, 'so nobody was notified');
+});
+
+test('branch and patch are one or the other', async () => {
+  let r = await post('/api/apps/demo-app/demo/propose', { branch: 'demo/x', patch: 'diff --git a/x b/x', title: 'x' });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /not both/);
+  r = await post('/api/apps/demo-app/demo/propose', { title: 'x' });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /branch .* or patch/);
+  assert.equal(calls.applyPatch, undefined);
+  assert.equal(calls.createPR, undefined);
 });

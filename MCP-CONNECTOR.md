@@ -187,7 +187,7 @@ tools, and only these, the partner acts:
 | Tool | What it actually does |
 |---|---|
 | `demo_mode` | Switches an app the caller created into demo mode; creates the partner |
-| `demo_propose` | The partner opens a proposal from a branch already on the repo and sends the real vote notification |
+| `demo_propose` | The partner opens a proposal from a branch already on the repo, or from a patch the platform applies there itself, and sends the real vote notification |
 | `demo_vote` | The partner casts its vote — a real vote, through the real path |
 | `demo_reset` | Takes the partner's proposals down, moves the app's `main` back to where demo mode was switched on, and redeploys |
 

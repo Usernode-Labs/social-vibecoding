@@ -15,6 +15,7 @@ const topicAttrs = require('../services/topic-attributes');
 const usernames = require('../services/usernames');
 const prImportSync = require('../services/pr-import-sync');
 const sessionLifecycle = require('../services/session-lifecycle');
+const externalAgentPatch = require('../services/external-agent-patch');
 const { reviewedHeadForSession } = require('../services/pr-vote-revision');
 const { drainGuard } = require('../services/lifecycle');
 const votes = require('./votes');
@@ -56,8 +57,10 @@ const votes = require('./votes');
 // ── What each route does ───────────────────────────────────────────────
 //
 // The proposal is REAL. demo/propose opens a pull request from a branch
-// already on the app's repository, as the platform's own bot — the same
-// authorship every connector submission has — and files it as an imported
+// already on the app's repository, or from a patch it applies there itself
+// (the repository is the platform's own; the creator cannot push to it), as
+// the platform's own bot — the same authorship every connector submission
+// has — and files it as an imported
 // proposal owned by the partner, already promoted. Imported is the right
 // source: the preview, checks, head-sync and merge machinery all key off it
 // (services/pr-import-sync.js, checkAndMerge) and none of it needs a
@@ -342,8 +345,17 @@ function demoModeRoutes(config) {
         return res.status(409).json({ error: 'Demo mode has no partner. Switch it on with a partnerName first.' });
       }
 
-      const branch = typeof req.body?.branch === 'string' ? req.body.branch.trim() : '';
-      if (!validBranch(branch)) {
+      const branchIn = typeof req.body?.branch === 'string' ? req.body.branch.trim() : '';
+      const patch = typeof req.body?.patch === 'string' ? req.body.patch : '';
+      if (branchIn && patch.trim()) {
+        return res.status(400).json({ error: 'Pass either branch or patch, not both.' });
+      }
+      if (!branchIn && !patch.trim()) {
+        return res.status(400).json({
+          error: 'Pass branch (a branch already on the app\'s repository) or patch (the change as git diff or git format-patch output).',
+        });
+      }
+      if (branchIn && !validBranch(branchIn)) {
         return res.status(400).json({ error: 'branch must name a branch on the app\'s repository.' });
       }
       const title = typeof req.body?.title === 'string' ? req.body.title.trim().slice(0, 256) : '';
@@ -364,13 +376,60 @@ function demoModeRoutes(config) {
         return res.status(409).json({ error: 'A demo proposal is already open. Reset before proposing again.' });
       }
 
+      let branch = branchIn;
       let headSha;
-      try {
-        headSha = await github.getBranchSha(repo.owner, repo.repo, branch);
-      } catch (err) {
-        return res.status(404).json({ error: `Branch "${branch}" was not found on ${repo.owner}/${repo.repo}.` });
+      // Only a branch this call created is this call's to remove.
+      let discardBranch = async () => {};
+      if (patch.trim()) {
+        // The app's repository is the platform's own and its creator cannot
+        // push there, so a change usually arrives as a patch, applied at
+        // main's current head and pushed as the bot. Same path, same bounds
+        // as submit_work's patch shape (services/external-agent-patch.js):
+        // size-capped before git runs, .github/** refused, every path
+        // enumerated first. Applied at the LIVE head rather than the recorded
+        // base: after a reset they are the same commit, and between takes
+        // that did not reset, the live head is the one a PR can merge into.
+        let baseSha = app.main_sha || null;
+        try {
+          const live = await github.getRepoHead(repo.owner, repo.repo);
+          if (live?.headSha) baseSha = live.headSha;
+        } catch (err) {
+          log.warn('demo-mode', 'Could not read the repository head; applying at the deployed sha', {
+            slug: app.slug, err: err.message,
+          });
+        }
+        const applied = await externalAgentPatch.applyPatch({
+          owner: repo.owner, repo: repo.repo, patch, baseSha,
+          userId: partner.id, taskId: `demo-${app.id}`,
+        });
+        if (!applied.ok) {
+          const status = applied.code === 'patch_too_large' ? 413
+            : applied.code === 'platform_unavailable' ? 503
+              : applied.code === 'patch_did_not_apply' ? 409 : 400;
+          return res.status(status).json({
+            error: applied.message || 'The patch could not be applied.', code: applied.code || null,
+          });
+        }
+        branch = applied.branch;
+        headSha = applied.headSha;
+        if (typeof applied.cleanup === 'function') discardBranch = applied.cleanup;
+      } else {
+        try {
+          headSha = await github.getBranchSha(repo.owner, repo.repo, branch);
+        } catch (err) {
+          return res.status(404).json({ error: `Branch "${branch}" was not found on ${repo.owner}/${repo.repo}.` });
+        }
       }
-      const pr = await github.createPR(repo.owner, repo.repo, { branch, title, body: description });
+      let pr;
+      try {
+        pr = await github.createPR(repo.owner, repo.repo, { branch, title, body: description });
+      } catch (err) {
+        // A branch this call pushed for a PR that never opened is litter;
+        // applyPatch hands back the broom for exactly this.
+        await discardBranch().catch(() => {});
+        log.error('demo-mode', 'Opening the PR failed', { slug: app.slug, branch, err: err.message });
+        return res.status(502).json({ error: 'GitHub did not open the pull request. Nothing was proposed.' });
+      }
       const prNumber = pr.number;
       const prUrl = pr.html_url || null;
       // The PR is the bot's, as every connector submission's is; the PROPOSAL

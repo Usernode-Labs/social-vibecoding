@@ -3677,6 +3677,23 @@ test('the demo write tools post to the demo routes and pass the platform\'s refu
     assert.equal(c.calls.at(-1).body.summary, 'Categories glide open.');
     assert.match(proposed.structuredContent.nextStep, /demo_vote/);
 
+    // The usual way in: a patch, forwarded whole, with no branch beside it.
+    const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';
+    const patched = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch, title: 'From a patch' });
+    assert.notEqual(patched.isError, true);
+    assert.equal(c.calls.at(-1).body.patch, patch);
+    assert.equal(c.calls.at(-1).body.branch, undefined);
+    // One or the other, checked before the platform is asked.
+    const callsBefore = c.calls.length;
+    const both = await c.handlers.get('demo_propose')({ slug: 'demo-app', branch: 'x', patch, title: 'y' });
+    assert.equal(both.isError, true);
+    const neither = await c.handlers.get('demo_propose')({ slug: 'demo-app', title: 'y' });
+    assert.equal(neither.isError, true);
+    const huge = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch: 'x'.repeat(256 * 1024 + 1), title: 'y' });
+    assert.equal(huge.isError, true);
+    assert.equal(huge.structuredContent.code, 'patch_too_large');
+    assert.equal(c.calls.length, callsBefore, 'none of the three reached the platform');
+
     const voted = await c.handlers.get('demo_vote')({ slug: 'demo-app' });
     assert.equal(voted.structuredContent.vote, 'yes');
     assert.deepEqual(c.calls.at(-1).body, { vote: 'yes' });
