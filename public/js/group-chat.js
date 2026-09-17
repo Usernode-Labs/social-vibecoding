@@ -1066,6 +1066,14 @@ const GroupChat = {
         snippet: row.dataset.specTitle || 'Spec',
       };
     }
+    // #2390: a proposal event (submitted / went live) is a platform message
+    // too, and replying to one is how the discussion picks it up. Its line of
+    // text is the snippet; the server re-derives the stored quote from the
+    // row itself and attributes a system row to nobody.
+    if (row.classList.contains('gc-event')) {
+      const textEl = row.querySelector('.gc-event-text');
+      return { source: 'event', refMsgId: id, author: null, snippet: GroupChat._collapseSnippet(textEl ? textEl.textContent : '') };
+    }
     if (row.classList.contains('gc-msg-system')) {
       const textEl = row.querySelector('.gc-msg-system-text');
       const text = (textEl ? textEl.textContent : row.textContent) || '';
@@ -1127,6 +1135,12 @@ const GroupChat = {
     container._gcQuoteBound = true;
 
     const ROW_SEL = '.gc-msg, .gc-msg-system, .gc-spec-card';
+    // #2390: tap-to-quote also takes the general chat's proposal events.
+    // Only the tap: long-press and the react button stay on ROW_SEL, because
+    // an event carries no reactions (#2366). Its box is an anchor, so a tap
+    // on the box still opens the proposal (the `a, button` rule below) and a
+    // tap anywhere else on the row stages the reply.
+    const QUOTE_SEL = `${ROW_SEL}, .gc-event`;
 
     container.addEventListener('pointerdown', (e) => {
       GroupChat._tap = { x: e.clientX, y: e.clientY };
@@ -1239,7 +1253,7 @@ const GroupChat = {
       // Real links/buttons (PR link, "View full spec", mentions) win.
       if (e.target.closest('a, button')) return;
       if (!GroupChat._isCleanTap(e)) return;
-      const row = e.target.closest(ROW_SEL);
+      const row = e.target.closest(QUOTE_SEL);
       if (!row || !container.contains(row)) return;
       // Clicking a dotted message clears just that message's unread
       // mention/reply/reaction notification.
