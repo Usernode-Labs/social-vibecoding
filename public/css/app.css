@@ -186,7 +186,7 @@
      shadow reaching up into the bar — and the chip, the bell and Improve sat
      on its lip. `pb-5` spends 8px buying that clearance back, so the notch
      costs the controls nothing. */
-  --platform-header-h: 3.75rem;
+  --platform-header-h: 3.25rem;
 
   /* ── Semantic state tokens (dev board) ───────────────────
      ONE meaning per hue, so the same lifecycle stage never reads two
@@ -9060,9 +9060,17 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    console, …) and #landing-header (the anonymous shell) — and they must
    be the SAME height on every screen. Both are built the same way:
 
-     pt-3 / pb-5 (12px above, 20px below) around a 28px CONTENT ROW = 60px,
+     pt-2 / pb-4 (8px above, 16px below) around a 28px CONTENT ROW = 52px,
      plus env(safe-area-inset-top) via .un-safe-top-extend (native.css)
-     on the padding-top.
+     on the padding-top — whose kit value (0.75rem + inset) the #2305 rule
+     at the end of this block trims to 0.5rem + inset for these two bars.
+
+   #2305: "the top bar steals too much vertical space the applications
+   can use". Two 4px cuts, identical on both bars so parity holds, and
+   constant (the inset is added on top, as before) so --platform-header-h
+   still describes the bar on every device: 12px → 8px above the controls,
+   and 20px → 16px below them — still double the 4px clearance whose
+   absence made pb-5 necessary (below). 60px → 52px.
 
    THE TWO PADDINGS DIFFER ON PURPOSE, and this block used to say `py-3
    around a 48px row = 72px` while the bar measured 52. Both halves of
@@ -9078,10 +9086,10 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    on the screen. A transparent screen root hid that. A raised sheet does
    not — inside an app and in a proposal session the chip, the bell and
    Improve sat on the lip of a 28px radius with a shadow coming up to meet
-   them. `pb-5` restores the 12px the notch was spending.
+   them. `pb-5` restored 12px; #2305 settled on `pb-4`, which leaves 8px.
 
    Symmetry is not the invariant; PARITY is. Both bars carry the same two
-   paddings, so both are 60px, and neither jumps as you sign in.
+   paddings, so both are the same height, and neither jumps as you sign in.
 
    It was 53px until the reskin: both bars carried a 1px `border-b`
    hairline, and the border box counted it. The widget language draws no
@@ -9121,6 +9129,19 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    the row — never add overflow:hidden here.
 
    tests/header-height-parity.test.js pins all of the above. */
+
+/* #2305: the top padding the kit's .un-safe-top-extend sets (0.75rem + the
+   inset) is trimmed to 0.5rem + the inset (the markup's pt-2) for the two
+   platform bars only — the kit class stays on
+   them (dapp.json and the safe-area tests select on it) and every other
+   consumer keeps its 0.75rem. An id outranks the kit's class, and both are
+   !important. */
+@supports (padding: env(safe-area-inset-top)) {
+  #platform-header.un-safe-top-extend,
+  #landing-header.un-safe-top-extend {
+    padding-top: calc(0.5rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+  }
+}
 
 /* ── Header title centering ───────────────────────────────
    `#header-title` is in flex flow by default (left-aligned, truncating
@@ -9572,8 +9593,8 @@ a.drawer-ver--fork:hover {
    (`#switcher-nav`, the one `flex-1 min-h-0` child) take the rest. */
 @media (min-width: 640px) {
   #apps-switcher-sheet {
-    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 60px the
-       "Header height invariant" block above derives (pt-3/pb-5 around a 28px
+    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 52px the
+       "Header height invariant" block above derives (pt-2/pb-4 around a 28px
        content row, no hairline since the reskin); --platform-safe-top is the
        status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
        a desktop browser. If the header's height ever moves, this moves with
