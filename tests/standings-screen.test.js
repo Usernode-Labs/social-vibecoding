@@ -678,3 +678,40 @@ test('dapp.json checks the canonical routes and every legacy alias', () => {
   );
   assert.ok(eventBar, 'a check asserts the shared event picker renders');
 });
+
+
+// ── The cross-link's tally is the VIEWER's, not the organiser's ────────
+//
+// It counted `challenge.completed` — the organiser's "this challenge is over"
+// flag — and called the result "challenges completed". Home, reading the same
+// event at the same moment, said "4/9 done" for the viewer's own progress.
+// Two correct numbers, one word, and a contradiction on screen.
+
+test('the standings tally counts the viewer\'s progress, in the word Home uses', () => {
+  const load = topoJs.slice(topoJs.indexOf('  async _loadChallengeCounts('),
+    topoJs.indexOf('  // ── Rendering'));
+  assert.ok(load.length > 0, '_loadChallengeCounts located');
+
+  assert.doesNotMatch(load, /c\.completed === true/,
+    'the organiser\'s closed flag is not the viewer\'s progress');
+  assert.match(load, /c\.progress && c\.progress\.done === true/,
+    'the tally counts done-ness per row');
+  assert.match(standingsTsx, /challenges done/,
+    'and says "done", the word Home uses for this same number');
+  assert.doesNotMatch(standingsTsx, /challenges completed/,
+    'never "completed", which on a challenge row means the organiser closed it');
+});
+
+test('a signed-out reader gets the cross-link without a tally that is not theirs', () => {
+  const load = topoJs.slice(topoJs.indexOf('  async _loadChallengeCounts('),
+    topoJs.indexOf('  // ── Rendering'));
+  assert.match(load, /const signedIn = data\.data\.some\(\(c\) => c && c\.progress\)/,
+    'progress rides along per row for a signed-in viewer only, which is the signal');
+  assert.match(load, /done: signedIn/, 'so the tally is null when nobody is signed in');
+  assert.match(standingsTsx, /line\.done == null \? null :/,
+    'and the line renders the link alone rather than a zero read as the reader\'s own');
+  // The declared check anchors on the link INSIDE the paragraph, so the
+  // paragraph must survive a null tally.
+  assert.match(standingsTsx, /id="tc-lb-challenge-link"/);
+  assert.match(standingsTsx, /id="tc-lb-to-challenges"/);
+});
