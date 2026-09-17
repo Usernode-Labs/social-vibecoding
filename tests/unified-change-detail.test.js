@@ -158,6 +158,28 @@ test('a change with nothing committed cannot be submitted yet (#2379)', () => {
   assert.equal(state({ source: 'imported' }).kind, 'ready');
 });
 
+test('before review the author reads the spec under About this change (#2371)', () => {
+  const av = context();
+  const draft = { ...failing, source: null, proposal_state: undefined, pr_body: null, pr_summary_md: null,
+    spec_md: '# Authenticate previews\n\nWait for the session before opening a preview.' };
+  const own = av._topicViewFor('session', draft);
+  assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
+  assert.match(own.body.proposalBody.html, /Authenticate previews/);
+  assert.match(own.body.summaryHtml, /spec this change is built from is under Technical details/);
+
+  // A real PR body wins, and a summary is never replaced.
+  const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
+  assert.match(withBody.body.proposalBody.html, /The PR body/);
+  assert.doesNotMatch(withBody.body.summaryHtml, /spec this change/);
+
+  // Nobody else's change, and nothing once it is up for review.
+  const readerView = context({ id: 99 })._topicViewFor('session', { ...draft, shared_at: '2026-09-11' });
+  assert.equal(readerView.body.proposalBody, null);
+  assert.doesNotMatch(readerView.body.summaryHtml, /spec this change/);
+  const promoted = av._topicViewFor('proposal', { ...draft, status: 'promoted' });
+  assert.doesNotMatch(promoted.body.summaryHtml || '', /spec this change/);
+});
+
 test('readers cannot promote, sync, or open the private workspace', () => {
   const av = context({ id: 99 });
   const v = av._topicViewFor('session', { ...failing, shared_at: '2026-09-11' });
