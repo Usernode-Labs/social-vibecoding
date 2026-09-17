@@ -6091,7 +6091,19 @@ const AppView = {
       // data-issue-row. A `1` rather than an id because there is exactly one.
       attrs: { 'data-discussion-row': '1', title: "Open the app's general chat" },
       icon: AppView._devCardIcon('chat'),
-      title: { text: 'General discussion', title: "Open the app's general chat" },
+      // NAMED FOR ITS APP. The Workshop draws this as one row at the foot
+      // of the dashboard pane, where "General discussion" alone does not
+      // say whose — the Dev screen can be reached from a notification or a
+      // direct link, so the app whose chat this is not always on screen
+      // above it. The bare form stays the fallback: an app whose name has
+      // not loaded gets a heading that is short rather than one that says
+      // "for undefined".
+      title: {
+        text: (AppView.appData && AppView.appData.name)
+          ? `General discussion for ${AppView.appData.name}`
+          : 'General discussion',
+        title: "Open the app's general chat",
+      },
       meta,
       pill: null,
       linked: [],
