@@ -325,13 +325,14 @@ test('grading returns the model\'s score, with its reason kept for the admin', a
 // A pool that answers by matching the query text. Deliberately not a SQL
 // engine: what these tests pin is the ORDER of operations and what ends up in
 // `inserted`, not Postgres's behaviour.
-function scriptedPool({ challenges = [], candidates = [], credited = [] } = {}) {
+function scriptedPool({ challenges = [], candidates = [], credited = [], feedback = [] } = {}) {
   const inserted = [];
   const runs = [];
   const handle = async (sql, params) => {
     if (sql.includes('FROM challenge_scoring_rules')) return { rows: challenges };
     if (sql.includes("metadata->>'source_key' AS source_key")) return { rows: credited };
     if (sql.includes('FROM app_activity')) return { rows: candidates };
+    if (sql.includes('FROM feedback_reports')) return { rows: feedback };
     if (sql.includes('INSERT INTO challenge_scorer_runs')) { runs.push(params); return { rows: [{ id: runs.length }] }; }
     if (sql.includes('UPDATE challenge_scorer_runs')) { runs.push(params); return { rows: [] }; }
     if (sql.includes('INSERT INTO user_activities')) {
@@ -427,6 +428,49 @@ test('a dry run of a graded measure spends no model call', async () => {
   assert.equal(summary.challenges[0].to_grade, 1);
   assert.equal(summary.credits, 0);
   assert.equal(summary.graded, 0);
+});
+
+// Both caught by the first end-to-end run, not by the tests above — they
+// exercised the filter and the plan separately, and the defect was the ORDER
+// the scorer ran them in.
+const feedbackChallenge = () => challengeRow({
+  measure: 'USEFUL_FEEDBACK', rule_name: 'Feedback', metric_target: 4, t_metric_target: 4,
+  reward: '1,000 pts', t_reward: '1,000 pts', t_goal: 'Send useful feedback', t_category: 'WEEKLY',
+});
+const feedbackRow = (id, description, minutesAgo) => ({
+  id, user_id: 7, created_at: new Date(NOW - minutesAgo * 60000), title: 'Report', description, app_name: 'Recipes',
+});
+const realReport = (n) => `Report ${n}: the save button on the recipe screen does nothing when the title is empty, and no error is shown.`;
+const fixedGrader = {
+  isEnabled: () => true,
+  async gradeChallengeUnit() { return { score: 200, reason: 'Says what broke and where.', model: 'stub' }; },
+};
+
+test('junk sent first never holds a weekly slot: the real reports behind it are paid', async () => {
+  const pool = scriptedPool({
+    challenges: [feedbackChallenge()],
+    feedback: [
+      feedbackRow(1, 'test', 90), feedbackRow(2, 'test', 89), feedbackRow(3, 'asdf', 88), feedbackRow(4, 'hi', 87),
+      feedbackRow(5, realReport(1), 60), feedbackRow(6, realReport(2), 50), feedbackRow(7, realReport(3), 40),
+    ],
+  });
+  const summary = await scorer.score(pool, { now: NOW, llm: fixedGrader });
+
+  assert.deepEqual(pool.inserted.map((r) => r.metadata.source_key), ['feedback:5', 'feedback:6', 'feedback:7'],
+    'planning first gave all four slots to the junk, and nothing was ever written');
+  assert.equal(summary.challenges[0].rejected, 4);
+});
+
+test('a report already paid for is a duplicate the next time it is sent', async () => {
+  const pool = scriptedPool({
+    challenges: [feedbackChallenge()],
+    feedback: [feedbackRow(5, realReport(1), 60), feedbackRow(9, realReport(1), 5)],
+    credited: [{ user_id: 7, source_key: 'feedback:5' }],
+  });
+  const summary = await scorer.score(pool, { now: NOW, llm: fixedGrader });
+
+  assert.equal(pool.inserted.length, 0, 'the bag used to start empty each run, so the copy earned a second credit');
+  assert.equal(summary.challenges[0].rejected, 1);
 });
 
 test('a skipped rule reports the reason instead of failing silently', async () => {

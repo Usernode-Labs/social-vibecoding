@@ -435,28 +435,32 @@ async function score(pool, { dryRun = false, now = Date.now(), apiKey = null, ll
       continue;
     }
 
-    const credited = await loadCredited(pool, row.challenge_id);
-    let planned = rules.planCredits(rule, row, { candidates, credited, now });
-
-    // The deterministic pre-filter runs before anything is graded, so junk
-    // never reaches a model call. `seen` starts from nothing each run: it
-    // only has to catch duplicates WITHIN a person's uncredited batch,
-    // because anything already credited was dropped by `credited` above.
+    // The deterministic pre-filter runs BEFORE the plan, over everything the
+    // person sent in the window, in the order they sent it. Two things depend
+    // on that order, and the first end-to-end run caught both:
+    //
+    //   - Junk must never hold a weekly slot. Planning first handed the four
+    //     slots to somebody's four "test" reports, the filter then dropped
+    //     them, nothing was written — and the next tick planned the same four
+    //     again. Their real reports, queued behind, were never paid at all.
+    //   - A duplicate is a duplicate of what was already PAID, too. The bag
+    //     used to start empty each run and see only the uncredited batch, so
+    //     the same sentence sent again after the next tick earned a second
+    //     credit. Walking the credited units as well puts their text in the
+    //     bag first; the plan drops them afterwards by source key, as before.
     if (MEASURES[rule.measure].graded) {
       const seen = new Map();
-      const kept = [];
-      for (const credit of planned) {
-        const bag = seen.get(credit.userId) || new Set();
-        seen.set(credit.userId, bag);
-        const reason = grader.preFilter(rule.measure, credit.gradeInput, bag);
-        if (reason) {
-          entry.rejected = (entry.rejected || 0) + 1;
-          continue;
-        }
-        kept.push(credit);
-      }
-      planned = kept;
+      candidates = candidates.filter((candidate) => {
+        const bag = seen.get(candidate.userId) || new Set();
+        seen.set(candidate.userId, bag);
+        if (!grader.preFilter(rule.measure, candidate.gradeInput, bag)) return true;
+        entry.rejected = (entry.rejected || 0) + 1;
+        return false;
+      });
     }
+
+    const credited = await loadCredited(pool, row.challenge_id);
+    let planned = rules.planCredits(rule, row, { candidates, credited, now });
 
     if (planned.length > budget) planned = planned.slice(0, budget);
 
