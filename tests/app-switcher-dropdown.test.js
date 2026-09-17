@@ -120,7 +120,7 @@ test('--platform-header-h is the height the header markup actually builds', () =
   // and one coming back would add a pixel to the border box.
   //
   // THE TWO PADDINGS ARE READ SEPARATELY. The bar was `py-3`; it is
-  // `pt-3 pb-5` now, because `-mb-2` spends 8px of the bottom padding
+  // `pt-2 pb-4` now (#2305), because `-mb-2` spends 8px of the bottom padding
   // cutting the notch below it and the controls were left with four pixels
   // of clearance above an app's raised sheet. A single `py-N` read would
   // have gone on matching nothing and silently reported the old height.

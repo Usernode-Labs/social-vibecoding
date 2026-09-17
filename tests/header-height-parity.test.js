@@ -3,8 +3,9 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `pt-3 pb-5` around a 28px CONTENT ROW, i.e.
-// 60px + env(safe-area-inset-top), everywhere.
+// (anonymous shell) — are `pt-2 pb-4` around a 28px CONTENT ROW, i.e.
+// 52px + env(safe-area-inset-top), everywhere. One app.css rule trims the
+// kit's safe-area top padding to match pt-2 for both bars (#2305).
 //
 // It was `py-3` (52px) until the bottom padding grew. #platform-header also
 // carries `-mb-2`, which pulls the screen below it 8px UP into the bar to cut
@@ -12,7 +13,8 @@
 // 8px overlap, i.e. four pixels, between them and whatever came next. On the
 // routes where that next thing is a raised sheet with a 28px radius and a
 // shadow reaching up (inside an app, inside a proposal session) the chip, the
-// bell and Improve sat on its lip. `pb-5` restores the 12px the notch spends.
+// bell and Improve sat on its lip. `pb-5` restored 12px; #2305 ("the top bar
+// steals too much vertical space") settled on `pb-4`, which leaves 8px.
 //
 // It was 53px until the reskin, when both bars lost the 1px `border-b`
 // hairline they had carried: the widget language draws no rule under a top
@@ -94,10 +96,10 @@ const BARS = [
   { id: 'landing-header', slice: headerSlice('landing-header') },
 ];
 
-test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area', () => {
+test('both top bars carry the identical shape: pt-2/pb-4, no hairline, safe-area', () => {
   for (const bar of BARS) {
     const tag = openingTag(bar.slice);
-    // 12px above and 20px below the content row. NOT symmetric, and not by
+    // 8px above and 16px below the content row (#2305). NOT symmetric, and not by
     // accident: `-mb-2` on #platform-header pulls the screen below it 8px up
     // to cut the notch every platform surface reads as its rounded top, and
     // that 8px comes out of the bottom padding. At py-3 the controls had four
@@ -106,11 +108,13 @@ test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area
     // screen root. pb-5 buys it back.
     //
     // PARITY, NOT SYMMETRY, is what this file is for: both bars carry the
-    // same pair, so both are 60px and the bar does not jump as you sign in.
-    assert.match(tag, /\bpt-3\b/,
-      `#${bar.id} keeps pt-3 — 12px above the row`);
-    assert.match(tag, /\bpb-5\b/,
-      `#${bar.id} keeps pb-5 — 20px below it, 8px of which the notch spends`);
+    // same pair, so both are 52px and the bar does not jump as you sign in.
+    assert.match(tag, /\bpt-2\b/,
+      `#${bar.id} keeps pt-2 — 8px above the row (#2305)`);
+    // #2305 took it to pb-4: 16px, 8px of which the notch spends, still
+    // double the clearance whose absence made pb-5 necessary.
+    assert.match(tag, /\bpb-4\b/,
+      `#${bar.id} keeps pb-4 — 16px below it, 8px of which the notch spends`);
     assert.doesNotMatch(tag, /\bpy-\d/,
       `#${bar.id} states its vertical padding once, as the pt/pb pair`);
     // A bottom border is part of the height (border-box), so it is part of
@@ -339,4 +343,14 @@ test('the title is left-aligned on a phone by an explicit rule, not by a native 
     'and the decision goes through the one exported, tested function');
   assert.doesNotMatch(hook, /in-native-webview|isNative/,
     'alignment is one geometric rule for every surface');
+});
+
+test('#2305: both bars trim the kit\'s top padding to the inset + 8px, matching pt-2', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rule = css.match(/@supports \(padding: env\(safe-area-inset-top\)\) \{\s*#platform-header\.un-safe-top-extend,\s*#landing-header\.un-safe-top-extend \{([^}]*)\}/);
+  assert.ok(rule, 'one rule, for BOTH bars — parity survives the trim');
+  assert.match(rule[1], /padding-top: calc\(0\.5rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
+  // The kit's own class is untouched for every other consumer.
+  const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  assert.match(kit, /\.un-safe-top-extend \{\s*padding-top: calc\(0\.75rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
 });

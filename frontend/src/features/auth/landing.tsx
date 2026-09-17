@@ -761,7 +761,7 @@ export function LandingScreen() {
       */}
       <header
         id="landing-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 pt-3 pb-5 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-3 px-4 pt-2 pb-4 shrink-0"
       >
         <div className="w-7 h-7 shrink-0 flex items-center justify-center">
           <button
