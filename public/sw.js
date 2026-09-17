@@ -615,6 +615,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Slot availability and pending requests must reflect the current account,
   // including immediately after an admin edit. Never replay an offline count.
   if (p === '/api/me/app-allowance' || p.startsWith('/api/me/app-allowance/')) return 'bypass';
+  // Network/receiver configuration must be live. Completed epoch responses
+  // have their own device cache keyed by chain, wallet and epoch.
+  if (p === '/api/me/staking' || p.startsWith('/api/me/staking/')) return 'bypass';
   // Hosted MCP connector and social-account OAuth: endpoints, OAuth
   // surfaces and identity status. Same hard bypass as the CLI's, for the
   // same reason — none of this may ever be answered from a cache.

@@ -1,5 +1,6 @@
 import { createStore } from '../../lib/plain-store.js';
 import { createEpochCache } from './staking-cache.js';
+import { fetchStakingEpoch } from './staking-observability.js';
 
 async function readJson(path, signal) {
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal });
@@ -10,8 +11,8 @@ async function readJson(path, signal) {
 
 // Each opened Active sheet owns one history. Unmounting it on delegation or a
 // wallet change cancels reads and fences late responses before they touch UI.
-export function createStakingHistory(wallet, { read = readJson, cache = createEpochCache() } = {}) {
-  const store = createStore({ chainId: null, currentEpoch: null, selectedEpoch: null,
+export function createStakingHistory(wallet, { read = readJson, readEpoch = fetchStakingEpoch, cache = createEpochCache() } = {}) {
+  const store = createStore({ chainId: null, observabilityUrl: null, currentEpoch: null, selectedEpoch: null,
     records: {}, errors: {}, loading: true, error: null });
   const controller = new AbortController();
   const pending = new Map();
@@ -21,7 +22,7 @@ export function createStakingHistory(wallet, { read = readJson, cache = createEp
 
   async function load(epoch, force = false) {
     if (disposed) return null;
-    const { chainId, records } = store.get();
+    const { chainId, observabilityUrl, records } = store.get();
     if (!chainId) return null;
     if (!force && records[epoch]?.complete) return records[epoch];
     const key = `${generation}:${epoch}`;
@@ -33,8 +34,7 @@ export function createStakingHistory(wallet, { read = readJson, cache = createEp
         let data = epoch === 'current' ? null : await cache.get(chainId, wallet, epoch);
         if (!current()) return null;
         if (!data) {
-          const params = new URLSearchParams({ wallet, chainId, epoch: String(epoch) });
-          data = await read(`/api/me/staking/epochs?${params}`, controller.signal);
+          data = await readEpoch({ wallet, chainId, observabilityUrl, epoch: String(epoch) }, controller.signal);
         }
         if (!current()) return null;
         if (data.chainId !== chainId || data.wallet !== wallet
@@ -70,9 +70,10 @@ export function createStakingHistory(wallet, { read = readJson, cache = createEp
         const context = await read('/api/me/staking/context', controller.signal);
         if (disposed) return;
         if (!context.chainId) throw new Error('The network is unavailable.');
-        if (context.chainId !== store.get().chainId) {
+        const observabilityUrl = context.observabilityUrl || null;
+        if (context.chainId !== store.get().chainId || observabilityUrl !== store.get().observabilityUrl) {
           generation += 1;
-          store.set({ chainId: context.chainId, currentEpoch: null, selectedEpoch: null,
+          store.set({ chainId: context.chainId, observabilityUrl, currentEpoch: null, selectedEpoch: null,
             records: {}, errors: {}, loading: true, error: null });
         }
         const data = await load('current', true);

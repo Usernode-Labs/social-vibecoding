@@ -27,6 +27,13 @@ test('non-GET requests are never intercepted', () => {
   assert.equal(classify('PUT', '/js/app.js'), 'bypass');
 });
 
+test('staking configuration bypasses generic caching and receiver reads remain direct', () => {
+  assert.equal(classify('GET', '/api/me/staking/context'), 'bypass');
+  assert.equal(classify('GET', '/api/me/staking/epochs?epoch=current'), 'bypass');
+  assert.equal(classifyRequest('GET', 'https://receiver.example/v1/observability/vrf/slots?epoch=1',
+    'application/json', 'cors', ORIGIN), 'bypass');
+});
+
 test('SSE streams are bypassed by accept header and by path', () => {
   assert.equal(classify('GET', '/api/sessions/42/events', 'text/event-stream'), 'bypass');
   // Known SSE path even without the header (e.g. EventSource polyfills).

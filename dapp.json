@@ -552,7 +552,7 @@
       "key": "STAKING_OBSERVABILITY_URL",
       "group": "Native app",
       "default": "https://observability.preseason-testnet.apps.beta.usernodelabs.org",
-      "description": "Observability origin for the admitted native chain, without /ui/nodes or /v1/observability. Profile staking epoch history reads this service, never the local node. Changes apply on the next platform deployment and are inherited by rebuilt previews."
+      "description": "Public HTTPS observability origin for the admitted native chain, without /ui/nodes or /v1/observability. The device reads this service directly; its read-only epoch endpoints must allow browser CORS requests from Homeroom and previews. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
   "tests": [
@@ -4378,9 +4378,9 @@
       "expectText": "Undelegate"
     },
     {
-      "name": "Profile staking: real preview resolves its chain without demo data (#1551)",
+      "name": "Profile staking: real preview supplies the receiver URL and chain without demo data (#1551)",
       "path": "/api/me/staking/context",
-      "expectText": "\"chainId\":\"utc1"
+      "expectText": "\"observabilityUrl\":\"https://"
     }
   ],
   "governance": {
