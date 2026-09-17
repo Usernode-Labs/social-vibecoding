@@ -468,6 +468,23 @@ test('a credit dated on the first day of the window survives the window guard', 
   assert.equal(plan.length, 1, 'noon on the opening day is inside the window in every timezone');
 });
 
+test('a challenge on a SEASON-type event is scored, not skipped', () => {
+  // Found setting the rules up on production: all nine Pre Season 2
+  // challenges hang off the season-type event, and the sweep had borrowed
+  // `se.type = 'regular'` from the snapshot builder — which sweeps regular
+  // events because those are the scoring sprints it computes standings for.
+  // The result was seven correctly configured rules all reporting "No live
+  // challenge" and a service that silently did nothing.
+  const sql = scorer.RULE_CHALLENGES_SQL;
+  assert.ok(!/se\.type\s*=/.test(sql),
+    'challenges are scored wherever the organiser attached them');
+  // The gates that DO matter are still there: a staff dry-run season, a
+  // paused event and a closed season must never pay anyone.
+  assert.match(sql, /se\.internal = FALSE/);
+  assert.match(sql, /se\.is_active = TRUE/);
+  assert.match(sql, /COALESCE\(s\.is_active, FALSE\) = TRUE/);
+});
+
 // ─── The admin API ─────────────────────────────────────────────────────
 
 test('a rule must name exactly one binding', () => {
