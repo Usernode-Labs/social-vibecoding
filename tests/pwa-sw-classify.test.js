@@ -297,3 +297,45 @@ test('app allowance reads always reach the server after an admin change', () => 
   assert.equal(classify('GET', '/api/me/app-allowance?refresh=1'), 'bypass');
   assert.equal(classify('POST', '/api/me/app-allowance/request'), 'bypass');
 });
+
+
+// ── An announced refresh shuts the fast lane ───────────────────────────
+//
+// `/api/home-panels` and the other boot reads answer from cache on a zero
+// deadline, which is right for a first paint and wrong for a pull. Reproduced
+// on production before this existed: a planted stale copy was served to a
+// refresh while the network held the newer answer.
+
+test('a boot read takes the fast lane when nothing announced a refresh', () => {
+  const { bootLaneApplies, BOOT_READ_PATHS } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  for (const p of BOOT_READ_PATHS) {
+    assert.equal(bootLaneApplies(`${origin}${p}`, origin, 1_000, 0), true,
+      `${p} is a boot read and should take the lane on an ordinary load`);
+  }
+});
+
+test('an announced refresh shuts the lane for every boot read, then it reopens', () => {
+  const { bootLaneApplies, REFRESH_INTENT_WINDOW_MS } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  const url = `${origin}/api/home-panels`;
+  const announcedAt = 1_000;
+  const until = announcedAt + REFRESH_INTENT_WINDOW_MS;
+
+  assert.equal(bootLaneApplies(url, origin, announcedAt, until), false,
+    'the pull itself must reach the network, not last visit\'s numbers');
+  assert.equal(bootLaneApplies(url, origin, until - 1, until), false,
+    'and so must the rest of that screen\'s reads, which leave over the next few seconds');
+  assert.equal(bootLaneApplies(url, origin, until, until), true,
+    'the window is bounded: a stuck flag would turn every later boot into a cold one');
+});
+
+test('shutting the lane never promotes a request that was never in it', () => {
+  const { bootLaneApplies } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  // Paginated reads keep the ordinary deadline either way — a refresh window
+  // must not change which tier a URL belongs to, only whether the lane is open.
+  const url = `${origin}/api/apps/demo/messages?page=2`;
+  assert.equal(bootLaneApplies(url, origin, 1_000, 0), false);
+  assert.equal(bootLaneApplies(url, origin, 1_000, 99_000), false);
+});

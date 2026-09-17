@@ -1862,6 +1862,7 @@ const App = {
   // be worse. The spinner stays up throughout, which is honest: the download
   // is what the pull is now waiting on.
   _refreshOrReload(refresh) {
+    App._announceRefreshIntent();
     return Promise.all([
       Promise.resolve().then(refresh).catch(() => {}),
       App.platformMovedOn(),
@@ -1872,6 +1873,26 @@ const App = {
         return new Promise(() => {});
       });
     });
+  },
+
+  // Tell the worker this is a REFRESH, not a boot, before the screen's
+  // loader runs.
+  //
+  // public/sw.js answers `/api/home-panels` and the other boot reads from
+  // cache on a zero deadline, which is right for a first paint and wrong
+  // here: a pull is somebody asking for the current state, and handing them
+  // last visit's numbers is the one answer it must not give. The worker
+  // already undoes it via `api-updated`, but that correction cannot fire
+  // until the network answer arrives — so on a slow link, which is where
+  // people pull, the stale frame is what they sit looking at.
+  //
+  // Fire-and-forget on purpose. A refresh must never wait on the worker, and
+  // a message that lands late costs one lane-served request and nothing
+  // else. Silent when there is no worker at all.
+  _announceRefreshIntent() {
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'refresh-intent' });
+    } catch { /* no worker, or a browser that refuses the post */ }
   },
 
   // ── Late-arrival correction ─────────────────────────────────────────
