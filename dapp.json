@@ -617,7 +617,7 @@
     },
     {
       "name": "Standings tab cross-links to the challenges tab (#981), on the season board (#999)",
-      "path": "/#leaderboard",
+      "path": "/#leaderboard/topochain",
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges",
       "expectText": "Whole-season standings"
     },
@@ -1072,9 +1072,9 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
+      "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
       "path": "/#leaderboard",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
       "name": "The Create app section sits below the grid and opens the create flow",

@@ -4,16 +4,18 @@
 // screen and its drawer row read "Leaderboard" now.)
 //
 // The contract that's easy to break later:
-//   - the screen opens on the TOPOCHAIN STANDINGS, which the tab strip
-//     labels simply "Leaderboard" — it is the platform's primary ranking,
-//     and the trophy/menu entry, the bare #leaderboard hash and the home
-//     widget's fill must all agree on that;
+//   - the screen opens on CHALLENGES, the strip's first tab (#2374): the
+//     bare #leaderboard hash, the pane the shell ships visible and the
+//     module's starting section must all agree on that;
+//   - the Topochain standings, which the tab strip labels simply
+//     "Leaderboard", are addressed by name — #leaderboard/topochain — and
+//     the home widget's fill links there explicitly;
 //   - the kudos board is still all there, one tab over, named "Kudos";
 //   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
-//   - the bare #leaderboard and #leaderboard/challenges are the canonical
-//     addresses for the standings and challenges tabs, and the legacy
-//     hashes (#leaderboard/topochain, #topochain/leaderboard,
+//   - #leaderboard/challenges and #leaderboard/topochain are the canonical
+//     addresses for the challenges and standings tabs, and the bare
+//     #leaderboard and the legacy hashes (#topochain/leaderboard,
 //     #topochain/seasons, #challenges) alias onto them, so old bookmarks
 //     work;
 //   - the three panes keep SEPARATE data state — routing Topochain
@@ -82,15 +84,15 @@ test('the retired screens are gone from the shell', () => {
     '#topochain-seasons-screen was folded into the Leaderboard screen');
 });
 
-test('the standings pane + event bar ship visible — standings are the default section', () => {
+test('the challenges pane + event bar ship visible — challenges are the default section', () => {
   // The DEFAULT pane and the event bar it reads from must ship visible, or
-  // the screen paints the Kudos pane for a frame before _applySection runs.
-  for (const id of ['topochain-leaderboard-root', 'leaderboard-event-bar']) {
+  // the screen paints another pane for a frame before _applySection runs.
+  for (const id of ['challenges-root', 'leaderboard-event-bar']) {
     const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
     assert.ok(el, `#${id} exists`);
     assert.doesNotMatch(el[0], /class="hidden/, `#${id} ships visible`);
   }
-  for (const id of ['leaderboard-root', 'challenges-root']) {
+  for (const id of ['leaderboard-root', 'topochain-leaderboard-root']) {
     const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
     assert.ok(el, `#${id} exists`);
     assert.match(el[0], /class="hidden/, `#${id} ships hidden`);
@@ -99,9 +101,14 @@ test('the standings pane + event bar ship visible — standings are the default 
 
 // ─── Section state ───────────────────────────────────────────────────────
 
-test('Leaderboard.section defaults to the standings', () => {
-  assert.match(lbJs, /section: 'topochain',/,
-    "the screen opens on the primary standings tab, not on Kudos");
+test('Leaderboard.section defaults to Challenges (#2374)', () => {
+  assert.match(lbJs, /section: 'challenges',/,
+    'the screen opens on its first tab, Challenges, not on the standings');
+  assert.match(lbJs, /store = \{ mounted: false, section: 'challenges',/,
+    "the module's copy of the section store starts there too");
+  assert.match(fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/section-store.ts'), 'utf8'),
+    /export const DEFAULT_SECTION = 'challenges';/,
+    "and so does the island's, or the strip's first render disagrees with the pane");
 });
 
 // The strip's markup moved to the island in #1083 chunk F — the module
@@ -168,10 +175,10 @@ test('_setSub still rejects garbage, and pins the section back to kudos', () => 
 test('_syncHash emits the canonical standings and challenges addresses', () => {
   const fn = lbJs.slice(lbJs.indexOf('  _syncHash() {'), lbJs.indexOf('  _setWindow(win)'));
   assert.ok(fn.length > 0, '_syncHash located');
-  assert.match(fn, /\? '#leaderboard'\n/,
-    'the primary standings tab addresses as the BARE #leaderboard');
-  assert.doesNotMatch(fn, /'#leaderboard\/topochain'/,
-    'so an arriving #leaderboard/topochain bookmark self-heals to it');
+  assert.match(fn, /\? '#leaderboard\/topochain'\n/,
+    'the standings tab addresses by name since Challenges became the default (#2374)');
+  assert.doesNotMatch(fn, /\? '#leaderboard'\n/,
+    'no section claims the BARE #leaderboard, so an arriving bare hash self-heals to its tab');
   assert.match(fn, /'#leaderboard\/challenges'/, 'the Challenges tab addresses as #leaderboard/challenges');
   assert.match(fn, /#leaderboard\/users\/\$\{encodeURIComponent/, 'the profile drill-in hash is unchanged');
   assert.match(fn, /location\.hash\.startsWith\('#leaderboard'\)/,
@@ -206,8 +213,8 @@ test('the legacy #topochain hashes self-heal to the canonical form', () => {
   );
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
-    'the address is rewritten in place — standings to the bare hash, one replaceState not two');
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard\/topochain'/,
+    'the address is rewritten in place — standings to #leaderboard/topochain, one replaceState not two');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/, 'then hands off');
   assert.match(branch, /catch \(err\)/,
     'a replaceState failure must not swallow the navigation');
@@ -630,7 +637,7 @@ test('both #981 checks are declared and the reader keeps them', () => {
     + 'the tail is being dropped again, which is exactly the bug #1019 fixed');
   const kept = meta.tests;
   const summary = kept.find((t) => t.path === '/#leaderboard/challenges');
-  const crossLink = kept.find((t) => t.path === '/#leaderboard');
+  const crossLink = kept.find((t) => t.path === '/#leaderboard/topochain');
   assert.ok(summary, 'the challenges-summary check must survive the reader');
   assert.ok(crossLink, 'the standings cross-link check must survive the reader');
   assert.match(summary.expectSelector, /#tc-se-challenge-summary/);
@@ -641,16 +648,26 @@ test('both #981 checks are declared and the reader keeps them', () => {
   // them. It therefore has to carry their assertions too, or moving a check
   // to the top of the array silently weakens what the older ones pinned.
   assert.match(crossLink.expectSelector, /\[data-standings-tab="challenges"\]/,
-    'the shadowing /#leaderboard check must still assert the three-tab strip');
+    'the shadowing /#leaderboard/topochain check must still assert the three-tab strip');
+  // #2374 moved the cross-link check off the bare hash when Challenges became
+  // the default, which leaves the bare-hash check the FIRST /#leaderboard
+  // entry — the one tests/topochain-screens.test.js finds — so it carries
+  // the strip assertion in its own right.
+  const bare = kept.find((t) => t.path === '/#leaderboard');
+  assert.ok(bare, 'the bare /#leaderboard check must survive the reader');
+  assert.match(bare.expectSelector, /\[data-standings-tab="challenges"\]/,
+    'the canonical /#leaderboard check asserts the three-tab strip');
+  assert.match(bare.expectSelector, /#challenges-root:not\(\.hidden\)/,
+    'and that the bare hash opens on Challenges');
 
   // #999 rides on this SAME entry rather than declaring its own. The cap is
   // full of load-bearing checks — every one of the ten is pinned by a suite
   // like this — so two new entries at the top would have silently pushed the
   // #911 and #947 home-panel checks out of the parse window and broken their
   // guards. Same route, one more assertion, nothing displaced: the default
-  // /#leaderboard board must be the whole-season one.
+  // standings board must be the whole-season one.
   assert.equal(crossLink.expectText, 'Whole-season standings',
-    'the /#leaderboard check must also assert the season board is the default');
+    'the /#leaderboard/topochain check must also assert the season board is the default');
   assert.match(summary.expectSelector, /#challenges-root:not\(\.hidden\)/,
     'and the shadowing /#leaderboard/challenges check the revealed pane');
 });

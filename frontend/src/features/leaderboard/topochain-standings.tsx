@@ -239,9 +239,9 @@ function Pagination(
 /**
  * The standings' loading state, at the TABLE's own shape.
  *
- * This is the pane the bare `#leaderboard` address lands on, so it is the
- * first thing the screen shows — and it was the word "Loading…" on an
- * otherwise blank panel.
+ * This was the pane the bare `#leaderboard` address landed on until #2374
+ * made Challenges the default, so it was the first thing the screen showed —
+ * and it was the word "Loading…" on an otherwise blank panel.
  *
  * The container is the table's own (`rounded-lg` + the hairline), with a
  * header strip in the same `bg-zinc-50` the real `<thead>` uses, so the table

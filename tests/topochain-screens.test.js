@@ -145,7 +145,7 @@ test('one entry point reaches all three surfaces', () => {
     'the area\u2019s title bar carries the link');
   assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
     'which is a real hash navigation onto the Leaderboard screen');
-  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard'/,
+  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,
     'and it is a real hash navigation, so the device back gesture returns home');
 });
 
@@ -160,11 +160,11 @@ test('the hash router aliases both #topochain sub-routes onto the sections', () 
   assert.ok(branch.length > 0, 'the topochain router branch is located');
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  // Canonical form per section: the standings are the screen's PRIMARY tab,
-  // so their address is the bare #leaderboard (rewriting to
-  // #leaderboard/topochain here would only make Leaderboard._syncHash
-  // rewrite it a second time).
-  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
+  // Canonical form per section: #leaderboard/topochain for the standings —
+  // never the bare #leaderboard, which opens Challenges since #2374 (and
+  // rewriting to it here would only make Leaderboard._syncHash rewrite it a
+  // second time).
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard\/topochain'/,
     'the legacy hash is rewritten to its canonical form');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/,
     'then dispatches to the Leaderboard screen on that section');
