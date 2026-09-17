@@ -200,10 +200,38 @@ function syntheticRecord(stage, reason) {
   };
 }
 
+// Is `next` the failure `prev` already recorded — the same commit failing at
+// the same stage? A production rebuild that cannot succeed (a Dockerfile the
+// build sandbox cannot build, a syntax error on main) fails identically on
+// every retry, and the drift poller retries every tick; the people who can
+// fix it need to hear about the incident once, not per attempt. Twenty-five
+// "Deploy failed" pushes went out for one falling-sands commit in a night.
+//
+// Same sha, and the same stage when both records name one. A different
+// stage on the same commit IS news (the build now passes but the container
+// will not start). A record without a sha — a synthetic one, or the legacy
+// string shape — never matches, so those keep notifying as before.
+function sameIncident(prev, next) {
+  const a = asRecord(prev);
+  const b = asRecord(next);
+  if (!a || !b || !a.sha || !b.sha) return false;
+  if (String(a.sha).toLowerCase() !== String(b.sha).toLowerCase()) return false;
+  return !a.stage || !b.stage || a.stage === b.stage;
+}
+
+function asRecord(value) {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  return value && typeof value === 'object' ? value : null;
+}
+
 module.exports = {
   classify,
   record,
   syntheticRecord,
+  sameIncident,
   summarizeBootFailure,
   bootFailureIsInfrastructure,
   truncateLog,
