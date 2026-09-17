@@ -3442,9 +3442,10 @@ const App = {
       // in-SPA screens (auth-screens.js). Which set of routes is live
       // depends on the boot stage:
       //   - no session: auth routes render; every other hash is a deep
-      //     link — remembered for after login, which is offered first
-      //     (parity with the old server redirect: '/' → landing.html,
-      //     deeper paths → login.html).
+      //     link — remembered for after login — and answers with the
+      //     landing page, the same as a bare '/' (#2375). Its Sign in
+      //     button goes to #login, which leaves the remembered link in
+      //     place, so finishLogin still restores it.
       //   - gated session (waiting room): only #waiting and #landing
       //     (public-app browsing) render; everything else returns to
       //     the waiting room. The server's API 403 remains the actual
@@ -3468,7 +3469,7 @@ const App = {
               return;
             }
             AuthScreens.rememberDeepLink(App._deepLinkTarget());
-            AuthScreens.show('login');
+            AuthScreens.show('landing');
             return;
           }
         }
@@ -3674,8 +3675,8 @@ const App = {
       if (parts[0] === 'settings') {
         // Settings screen (settings-modal-to-screen conversion). Optional
         // section segment (#settings/password etc.) deep-links one section;
-        // no extra gate — the anonymous-shell branch above already bounced
-        // a signed-out visitor to login and remembered the deep link.
+        // no extra gate — the anonymous-shell branch above already sent a
+        // signed-out visitor to the landing page and remembered the deep link.
         App.setChromeless(false);
         App.navigateToSettings(parts[1] || null);
         return;
@@ -4441,10 +4442,10 @@ const App = {
   //
   // No permission gate: the grid is built from GET /api/apps, which is
   // already visibility-filtered per viewer, and restoreFromHash's
-  // anonymous-shell branch bounced a signed-out visitor to login before
-  // this can run. The top-level header matches Home, which stays accessible
-  // through the navigation menu. Browser/OS back returns here from an app
-  // opened out of this grid, because the screen has its own hash entry.
+  // anonymous-shell branch sent a signed-out visitor to the landing page
+  // before this can run. The top-level header matches Home, which stays
+  // accessible through the navigation menu. Browser/OS back returns here from
+  // an app opened out of this grid, because the screen has its own hash entry.
   navigateToBrowse(slug) {
     // Already mounted: this is an in-screen level change (#apps ↔
     // #apps/<slug>, the back button, a hand-typed hash), not a screen
@@ -4645,7 +4646,7 @@ const App = {
   // render its sidebar / two-level menu into the static shell in
   // index.html. No permission gate: Settings is every signed-in user's own
   // account surface, and restoreFromHash's anonymous-shell branch already
-  // bounced a signed-out visitor to login (remembering the deep link).
+  // sent a signed-out visitor to the landing page, remembering the deep link.
   navigateToSettings(section) {
     // Already mounted: this is an in-screen navigation (a mobile drill-in,
     // the back button, a hand-typed section hash), not a screen entry. Hand

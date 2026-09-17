@@ -51,19 +51,24 @@ function method(src, name) {
 
 // ── Why the address has to be normalised at all ────────────────────────
 
-test('an anonymous deep link answers with sign-in, only a bare / lands', () => {
-  // The branch the leftover `#settings` address falls into. This is the whole
-  // reason the native path normalises before handing over the WebView: the
-  // router cannot tell "signed out at /#settings" from "guest following a
-  // link to /#settings", and it is right not to.
+test('an anonymous deep link lands too, but is remembered; only a bare / is not', () => {
+  // The branch the leftover `#settings` address falls into. Since #2375 it
+  // shows the landing page either way, so this is no longer about WHICH
+  // screen appears — it is why the native path still normalises before
+  // handing over the WebView: the router cannot tell "signed out at
+  // /#settings" from "guest following a link to /#settings", and it is right
+  // not to. A leftover address would be remembered as a deep link, and the
+  // next person to sign in would be carried to the previous one's Settings.
   const at = APP.indexOf('        if (!App.user) {');
   assert.ok(at > -1, 'the anonymous branch of restoreFromHash must exist');
   const anon = APP.slice(at, APP.indexOf('\n        if (App.user) {', at));
 
-  assert.match(anon, /if \(!hash \|\| authRoute === 'waiting'\) \{\s*\n\s*AuthScreens\.show\('landing'\);/,
-    'no fragment and no app path is the ONLY thing that reaches landing');
-  assert.match(anon, /AuthScreens\.rememberDeepLink\(App\._deepLinkTarget\(\)\);\s*\n\s*AuthScreens\.show\('login'\);/,
-    'every other address is remembered and answered with the sign-in form');
+  assert.match(anon, /if \(!hash \|\| authRoute === 'waiting'\) \{\s*\n\s*AuthScreens\.show\('landing'\);\s*\n\s*return;/,
+    'no fragment and no app path lands without remembering anything');
+  assert.match(anon, /AuthScreens\.rememberDeepLink\(App\._deepLinkTarget\(\)\);\s*\n\s*AuthScreens\.show\('landing'\);/,
+    'every other address is remembered, then answered with the landing page');
+  assert.doesNotMatch(anon, /AuthScreens\.show\('login'\)/,
+    'no address is answered with the bare sign-in form any more (#2375)');
   // `hash` falls back to the clean app pathname above this branch, so a
   // sign-out from inside `/app/<slug>` is the same case.
   assert.match(APP, /let hash = rawHash\s*\n\s*\? \(qIdx === -1 \? rawHash : rawHash\.slice\(0, qIdx\)\)\s*\n\s*: pathRoute;/);

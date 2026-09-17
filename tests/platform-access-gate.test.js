@@ -233,7 +233,7 @@ test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', 
     assert.equal(await app.text(), 'SPA');
 
     // Deeper paths bounce to the shell — the URL fragment survives a
-    // redirect, so shared deep links still reach the login screen.
+    // redirect, so shared deep links are still remembered through sign-in.
     const deep = await get(base, '/social');
     assert.equal(deep.status, 302);
     assert.equal(deep.headers.get('location'), '/');
