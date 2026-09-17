@@ -299,8 +299,13 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
 
     const conventions = prompts.getAppConventions();
     assert.doesNotMatch(conventions, DEAD_HOST);
-    assert.match(conventions, /my\.example\.com\/usernode-tailwind\/v1\/tailwind\.js/,
-      'the doc names THIS deployment, resolved at load');
+    // #2319: not even THIS deployment's host. Apps copied the absolute form
+    // into their markup, which breaks on the next domain move; the doc shows
+    // the path the platform serves on every app's own address.
+    assert.doesNotMatch(conventions, /my\.example\.com\/usernode-/,
+      'the doc never puts a hostname in front of a hosted asset');
+    assert.match(conventions, /<script src="\/usernode-tailwind\/v1\/tailwind\.js"><\/script>/,
+      'the doc shows the relative tag');
 
     const order = svc.buildWorkOrder({
       appName: 'Recipe Box', appSlug: 'recipe-box',
@@ -319,6 +324,8 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
       platformRules: prompts.getWorkOrderEssentials(),
     });
     assert.doesNotMatch(order, DEAD_HOST);
+    assert.ok(!order.includes('usernode.example/usernode-'),
+      'the work order lists hosted assets without a hostname');
   } finally {
     if (before === undefined) delete process.env.USERNODE_DOMAIN;
     else process.env.USERNODE_DOMAIN = before;
