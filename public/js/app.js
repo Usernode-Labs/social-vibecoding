@@ -5067,8 +5067,8 @@ const App = {
     // are what says which screen the viewer is coming FROM. The Workshop
     // screen is the one origin with a level of its own to return to, so
     // entering an app from it leaves the Dev lander a real ← rather than the
-    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set,
-    // like `_inBrowse`: the next screen entry clears it, and _showOnlyScreen
+    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set:
+    // the next screen entry clears it, and _showOnlyScreen
     // clears this the moment any non-app root is revealed.
     //
     // A BARE FRAGMENT, not a resolved URL. #back-btn's click handler follows
@@ -5083,6 +5083,11 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    // Retire the directory's detail/back state as we leave. Otherwise its
+    // hidden detail page intercepts the app's Home button, and returning to
+    // #apps takes the in-screen shortcut without revealing the directory.
+    // This exit is state-only; `departing` stays painted for the transition.
+    if (App._inBrowse) App._exitBrowse();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
