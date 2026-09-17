@@ -86,13 +86,6 @@ function topicAttributeRoutes(config) {
       if (field === 'category') {
         data.categories = await attrs.listCategories(pool, app.id);
       }
-      // Same contract for themes: the picker offers the app's LIVE
-      // vocabulary, which is the model's standing draft plus whatever the
-      // group has pinned, so a member can move a card into a theme the
-      // model drafted without retyping its name.
-      if (field === 'theme') {
-        data.themes = await attrs.listThemes(pool, app.id);
-      }
       res.json(data);
     } catch (err) {
       log.error('topic-attrs', 'Failed to list attribute options', { message: err.message });
@@ -118,23 +111,22 @@ function topicAttributeRoutes(config) {
       // #780: a category is now free text, so keep the normalized pair —
       // castVote needs the typed LABEL to register a brand-new option with
       // the casing the user typed, while the vote itself stores the slug.
-      const category = field === 'category'
+      const typed = field === 'category'
         ? attrs.normalizeCategoryInput(req.body?.value) : null;
-      // A theme keeps its typed label the same way, for the same reason:
-      // the vote stores the slug, the registry row shows the casing.
-      const theme = field === 'theme'
-        ? attrs.normalizeThemeInput(req.body?.value) : null;
-      const typed = category || theme;
+      // Resolve a typed name against the vocabulary the app already has,
+      // under either spelling: the key is a slug now, but values stored
+      // under #780's bare lower-cased rule are still out there, and typing
+      // "dev experience" must keep voting for the row it always did rather
+      // than minting "dev-experience" beside it.
       const value = typed
-        ? typed.slug : attrs.normalizeValue(field, req.body?.value);
+        ? await attrs.resolveCategoryKey(pool, app.id, typed.typed)
+        : attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
         let error;
         if (field === 'priority') {
           error = 'Priority must be low, medium or high';
         } else if (field === 'category') {
           error = `Category must be 1–${attrs.MAX_CATEGORY_LEN} characters`;
-        } else if (field === 'theme') {
-          error = `Theme must be 1–${attrs.MAX_THEME_LEN} characters`;
         } else {
           error = `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`;
         }
@@ -149,28 +141,18 @@ function topicAttributeRoutes(config) {
           typed ? typed.label : null
         );
       } catch (err) {
-        // The app is already at its custom-category cap and this is a NEW
-        // slug — a user error, not a server fault.
+        // The cap counts LIVE rows, so this is reachable only when the group
+        // itself is holding every slot — the model's own discards retire
+        // themselves. Saying so is more useful than the raw number alone.
         if (err.message === attrs.CATEGORY_CAP_ERROR) {
           return res.status(400).json({
-            error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} custom categories.`,
-          });
-        }
-        // The theme cap counts LIVE rows, so this one is reachable only when
-        // the group itself is holding every slot — the model's own discards
-        // retire themselves. Saying so is more useful than the raw number.
-        if (err.message === attrs.THEME_CAP_ERROR) {
-          return res.status(400).json({
-            error: `This app already has the maximum of ${attrs.MAX_THEMES_PER_APP} themes in use. Retire one by moving its cards elsewhere.`,
+            error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} categories in use. Retire one by moving its cards elsewhere.`,
           });
         }
         throw err;
       }
       if (field === 'category') {
         data.categories = await attrs.listCategories(pool, app.id);
-      }
-      if (field === 'theme') {
-        data.themes = await attrs.listThemes(pool, app.id);
       }
       res.json(data);
     } catch (err) {

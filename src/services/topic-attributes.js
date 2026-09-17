@@ -11,15 +11,15 @@
 // then alphabetically (a stable tie-break so the chip never flickers).
 
 const TARGET_TYPES = ['issue', 'proposal'];
-// `theme` joined the list when the Workshop's AI grouping was merged onto
-// this mechanism: a theme is what a card is ABOUT, a category is what KIND
-// of work it is, and they stay two axes — but one table, one tally, one
-// movable vote each. The difference from the other three is where the
-// vocabulary comes from: a model drafts it (services/workshop-themes.js)
-// and a member's vote OVERRIDES the model's placement rather than adding to
-// it. See app_theme_registry in schema.sql for why that registry has to be
-// generational where app_topic_categories is append-only.
-const FIELDS = ['priority', 'assignee', 'category', 'theme'];
+// #2332 added a fourth field, `theme`, as a SECOND grouping axis. It is gone
+// again: the product had one name for this idea all along — the card chip's
+// own tooltip read "Category: {name}" — and two lists was the thing the merge
+// was asked to end. There is ONE grouping now, `category`, and what #2332
+// built for themes is what powers it: the model DRAFTS the vocabulary and
+// places each card as a SEED, and a member's vote overrides that placement.
+// See app_category_registry in schema.sql for why the registry behind it has
+// to be generational where app_topic_categories was append-only.
+const FIELDS = ['priority', 'assignee', 'category'];
 const PRIORITY_VALUES = ['low', 'medium', 'high'];
 // The BUILT-IN category vocabulary. Since #780 this is no longer the whole
 // set: an app can also register CUSTOM categories (app_topic_categories),
@@ -32,25 +32,34 @@ const MAX_ASSIGNEE_LEN = 64;
 // field — they render inside a tiny chip pill and a 260px dropdown, so the
 // cap is short. The per-app cap bounds how far one spammer can grow the
 // vocabulary everybody in the app then sees.
-const MAX_CATEGORY_LEN = 24;
+// A category NAMES a part of the product now as well as a kind of work
+// ("Onboarding and sign-in", not just "bug"), so it gets the room #2332 gave
+// a theme rather than the 24 characters a chip-only label needed.
+const MAX_CATEGORY_LEN = 48;
 const MAX_CUSTOM_CATEGORIES_PER_APP = 24;
 // Thrown by ensureCategory when the app is already at its custom cap, so
 // the route can turn it into a distinct 400 instead of a 500.
 const CATEGORY_CAP_ERROR = 'category_cap_exceeded';
-// A theme NAMES a part of the product ("Onboarding and sign-in"), where a
-// category names a kind of work, so it gets more room than the category
-// chip's 24 — but still short enough to read in a list row.
-const MAX_THEME_LEN = 48;
 // Counted over LIVE rows only (retired_at IS NULL). That is what makes the
 // cap survive a model that re-drafts the whole vocabulary every day: the
 // draft it no longer wants is retired in the same pass that mints its
-// replacement, so churn is free and only themes in USE hold a slot.
-const MAX_THEMES_PER_APP = 24;
-const THEME_CAP_ERROR = 'theme_cap_exceeded';
+// replacement, so churn is free and only categories in USE hold a slot.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// The ONE slug function for the grouping, used by every writer so that a
+// member typing "Signing in" and the model drafting a category it calls
+// `signing-in` land on the same registry row and the same vote value.
+// services/workshop-themes.js imports it rather than keeping its own copy —
+// two implementations would mean a member could never vote for a category
+// the model had drafted, which is the whole point of one list.
+function slugifyCategory(name) {
+  const s = String(name || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return s || 'category';
+}
+
 // #780: validate + normalize a TYPED category into the pair we persist:
-//   slug  — lowercased, the dedupe key AND the value stored on the vote
+//   slug  — the dedupe key AND the value stored on the vote
 //   label — the same string with its typed casing, for display
 // Returns null when the input can't be a category. Control characters are
 // neutralised to spaces (never a legitimate part of a label, and they'd
@@ -58,6 +67,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // collapse to a single space (so "dev  experience" and "dev experience" are
 // one option), and we require at least one letter or digit so pure
 // punctuation ("---") can't become a category.
+//
+// The slug is SLUGIFIED now, not merely lower-cased. It has to be: since the
+// merge, a category key must be able to equal an id the model drafted, and
+// the model's are slugs. Values stored under the old lower-cased rule (a
+// space rather than a hyphen) are NOT rewritten — resolveCategoryKey below
+// matches a typed name against both spellings, so "dev experience" keeps
+// voting for the row it always did.
 function normalizeCategoryInput(raw) {
   if (typeof raw !== 'string') return null;
   // Control chars become a SPACE (not nothing) so a tab/newline between
@@ -66,37 +82,36 @@ function normalizeCategoryInput(raw) {
   const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!cleaned || cleaned.length > MAX_CATEGORY_LEN) return null;
   if (!/[A-Za-z0-9]/.test(cleaned)) return null;
-  return { slug: cleaned.toLowerCase(), label: cleaned };
+  return { slug: slugifyCategory(cleaned), label: cleaned, typed: cleaned };
 }
 
-// The ONE slug function for themes, used by both writers so that a member
-// typing "Signing in" and the model drafting a theme it calls `signing-in`
-// land on the same registry row and the same vote value.
-// services/workshop-themes.js imports it rather than keeping its own copy —
-// two implementations here would mean a member could never vote for a theme
-// the model had drafted, which is the whole feature.
-function slugifyTheme(name) {
-  const s = String(name || '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  return s || 'theme';
+// The two spellings a typed name could already be stored under: the slug we
+// mint today, and the bare lower-cased form #780 used. Deduped, order
+// significant — the slug wins when both exist.
+function categoryKeyCandidates(typed) {
+  const slug = slugifyCategory(typed);
+  const legacy = String(typed || '').toLowerCase();
+  return legacy && legacy !== slug ? [slug, legacy] : [slug];
 }
 
-// Validate + normalize a TYPED theme into the pair we persist. Same shape as
-// normalizeCategoryInput and the same neutralising of control characters,
-// but the key is SLUGIFIED rather than merely lower-cased, because a theme
-// key has to match the model's own drafted ids.
-function normalizeThemeInput(raw) {
-  if (typeof raw !== 'string') return null;
-  /* eslint-disable-next-line no-control-regex */
-  const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!cleaned || cleaned.length > MAX_THEME_LEN) return null;
-  if (!/[A-Za-z0-9]/.test(cleaned)) return null;
-  const slug = slugifyTheme(cleaned);
-  // slugifyTheme falls back to the literal 'theme' for input with no
-  // alphanumerics, which the guard above already rejected; a string that
-  // slugs to nothing else has no key to tally under.
-  if (!slug) return null;
-  return { slug, label: cleaned };
+// Which key a typed category should actually vote for. A name that already
+// names a built-in, or a row in this app's registry under EITHER spelling,
+// votes for that one; anything else mints the slug. This is what stops the
+// change of spelling above from orphaning the categories members typed
+// before it.
+async function resolveCategoryKey(pool, appId, typed) {
+  const candidates = categoryKeyCandidates(typed);
+  for (const c of candidates) {
+    if (CATEGORY_VALUES.includes(c)) return c;
+  }
+  const { rows } = await pool.query(
+    `SELECT category_key FROM app_category_registry
+      WHERE app_id = $1 AND category_key = ANY($2::text[])
+      ORDER BY (retired_at IS NULL) DESC, id ASC
+      LIMIT 1`,
+    [appId, candidates]
+  );
+  return (rows[0] && rows[0].category_key) || candidates[0];
 }
 
 // Validate + normalize a submitted value for a field. Returns the string
@@ -116,10 +131,6 @@ function normalizeValue(field, value) {
   if (field === 'category') {
     const c = normalizeCategoryInput(value);
     return c ? c.slug : null;
-  }
-  if (field === 'theme') {
-    const t = normalizeThemeInput(value);
-    return t ? t.slug : null;
   }
   if (field === 'assignee') {
     const v = typeof value === 'string' ? value.trim() : '';
@@ -155,7 +166,6 @@ function emptySummary() {
     priority: { top: null, count: 0, myValue: null },
     assignee: { top: null, count: 0, myValue: null },
     category: { top: null, count: 0, myValue: null },
-    theme: { top: null, count: 0, myValue: null },
   };
 }
 
@@ -409,34 +419,51 @@ async function listOptions(pool, appId, targetType, ref, field, userId, linkedIs
   );
 }
 
-// #780: the app's full category vocabulary for the dropdown + filter bar:
-// the six built-ins first (custom: false), then the app's registered custom
-// categories in creation order, then a SELF-HEAL tail — any category value
-// that appears in this app's votes but has no registry row (e.g. a row
-// deleted straight in the DB), appended alphabetically. The tail guarantees
-// a chip can never display a value the picker doesn't list.
+// The app's full category vocabulary for the chip's dropdown and the filter
+// bar: the six built-ins first, then this app's LIVE registry rows, then a
+// SELF-HEAL tail — any category value that appears in this app's votes but
+// has no live row, appended alphabetically. The tail guarantees a chip can
+// never display a value the picker does not list, and since the merge it
+// also covers the one case the lifecycle allows: a vote on a row a later
+// draft retired before anybody pinned it.
 //
-// `value` is the slug (what a vote stores); `label` is what the FE renders.
-// Built-ins return the slug as their label — the FE owns their display
-// names + colours in _categoryMeta, so echoing them here would just be a
-// second place to keep in sync.
+// Registry order is pinned rows first — somebody in the group chose them, so
+// they are the vocabulary that has actually been agreed — then the model's
+// standing draft in the order it was minted.
+//
+// `value` is the key (what a vote stores); `label` is what the front end
+// renders. Built-ins return the slug as their label — the front end owns
+// their display names and colours in _categoryMeta, so echoing them here
+// would just be a second place to keep in sync.
 async function listCategories(pool, appId) {
-  const out = CATEGORY_VALUES.map((v) => ({ value: v, label: v, custom: false }));
+  const out = CATEGORY_VALUES.map((v) => ({
+    value: v, label: v, custom: false, description: '', icon: '', origin: 'builtin', pinned: true,
+  }));
   const seen = new Set(CATEGORY_VALUES);
 
   const { rows } = await pool.query(
-    `SELECT slug, label FROM app_topic_categories
-      WHERE app_id = $1
-      ORDER BY created_at ASC, id ASC`,
+    `SELECT category_key, label, description, icon, origin,
+            (pinned_at IS NOT NULL) AS pinned
+       FROM app_category_registry
+      WHERE app_id = $1 AND retired_at IS NULL
+      ORDER BY (pinned_at IS NULL) ASC, created_at ASC, id ASC`,
     [appId]
   );
   for (const r of rows) {
-    if (seen.has(r.slug)) continue;
-    seen.add(r.slug);
-    out.push({ value: r.slug, label: r.label || r.slug, custom: true });
+    if (seen.has(r.category_key)) continue;
+    seen.add(r.category_key);
+    out.push({
+      value: r.category_key,
+      label: r.label || r.category_key,
+      custom: true,
+      description: r.description || '',
+      icon: r.icon || '',
+      origin: r.origin || 'ai',
+      pinned: !!r.pinned,
+    });
   }
 
-  // Self-heal tail: registered-nowhere values that cards are already using.
+  // Self-heal tail: values that cards are already using with no live row.
   const { rows: orphans } = await pool.query(
     `SELECT DISTINCT value FROM topic_attribute_votes
       WHERE app_id = $1 AND field = 'category'
@@ -446,140 +473,61 @@ async function listCategories(pool, appId) {
   for (const o of orphans) {
     if (!o.value || seen.has(o.value)) continue;
     seen.add(o.value);
-    out.push({ value: o.value, label: o.value, custom: true });
+    out.push({
+      value: o.value, label: o.value, custom: true,
+      description: '', icon: '', origin: 'member', pinned: true,
+    });
   }
 
-  // Staging previews start from a copy of production, so app_topic_categories
-  // — created by this change — arrives EMPTY and the custom-category UI would
-  // have nothing to show. Append two obviously-fake entries so the dropdown's
-  // custom block, the chip colours and the filter option are all reviewable.
-  // Doing it here (rather than a boot seed keyed to one app id) covers
-  // whichever app's Dev tab a reviewer opens. Strictly a no-op in production.
+  // Staging previews start from a copy of production, so a brand-new table
+  // arrives EMPTY and the custom block would have nothing to show. Two
+  // obviously-fake entries make the dropdown, the chip colours and the
+  // filter option reviewable. Strictly a no-op in production.
   if (IS_STAGING) {
     for (const label of ['Staging demo perf', 'Staging demo onboarding']) {
-      const slug = label.toLowerCase();
+      const slug = slugifyCategory(label);
       if (seen.has(slug)) continue;
       seen.add(slug);
-      out.push({ value: slug, label, custom: true });
+      out.push({
+        value: slug, label, custom: true,
+        description: '', icon: '', origin: 'ai', pinned: false,
+      });
     }
   }
 
   return out;
 }
 
-// #780: register a typed category for this app so it becomes an option on
-// every card, then let the caller cast the vote. No-op for a built-in slug
-// (those need no row). Idempotent via UNIQUE(app_id, slug) — the FIRST typed
-// label wins, so a later "PERFORMANCE" votes for the existing "Performance"
-// without rewriting how it reads. Throws CATEGORY_CAP_ERROR when the app is
-// at its custom cap AND this slug isn't already registered, so voting for an
-// existing option keeps working at the cap.
-async function ensureCategory(pool, appId, { slug, label }, userId) {
-  if (CATEGORY_VALUES.includes(slug)) return;
-  const { rows } = await pool.query(
-    `SELECT
-       (SELECT COUNT(*)::int FROM app_topic_categories WHERE app_id = $1) AS total,
-       (SELECT COUNT(*)::int FROM app_topic_categories
-          WHERE app_id = $1 AND slug = $2) AS existing`,
-    [appId, slug]
-  );
-  const total = (rows[0] && rows[0].total) || 0;
-  const existing = (rows[0] && rows[0].existing) || 0;
-  if (!existing && total >= MAX_CUSTOM_CATEGORIES_PER_APP) {
-    throw new Error(CATEGORY_CAP_ERROR);
-  }
-  if (existing) return;
-  await pool.query(
-    `INSERT INTO app_topic_categories (app_id, slug, label, created_by)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (app_id, slug) DO NOTHING`,
-    [appId, slug, label, userId || null]
-  );
-}
-
-// ── The theme registry ────────────────────────────────────────────────
+// Register (or revive) a category so it becomes an option on every card.
 //
-// Same job listCategories does for categories, with one difference that
-// matters: this vocabulary has a LIFECYCLE. Only live rows (retired_at IS
-// NULL) are offered, because a draft the model has moved on from should not
-// keep appearing in the picker — but the row stays, so the votes and
-// placements pointing at it never dangle and a member can revive it simply
-// by voting for it again.
-//
-// Order: pinned rows first (somebody in the group chose them, so they are
-// the vocabulary that has actually been agreed), then the model's standing
-// draft in the order it was minted. The self-heal tail is the same
-// invariant listCategories keeps — a chip can never show a value the picker
-// does not list — and here it also covers the one case the lifecycle allows:
-// a vote on a row that was retired straight in the database.
-async function listThemes(pool, appId) {
-  const out = [];
-  const seen = new Set();
-  const { rows } = await pool.query(
-    `SELECT theme_key, label, description, icon, origin,
-            (pinned_at IS NOT NULL) AS pinned
-       FROM app_theme_registry
-      WHERE app_id = $1 AND retired_at IS NULL
-      ORDER BY (pinned_at IS NULL) ASC, created_at ASC, id ASC`,
-    [appId]
-  );
-  for (const r of rows) {
-    if (seen.has(r.theme_key)) continue;
-    seen.add(r.theme_key);
-    out.push({
-      value: r.theme_key,
-      label: r.label || r.theme_key,
-      description: r.description || '',
-      icon: r.icon || '',
-      origin: r.origin || 'ai',
-      pinned: !!r.pinned,
-    });
-  }
-
-  const { rows: orphans } = await pool.query(
-    `SELECT DISTINCT value FROM topic_attribute_votes
-      WHERE app_id = $1 AND field = 'theme'
-      ORDER BY value ASC`,
-    [appId]
-  );
-  for (const o of orphans) {
-    if (!o.value || seen.has(o.value)) continue;
-    seen.add(o.value);
-    out.push({ value: o.value, label: o.value, description: '', icon: '', origin: 'ai', pinned: true });
-  }
-
-  return out;
-}
-
-// Register (or revive) a theme so it becomes an option on every card.
-//
-// `pin` is what a HUMAN vote passes, and it is the hinge of the whole
-// design: a pinned row is never retired by a later draft, so the group's
-// own vocabulary outlives the model's. Pinning is idempotent and one-way —
+// `pin` is what a HUMAN vote passes, and it is the hinge of the design: a
+// pinned row is never retired by a later draft, so the group's own
+// vocabulary outlives the model's. Pinning is idempotent and one-way —
 // COALESCE keeps the first pin's timestamp, and withdrawing the vote does
-// not unpin, because a theme the group has used is a commitment rather than
-// a tally. That does mean a member can hold a slot against the cap; the
-// bound is the same one categories already live under, and it is a human
-// bound rather than a machine one, which is the point.
+// not unpin, because a category the group has used is a commitment rather
+// than a tally. That does mean a member can hold a slot against the cap; the
+// bound is a human one rather than a machine one, which is the point.
 //
-// Throws THEME_CAP_ERROR when the app is at its LIVE cap and this key is
-// neither already live nor revivable within it, so voting for an existing
-// theme keeps working at the cap exactly as voting for a category does.
-async function ensureTheme(pool, appId, { slug, label, description, icon }, userId, opts = {}) {
+// No-op for a built-in slug — those need no row. Throws CATEGORY_CAP_ERROR
+// when the app is at its LIVE cap and this key is neither already live nor
+// revivable within it, so voting for an existing option keeps working at the
+// cap exactly as it always did.
+async function ensureCategory(pool, appId, { slug, label, description, icon }, userId, opts = {}) {
+  if (CATEGORY_VALUES.includes(slug)) return;
   const pin = !!opts.pin;
   const { rows } = await pool.query(
-    `SELECT id, (retired_at IS NULL) AS live FROM app_theme_registry
-      WHERE app_id = $1 AND theme_key = $2`,
+    `SELECT id, (retired_at IS NULL) AS live FROM app_category_registry
+      WHERE app_id = $1 AND category_key = $2`,
     [appId, slug]
   );
   const existing = rows[0] || null;
 
   if (existing && existing.live) {
     // Already on offer. A member's vote pins it; the model's draft may
-    // refresh the prose. COALESCE on label/description keeps a row readable
-    // when a caller passes nothing.
+    // refresh the prose. COALESCE keeps a row readable when a caller passes
+    // nothing for a field.
     await pool.query(
-      `UPDATE app_theme_registry
+      `UPDATE app_category_registry
           SET label       = COALESCE($3, label),
               description = COALESCE($4, description),
               icon        = COALESCE($5, icon),
@@ -593,17 +541,17 @@ async function ensureTheme(pool, appId, { slug, label, description, icon }, user
   // Reviving a retired row and minting a new one both consume a live slot,
   // so both go through the cap.
   const { rows: countRows } = await pool.query(
-    `SELECT COUNT(*)::int AS live FROM app_theme_registry
+    `SELECT COUNT(*)::int AS live FROM app_category_registry
       WHERE app_id = $1 AND retired_at IS NULL`,
     [appId]
   );
-  if (((countRows[0] && countRows[0].live) || 0) >= MAX_THEMES_PER_APP) {
-    throw new Error(THEME_CAP_ERROR);
+  if (((countRows[0] && countRows[0].live) || 0) >= MAX_CUSTOM_CATEGORIES_PER_APP) {
+    throw new Error(CATEGORY_CAP_ERROR);
   }
 
   if (existing) {
     await pool.query(
-      `UPDATE app_theme_registry
+      `UPDATE app_category_registry
           SET retired_at  = NULL,
               label       = COALESCE($3, label),
               description = COALESCE($4, description),
@@ -616,42 +564,43 @@ async function ensureTheme(pool, appId, { slug, label, description, icon }, user
   }
 
   await pool.query(
-    `INSERT INTO app_theme_registry
-       (app_id, theme_key, label, description, icon, origin, created_by, pinned_at)
+    `INSERT INTO app_category_registry
+       (app_id, category_key, label, description, icon, origin, created_by, pinned_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (app_id, theme_key) DO NOTHING`,
+     ON CONFLICT (app_id, category_key) DO NOTHING`,
     [appId, slug, label || slug, description || '', icon || '',
      pin ? 'member' : 'ai', userId || null, pin ? new Date() : null]
   );
 }
 
-// Retire every LIVE, UNPINNED theme whose key the latest draft did not
+// Retire every LIVE, UNPINNED category whose key the latest draft did not
 // redraw. This is the half of the generational registry that makes the cap
 // survive a daily re-draft: the model's discards free their slots in the
 // same pass that mints their replacements.
 //
 // `pinned_at IS NULL` is the entire protection rule, and it is checked HERE
-// in SQL rather than trusted to the prompt — a theme somebody voted for
-// cannot be retired by a model that simply stopped mentioning it.
+// in SQL rather than trusted to the prompt — a category somebody voted for
+// cannot be retired by a model that simply stopped mentioning it. The six
+// built-ins are not rows at all, so no draft can touch them either.
 // Returns the keys retired, for the caller's log.
-async function retireThemesExcept(pool, appId, keepKeys) {
+async function retireCategoriesExcept(pool, appId, keepKeys) {
   const keep = [...new Set((keepKeys || []).map(String))];
   // An empty keep list would match every live row and retire the app's whole
   // vocabulary. No caller should reach here with one — reconcile only syncs
-  // after a draft, and a draft with no themes throws — but "the model
-  // answered nothing" must never be the input that empties the registry.
+  // a standing vocabulary — but "the model answered nothing" must never be
+  // the input that empties the registry.
   if (!keep.length) return [];
   const { rows } = await pool.query(
-    `UPDATE app_theme_registry
+    `UPDATE app_category_registry
         SET retired_at = NOW()
       WHERE app_id = $1
         AND retired_at IS NULL
         AND pinned_at IS NULL
-        AND NOT (theme_key = ANY($2::text[]))
-      RETURNING theme_key`,
+        AND NOT (category_key = ANY($2::text[]))
+      RETURNING category_key`,
     [appId, keep]
   );
-  return rows.map((r) => r.theme_key);
+  return rows.map((r) => r.category_key);
 }
 
 // Cast / move the caller's vote, then return the refreshed option list so
@@ -669,15 +618,12 @@ async function retireThemesExcept(pool, appId, keepKeys) {
 // defaults to the slug. `theme` behaves the same way and pins in addition.
 async function castVote(pool, appId, targetType, ref, field, value, userId, linkedIssues = [], valueLabel = null) {
   if (field === 'category') {
-    await ensureCategory(pool, appId, { slug: value, label: valueLabel || value }, userId);
-  }
-  // A theme vote REGISTERS the theme the same way, and additionally PINS it:
-  // from here on no re-draft may retire it. Typing a theme the model never
-  // drafted is therefore how the group adds to its own vocabulary, in the
-  // same gesture that files the card under it — symmetric with suggesting a
-  // category or an assignee.
-  if (field === 'theme') {
-    await ensureTheme(pool, appId, { slug: value, label: valueLabel || value }, userId, { pin: true });
+    // Registering the value and voting for it are ONE operation, and a
+    // member's vote also PINS: from here on no re-draft may retire it.
+    // Typing a category the model never drafted is therefore how the group
+    // adds to its own vocabulary, in the same gesture that files the card
+    // under it — exactly as suggesting an assignee works.
+    await ensureCategory(pool, appId, { slug: value, label: valueLabel || value }, userId, { pin: true });
   }
   await pool.query(
     `INSERT INTO topic_attribute_votes (app_id, target_type, target_ref, field, value, user_id)
@@ -750,18 +696,14 @@ module.exports = {
   MAX_CATEGORY_LEN,
   MAX_CUSTOM_CATEGORIES_PER_APP,
   CATEGORY_CAP_ERROR,
-  MAX_THEME_LEN,
-  MAX_THEMES_PER_APP,
-  THEME_CAP_ERROR,
   normalizeValue,
   normalizeCategoryInput,
-  normalizeThemeInput,
-  slugifyTheme,
+  categoryKeyCandidates,
+  resolveCategoryKey,
+  slugifyCategory,
   listCategories,
   ensureCategory,
-  listThemes,
-  ensureTheme,
-  retireThemesExcept,
+  retireCategoriesExcept,
   groupKey,
   pickTop,
   mergeBuckets,

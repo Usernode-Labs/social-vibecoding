@@ -1894,63 +1894,113 @@ CREATE TABLE IF NOT EXISTS app_topic_categories (
   UNIQUE(app_id, slug)
 );
 
--- The app's THEME vocabulary: what the work is ABOUT ("Signing in", "Game
--- Corner"), as opposed to app_topic_categories above, which is what KIND of
--- work it is ("bug", "docs"). Two axes, deliberately — the discovery prompt
--- in services/llm.js forbids cutting the board on the second one — but from
--- here down they share ONE mechanism: a theme is a value of the `theme`
--- field in topic_attribute_votes, tallied and moved exactly like a category,
--- so a member's vote and the model's placement meet in the same table.
+-- The app's ONE category vocabulary, and the registry behind it.
 --
--- Before this, the model's grouping lived only in app_workshop_themes'
--- themes_json/placements_json, which no member could write to: the Workshop
--- described itself as "drafted by a model and corrected by the group" while
--- routes/workshop-themes.js exposed a GET and nothing else. The AI placement
--- is now a SEED and any vote overrides it.
+-- #2332 added this as a SECOND axis ("themes", what the work is about, beside
+-- categories, what kind of work it is). That was the wrong shape: the product
+-- had always called this grouping a category — the card chip's own tooltip
+-- read "Category: {name}" while the tab above it said "By theme" — and two
+-- lists is what the merge was asked to end. There is now ONE list. Every
+-- non-built-in category lives here, whoever minted it: the model drafting the
+-- board's grouping, or a member typing a name.
 --
--- GENERATIONAL, not append-only, and that distinction is the whole reason
--- this is its own table rather than more rows in app_topic_categories.
--- Discovery re-drafts an app's entire vocabulary every run (daily, or at a
--- tenth of the board's churn), while app_topic_categories only ever INSERTs
--- and is capped at 24. Pointing the model's churn at an append-only registry
--- would exhaust that cap within weeks, after which ensureCategory throws
--- CATEGORY_CAP_ERROR for good and the model could never introduce a new
--- theme again. So:
+-- The six BUILT-IN slugs (feature|bug|improvement|design|docs|chore) stay
+-- hardcoded in services/topic-attributes.js, as they always were — they need
+-- stable colours and labels and are mirrored on the front end. They are
+-- offered alongside these rows, never duplicated into them, and discovery is
+-- given them so it drafts AROUND them rather than redrawing them.
+--
+-- GENERATIONAL, not append-only, and that is why this is its own table rather
+-- than more rows in app_topic_categories above. Discovery re-drafts an app's
+-- entire vocabulary every run (daily, or at a tenth of the board's churn),
+-- while app_topic_categories only ever INSERTs and is capped at 24. Pointing
+-- the model's churn at an append-only registry would exhaust that cap within
+-- weeks, after which the app could never gain another category. So:
 --   * discovery may MINT rows and RETIRE ones it no longer draws;
 --   * retirement is a `retired_at` stamp, never a DELETE, so the votes and
---     placements that point at a theme can never dangle;
---   * `pinned_at` is set the moment a HUMAN votes for the theme, and a
---     pinned row is never retired — it rides into the next discovery inside
---     `previousThemes` carrying `pinned: true`, and services/workshop-themes.js
---     re-adds it after the call whatever the model answered. The prompt is
---     told to keep it; the code does not rely on the prompt obeying.
+--     placements that point at a category can never dangle;
+--   * `pinned_at` is set the moment a HUMAN votes for it, and a pinned row is
+--     never retired — it rides into the next discovery carrying
+--     `pinned: true`, and services/workshop-themes.js re-adds it after the
+--     call whatever the model answered. The prompt is told to keep it; the
+--     code does not rely on the prompt obeying.
 --   * the cap counts LIVE rows (retired_at IS NULL) only, so model churn
---     stops consuming the budget members' own themes need.
+--     stops consuming the budget members' own categories need.
 --
--- theme_key is slugify()'d text and IS the literal value written into
+-- category_key is slugify()'d text and IS the literal value written into
 -- topic_attribute_votes.value, so a member typing "Signing in" tallies
--- byte-for-byte with the model's own `signing-in` id and needs no migration.
+-- byte-for-byte with the model's own `signing-in` id.
 --
 -- NOT staging:private — like topic_attribute_votes and app_topic_categories
 -- this is a shared, governance-style signal everyone in the app sees.
-CREATE TABLE IF NOT EXISTS app_theme_registry (
-  id          SERIAL PRIMARY KEY,
-  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-  theme_key   TEXT NOT NULL,           -- slugified dedupe key + vote value
-  label       TEXT NOT NULL,           -- display casing, as drafted or typed
-  description TEXT NOT NULL DEFAULT '',
-  icon        TEXT NOT NULL DEFAULT '',-- one emoji, or '' for the initial
-  origin      VARCHAR(8) NOT NULL DEFAULT 'ai',  -- 'ai' | 'member'
-  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  pinned_at   TIMESTAMPTZ,             -- first human vote; pinned is forever
-  retired_at  TIMESTAMPTZ,             -- dropped by a draft; never deleted
-  UNIQUE(app_id, theme_key)
+
+-- Renamed from #2332's app_theme_registry / theme_key. Guarded so boot is
+-- idempotent either way: an existing deployment renames in place and keeps
+-- its rows, a fresh one falls straight through to the CREATE below.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+              WHERE table_schema = current_schema() AND table_name = 'app_theme_registry')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+              WHERE table_schema = current_schema() AND table_name = 'app_category_registry')
+  THEN
+    ALTER TABLE app_theme_registry RENAME TO app_category_registry;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema()
+                AND table_name = 'app_category_registry' AND column_name = 'theme_key')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema()
+                AND table_name = 'app_category_registry' AND column_name = 'category_key')
+  THEN
+    ALTER TABLE app_category_registry RENAME COLUMN theme_key TO category_key;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS app_category_registry (
+  id           SERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  category_key TEXT NOT NULL,          -- slugified dedupe key + vote value
+  label        TEXT NOT NULL,          -- display casing, as drafted or typed
+  description  TEXT NOT NULL DEFAULT '',
+  icon         TEXT NOT NULL DEFAULT '',-- one emoji, or '' for the initial
+  origin       VARCHAR(8) NOT NULL DEFAULT 'ai',  -- 'ai' | 'member'
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pinned_at    TIMESTAMPTZ,            -- first human vote; pinned is forever
+  retired_at   TIMESTAMPTZ,            -- dropped by a draft; never deleted
+  UNIQUE(app_id, category_key)
 );
 -- The read every list, cap check and discovery hand-off makes: this app's
 -- live vocabulary. Partial, because retired rows are dead weight on it.
-CREATE INDEX IF NOT EXISTS idx_app_theme_registry_live
-  ON app_theme_registry (app_id, created_at) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_app_category_registry_live
+  ON app_category_registry (app_id, created_at) WHERE retired_at IS NULL;
+DROP INDEX IF EXISTS idx_app_theme_registry_live;
+
+-- ONE registry: fold app_topic_categories' rows in, so the custom categories
+-- members typed before #2332 are offered from the same place as everything
+-- since. They arrive PINNED and origin 'member' — a person chose each one, so
+-- no draft may retire it. app_topic_categories is left in place, unread, as
+-- the record of where they came from; nothing writes to it any more.
+INSERT INTO app_category_registry (app_id, category_key, label, origin, created_by, created_at, pinned_at)
+SELECT c.app_id, c.slug, c.label, 'member', c.created_by, c.created_at, c.created_at
+  FROM app_topic_categories c
+ ON CONFLICT (app_id, category_key) DO NOTHING;
+
+-- ONE field: #2332's `theme` votes become `category` votes. Where the same
+-- member already holds a category vote on the same card the EXISTING vote
+-- stands — they expressed both, and the older one is the one they have lived
+-- with — so the theme row is dropped rather than overwriting it. Both
+-- statements are no-ops once no `theme` rows remain.
+UPDATE topic_attribute_votes v
+   SET field = 'category'
+ WHERE v.field = 'theme'
+   AND NOT EXISTS (
+     SELECT 1 FROM topic_attribute_votes o
+      WHERE o.app_id = v.app_id AND o.target_type = v.target_type
+        AND o.target_ref = v.target_ref AND o.field = 'category'
+        AND o.user_id IS NOT DISTINCT FROM v.user_id
+   );
+DELETE FROM topic_attribute_votes WHERE field = 'theme';
 
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);

@@ -43,23 +43,25 @@ import { useSyncExternalStore } from 'react';
 
 export const WORKSHOP_GROUP_STORE_KEY = '__usernodeWorkshopGroup';
 
-export const WORKSHOP_GROUPS = ['theme', 'stage'] as const;
+export const WORKSHOP_GROUPS = ['category', 'stage'] as const;
 
 export type WorkshopGroup = (typeof WORKSHOP_GROUPS)[number];
 
 /**
- * Theme is the default: it is what the Workshop has always shown, and the
+ * Category is the default: it is what the Workshop has always shown, and the
  * stage pane is the board a viewer can already reach from the view strip.
  *
- * It was spelled 'category' until the app's two groupings were merged onto
- * one mechanism. That was the wrong noun for this pane: it groups by the
- * app's THEMES — what the work is about — while a category is what KIND of
- * work it is. Both being called "category" is precisely what the merge fixed.
+ * #2332 spelled it 'theme' for one release, on the argument that this pane
+ * groups by what the work is ABOUT while a category is what KIND of work it
+ * is. That split is gone — there is ONE grouping now and it is called a
+ * category, which is what the card chip's own tooltip had been saying all
+ * along. 'theme' is kept as the legacy spelling for the release that shipped
+ * it, so nobody's stored preference or link resolves to nothing.
  */
-export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'theme';
+export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'category';
 
-/** The old spelling, still honoured so a stored preference survives. */
-const LEGACY_GROUPS: Record<string, WorkshopGroup> = { category: 'theme' };
+/** Spellings retired along the way, still honoured so a preference survives. */
+const LEGACY_GROUPS: Record<string, WorkshopGroup> = { theme: 'category' };
 
 export function isWorkshopGroup(value: unknown): value is WorkshopGroup {
   return typeof value === 'string' && (WORKSHOP_GROUPS as readonly string[]).includes(value);
