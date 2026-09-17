@@ -278,6 +278,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2370: the social-account scope disclosure ───────────────────
+  'github-link-scope': '#2370: the scope line under the provider rows — no repository access, no provider token, and that this is account control rather than proof of unique humanity. It used to sit in a 76-word section lead ahead of the rows, read before anyone could act. It is deliberately NOT a disclosure: dapp.json asserts these phrases with no interaction step, which is the product stating they must be readable without a tap.',
   // ── #2266: password-reset completion ─────────────────────────────
   'login-reset-success': '#2266: the durable success notice shown on the login form after a completed email password reset. The reset form is terminal now, so its old inline status has no successful state to render.',
   // ── #1911: the create-app dialog is three steps ───────────────────

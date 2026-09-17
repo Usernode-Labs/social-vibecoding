@@ -27,13 +27,15 @@
  * the configuration check's in-flight/verdict line. Both were local variables
  * closed over by a listener before.
  *
- * @typedef {{ title: string, detail: string, tone: 'plain'|'warn'|'ok' }} TierCardView
+ * @typedef {{ title: string, amount: string|null, note: string|null, done: boolean,
+ *             tone: 'plain'|'warn' }} TierCardView
  * @typedef {{ source: string, callbackUrl: string, warning: string, demo: boolean,
  *             name: string, provider: string }} DiagnosticsView
  * @typedef {{
  *   provider: 'github'|'x', name: string, heading: string,
  *   badge: { text: string, tone: 'emerald'|'amber' }|null,
  *   state: { text: string, tone: 'amber'|'emerald'|'muted' },
+ *   done?: boolean, amount?: string|null, handle?: string|null,
  *   linkedAt: string|null, noToken: string|null,
  *   connect: { label: string, href: string|null, intent: 'connect'|'refresh'|'replace' }|null,
  *   refresh: { label: string, href: string|null, intent: 'connect'|'refresh'|'replace' }|null,
