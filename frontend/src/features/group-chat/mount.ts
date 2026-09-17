@@ -90,12 +90,21 @@ export function publishTranscript(
  * property through the reconciler instead of around it.
  */
 export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'): void {
-  transcriptStore.set((s: TranscriptState) => {
-    const view = s.byKey[key] || EMPTY_VIEW;
-    return {
-      ready: true,
-      byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
-    };
+  // Flushed, and only here (#2389): both callers — `handleIncoming` and
+  // `_handleThreadIncoming` — scroll to the bottom on the very next line,
+  // measuring `scrollHeight`. Batched, that measured the transcript WITHOUT
+  // the new row, so the message you had just sent landed under the fold. The
+  // store as a whole is deliberately not `setFlush(flushSync)`: its patch path
+  // runs from `refreshVoteControls` inside a React effect, where flushSync
+  // logs a console error. Both append callers are websocket handlers.
+  flushSync(() => {
+    transcriptStore.set((s: TranscriptState) => {
+      const view = s.byKey[key] || EMPTY_VIEW;
+      return {
+        ready: true,
+        byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
+      };
+    });
   });
 }
 
