@@ -8175,20 +8175,6 @@ CREATE TABLE IF NOT EXISTS account_email_verifications (
 );
 COMMENT ON TABLE account_email_verifications IS 'staging:private';
 
--- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
-CREATE TABLE IF NOT EXISTS preview_operations (
-  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  desired_revision TEXT NOT NULL,
-  run_id UUID,
-  revision TEXT,
-  phase TEXT,
-  state TEXT NOT NULL DEFAULT 'queued',
-  result JSONB,
-  finished_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE preview_operations IS 'staging:private';
-
 -- ── Demo mode ──────────────────────────────────────────────────────────
 --
 -- A recording of the proposal flow needs a second participant who proposes
@@ -8205,3 +8191,22 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_mode BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_base_sha VARCHAR(40);
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+--
+-- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
+-- applies schema.sql from this CREATE TABLE to the end of the file into a
+-- scratch schema that holds nothing else, so anything appended after it has
+-- to stand on its own there — an ALTER TABLE on users or apps does not.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';
