@@ -154,7 +154,7 @@ test('the viewer\'s own event sits on the right: the row runs right to left, no 
   const html = renderComponent(EVENT, 'EventRow', { msg });
   assert.match(html, new RegExp(`^<div class="flex gap-3 px-4 py-2 flex-row-reverse gc-event gc-event-self" data-msg-id="${msg.id}"`));
   assert.doesNotMatch(html, /rounded-xl h-11 w-11/, 'no avatar beside your own event');
-  assert.match(html, /<div class="min-w-0 flex-1"><div class="flex items-baseline gap-2 flex-row-reverse"><span class="truncate [^"]*"><span data-event-sender="">evan<\/span>/, 'the header runs right to left: the name at the edge');
+  assert.match(html, /<div class="min-w-0 flex-1"><div class="flex items-baseline gap-2 justify-end"><span class="truncate [^"]*"><span data-event-sender="">evan<\/span><\/span><span class="shrink-0 [^"]*"><span class="gc-msg-time"/, 'the header is pushed to the right edge but still reads name then time (#2392)');
   assert.match(html, /<div class="text-\[1\.0625rem\] leading-snug text-zinc-900 dark:text-zinc-100 flex flex-col items-end"><a class="gc-event-box"/, 'the box column stacks against the right edge');
   const theirs = renderComponent(EVENT, 'EventRow', { msg: submitted('open') });
   assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-event" /, 'somebody else\'s stays on the left, with the avatar');
@@ -172,7 +172,7 @@ test('in the general chat a person\'s message is a bubble under their name; your
   const mine = renderToHtml(createElement(MessageRow, { msg: human('mine'), bubbled: true }).type === undefined ? null : createElement(MessageRow, { msg: { ...human('mine'), username: 'evan', mine: true }, bubbled: true }));
   assert.match(mine, /^<div class="flex gap-3 px-4 py-2 flex-row-reverse gc-msg gc-msg-self" data-msg-id="\d+" data-username="evan">/, 'the row runs right to left, and keeps gc-msg-self for the reaction bar');
   assert.doesNotMatch(mine, /rounded-xl h-11 w-11/, 'no avatar beside your own words');
-  assert.match(mine, /<div class="flex items-baseline gap-2 flex-row-reverse"><span class="truncate [^"]*"><span class="gc-msg-username-self">evan<\/span>/);
+  assert.match(mine, /<div class="flex items-baseline gap-2 justify-end"><span class="truncate [^"]*"><span class="gc-msg-username-self">evan<\/span>/, 'name then time, not reversed (#2392)');
   assert.match(mine, /flex flex-col items-end"><div class="gc-bubble gc-bubble-self"><div class="gc-msg-content"><p>mine<\/p><\/div><\/div>/);
 
   // A quoted reply and files ride inside the bubble.
