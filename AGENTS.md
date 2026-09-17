@@ -1,5 +1,21 @@
 # Coding-agent project guidance
 
+## Scope of this guidance
+
+These instructions govern only files inside the
+`Usernode-Labs/social-vibecoding` Git worktree. Every path below is relative
+to this repository's root; a same-named path in a separate repository does
+not inherit the rule. When a task opens or clones another repository, use
+that repository's own agent instructions for its files instead of applying
+this file to them.
+
+Some coding agents retain the repository-instruction chain from where a task
+started. If a task started in this repository and the work moves to an
+unrelated repository, do not carry these instructions across that boundary.
+Make sure the agent has loaded the other repository's own guidance; if it
+cannot refresh repository context in place, start a fresh task rooted there
+before editing it.
+
 ## Shared task workflows
 
 This repository keeps conditional procedures as portable Agent Skills instead

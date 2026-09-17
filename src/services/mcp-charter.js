@@ -95,6 +95,11 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Homeroom account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
   },
   {
+    id: 'repository-instruction-boundary',
+    title: 'Repository instructions stop at the repository boundary',
+    text: 'Before editing, make sure the active coding-agent context is rooted in the app repository or its fork and has loaded that repository\'s own instructions. Instructions from the repository where a task started do not become rules for a separate repository merely because the agent cloned it or changed directory into it. Some agents refresh repository guidance in place and some retain their starting context; when unrelated repository instructions remain active, use prepare_work\'s guidance to open a fresh task rooted in the app repository even if the current conversation has code-editing tools.',
+  },
+  {
     // Charter-only, and deliberately so (#1433). SERVER_INSTRUCTIONS sits at
     // 1399 of its 1400-character budget, so a brief here would have to be
     // paid for by deleting an existing clause — and every clause in

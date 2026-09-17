@@ -596,6 +596,13 @@ function buildWorkOrder({
   // work order's "exactly as named above" made the agent rewrite a finished
   // commit onto a differently-named branch for no benefit. Check first.
   setup.push(
+    'Before editing, make sure this agent context is rooted in this app repository',
+    '(or its fork) and has loaded this repository\'s own instructions. Some coding',
+    'agents retain instructions from the project where a task started, so cloning',
+    'this repository or changing directory from an unrelated project may not',
+    'replace them. If unrelated repository instructions are still active, start a',
+    'fresh task rooted in this repository and use this same work order there.',
+    '',
     'If your harness has already put you in a clone of the fork, do not re-clone.',
     'Check where you are and keep the branch you are on if it starts at the right',
     'commit:',
