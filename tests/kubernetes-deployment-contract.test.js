@@ -52,6 +52,16 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
+test('Kubernetes enables visual evidence by default with one explicit kill switch', () => {
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /visualEvidenceV2Enabled: true/);
+  assert.match(platform,
+    /name: VISUAL_EVIDENCE_V2_ENABLED, value: \{\{ \.Values\.platform\.visualEvidenceV2Enabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /visualEvidenceV2Enabled \| default true/,
+    'Helm default treats boolean false as empty and would defeat the kill switch');
+});
+
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const workerDockerfile = read('worker/Dockerfile');

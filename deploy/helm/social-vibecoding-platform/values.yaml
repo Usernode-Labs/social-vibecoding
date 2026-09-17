@@ -19,6 +19,9 @@ platform:
   # Activation/rollback requires draining all flag-off/on platform Pods;
   # see docs/kubernetes-operations.md. Mixed coordination modes are unsafe.
   previewLifecycleEnabled: false
+  # Agent-authored visual evidence is default-on. Set false only as an
+  # emergency kill switch; legacy default-root screenshots stay suppressed.
+  visualEvidenceV2Enabled: true
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform

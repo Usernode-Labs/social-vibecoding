@@ -1,7 +1,8 @@
 # Agent-authored visual evidence for proposal reviews
 
-Status: implemented on `b/issue-2380-visual-evidence-plan`; deployment canary
-and production rollout remain pending
+Status: implemented, merged, and deployed. Collection, execution, and
+presentation are default-on and advisory; one emergency kill switch can stop
+the mechanism without restoring legacy default-route screenshots.
 
 Tracks: [GitHub issue #2380](https://github.com/Usernode-Labs/social-vibecoding/issues/2380)
 
@@ -362,10 +363,11 @@ containers and databases are removed after the run. On a new head:
 - remove its PR block or change it to a pending link;
 - queue a new paired run.
 
-During initial rollout evidence is advisory. After the success and relevance
-targets in the rollout section are met, a UI-affecting proposal may be visible
-while evidence runs, but review/vote controls remain pending until evidence is
-`verified`, `not_required`, or explicitly overridden by an authorized human.
+Evidence is advisory by default: collection, execution, and presentation are
+active on every deployment, while review/vote controls remain available. A
+future enforcement change may gate those controls only after the success and
+relevance targets below are met and evidence is `verified`, `not_required`, or
+explicitly overridden by an authorized human.
 
 ## Version 1 evidence-plan contract
 
@@ -1013,15 +1015,16 @@ Record separately:
 ## Integration with existing proposal checks
 
 - Leave `capture/capture.js` and the declared `dapp.json` check runner in
-  place during rollout.
+  place for proposal correctness checks.
 - Proposal checks continue to gate correctness and console health.
 - The new evidence runner does not execute the full check suite.
 - A relevant `dapp.json` visual scenario may seed evidence intent, but it is
   not accepted as evidence until its interaction plan is replayed and
   reviewed.
 - Stop publishing default `/` media for sessions enrolled in evidence v2.
-- Keep legacy route capture only for proposals created before enrollment or
-  behind an emergency rollback flag.
+- Keep legacy route capture only for historical proposals created before
+  evidence-v2 enrollment. The emergency kill switch suppresses new review
+  media instead of reviving route-only capture.
 - Remove the convention that agents must add screenshot-only deep links once
   evidence v2 is enforced. Deep links remain useful product/testing affordances
   when they have value beyond capture.
@@ -1042,9 +1045,7 @@ Add:
 - schema additions for runs, artifacts, and session summary fields;
 - `visualEvidence` submission parsing and result fields;
 - read-only status serialization;
-- feature flags:
-  - `VISUAL_EVIDENCE_V2_ENABLED`;
-  - `VISUAL_EVIDENCE_V2_ENFORCE`;
+- one default-on emergency kill switch: `VISUAL_EVIDENCE_V2_ENABLED=false`;
 - metrics for required/planned/missing/defaulted legacy evidence.
 
 Tests:
@@ -1227,23 +1228,24 @@ Tests:
 Exit criterion: reviewers can understand what changed without opening the
 preview or reading implementation details.
 
-### Slice 8: Enforcement and legacy retirement
+### Slice 8: Default-on operation, enforcement, and legacy retirement
 
-Roll out in stages:
+Collection, execution, and presentation ship enabled. They do not require a
+canary deployment or an operator configuration change. Operate in stages:
 
-1. **Shadow:** run evidence v2 for selected self-app proposals while legacy
-   visuals remain primary. Collect metrics and human relevance ratings.
-2. **Prefer v2:** show verified v2 evidence first; show no legacy fallback when
-   v2 explicitly fails.
-3. **Advisory requirement:** UI proposals without verified evidence display a
-   warning and require an explicit reviewer acknowledgement.
-4. **Enforce:** UI proposal review/vote actions require `verified`,
-   `not_required`, or authorized `overridden` evidence.
-5. **Retire:** stop generating automatic scroll GIFs and remove the mandatory
+1. **Advisory:** run evidence v2 for proposals that carry intent, show verified
+   v2 evidence first, and collect metrics and human relevance ratings.
+2. **Improve:** fix failure classes while leaving missing/failed evidence
+   truthful and never substituting legacy route media.
+3. **Enforce later:** only through a separate reviewed product change after the
+   promotion targets below are met; UI proposal review/vote actions may then
+   require `verified`, `not_required`, or authorized `overridden` evidence.
+4. **Retire:** stop generating automatic scroll GIFs and remove the mandatory
    screenshot-state-deep-link convention.
 
-Keep the emergency flag capable of disabling enforcement without restoring
-irrelevant `/` screenshots.
+Keep one emergency switch capable of stopping evidence v2 without restoring
+irrelevant `/` screenshots. Do not split ordinary activation across deployment
+flags.
 
 ## Test strategy
 
@@ -1331,16 +1333,18 @@ The issue is complete only when all of these are true:
 - Privileged evidence is never served through the public legacy visual route.
 - Reviewers see the claim, concise flow, focused pair, provenance, and
   verification status together.
-- UI-evidence enforcement can be enabled or disabled independently without
-  reviving the `/` fallback.
+- The default-on evidence mechanism has one emergency off switch that never
+  revives the `/` fallback; enforcement remains advisory until separately
+  approved.
 
 ## Rollback and operational recovery
 
 - All schema changes are additive.
-- Feature flags separate collection, execution, presentation, and enforcement.
-- Disabling execution leaves proposal checks and staging previews untouched.
-- Disabling enforcement does not publish legacy default-root captures; it
-  changes the state to advisory/missing.
+- One default-on switch controls collection, execution, and presentation as a
+  unit; setting it to false leaves proposal checks and staging previews
+  untouched and does not publish legacy default-root captures.
+- Evidence remains advisory by default. Enabling a merge/review gate is a
+  separate reviewed product change, not a deployment flag rollout.
 - A stuck evidence run is terminalized with its phase and can be rerun on the
   same commit.
 - A platform restart adopts or cancels a run using its heartbeat and exact
