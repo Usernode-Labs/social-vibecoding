@@ -25,11 +25,12 @@ poolMod.getPool = () => ({
 });
 
 // No GitHub creds in the test env. Since #1350 the interactive create route
-// does not touch GitHub at all (the branch is minted on the first turn, by
-// sessionLifecycle.ensureSessionBranch), so this stub is belt-and-braces —
-// and the INSERT's params start one position earlier than they used to,
-// because branch_name is now a literal NULL in the VALUES list rather than
-// a bound parameter.
+// mints no branch (that happens on the first turn, by
+// sessionLifecycle.ensureSessionBranch); its only GitHub read is #2364's
+// open-issue check before claiming, which the claim tests at the bottom
+// switch on per test. The INSERT's params start one position earlier than
+// they used to, because branch_name is now a literal NULL in the VALUES
+// list rather than a bound parameter.
 const github = require('../src/services/github');
 github.isEnabled = () => false;
 
@@ -293,4 +294,150 @@ test('repo-less app is rejected with 400 before any session INSERT', async () =>
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
+});
+
+// #2364: "Start work" on an issue card creates its session through this
+// route, and starting work on an issue claims and assigns it for the
+// starter — but only an issue GitHub confirms is OPEN on this app's repo,
+// because the number is client input. A claim never fails the session.
+function installClaimCapture({ created = true } = {}) {
+  const calls = [];
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    calls.push({ sql: s, params });
+    if (/INSERT INTO chat_sessions/.test(s)) {
+      return { rows: [{ id: 99, status: 'active', created_from_issue_number: params[2] }] };
+    }
+    if (/INSERT INTO issue_claims/.test(s)) {
+      return { rows: [{ claimed_at: '2026-09-17T00:00:00Z', created }] };
+    }
+    if (/COUNT\(\*\)/.test(s)) return { rows: [{ cnt: '0' }] };
+    return { rows: [] };
+  };
+  return {
+    claim: () => calls.find((c) => /INSERT INTO issue_claims/.test(c.sql)) || null,
+    vote: () => calls.find((c) => /INSERT INTO topic_attribute_votes/.test(c.sql)
+      && c.params && c.params[1] === 'issue') || null,
+  };
+}
+
+// services/issue-claims.js reads ws off the module object at call time.
+function stubClaimCollaborators(t, { issue, enabled = true }) {
+  const ws = require('../src/services/ws');
+  const orig = {
+    isEnabled: github.isEnabled,
+    fetchPublicIssue: github.fetchPublicIssue,
+    sendSystemMessage: ws.sendSystemMessage,
+    pushIssueUpdate: ws.pushIssueUpdate,
+  };
+  const seen = { fetches: [], messages: [], pushes: [] };
+  github.isEnabled = () => enabled;
+  github.fetchPublicIssue = async (owner, repo, n) => {
+    seen.fetches.push([owner, repo, n]);
+    if (issue instanceof Error) throw issue;
+    return { issue };
+  };
+  ws.sendSystemMessage = async (pool, appId, content, msgType, metadata, thread) => {
+    seen.messages.push({ content, thread });
+  };
+  ws.pushIssueUpdate = (payload) => { seen.pushes.push(payload); };
+  t.after(() => {
+    github.isEnabled = orig.isEnabled;
+    github.fetchPublicIssue = orig.fetchPublicIssue;
+    ws.sendSystemMessage = orig.sendSystemMessage;
+    ws.pushIssueUpdate = orig.pushIssueUpdate;
+    poolQueryHandler = async () => ({ rows: [] });
+  });
+  return seen;
+}
+
+async function postSession(body) {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    return await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } finally {
+    server.close();
+  }
+}
+
+test('starting work on an OPEN issue claims and assigns it for the starter', async (t) => {
+  const seen = stubClaimCollaborators(t, { issue: { number: 287, title: 't', state: 'open' } });
+  const capture = installClaimCapture();
+  const res = await postSession({ issueNumber: 287 });
+  assert.strictEqual(res.status, 201);
+
+  assert.deepStrictEqual(seen.fetches, [['bot', 'demo', 287]]);
+  const claim = capture.claim();
+  assert.ok(claim, 'a claim upsert was issued');
+  assert.deepStrictEqual(claim.params, [1, 287, 7]);
+  const vote = capture.vote();
+  assert.ok(vote, 'the issue assignee vote was cast');
+  assert.deepStrictEqual(vote.params, [1, 'issue', 287, 'assignee', 'tester', 7]);
+  assert.deepStrictEqual(seen.messages, [
+    { content: 'tester claimed this issue', thread: { type: 'issue', ref: 287 } },
+  ]);
+  assert.deepStrictEqual(seen.pushes, [
+    { action: 'claimed', appSlug: 'demo', appId: 1, issueNumber: 287 },
+  ]);
+});
+
+test('a CLOSED issue is not claimed, but the session is still created', async (t) => {
+  const seen = stubClaimCollaborators(t, { issue: { number: 287, title: 't', state: 'closed' } });
+  const capture = installClaimCapture();
+  const res = await postSession({ issueNumber: 287 });
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual(seen.fetches.length, 1);
+  assert.strictEqual(capture.claim(), null, 'no claim upsert');
+  assert.strictEqual(capture.vote(), null, 'no issue assignee vote');
+  assert.strictEqual(seen.pushes.length, 0);
+});
+
+test('an issue GitHub cannot confirm (degraded fetch) is not claimed', async (t) => {
+  const seen = stubClaimCollaborators(t, { issue: null });
+  const capture = installClaimCapture();
+  const res = await postSession({ issueNumber: 287 });
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual(seen.fetches.length, 1);
+  assert.strictEqual(capture.claim(), null, 'no claim upsert');
+});
+
+test('a session with no issueNumber claims nothing and asks GitHub nothing', async (t) => {
+  const seen = stubClaimCollaborators(t, { issue: { number: 287, title: 't', state: 'open' } });
+  const capture = installClaimCapture();
+  const res = await postSession({});
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual(seen.fetches.length, 0);
+  assert.strictEqual(capture.claim(), null, 'no claim upsert');
+});
+
+test('with GitHub disabled the issue cannot be verified, so nothing is claimed', async (t) => {
+  const seen = stubClaimCollaborators(t, {
+    issue: { number: 287, title: 't', state: 'open' }, enabled: false,
+  });
+  const capture = installClaimCapture();
+  const res = await postSession({ issueNumber: 287 });
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual(seen.fetches.length, 0);
+  assert.strictEqual(capture.claim(), null, 'no claim upsert');
+});
+
+test('a failing claim never fails session creation', async (t) => {
+  stubClaimCollaborators(t, { issue: { number: 287, title: 't', state: 'open' } });
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/INSERT INTO chat_sessions/.test(s)) {
+      return { rows: [{ id: 99, status: 'active', created_from_issue_number: params[2] }] };
+    }
+    if (/INSERT INTO issue_claims/.test(s)) throw new Error('db down');
+    if (/COUNT\(\*\)/.test(s)) return { rows: [{ cnt: '0' }] };
+    return { rows: [] };
+  };
+  const res = await postSession({ issueNumber: 287 });
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual((await res.json()).session.id, 99);
 });

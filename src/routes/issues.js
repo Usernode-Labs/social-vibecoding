@@ -15,6 +15,7 @@ const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
+const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
@@ -2302,49 +2303,17 @@ function issueRoutes(config) {
         });
       }
 
-      // Upsert the caller's own claim. `xmax = 0` distinguishes a fresh
-      // INSERT (announce in the thread) from a renewal (silent — the
-      // claimer just restarted their clock).
-      const { rows } = await pool.query(
-        `INSERT INTO issue_claims (app_id, github_issue_number, user_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (app_id, github_issue_number, user_id)
-           DO UPDATE SET claimed_at = NOW()
-         RETURNING claimed_at, (xmax = 0) AS created`,
-        [app.id, issueNumber, req.user.id]
-      );
-      const created = !!rows[0]?.created;
-
-      // #1648: claiming is an explicit statement that the caller is taking
-      // the issue, so mirror it into the existing community-voted assignee
-      // field. Do this on renewals too: re-claiming repairs a missing or
-      // independently changed self-assignment. Releasing remains separate —
-      // it must not erase metadata that the user may have edited afterward.
-      await topicAttrs.castVote(
-        pool, app.id, 'issue', issueNumber, 'assignee', req.user.username, req.user.id
-      );
-
-      if (created) {
-        // On-the-record note in the issue's own discussion thread (which
-        // also freshens the thread clock every claim keys off).
-        await sendSystemMessage(pool, app.id,
-          // #1112: "claimed" rather than "marked this issue in progress" —
-          // a claim is one of seven things the board used to call "In
-          // progress", and it is the only one this route creates. Rows
-          // already written keep their old wording; not worth a migration.
-          `${req.user.username} claimed this issue`,
-          'system', null, { type: 'issue', ref: issueNumber }
-        ).catch((err) => log.warn('issues', 'Claim chat message failed', { err: err.message }));
-      }
-
-      pushIssueUpdate({
-        action: 'claimed', appSlug: app.slug, appId: app.id, issueNumber,
+      // #2364: the upsert, the #1648 assignee vote, the thread note and the
+      // push live in services/issue-claims.js, shared with the two routes
+      // that start work on an issue.
+      const { created, claimedAt } = await claimIssueForUser(pool, {
+        app, issueNumber, user: req.user,
       });
 
       log.info('issues', created ? 'Issue claimed' : 'Issue claim renewed', {
         appId: app.id, issueNumber, by: req.user.username,
       });
-      res.json({ ok: true, created, claimedAt: rows[0]?.claimed_at || null });
+      res.json({ ok: true, created, claimedAt });
     } catch (err) {
       log.error('issues', 'Issue claim failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
