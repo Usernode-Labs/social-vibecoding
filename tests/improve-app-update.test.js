@@ -223,7 +223,7 @@ test('the panel offers the reload of the app on its own row, through Improve.rel
 
 test('the landed state has a declared check on the staging fork fixture', () => {
   const landed = MANIFEST.tests.find((t) => t.expectSelector && t.expectSelector.includes('button#improve-app-update-ready'));
-  assert.ok(landed && /shot=app-update-ready#app\/staging-demo-fork/.test(landed.path));
+  assert.ok(landed && /shot=app-update-ready#app\/staging-demo-forkable/.test(landed.path));
   assert.match(landed.expectSelector, /#improve-btn-glyph\[data-state=ready\]/);
   // One check, not two: the building state is the note and spinner the
   // platform-updating check already photographs, and the manifest keeps 20
