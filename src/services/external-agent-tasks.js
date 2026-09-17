@@ -636,6 +636,28 @@ function buildWorkOrder({
     `${CMD}npm ci`
   );
 
+  // What to run before submitting, and how much of it. Homeroom runs the
+  // whole unit suite and every declared check against the commit once it is
+  // submitted, in a clean container; a local run of everything duplicates
+  // that, minutes at a time, and one hung test used to hold it open for
+  // good. The local run is for the files the change touched. The platform's
+  // own repository maps a diff to the suites that read its files
+  // (scripts/test-changed.js, with the base commit this order already names);
+  // an app without that script picks the tests by hand.
+  setup.push(
+    '',
+    'Before you submit, run the tests that cover the files you changed, not the',
+    'whole suite: Homeroom runs every unit test and every declared check against',
+    'your commit when you submit, so the local run is for catching what your',
+    'change touches, quickly. If the repository has a `test:changed` script',
+    '(the platform\'s own does), it maps your diff against the base commit to',
+    'the suites that read those files and runs only them:',
+    `${CMD}npm run test:changed -- --base ${baseSha}`,
+    'Run the whole suite only when shared code moved and you cannot tell what',
+    'depends on it. After a check fails on the platform, re-run the failing',
+    'suites and the ones for your fix, not everything.'
+  );
+
   // The base commit is the single most-mangled part of this text: it reaches
   // the coding agent through an assistant that likes to paraphrase. Say what
   // failure looks like and how to recover, so a bad transcription corrects

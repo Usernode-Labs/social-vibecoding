@@ -61,6 +61,36 @@ selects a skill.
   diffed against decides what the group is voting on; a wrong base is caught
   only at submission, after the expensive work is already done.
 
+## Run the suites that pin what you changed; leave the whole suite to Homeroom
+
+- **The platform runs everything on every submission.** `npm run lint:sql`,
+  the full unit suite (`npm test`) and every declared `dapp.json` check run
+  against the submitted commit in a clean container, and they gate the merge.
+  A local run of all 13,000+ tests duplicates that, minutes at a time, and
+  one hung test once held such a run open for an hour with no failure in it.
+  The local run's job is narrower: to know, before you submit, whether the
+  files you touched still satisfy the suites that read them.
+- **`npm run test:changed -- --base <40-character-base-sha>` runs exactly
+  those.** It diffs the working tree against the base commit (committed,
+  staged, unstaged and untracked alike), maps each changed file to the suites
+  that name it — tests here read their sources by path — plus the suites of
+  the files that import a changed module under `frontend/` or `src/`, and
+  runs them with the `test` script's own preload, flags and timeout.
+  `--list` prints the mapping and the command without running; `--files a,b`
+  names the changed files yourself. A changed file no suite names is printed
+  as such: for a screen, that is the test that does not exist yet; for shared
+  code, it is the cue below.
+- **Run `npm test` only when shared code moved and the mapping cannot see
+  who depends on it** — a `public/js/**` module other modules reach through
+  a global (the mapping runs the suites that name the module, not those of
+  its callers), `app.css`, a primitive many screens draw with. After a check
+  fails on the platform, re-run the failing suites and the ones for your fix,
+  not everything.
+- **A hang is a failure, not a wait.** `npm test` runs with
+  `--test-timeout=180000`, which bounds every test and every file as a whole
+  (the slowest file takes about twelve seconds); a test that never settles
+  fails after three minutes instead of holding the summary open.
+
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
