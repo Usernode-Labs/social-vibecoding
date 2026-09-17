@@ -37,9 +37,10 @@
  * glyph and the link are all on the view model (`GroupChat._proposalEvent`,
  * `_eventIcon`, `_eventHref` in public/js/group-chat.js). This component
  * composes the line from those facts and draws. It renders no controls host,
- * and its class is `gc-event`, not `gc-msg`: the delegated handlers in
- * group-chat.js (tap-to-quote, long-press) select on the latter, and an
- * anchor is what a tap here should follow.
+ * and its class is `gc-event`, not `gc-msg`: group-chat.js's long-press and
+ * react handlers select on the latter, so an event gets no reaction bar. Its
+ * tap-to-quote takes `gc-event` as well (#2390) — a tap on the row replies to
+ * it, while the box is an anchor, and a tap there follows the link.
  */
 
 import { ChatMessageRow } from '@/components/ui/chat';
