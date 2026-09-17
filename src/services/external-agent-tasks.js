@@ -1238,13 +1238,15 @@ function buildWorkOrder({
 // change. Written out rather than pulled from the conventions doc because
 // the diagnosis ("this is your container, not your code") is specific to an
 // agent working offline and belongs nowhere else.
-// PATHS, not URLs. This list used to hold three ABSOLUTE URLs on whatever
-// the platform's hostname was when it was written — and once the platform
-// moved, that host stopped answering, so every work order was handing
-// coding agents three dead links and inviting them to write the same dead
-// host into the app they were building. The origin is resolved per
-// deployment instead, the way services/template.js already does it, so a
-// self-hosted fork and a domain move both carry through by themselves.
+// PATHS, not URLs, and the work order shows them as paths too (#2319). This
+// list used to hold three ABSOLUTE URLs on whatever the platform's hostname
+// was when it was written; once the platform moved, that host stopped
+// answering, and every work order had been inviting agents to write it into
+// the app they were building. Resolving the origin per deployment fixed the
+// dead links but not the habit: apps built from those orders hard-coded
+// my.onhomeroom.com instead, which breaks on the next move the same way. The
+// platform serves these paths on every app's own address, so the only
+// spelling that survives a domain move is the relative one.
 const HOSTED_ASSET_PATHS = Object.freeze([
   '/usernode-bridge/v1/bridge.js',
   '/usernode-native/v1/native.css',
@@ -1260,25 +1262,25 @@ function platformOriginFrom(webPath) {
   return domain ? `https://${domain}` : null;
 }
 
-function hostedAssetUrls(origin) {
-  return HOSTED_ASSET_PATHS.map((assetPath) => (origin ? `${origin}${assetPath}` : assetPath));
-}
-
 function hostedAssetWarning(webPath) {
   const origin = platformOriginFrom(webPath);
   const lines = [
     'ABOUT THE APP\'S HOSTED ASSETS (read before you "fix" the styling)',
-    'Every Homeroom app loads three files from the platform, centrally hosted:',
-    ...hostedAssetUrls(origin).map((u) => `${CMD}${u}`),
-    'Your container may not be able to reach that host. When it cannot, the app',
-    'renders unstyled in a local browser and any native-kit assertion fails. That',
+    'Every Homeroom app loads three files from the platform, centrally hosted.',
+    'The platform serves them on the app\'s OWN address, so reference them by',
+    'these RELATIVE paths, exactly as written — never with a hostname in front:',
+    ...HOSTED_ASSET_PATHS.map((p) => `${CMD}${p}`),
+    'A hostname written into the app breaks the next time the platform\'s domain',
+    'moves; that is how apps lost their styling and bridge after the last move.',
+    'Your local container does not serve these paths, so there the app renders',
+    'unstyled in a browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
     'Vendoring those files into the repository is forbidden: the copy freezes the',
     'day you make it, and the fleet-wide fixes and rollbacks central hosting buys',
     'stop reaching this app. No automated check catches that. A cdn.tailwindcss.com',
     'tag is a different thing — a legacy state many apps are still in, whose checks',
     'pass: do not add one, do not "fix" one as a drive-by, and when migrating IS the',
-    'task swap it to the Tailwind URL above (including any copy of that hostname in',
+    'task swap it to the Tailwind path above (including any copy of that hostname in',
     'the app\'s sw.js precache list). The staging preview Homeroom builds — not a',
     'local screenshot — is the authority on how this change looks.',
   ];
@@ -3584,7 +3586,6 @@ module.exports = {
   SUBMIT_VIA,
   SUBMIT_SOURCES,
   HOSTED_ASSET_PATHS,
-  hostedAssetUrls,
   platformOriginFrom,
   normalizeAgent,
   normalizeSource,

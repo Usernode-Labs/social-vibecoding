@@ -160,23 +160,26 @@ test('the work order names all three hosted assets and the full document URL', (
   // The three files whose absence made the app render unstyled in a
   // sandbox browser and one declared check fail.
   assert.equal(svc.HOSTED_ASSET_PATHS.length, 3);
-  // They are named on THIS DEPLOYMENT's origin, taken from the webPath the
-  // task was created from — not on a compiled-in hostname. The literal this
-  // used to assert, social-vibecoding.usernodelabs.org, stopped answering
-  // when the platform moved to my.onhomeroom.com, and every work order went
-  // on handing agents three dead links and inviting them to write that host
-  // into the app they were building.
-  for (const url of svc.hostedAssetUrls('https://usernode.example')) {
-    assert.ok(order.includes(url), `the work order names ${url}`);
-    assert.match(url, /^https:\/\/usernode\.example\//);
+  // They are named as RELATIVE paths, with no hostname in front (#2319).
+  // Absolute URLs on a compiled-in host (social-vibecoding.usernodelabs.org)
+  // went dead when the platform moved; absolute URLs on the deployment's own
+  // origin then got copied into apps as my.onhomeroom.com, which breaks on
+  // the next move the same way. The platform serves these paths on every
+  // app's own address, so the relative form is the one to copy.
+  for (const assetPath of svc.HOSTED_ASSET_PATHS) {
+    assert.match(assetPath, /^\/usernode-/);
+    assert.ok(order.includes(assetPath), `the work order names ${assetPath}`);
+    assert.ok(!order.includes(`https://usernode.example${assetPath}`),
+      `and never on a hostname: ${assetPath}`);
   }
+  assert.match(order, /RELATIVE paths, exactly as written/);
   assert.doesNotMatch(order, /social-vibecoding\.usernodelabs\.org/);
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-bridge')));
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-native')));
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-tailwind')));
 
   // The diagnosis, so a less careful agent does not "fix" the sandbox.
-  assert.match(order, /may not be able to reach that host/);
+  assert.match(order, /local container does not serve these paths/);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
   assert.match(order, /staging preview Homeroom builds/);
 

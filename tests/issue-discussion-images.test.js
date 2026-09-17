@@ -49,17 +49,35 @@ function loadRenderer() {
   };
 }
 
-test('image-enabled issue Markdown renders GitHub raw screenshot HTML safely', () => {
+test('image-enabled issue Markdown safely links a raw GitHub screenshot to its full-size asset', () => {
   const renderer = loadRenderer();
   const body = 'See below.\n\n'
     + '<img width="367" height="212" alt="Image" '
     + 'src="https://github.com/user-attachments/assets/example" onerror="alert(1)" />';
 
   const html = renderer.render(body, { images: true });
-  assert.match(html, /<img class="dc-inline-img" src="https:\/\/github\.com\/user-attachments\/assets\/example" alt="Image" loading="lazy">/);
+  assert.match(html, /<a class="dc-inline-img-link" href="https:\/\/github\.com\/user-attachments\/assets\/example" target="_blank" rel="noopener noreferrer" aria-label="View image full size"><img class="dc-inline-img" src="https:\/\/github\.com\/user-attachments\/assets\/example" alt="Image" loading="lazy"><\/a>/);
   assert.doesNotMatch(html, /onerror|width=|height=/, 'untrusted raw attributes are discarded');
   assert.ok(renderer.sanitizeOptions().ALLOWED_TAGS.includes('img'));
   assert.ok(renderer.sanitizeOptions().ALLOWED_ATTR.includes('src'));
+  assert.ok(renderer.sanitizeOptions().ALLOWED_ATTR.includes('aria-label'));
+});
+
+test('Markdown screenshots use the same full-size link, including same-origin assets', () => {
+  const renderer = loadRenderer();
+  const html = renderer.render('![Screenshot](/icons/icon-192.png)', { images: true });
+  assert.match(html, /<a class="dc-inline-img-link" href="\/icons\/icon-192\.png"[^>]*aria-label="View image full size"><img class="dc-inline-img" src="\/icons\/icon-192\.png" alt="Screenshot" loading="lazy"><\/a>/);
+});
+
+test('an explicitly linked image keeps its authored destination without nested links', () => {
+  const renderer = loadRenderer();
+  const html = renderer.render(
+    '[![Architecture](https://example.com/architecture.png)](https://example.com/design-notes)',
+    { images: true }
+  );
+  assert.equal((html.match(/<a\b/g) || []).length, 1);
+  assert.match(html, /<a href="https:\/\/example\.com\/design-notes"[^>]*><img class="dc-inline-img" src="https:\/\/example\.com\/architecture\.png"/);
+  assert.doesNotMatch(html, /dc-inline-img-link/);
 });
 
 test('raw image HTML stays escaped without opt-in and unsafe sources never render', () => {

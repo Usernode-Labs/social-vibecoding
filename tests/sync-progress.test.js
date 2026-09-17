@@ -77,12 +77,13 @@ function stub(id, exports) {
 // Load a fresh sync-main with worker + ws stubbed. execImpl receives
 // the execInWorker opts (so tests can drive opts.onProgress with the
 // worker's "[sync_*]" phase lines) and returns/throws the turn result.
-function loadSyncMain({ execImpl }) {
+function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, applied: true }) }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     worker: require.resolve('../src/services/worker'),
     ws: require.resolve('../src/services/ws'),
     sessionBus: require.resolve('../src/services/session-bus'),
+    cliHandoffSync: require.resolve('../src/services/cli-handoff-sync'),
     subject: require.resolve('../src/services/sync-main'),
   };
   const orig = {};
@@ -92,6 +93,7 @@ function loadSyncMain({ execImpl }) {
   const updates = [];   // pushSessionUpdate (banner channel)
   const globals = [];   // broadcastGlobal (session_event channel)
   const busEvents = []; // sessionBus.publish (per-session ring buffer)
+  const reconcileCalls = [];
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.worker, {
     ensureWorkerImage: async () => {},
@@ -110,6 +112,12 @@ function loadSyncMain({ execImpl }) {
     broadcastGlobal(data) { globals.push(data); },
   });
   stub(ids.sessionBus, { publish(sessionId, event) { busEvents.push({ sessionId, event }); } });
+  stub(ids.cliHandoffSync, {
+    async reconcileCliHandoffSync(args) {
+      reconcileCalls.push(args);
+      return reconcileImpl(args);
+    },
+  });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -119,7 +127,7 @@ function loadSyncMain({ execImpl }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, execCalls, updates, globals, busEvents, restore };
+  return { subject, execCalls, updates, globals, busEvents, reconcileCalls, restore };
 }
 
 function syncPool() {
@@ -290,6 +298,58 @@ test('lifecycle: already_synced short-circuit still emits starting → done so a
     const events = syncEvents(updates);
     assert.deepEqual(events.map((e) => e.state), ['starting', 'done']);
     assert.match(events[1].message, /already up to date/i);
+  } finally {
+    restore();
+  }
+});
+
+test('CLI handoff: clean and already-synced outcomes reconcile the managed revision', async () => {
+  for (const syncResult of ['clean', 'already_synced']) {
+    const sha = 'a'.repeat(40);
+    const { subject, reconcileCalls, restore } = loadSyncMain({
+      execImpl: async () => ({ syncResult, behind: 0, sha, pushOk: true, exitCode: 0 }),
+    });
+    try {
+      const session = sessionRow({ source: 'cli_handoff', status: 'active' });
+      const result = await subject.runSyncMain({}, syncPool(), 7, { sessionRow: session });
+      assert.equal(reconcileCalls.length, 1, syncResult);
+      assert.equal(reconcileCalls[0].newHead, sha);
+      assert.equal(result.managedRevision.ok, true);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('CLI handoff: unresolved conflicts never advance the managed revision', async () => {
+  const { subject, reconcileCalls, restore } = loadSyncMain({
+    execImpl: async () => ({
+      syncResult: 'conflict', behind: 2, sha: null, pushOk: false, exitCode: 0,
+    }),
+  });
+  try {
+    await subject.runSyncMain({}, syncPool(), 7, {
+      sessionRow: sessionRow({ source: 'cli_handoff', status: 'active' }),
+    });
+    assert.equal(reconcileCalls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('CLI handoff: a reconciliation race fails visibly instead of publishing old-head success', async () => {
+  const { subject, reconcileCalls, updates, restore } = loadSyncMain({
+    execImpl: async () => ({
+      syncResult: 'clean', behind: 0, sha: 'b'.repeat(40), pushOk: true, exitCode: 0,
+    }),
+    reconcileImpl: async () => ({ ok: false, reason: 'session_state_changed' }),
+  });
+  try {
+    await assert.rejects(() => subject.runSyncMain({}, syncPool(), 7, {
+      sessionRow: sessionRow({ source: 'cli_handoff', status: 'active' }),
+    }), /could not adopt its new proposal revision/);
+    assert.equal(reconcileCalls.length, 1);
+    assert.equal(syncEvents(updates).at(-1).state, 'failed');
   } finally {
     restore();
   }

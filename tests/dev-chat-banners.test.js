@@ -237,8 +237,22 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
     tag,
     '<button id="dc-new-change-btn" type="button" class="rounded-md bg-violet-600 '
     + 'hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 '
-    + 'text-xs font-medium text-white transition-colors shrink-0">'
+    + 'text-xs font-medium text-white transition-colors col-start-2 justify-self-start '
+    + 'sm:col-auto sm:justify-self-auto shrink-0">'
   );
+});
+
+test('the new-change explanation owns the phone row before its action', () => {
+  const html = bannersHtml({
+    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false },
+    credits: null, creditsLow: null,
+  });
+  assert.match(html,
+    /id="dc-new-change-banner" class="grid grid-cols-\[auto_minmax\(0,1fr\)\][^\"]*sm:flex/,
+    'phone layout is a two-column grid; desktop returns to the existing flex strip');
+  assert.match(html,
+    /id="dc-new-change-btn"[^>]*col-start-2 justify-self-start sm:col-auto sm:justify-self-auto/,
+    'the phone action starts under the copy, then becomes an ordinary flex child at sm');
 });
 
 test('the sync button stays hand-written, and that is the rule, not an exception', () => {

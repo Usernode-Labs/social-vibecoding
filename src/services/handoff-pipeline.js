@@ -73,8 +73,10 @@ function beginHandoffPipeline(sessionId) {
   };
 }
 
-function startHandoffPipeline(config, pool, session, app, headSha, releasePipeline) {
-  const run = runStaging(config, pool, session, app, headSha);
+function startHandoffPipeline(
+  config, pool, session, app, headSha, releasePipeline, trigger = 'commit-push'
+) {
+  const run = runStaging(config, pool, session, app, headSha, trigger);
   run.catch((err) => {
     log.error('handoff-pipeline', 'Unexpected handoff run rejection', {
       sessionId: session.id, err: err.message,
@@ -113,7 +115,7 @@ async function discardHandoffStaging(pool, session, app, result, expectedHeadSha
   }
 }
 
-async function runStaging(config, pool, session, app, headSha) {
+async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
   let result;
   try {
     result = await staging.buildAndDeployStaging(config, session, app, headSha);
@@ -202,7 +204,7 @@ async function runStaging(config, pool, session, app, headSha) {
   // captureForSession owns its terminal error verdict and never lets a test
   // runner failure escape. Awaiting it here keeps status honest while still
   // running entirely outside the original HTTP request.
-  await visuals.captureForSession(config, session, app, headSha, result, { trigger: 'commit-push' });
+  await visuals.captureForSession(config, session, app, headSha, result, { trigger });
   return result;
 }
 

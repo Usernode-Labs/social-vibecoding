@@ -2828,7 +2828,7 @@ async function settleCaptureRun(config, pool, run) {
   // path (a run whose launching process died) reports it too. A deferred
   // run takes no verdict, so it does not probe. Never throws.
   const assetOutcome = shotsOnly ? null : await assetRouteCheck.maybeRunAssetRouteCheck({
-    config, pool, appId: app.id, sessionId: session.id, stagingOrigin,
+    config, pool, appId: app.id, appSlug: app.slug, sessionId: session.id, stagingOrigin,
   });
   if (assetOutcome) extraRows.push(assetOutcome.row);
 

@@ -144,9 +144,9 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"
-              className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
+              className="mx-3 mt-3 mb-1 flex flex-col items-stretch gap-3 rounded-xl bg-violet-500/10 p-4 text-sm text-zinc-700 dark:text-zinc-200 shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:p-3"
             >
-              <div className="flex-1 min-w-[12rem]">
+              <div className="flex-1 min-w-0 sm:min-w-[12rem]">
                 <p className="font-semibold">You can come back later</p>
                 <p className="mt-1">
                   You can leave this page and return anytime. Open <strong>Improve</strong> in
@@ -155,7 +155,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
               </div>
               <Button
                 id="dc-return-hint-dismiss" type="button" size="sm" layout="shrink"
-                variant="neutral" ink="muted" className="min-h-[44px]"
+                variant="neutral" ink="muted" className="min-h-[44px] self-end sm:self-auto"
                 onClick={() => window.DevChat?.dismissReturnHint()}
               >Got it</Button>
             </aside>

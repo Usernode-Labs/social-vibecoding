@@ -529,7 +529,9 @@ async function refreshDriftState({ pool, session, pr, repo }) {
 // import + dev-turn callers; a genuine build failure is recorded as a
 // terminal 'error' verdict (recordStagingBootFailure) so the gate never
 // dead-ends on a NULL/pending state.
-async function rerunChecksForNewHead({ config, pool, session, newHead }) {
+async function rerunChecksForNewHead({
+  config, pool, session, newHead, trigger = 'pr-import',
+}) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   const app = {
@@ -539,11 +541,11 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 
   // Stamp 'pending' immediately so the badge stops showing the old-head
   // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead, 'building', 'pr-import')
+  await visuals.setChecksPending(pool, session.id, newHead, 'building', trigger)
     .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, newHead, 'building', 'pr-import');
+  visuals.notifyChecksPending(session.id, newHead, 'building', trigger);
 
   // #687: in mock-GitHub mode (staging previews) there is no real repo to
   // clone against the new head — record a gate-passing 'skipped' verdict
@@ -588,7 +590,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger: 'pr-import' })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));

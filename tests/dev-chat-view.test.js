@@ -428,6 +428,12 @@ test('the first-use capture renders the real explainer without changing saved pr
   assert.match(out, /<strong>Improve<\/strong>/);
   assert.match(out, /session’s status/);
   assert.match(out, /id="dc-return-hint-dismiss"[^>]*>Got it<\/button>/);
+  assert.match(out,
+    /id="dc-return-hint"[^>]*class="[^"]*flex flex-col items-stretch[^"]*sm:flex-row/,
+    'the phone hint stacks its copy and action; desktop restores the inline row');
+  assert.match(out,
+    /id="dc-return-hint-dismiss"[^>]*class="[^"]*self-end sm:self-auto/,
+    'the phone dismissal sits below the copy without changing its desktop alignment');
   DevChat.dismissReturnHint();
   assert.equal(view().returnHint, false, 'the preview uses the real dismissal');
   assert.deepEqual(writes, [], 'a capture never consumes the account’s first-use state');

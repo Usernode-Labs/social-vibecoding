@@ -44,7 +44,11 @@ const SYNC_BTN
 const SHELL = {
   amber: 'flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   emerald: 'flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs',
-  violet: 'flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs',
+  // On a phone this is two rows: icon + readable copy, then the action
+  // aligned under the copy. Keeping the three children in one flex row made
+  // the paragraph surrender almost half of a 320px screen to the button.
+  // `sm:flex` restores the compact strip byte-for-byte at desktop widths.
+  violet: 'grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 gap-y-3 px-3 py-3 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs sm:flex sm:items-center sm:gap-2 sm:py-2',
   creditsAmber: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   creditsRed: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs',
 } as const;
@@ -119,7 +123,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
       <Button
         id="dc-new-change-btn" type="button"
         variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
-        className="shrink-0"
+        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
         disabled={b.pending}
         onClick={() => controller()?.startNewChange?.()}
       >

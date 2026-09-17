@@ -769,6 +769,46 @@ test('open tears the launch down when the server will not confirm the app', asyn
   assert.equal(cover.classList.contains('app-launch-cover--out'), false);
 });
 
+// ── 6b. AppView.open ownership ────────────────────────────────────────
+
+test('an older app detail response cannot replace the app opened after it', async () => {
+  const releases = {};
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: (url) => {
+      if (url.startsWith('/api/iframe-token')) {
+        const slug = new URL(url, 'https://platform.example').searchParams.get('app');
+        return Promise.resolve({ ok: true, json: async () => ({ token: `tok-${slug}` }) });
+      }
+      const slug = String(url).split('/').pop();
+      return new Promise((resolve) => {
+        releases[slug] = () => resolve({
+          ok: true,
+          json: async () => ({ app: { ...RUNNING, slug, name: slug } }),
+        });
+      });
+    },
+  });
+  // These effects are unrelated to the ownership race and would start
+  // background work the harness deliberately does not model.
+  AppView.prefetchDevData = () => {};
+  AppView.startActivityTracking = () => {};
+  AppView.startTokenRefresh = () => {};
+
+  sandbox.App.currentApp = 'older-app';
+  const older = AppView.open('older-app', { needsToken: false });
+  sandbox.App.currentApp = 'newer-app';
+  const newer = AppView.open('newer-app', { needsToken: false });
+
+  releases['newer-app']();
+  await newer;
+  assert.equal(AppView.appData.slug, 'newer-app');
+
+  releases['older-app']();
+  await older;
+  assert.equal(AppView.appData.slug, 'newer-app',
+    'a superseded request must not overwrite the current app context');
+});
+
 // ── 7. Screenshot state ─────────────────────────────────────────────────
 
 test('?shot=app-launching paints a pinned cover with no app behind it', () => {

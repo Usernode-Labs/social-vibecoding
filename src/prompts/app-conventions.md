@@ -37,21 +37,20 @@ Ordered by how badly an agent working offline gets each one wrong.
 <!-- work-order:begin -->
 1. **Three files are centrally hosted — never vendor them.** Every app
    loads the bridge, the native UI kit and (on the runtime path) Tailwind
-   from the platform's own origin. If your container cannot reach that
-   host the app renders unstyled and native-kit assertions fail *locally*
-   — that is the sandbox, not your change. Copying any of them into the
-   repo is forbidden: the copy freezes the day you make it, and the
-   fleet-wide fix and one-redeploy rollback central hosting buys stop
-   reaching the app. No automated check catches that, so this rule is the
-   only thing standing between you and a stale fork of platform
-   infrastructure. A `cdn.tailwindcss.com` tag is a different thing — a
-   legacy state many apps are still in, whose checks pass. Don't add one
-   to new code (new apps compile their own stylesheet at build time; the
-   hosted `usernode-tailwind/v1/tailwind.js` is the escape hatch), don't
-   "fix" one as a drive-by, and when migrating IS the task swap it to
-   that URL, including any copy of the CDN hostname in the app's `sw.js`
-   precache list. The staging preview the platform builds is the
-   authority on styling.
+   by relative path (`/usernode-bridge/v1/…`), never a hostname. A local
+   container doesn't serve them, so the app renders unstyled and
+   native-kit assertions fail *locally* — the sandbox, not your change.
+   Copying any of them into the repo is forbidden: the copy freezes the
+   day you make it, and the fleet-wide fix and one-redeploy rollback
+   central hosting buys stop reaching the app.
+   No automated check catches that; this rule is all that stands between
+   you and a stale fork of platform infrastructure.
+   A `cdn.tailwindcss.com` tag is a different thing — a legacy state many
+   apps are still in, whose checks pass. Don't add one to new code (new apps compile their own stylesheet at build
+   time; `/usernode-tailwind/v1/tailwind.js` is the escape hatch), don't
+   "fix" one as a drive-by, and when migrating IS the task swap it to that
+   path, including any copy of the CDN hostname in the app's `sw.js`
+   precache list. The staging preview is the authority on styling.
    **The bridge tag is not conditional on calling a bridge API.** It is
    also how the app ANSWERS the shell, so an app that omits it is invisible
    to anything that asks the frame a question — offline launch included.
@@ -1849,19 +1848,19 @@ canonical branch). Commit cleanly and let the harness finish the job.
 
 `usernode-bridge.js` is the one piece of cross-dapp infrastructure
 that is **not vendored**. It is served as a single canonical copy
-from the Homeroom platform itself:
+from the Homeroom platform itself, at this path on every app's own
+address:
 
 ```
-{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js
+/usernode-bridge/v1/bridge.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-bridge/v1/bridge.js`.
 
-Every dapp's HTML shell loads this URL directly. Cross-origin
-`<script>` tags are allowed by default; no CORS dance is needed:
+Every dapp's HTML shell loads it by that relative path, with no hostname:
 
 ```html
-<script src="{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js"></script>
+<script src="/usernode-bridge/v1/bridge.js"></script>
 ```
 
 Rules:
@@ -1885,14 +1884,14 @@ Rules:
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
   (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
-- **Prefer the RELATIVE path.** These three prefixes are served from the
-  app's own hostname too, so `/usernode-bridge/v1/bridge.js` reaches the
-  same file with no hostname in the app at all. That is what makes a
-  platform domain move survivable: apps scaffolded before the move to the
-  current domain hard-coded the old host, and when it stopped answering
-  they lost the bridge, the kit and their styling all at once. An absolute
-  URL still works and remains correct; a relative one simply cannot go
-  stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
+- **Always the RELATIVE path — never write a hostname.** These three
+  prefixes are served from the app's own hostname, so
+  `/usernode-bridge/v1/bridge.js` reaches the file with no hostname in
+  the app at all. That is what makes a platform domain move survivable:
+  apps that hard-coded the platform's host (the old one, and later
+  `{{PLATFORM_ORIGIN}}` itself) lost the bridge, the kit and their
+  styling all at once when that host stopped serving them. An absolute
+  URL on the current domain works today; a relative one cannot go stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
   the wildcard site's matcher on the docker runtime, and the scaffolded
   app's own handler under a plain `node server.js`, where there is no edge
   in front of the app. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
@@ -2176,8 +2175,8 @@ not a requirement.
 Like the bridge, it is centrally hosted — never vendor it:
 
 ```html
-<link rel="stylesheet" href="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.css">
-<script src="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.js"></script>
+<link rel="stylesheet" href="/usernode-native/v1/native.css">
+<script src="/usernode-native/v1/native.js"></script>
 ```
 
 Canonical source: `social-vibecoding/public/usernode-native/v1/`. The
@@ -2646,17 +2645,17 @@ The one rule this path asks of you:
 
 For an app that genuinely must generate class names at runtime, and as the
 one-line migration target for apps still pointing at the third-party CDN,
-the platform serves a pinned copy of the Tailwind browser engine from its
-own origin — exactly like the bridge and the native UI kit:
+the platform serves a pinned copy of the Tailwind browser engine on every
+app's own address — exactly like the bridge and the native UI kit:
 
 ```
-{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js
+/usernode-tailwind/v1/tailwind.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
 
 ```html
-<script src="{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js"></script>
+<script src="/usernode-tailwind/v1/tailwind.js"></script>
 <script>tailwind.config = { darkMode: 'class' }</script>
 ```
 
