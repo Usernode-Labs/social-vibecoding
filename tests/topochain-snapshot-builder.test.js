@@ -62,9 +62,12 @@ function freshDb() {
         disclaimer: null, display_leaderboard: true,
       },
       {
+        // Production's Season 2 shape exactly: the season-type event that
+        // carries the challenges, with no chain, no epoch range, and the
+        // `offchain_weight: 0` a season event is created with.
         id: 103, name: 'Season Standings', season_id: 10, type: 'season', is_active: true, internal: false,
         starts_at: T(-10), ends_at: T(10), start_epoch: null, end_epoch: null, chain_id: null,
-        scoring_formula: { metrics: [], offchain_weight: 1 },
+        scoring_formula: { metrics: [], offchain_weight: 0 },
         disclaimer: null, display_leaderboard: true,
       },
       {
@@ -86,6 +89,15 @@ function freshDb() {
         // addressable explicitly (LEFT JOIN), guarded like an inactive
         // season rather than 422ing as an unknown id.
         id: 106, name: 'Season-less Sprint', season_id: null, type: 'regular', is_active: true, internal: false,
+        starts_at: T(-10), ends_at: T(10), start_epoch: 1, end_epoch: 4, chain_id: 'chain-1',
+        scoring_formula: { metrics: [], offchain_weight: 1 },
+        disclaimer: null, display_leaderboard: true,
+      },
+      {
+        // A season-type event that DOES span an epoch range — Season 1's
+        // shape. Scoring it would count its season's regular events'
+        // blocks a second time, so it stays refused however addressed.
+        id: 107, name: 'Season One Standings', season_id: 10, type: 'season', is_active: true, internal: false,
         starts_at: T(-10), ends_at: T(10), start_epoch: 1, end_epoch: 4, chain_id: 'chain-1',
         scoring_formula: { metrics: [], offchain_weight: 1 },
         disclaimer: null, display_leaderboard: true,
@@ -129,6 +141,14 @@ function freshDb() {
       { user_id: 4, season_event_id: 100, activity_type: 'top_3', points: 500 },
       // different event — must never count toward event 100
       { user_id: 3, season_event_id: 102, activity_type: 'bug_report', points: 999 },
+      // The season-type event's own ledger: what a challenge scorer writes
+      // when the challenges hang off the season-type event rather than a
+      // regular one.
+      { user_id: 2, season_event_id: 103, activity_type: 'ONBOARDING', points: 500 },
+      { user_id: 2, season_event_id: 103, activity_type: 'WEEKLY', points: 250 },
+      { user_id: 4, season_event_id: 103, activity_type: 'ONBOARDING', points: 1000 },
+      // Podium-excluded, and still boards with her own rank-less row.
+      { user_id: 1, season_event_id: 103, activity_type: 'ONBOARDING', points: 100 },
     ],
     onchainAccounts: [
       { id: 1, user_id: 2, season_event_id: null, season_id: 10, address: 'addr-bob', public_key: 'pk-bob' },
@@ -155,7 +175,8 @@ function handleQuery(rawSql, params = []) {
     const id = params[0] ?? null;
     const rows = db.seasonEvents
       .filter((e) => (id === null
-        ? e.type === 'regular' && e.is_active && db.seasons.find((s) => s.id === e.season_id)?.is_active
+        ? e.is_active && db.seasons.find((s) => s.id === e.season_id)?.is_active
+          && (e.type === 'regular' || e.start_epoch === null || e.end_epoch === null)
         : e.id === id))
       .sort((a, b) => a.id - b.id)
       // BIGSERIAL columns come back from pg as strings — emulate that so
@@ -485,19 +506,64 @@ test('builder: prunes to the newest 10 snapshot_at values per event', async () =
   assert.equal(db.leaderboardSnapshots.some((s) => String(s.snapshot_at) === String(new Date(NOW - 20 * DAY))), false);
 });
 
-test('builder: default sweep takes active regular events on active seasons; others report skip reasons', async () => {
+test('builder: default sweep takes the events that can score — blocks or points', async () => {
   const result = await buildSnapshots(currentMockPool, { now: new Date() });
 
   const byId = new Map(result.events.map((e) => [e.season_event_id, e]));
   assert.equal(byId.get(100).users, 4);
   assert.equal(byId.get(100).skipped, undefined);
-  // 101 (inactive), 103 (type season), 104 (inactive season) are not
-  // candidates of the default sweep at all; 102 IS a candidate (active,
-  // regular, active season) but cannot score without an epoch range.
-  assert.equal(byId.get(102).skipped, 'missing_epoch_range');
+  // 102 and 103 have no epoch range, so they score from the ledger alone
+  // and the sweep reaches both. 103 is the one that matters: a season-type
+  // event carrying challenges used to be left out of the sweep entirely,
+  // which is how its points stayed off every leaderboard.
+  assert.equal(byId.get(102).skipped, undefined);
+  assert.equal(byId.get(102).users, 1, 'carol, from her one ledger row on 102');
+  assert.equal(byId.get(103).skipped, undefined);
+  assert.equal(byId.get(103).users, 3);
+  // 101 (inactive) and 104 (inactive season) are still not candidates, and
+  // 107 is a season-type event WITH an epoch range — left out of the sweep
+  // so its season's regular events' blocks are never counted twice.
   assert.equal(byId.has(101), false);
-  assert.equal(byId.has(103), false);
   assert.equal(byId.has(104), false);
+  assert.equal(byId.has(107), false);
+});
+
+test('builder: a points-only event scores its ledger at face value, whatever the weight says', async () => {
+  // Event 103 carries `offchain_weight: 0`, exactly as production's season
+  // events do. Weighting a points-only board by it would publish a board of
+  // zeros beside challenge cards that read 500 and 1,000.
+  await buildSnapshots(currentMockPool, { seasonEventId: 103, now: new Date() });
+
+  const rows = db.leaderboardSnapshots.filter((r) => r.season_event_id === 103);
+  const byUser = new Map(rows.map((r) => [r.user_id, r]));
+  assert.equal(byUser.get(2).total_points, 750, '500 ONBOARDING + 250 WEEKLY, unscaled');
+  assert.equal(byUser.get(4).total_points, 1000);
+  assert.equal(byUser.get(2).extra_points, 750);
+  // Ranked like any other board, and the podium-excluded row still boards.
+  assert.equal(byUser.get(4).rank, 1);
+  assert.equal(byUser.get(2).rank, 2);
+  assert.equal(byUser.get(1).total_points, 100);
+});
+
+test('builder: a points-only row reports no blocks rather than a missed block', async () => {
+  await buildSnapshots(currentMockPool, { seasonEventId: 103, now: new Date() });
+
+  const row = db.leaderboardSnapshots.find((r) => r.season_event_id === 103 && r.user_id === 2);
+  assert.equal(row.event_total_produced_blocks, 0);
+  assert.equal(row.canonical_total_won_slots, 0);
+  assert.deepEqual(JSON.parse(row.challenge_details), []);
+  // NULL, not 0: a 0% success rate would read as "missed every block" on a
+  // board where no block was ever due.
+  assert.equal(row.event_success_rate, null);
+  assert.equal(row.epoch_success_rate, null);
+});
+
+test('builder: a points-only event with an empty ledger writes nothing', async () => {
+  db.userActivities = db.userActivities.filter((a) => a.season_event_id !== 103);
+  const result = await buildSnapshots(currentMockPool, { seasonEventId: 103, now: new Date() });
+
+  assert.equal(result.events[0].users, 0);
+  assert.equal(db.leaderboardSnapshots.filter((r) => r.season_event_id === 103).length, 0);
 });
 
 test('builder: explicit target reports its guard; force bypasses activity guards only', async () => {
@@ -510,8 +576,11 @@ test('builder: explicit target reports its guard; force bypasses activity guards
   // dave's top_3 ledger row is scoped to event 100.
   assert.equal(forced.events[0].users, 3);
 
-  const seasonType = await buildSnapshots(currentMockPool, { seasonEventId: 103, force: true, now: new Date() });
-  assert.equal(seasonType.events[0].skipped, 'not_regular');
+  // A season-type event that spans the same epochs as its season's
+  // regular events is still refused, forced or not: scoring it would
+  // count those blocks twice.
+  const seasonWithEpochs = await buildSnapshots(currentMockPool, { seasonEventId: 107, force: true, now: new Date() });
+  assert.equal(seasonWithEpochs.events[0].skipped, 'not_regular');
 
   const closedSeason = await buildSnapshots(currentMockPool, { seasonEventId: 104, now: new Date() });
   assert.equal(closedSeason.events[0].skipped, 'inactive_season');
@@ -616,7 +685,8 @@ test('admin aggregate: sweep with no body aggregates every eligible event and re
     const body = await res.json();
     const byId = new Map(body.data.events.map((e) => [e.season_event_id, e]));
     assert.equal(byId.get(100).users, 4);
-    assert.equal(byId.get(102).skipped, 'missing_epoch_range');
-    assert.equal(body.message, 'Leaderboard aggregated for 1 event(s).');
+    assert.equal(byId.get(102).skipped, undefined);
+    assert.equal(byId.get(103).users, 3, 'the season-type event now reports a board of its own');
+    assert.equal(body.message, 'Leaderboard aggregated for 3 event(s).');
   } finally { server.close(); }
 });
