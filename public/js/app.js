@@ -947,6 +947,7 @@ const App = {
     App._applyImproveShot();
     App._applyDevTerminalShot();
     App._applyPlatformUpdateShot();
+    App._applyAppUpdateShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
@@ -1042,6 +1043,32 @@ const App = {
           // on screen; nothing else reads this flag.
           App._platformUpdateShot = true;
           App.renderPlatformVersionPill(info);
+          return;
+        }
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep links `?shot=app-updating` and
+  // `?shot=app-update-ready`: the Improve button and panel as they look while
+  // the open app's own build rolls out, and once it has landed. Store writes
+  // only, the same two publishes handleAppRedeployStatus makes on the real
+  // broadcasts, so nothing is fetched and nothing is rebuilt. Same open loop
+  // as ?shot=improve, because the row lives inside the panel.
+  _applyAppUpdateShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
+    const ready = shot === 'app-update-ready';
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        const panel = document.getElementById('improve-panel');
+        if (panel && panel.hasAttribute('data-open')) {
+          window.Improve.update({ deploying: !ready, appUpdateReady: ready });
           return;
         }
       } catch (err) { /* ignore */ }
@@ -2125,6 +2152,20 @@ const App = {
         // from /api/apps. Cheap (one query) and avoids manually
         // splicing the new SHA into a single card.
         Home.load();
+      }
+    }
+
+    // The app tab, for the app in view. Its Improve button spins while the
+    // build rolls out and offers the reload once it has landed. Nothing here
+    // touches the frame: it keeps showing the build before this one on
+    // purpose, and AppView.reloadAppFrame is what moves it. Another app's
+    // build is that app's news.
+    if (slug === App.currentApp && window.Improve) {
+      if (data.deploying) {
+        window.Improve.update({ deploying: true, appUpdateReady: false });
+      } else {
+        // A failed build leaves nothing new to load onto.
+        window.Improve.update({ deploying: false, appUpdateReady: !data.failed });
       }
     }
   },

@@ -1997,6 +1997,36 @@ const AppView = {
   // Drop the frame for good — the app is being LEFT, not parked. Also
   // invalidates the issue-state announcement (#685): the WindowProxy that made
   // it is going away with the frame.
+  // ── Reloading onto a build that just landed ───────────────────────────
+  //
+  // Twice, on purpose. An app following the offline convention answers the
+  // platform's token-bearing load from its shell cache and refreshes that
+  // cache in the background on boot (docs/app-slow-network-loading.md), so
+  // the first load after a deploy is the PREVIOUS build and only the second
+  // is the new one. The pause between them is for that refresh, one small
+  // fetch on a normal connection; an app with no worker simply loads twice.
+  //
+  // Through the frame seam, not the element: on the React bridge re-applying
+  // the same src IS a navigation (app-frame.tsx), and on the DOM adapter it
+  // is an assignment to el.src, which is one too. The load handler is
+  // released before the second navigation, so the second load does not
+  // schedule a third.
+  APP_RELOAD_SETTLE_MS: 1000,
+  reloadAppFrame() {
+    const frame = AppView._appFrame();
+    if (!frame || !frame.hasFrame()) return false;
+    const el = frame.frame();
+    const src = el && el.src;
+    if (!src) return false;
+    const granted = typeof AppView._grantedNow === 'function' ? AppView._grantedNow() : [];
+    frame.setOnLoad(() => {
+      frame.setOnLoad(null);
+      setTimeout(() => { frame.setSrc(src, { granted }); }, AppView.APP_RELOAD_SETTLE_MS);
+    });
+    frame.setSrc(src, { granted });
+    return true;
+  },
+
   _unmountAppFrame() {
     AppView._issueStateSource = null;
     AppView._appFrame().unmount();

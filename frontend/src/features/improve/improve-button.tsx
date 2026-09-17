@@ -136,7 +136,8 @@ const IMPROVE_BTN_CLASS =
 //
 //   lightbulb — nothing in flight; the button is an invitation
 //   spinner   — this app or the platform is building or downloading a build
-//   refresh   — a new build is here, and the panel offers the reload
+//   refresh   — a new build is here, the platform's or this app's own, and
+//               the panel offers the reload
 //
 // `w-4 h-4` inside the 28px content row, so the header height contract
 // (tests/header-height-parity.test.js) is untouched — no taller than the text
@@ -144,9 +145,10 @@ const IMPROVE_BTN_CLASS =
 const BUSY_STATES = ['deploying', 'downloading'];
 const READY_STATES = ['ready', 'failed'];
 
-function ImproveGlyph({ versionState, appDeploying }: {
+function ImproveGlyph({ versionState, appDeploying, appUpdateReady }: {
   versionState: string;
   appDeploying: boolean;
+  appUpdateReady: boolean;
 }) {
   const cls = 'w-4 h-4 shrink-0';
   if (appDeploying || BUSY_STATES.includes(versionState)) {
@@ -154,7 +156,9 @@ function ImproveGlyph({ versionState, appDeploying }: {
       <SpinnerArcIcon className={`${cls} animate-spin`} aria-hidden="true" />
     </span>;
   }
-  if (READY_STATES.includes(versionState)) {
+  // A build of this app that landed is the same offer as a platform build
+  // that is cached: the arrow, and the reload in the panel.
+  if (appUpdateReady || READY_STATES.includes(versionState)) {
     return <span id="improve-btn-glyph" data-state="ready" className="contents">
       <ArrowPathIcon className={cls} aria-hidden="true" />
     </span>;
@@ -225,7 +229,7 @@ function ImproveIndicators() {
 }
 
 export function ImproveButton() {
-  const { target, open, versionState, deploying } = useStoreState(improveStore);
+  const { target, open, versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -276,7 +280,7 @@ export function ImproveButton() {
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
     >
-      <ImproveGlyph versionState={versionState} appDeploying={deploying} />
+      <ImproveGlyph versionState={versionState} appDeploying={deploying} appUpdateReady={appUpdateReady} />
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
           top-right corner. That count is retired (#1610) and the working
