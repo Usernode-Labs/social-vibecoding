@@ -1251,6 +1251,18 @@ function appRoutes(config) {
       const phaseEntry = appRow.status === 'creating'
         ? appCreationPhase.read(appRow.slug) : null;
 
+      // Demo mode's partner, by name: the settings dialog says who the
+      // synthetic proposals and votes on this app come from
+      // (routes/demo-mode.js). Read by the flag, not just the column, so a
+      // row that lost it is not named as a partner.
+      let demoPartner = null;
+      if (appRow.demo_mode && appRow.demo_partner_id) {
+        const { rows: partnerRows } = await pool.query(
+          'SELECT username FROM users WHERE id = $1 AND is_synthetic = TRUE',
+          [appRow.demo_partner_id]
+        );
+        demoPartner = partnerRows[0]?.username || null;
+      }
       const [adminAppIds, contributorCounts] = await Promise.all([
         appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
         contributors.loadContributorCounts(pool, [appRow.id]),
@@ -1258,6 +1270,7 @@ function appRoutes(config) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        demo_partner: demoPartner,
         contributor_count: contributorCount,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,

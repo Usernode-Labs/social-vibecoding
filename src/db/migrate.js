@@ -90,6 +90,8 @@ async function migrate(config) {
   await seedStagingLandingDirectory(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
+  // After the fork fixtures: it switches one of them into demo mode.
+  await seedStagingDemoMode(pool);
   await seedStagingMembersPanel(pool);
   await seedStagingUserDirectory(pool);
   await seedStagingApproverPanel(pool);
@@ -5104,6 +5106,33 @@ async function seedStagingForkLineage(pool, config) {
     log.info('db', 'Staging fork-lineage fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging fork-lineage seeding failed', { message: err.message });
+  }
+}
+
+// Demo mode on the fork fixture, so the App settings dialog's demo-mode
+// notice (frontend/src/features/dialogs/app-settings.tsx) has something to
+// render in a preview: `staging-demo-fork` gets a synthetic partner and the
+// switch on. The partner is a real users row with the same no-login posture
+// as every fixture identity, with is_synthetic on top so the session
+// middleware refuses it before the password ever would. No base sha and no
+// GitHub in staging, so the demo endpoints themselves answer 409 here; only
+// the marking is exercised, which is the part a check can see.
+async function seedStagingDemoMode(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_admin, can_create_apps, is_synthetic)
+       VALUES ('staging_demo_partner', 'staging-demo-not-a-login', FALSE, FALSE, TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    await pool.query(
+      `UPDATE apps
+          SET demo_mode = TRUE,
+              demo_partner_id = (SELECT id FROM users WHERE username = 'staging_demo_partner')
+        WHERE slug = 'staging-demo-fork'`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging demo-mode fixture skipped', { err: err.message });
   }
 }
 

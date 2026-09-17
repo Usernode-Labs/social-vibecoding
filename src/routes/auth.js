@@ -217,7 +217,7 @@ function authRoutes(config) {
       const candidates = [];
       if (identifier.includes('@')) {
         const { rows } = await pool.query(
-          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE lower(email) = lower($1)',
+          'SELECT id, username, password, is_admin, admin_readonly, is_synthetic FROM users WHERE lower(email) = lower($1)',
           [identifier]
         );
         for (const row of rows) candidates.push({ row, matchedBy: 'email' });
@@ -225,7 +225,7 @@ function authRoutes(config) {
       let usernameMatched = false;
       {
         const { rows } = await pool.query(
-          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE username = $1',
+          'SELECT id, username, password, is_admin, admin_readonly, is_synthetic FROM users WHERE username = $1',
           [identifier]
         );
         for (const row of rows) {
@@ -247,7 +247,7 @@ function authRoutes(config) {
       // usernames stay case-sensitive at sign-in.
       if (!usernameMatched) {
         const { rows: retired } = await pool.query(
-          `SELECT u.id, u.username, u.password, u.is_admin, u.admin_readonly
+          `SELECT u.id, u.username, u.password, u.is_admin, u.admin_readonly, u.is_synthetic
              FROM username_history h
              JOIN users u ON u.id = h.user_id
             WHERE h.username = $1
@@ -268,6 +268,13 @@ function authRoutes(config) {
       let user = null;
       let matchedBy = null;
       for (const candidate of candidates) {
+        // A synthetic user (demo mode's partner, routes/demo-mode.js) has no
+        // sign-in: its stored password is random and discarded, so this
+        // compare could never succeed — and it is not tried, so that holds
+        // even if the row somehow had a real hash. Same answer as an
+        // unknown name below: the form is not an oracle for which handles
+        // are synthetic.
+        if (candidate.row.is_synthetic) continue;
         // At most 2 compares (one email match + one username match), so
         // the cost posture behind the login limiters is unchanged.
         if (await bcrypt.compare(password, candidate.row.password)) {

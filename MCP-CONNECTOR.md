@@ -149,7 +149,8 @@ either surface explaining why. The setting looked broken.
 **The marking is gone.** Allow-always now means what it says, on every tool.
 
 The reasoning behind it does not apply to this connector. Nothing the connector
-exposes writes to an app. Every acting call files a *request* — a proposal, an
+exposes writes to an app — one exception, demo mode, is taken up at the end of
+this section. Every acting call files a *request* — a proposal, an
 issue, a build — and the platform merges none of it without a group vote:
 
 | Tool | What it actually does |
@@ -159,6 +160,7 @@ issue, a build — and the platform merges none of it without a group vote:
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
+| `demo_mode`, `demo_propose`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
 
 The vote is the confirmation, and it is a better one than a prompt clicked
 through mid-loop by the one person already driving the agent. A per-call prompt
@@ -172,6 +174,33 @@ belongs; it does not need a second gate in the client.
 These tools are still named as a group, in `ACTING_TOOLS`. That list no longer
 controls prompting — it decides which tools stay out of the setup hint and out
 of the allow rules Homeroom ships, which is the subject of the next section.
+
+### The exception: demo mode
+
+Demo mode (`routes/demo-mode.js`) exists so a recording of the proposal flow
+can be driven from a connected agent while the phone in shot stays untouched.
+An app's creator, when they are also a full platform admin, switches the app
+into demo mode and names a *partner*: a
+synthetic account the platform owns, with no usable password and no OAuth,
+that the session middleware and the login route refuse outright. Through four
+tools, and only these, the partner acts:
+
+| Tool | What it actually does |
+|---|---|
+| `demo_mode` | Switches an app the caller created into demo mode; creates the partner |
+| `demo_propose` | The partner opens a proposal from a branch already on the repo, or from a patch the platform applies there itself, and sends the real vote notification |
+| `demo_vote` | The partner casts its vote — a real vote, through the real path |
+| `demo_reset` | Takes the partner's proposals down, moves the app's `main` back to where demo mode was switched on, and redeploys |
+
+Two of them do what the rest of the connector never does: `demo_vote` votes,
+and `demo_reset` rewinds `main`. They may because of where the platform
+refuses them — on every app not in demo mode, on any app the caller did not
+create, and for a creator who is not a full platform admin (both fences;
+never an admin's override on somebody else's app). The partner counts as a
+voter on the demo app alone, the app's settings say it is in demo mode and
+name the partner, and the read-only `get_demo_status` lists what would spoil
+a take. In the permission model they are acting tools like the others: out of
+the setup hint, out of the shipped allow rules, prompted like any other write.
 
 ---
 

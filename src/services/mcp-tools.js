@@ -127,6 +127,22 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //   submit_platform_build  — puts that build to a group vote
 //   update_proposal_issues — changes which requests an existing proposal
 //                            addresses (and its managed PR closing lines)
+//   demo_mode              — switches an app the user created into demo mode,
+//                            creating its synthetic partner
+//   demo_propose           — the partner opens a proposal and sends the vote
+//                            notification
+//   demo_vote              — the partner casts its vote
+//   demo_reset             — takes the partner's proposals down, moves the
+//                            app's main back and redeploys it
+//
+// The four demo tools are the connector's one group that acts on an app
+// directly rather than filing something for a vote: a synthetic partner
+// votes, and a reset rewinds main. They may because of where they are
+// refused — on every app not in demo mode, on any app the caller did not
+// create, and for a caller who is not a full platform admin
+// (routes/demo-mode.js has the whole argument). Here they are
+// acting tools like the rest: out of the setup hint, out of the shipped
+// allow rules, prompted like any other write.
 //
 // `answer_questions` is a write and is deliberately NOT here: it only feeds
 // text to a build the user already started.
@@ -137,6 +153,10 @@ const ACTING_TOOLS = Object.freeze([
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
+  'demo_mode',
+  'demo_propose',
+  'demo_vote',
+  'demo_reset',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -3680,6 +3700,246 @@ function registerTools(server, ctx) {
         ? changeWebPath(origin, session.app_slug, clone.id)
         : `${origin}/#`,
       nextStep: `It is up for a vote now as ${proposalRef(clone.id, prNumber)}. Use get_proposal to follow its checks and tally.`,
+    });
+  });
+  // ── Demo mode ──────────────────────────────────────────────────────────
+  //
+  // Five tools over routes/demo-mode.js. They exist so a RECORDING of the
+  // proposal flow can be driven from a connected agent while the phone in
+  // shot stays untouched: the partner proposes, the notification lands, the
+  // partner has already voted yes, the viewer votes, it merges, and a reset
+  // puts the app back for the next take. The platform answers 403 to every
+  // one of them unless the app is in demo mode and this user both created it
+  // and is a full platform admin —
+  // the tools add nothing to that and replay the caller's own token, so a
+  // connector can do here exactly what its user can do, and no more.
+  const demoPath = (slug, tail) => `/api/apps/${slug}/demo${tail}`;
+  const demoPartnerShape = z.object({ id: z.number(), username: z.string() }).nullable();
+  const shapeDemoPartner = (p) => (p ? { id: Number(p.id), username: String(p.username) } : null);
+
+  server.registerTool('get_demo_status', {
+    title: 'Demo mode: is the next take ready?',
+    description: 'What state an app\'s demo mode is in and, more usefully, what would spoil a take: `reasons` names every condition that would stop the notification or the vote from landing — the "New proposals to vote on" preference that defaults off, a creator who has not used the app in 10 days and so is not counted as a voter, a vote threshold that is not 2. `ready` is true when that list is empty. Also reports the partner, the commit demo_reset puts main back to, and the partner\'s open proposal with its tally and preview URL. Read-only; answers for any app this user created (this user must also be a full platform admin), in demo mode or not.',
+    inputSchema: { slug: z.string().describe('The app slug, as returned by list_apps.') },
+    outputSchema: {
+      demoMode: z.boolean(),
+      partner: demoPartnerShape,
+      baseSha: z.string().nullable(),
+      mainSha: z.string().nullable(),
+      activeCount: z.number(),
+      required: z.number(),
+      creatorActive: z.boolean(),
+      partnerActive: z.boolean(),
+      notifyOnNewProposals: z.boolean(),
+      openProposal: z.object({
+        sessionId: z.number(),
+        status: z.string(),
+        prNumber: z.number().nullable(),
+        prUrl: z.string().nullable(),
+        title: z.string().nullable(),
+        stagingUrl: z.string().nullable(),
+        votes: z.object({ yes: z.number(), no: z.number() }).nullable(),
+      }).nullable(),
+      ready: z.boolean(),
+      reasons: z.array(z.string()),
+    },
+    annotations: readAnnotations,
+  }, async ({ slug }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const r = await callPlatform(baseUrl, accessToken, 'GET', demoPath(slug, ''));
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    const open = b.openProposal || null;
+    return toolResult({
+      demoMode: !!b.demoMode,
+      partner: shapeDemoPartner(b.partner),
+      baseSha: b.baseSha || null,
+      mainSha: b.mainSha || null,
+      activeCount: Number(b.activeCount) || 0,
+      required: Number(b.required) || 0,
+      creatorActive: !!b.creatorActive,
+      partnerActive: !!b.partnerActive,
+      notifyOnNewProposals: !!b.notifyOnNewProposals,
+      openProposal: open ? {
+        sessionId: Number(open.sessionId),
+        status: String(open.status || ''),
+        prNumber: open.prNumber == null ? null : Number(open.prNumber),
+        prUrl: open.prUrl || null,
+        // A title is text somebody typed; wrapped like everything else.
+        title: open.title ? untrusted(String(open.title), MAX_TITLE_CHARS) : null,
+        stagingUrl: open.stagingUrl || null,
+        votes: open.votes
+          ? { yes: Number(open.votes.yes) || 0, no: Number(open.votes.no) || 0 }
+          : null,
+      } : null,
+      ready: !!b.ready,
+      reasons: Array.isArray(b.reasons) ? b.reasons.map((x) => clip(String(x), 400)) : [],
+    });
+  });
+
+  server.registerTool('demo_mode', {
+    title: 'Switch demo mode on or off for an app you created',
+    description: 'Switch an app this user created into demo mode, or out of it; this user must also be a full platform admin, and both are required. ON creates the synthetic partner — `partnerName` is a username (letters, digits, underscores), and it is what the proposal card and the notification show, so choose what should be on camera — records where main stands so demo_reset can put it back, and gives the partner standing as a voter on this app. The partner cannot sign in and acts only through demo_propose, demo_vote and demo_reset. OFF removes the partner and its standing; it is refused while the partner still has proposals on the app, so demo_reset first. Refused on the platform app, on any app this user did not create, and for a user who is not a full platform admin. Never present the partner as a person: its proposals and votes are synthetic, and the app\'s settings say so.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      enabled: z.boolean().describe('true to switch demo mode on, false to switch it off.'),
+      partnerName: z.string().optional()
+        .describe('The partner\'s username, required the first time demo mode goes on. 3–32 characters: letters, digits, underscores.'),
+    },
+    outputSchema: {
+      demoMode: z.boolean(),
+      partner: demoPartnerShape,
+      baseSha: z.string().nullable(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, enabled, partnerName }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const body = { enabled: enabled !== false };
+    if (typeof partnerName === 'string' && partnerName.trim()) body.partnerName = partnerName.trim();
+    const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/demo-mode`, body);
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    return toolResult({
+      demoMode: !!b.demoMode,
+      partner: shapeDemoPartner(b.partner),
+      baseSha: b.baseSha || null,
+      nextStep: b.demoMode
+        ? 'Call get_demo_status: it lists what would still keep a take from working, starting with the "New proposals to vote on" preference, which defaults off.'
+        : 'Demo mode is off; the partner and its standing on this app are gone.',
+    });
+  });
+
+  server.registerTool('demo_propose', {
+    title: 'Demo mode: the partner proposes a change',
+    description: 'Open a proposal as the app\'s synthetic partner from a branch already on the app\'s repository or from a `patch` (`git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB) that the platform applies there itself — the usual way in, because an app\'s repository is the platform\'s own and its creator cannot push to it — and put it straight up for the vote — which sends the real "please come vote" notification to the app\'s creator. The pull request is opened by the platform\'s own bot, as every connector submission is; the proposal is the partner\'s. A staging preview and the checks follow, as for any proposal. One demo proposal at a time: refused while one is open, so demo_reset between takes. `summary` is what a voter reads first — plain English, what changes on screen; `description` is the technical half and becomes the pull request body.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      branch: z.string().optional()
+        .describe('A branch that already exists on the app\'s repository and holds the change. Pass this or `patch`.'),
+      patch: z.string().optional()
+        .describe('The change as a patch: `git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB. Homeroom applies it at main\'s current head in the app\'s own repository and pushes the branch itself. Pass this or `branch`.'),
+      title: z.string().describe('The proposal\'s title, as the card and the notification will show it.'),
+      summary: z.string().optional()
+        .describe('The user-facing half: one to three plain sentences on what changes for somebody using the app.'),
+      description: z.string().optional().describe('The technical half; becomes the pull request body.'),
+      testingPaths: z.array(z.string()).optional()
+        .describe('Up to three in-app routes the change is visible on, for the before/after screenshots.'),
+    },
+    outputSchema: {
+      sessionId: z.number(),
+      prNumber: z.number(),
+      prUrl: z.string().nullable(),
+      headSha: z.string().nullable(),
+      notified: z.number(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, branch, patch, title, summary, description, testingPaths }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const branchIn = typeof branch === 'string' ? branch.trim() : '';
+    const patchIn = typeof patch === 'string' && patch.trim() ? patch : '';
+    if (branchIn && patchIn) return toolError('invalid_request', 'Pass either branch or patch, not both.');
+    if (!branchIn && !patchIn) return toolError('invalid_request', 'Pass branch (already on the app\'s repository) or patch (the change as git diff or git format-patch output).');
+    // Refused here, before the platform is asked, with the numbers: the route
+    // applies the same cap, but a 256 KB body that was never going to land
+    // is not worth the round trip.
+    const patchLimits = require('./external-agent-patch');
+    const patchBytes = patchIn ? Buffer.byteLength(patchIn, 'utf8') : 0;
+    if (patchBytes > patchLimits.MAX_PATCH_BYTES) {
+      return toolError('patch_too_large', `That patch is ${Math.round(patchBytes / 1024)} KB, over the ${Math.round(patchLimits.MAX_PATCH_BYTES / 1024)} KB a patch can be. Nothing was proposed.`, { limitBytes: patchLimits.MAX_PATCH_BYTES, actualBytes: patchBytes });
+    }
+    const titleCheck = checkWriteLength(title == null ? '' : String(title).trim(), {
+      field: 'title', max: MAX_REQUEST_TITLE_CHARS, hint: 'Shorten the title.',
+    });
+    if (!titleCheck.ok) return writeLengthError(titleCheck);
+    if (!titleCheck.value) return toolError('invalid_request', 'title is required.');
+    const bodyCheck = checkWriteLength(description == null ? '' : String(description), {
+      field: 'description', max: MAX_REQUEST_BODY_CHARS,
+      hint: 'Put the detail in the branch\'s commit messages instead.',
+    });
+    if (!bodyCheck.ok) return writeLengthError(bodyCheck);
+    const r = await callPlatform(baseUrl, accessToken, 'POST', demoPath(slug, '/propose'), {
+      branch: branchIn || undefined,
+      patch: patchIn || undefined,
+      title: titleCheck.value,
+      summary: summary == null ? undefined : String(summary),
+      description: bodyCheck.value || '',
+      testingPaths: Array.isArray(testingPaths) ? testingPaths : undefined,
+    });
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    const notified = Number(b.notified) || 0;
+    return toolResult({
+      sessionId: Number(b.sessionId),
+      prNumber: Number(b.prNumber),
+      prUrl: b.prUrl || null,
+      headSha: b.headSha || null,
+      notified,
+      nextStep: notified > 0
+        ? 'The notification is on its way to the creator. If the partner should already have voted when they open it, call demo_vote now; get_demo_status then shows the tally, and the preview URL once the build finishes.'
+        : 'Nobody was notified: the creator has "New proposals to vote on" off for this app, or is not counted as active. get_demo_status says which.',
+    });
+  });
+
+  server.registerTool('demo_vote', {
+    title: 'Demo mode: the partner votes',
+    description: 'Cast the synthetic partner\'s vote on its open demo proposal, through the same path a person\'s vote takes: it counts toward the threshold, shows in the tally and, if it completes the threshold, merges. Yes unless told otherwise. On a two-voter app this is the "already voted yes, waiting on you" state the recording wants.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      vote: z.enum(['yes', 'no']).optional().describe('Defaults to yes.'),
+    },
+    outputSchema: { sessionId: z.number(), vote: z.string(), nextStep: z.string() },
+    annotations: writeAnnotations,
+  }, async ({ slug, vote }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const r = await callPlatform(baseUrl, accessToken, 'POST', demoPath(slug, '/vote'), {
+      vote: vote === 'no' ? 'no' : 'yes',
+    });
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    return toolResult({
+      sessionId: Number(b.sessionId),
+      vote: String(b.vote || 'yes'),
+      nextStep: 'The creator\'s own vote is the second one. get_demo_status shows the tally; once it has merged, demo_reset puts the app back for the next take.',
+    });
+  });
+
+  server.registerTool('demo_reset', {
+    title: 'Demo mode: put the app back for the next take',
+    description: 'Remove the partner\'s proposals on this app — their votes, their previews and the notifications they sent go with them — move main back to the commit demo mode was switched on at, and rebuild production from it. Whatever the last take merged is undone. Only the partner\'s proposals are touched: anything else on the app\'s board stays, and so do the group-chat lines the take produced.',
+    inputSchema: { slug: z.string().describe('The app slug, as returned by list_apps.') },
+    outputSchema: {
+      sessionsRemoved: z.number(),
+      main: z.object({
+        from: z.string().nullable(), to: z.string().nullable(), moved: z.boolean(),
+      }).nullable(),
+      redeploy: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const r = await callPlatform(baseUrl, accessToken, 'POST', demoPath(slug, '/reset'), {});
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    return toolResult({
+      sessionsRemoved: Number(b.sessionsRemoved) || 0,
+      main: b.main ? { from: b.main.from || null, to: b.main.to || null, moved: !!b.main.moved } : null,
+      redeploy: String(b.redeploy || 'skipped'),
+      nextStep: b.redeploy === 'started'
+        ? 'Production is rebuilding from the base commit; give it a couple of minutes, then get_demo_status before the next take.'
+        : 'Nothing had merged, so main was already at the base commit. get_demo_status before the next take.',
     });
   });
 }

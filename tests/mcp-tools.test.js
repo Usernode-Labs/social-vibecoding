@@ -1538,11 +1538,14 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
-    'answer_questions', 'claim_request', 'create_request', 'get_app',
+    'answer_questions', 'claim_request', 'create_request',
+    // Demo mode: the four acting tools of a creator's synthetic partner, and
+    // its read — see ACTING_TOOLS and routes/demo-mode.js.
+    'demo_mode', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
-    'get_connector_guidance',
+    'get_connector_guidance', 'get_demo_status',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
     'list_my_proposals', 'list_requests',
@@ -1557,6 +1560,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
   // merge, withdraw, or touch settings, secrets or membership.
+  //
+  // The one exception is demo mode: demo_vote is a vote and demo_reset moves
+  // main — cast by a synthetic partner, on an app its creator switched into
+  // demo mode, and refused everywhere else (routes/demo-mode.js).
   for (const never of ['vote', 'merge_proposal', 'set_secret', 'add_member', 'delete_app']) {
     assert.ok(!registered.includes(never), `${never} must never be a connector tool`);
   }
@@ -1712,7 +1719,8 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'create_request', 'prepare_work', 'start_platform_build',
+    'create_request', 'demo_mode', 'demo_propose', 'demo_reset', 'demo_vote',
+    'prepare_work', 'start_platform_build',
     'submit_platform_build', 'submit_work', 'update_proposal_issues',
   ]);
   for (const name of tools.ACTING_TOOLS) {
@@ -1847,6 +1855,7 @@ test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
     'create_request', 'prepare_work', 'submit_work',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
+    'demo_mode', 'demo_propose', 'demo_vote', 'demo_reset',
   ];
   for (const name of writeTools) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -3592,4 +3601,136 @@ test('#2136 — submit_work answers name the proposal by its pull request first'
   } finally {
     svc.submitWork = realSubmit;
   }
+});
+
+// ── Demo mode ──────────────────────────────────────────────────────────
+//
+// Five tools, one property: they replay the caller's token at
+// /api/apps/:slug/demo* and add nothing of their own. Every refusal that
+// matters — not in demo mode, not the creator, not this user's app — is the
+// platform's, so what a connector can do here is exactly what its user can.
+const demoScopes = { scopes: [READ_SCOPE, WRITE_SCOPE] };
+
+test('get_demo_status hands back the platform\'s own readiness list, shaped and wrapped', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'GET');
+    assert.equal(pathname, '/api/apps/demo-app/demo');
+    return {
+      demoMode: true, partner: { id: 50, username: 'sam' },
+      baseSha: 'b'.repeat(40), mainSha: 'm'.repeat(40),
+      activeCount: 2, required: 2, creatorActive: true, partnerActive: true,
+      notifyOnNewProposals: false,
+      openProposal: {
+        sessionId: 9, status: 'promoted', prNumber: 42, prUrl: 'https://github.com/x/y/pull/42',
+        title: 'Smooth <b>animations</b>', stagingUrl: null, votes: { yes: 1, no: 0 },
+      },
+      ready: false,
+      reasons: ['"New proposals to vote on" is off for you on this app'],
+    };
+  }, demoScopes);
+  try {
+    const res = await c.handlers.get('get_demo_status')({ slug: 'demo-app' });
+    assert.notEqual(res.isError, true);
+    const out = res.structuredContent;
+    assert.equal(out.ready, false);
+    assert.match(out.reasons[0], /New proposals to vote on/);
+    assert.equal(out.openProposal.votes.yes, 1);
+    assert.match(out.openProposal.title, /^<untrusted-content>/, 'a title is text somebody typed');
+    assert.equal(out.partner.username, 'sam');
+    assert.equal(out.required, 2);
+  } finally {
+    c.restore();
+  }
+});
+
+test('the demo write tools post to the demo routes and pass the platform\'s refusal through', async () => {
+  const c = connector((method, pathname) => {
+    if (pathname === '/api/apps/demo-app/demo-mode') {
+      return { demoMode: true, partner: { id: 50, username: 'sam' }, baseSha: 'b'.repeat(40) };
+    }
+    if (pathname === '/api/apps/demo-app/demo/propose') {
+      return { sessionId: 9, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42', headSha: 'c'.repeat(40), notified: 1 };
+    }
+    if (pathname === '/api/apps/demo-app/demo/vote') return { ok: true, sessionId: 9, vote: 'yes' };
+    if (pathname === '/api/apps/demo-app/demo/reset') {
+      return { ok: true, sessionsRemoved: 1, main: { from: 'z'.repeat(40), to: 'b'.repeat(40), moved: true }, redeploy: 'started' };
+    }
+    // Any other app: what the platform tells somebody who is not the creator.
+    return { __http: { ok: false, status: 403, body: { error: "Only the app's creator can use demo mode." } } };
+  }, demoScopes);
+  try {
+    const on = await c.handlers.get('demo_mode')({ slug: 'demo-app', enabled: true, partnerName: 'sam' });
+    assert.notEqual(on.isError, true);
+    assert.equal(on.structuredContent.partner.username, 'sam');
+    assert.deepEqual(c.calls.at(-1).body, { enabled: true, partnerName: 'sam' });
+    assert.match(on.structuredContent.nextStep, /get_demo_status/);
+
+    const proposed = await c.handlers.get('demo_propose')({
+      slug: 'demo-app', branch: 'demo/animations', title: 'Smooth category animations',
+      summary: 'Categories glide open.', description: 'CSS transitions.',
+    });
+    assert.notEqual(proposed.isError, true);
+    assert.equal(proposed.structuredContent.prNumber, 42);
+    assert.equal(proposed.structuredContent.notified, 1);
+    assert.equal(c.calls.at(-1).method, 'POST');
+    assert.equal(c.calls.at(-1).body.branch, 'demo/animations');
+    assert.equal(c.calls.at(-1).body.summary, 'Categories glide open.');
+    assert.match(proposed.structuredContent.nextStep, /demo_vote/);
+
+    // The usual way in: a patch, forwarded whole, with no branch beside it.
+    const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';
+    const patched = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch, title: 'From a patch' });
+    assert.notEqual(patched.isError, true);
+    assert.equal(c.calls.at(-1).body.patch, patch);
+    assert.equal(c.calls.at(-1).body.branch, undefined);
+    // One or the other, checked before the platform is asked.
+    const callsBefore = c.calls.length;
+    const both = await c.handlers.get('demo_propose')({ slug: 'demo-app', branch: 'x', patch, title: 'y' });
+    assert.equal(both.isError, true);
+    const neither = await c.handlers.get('demo_propose')({ slug: 'demo-app', title: 'y' });
+    assert.equal(neither.isError, true);
+    const huge = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch: 'x'.repeat(256 * 1024 + 1), title: 'y' });
+    assert.equal(huge.isError, true);
+    assert.equal(huge.structuredContent.code, 'patch_too_large');
+    assert.equal(c.calls.length, callsBefore, 'none of the three reached the platform');
+
+    const voted = await c.handlers.get('demo_vote')({ slug: 'demo-app' });
+    assert.equal(voted.structuredContent.vote, 'yes');
+    assert.deepEqual(c.calls.at(-1).body, { vote: 'yes' });
+
+    const reset = await c.handlers.get('demo_reset')({ slug: 'demo-app' });
+    assert.equal(reset.structuredContent.sessionsRemoved, 1);
+    assert.equal(reset.structuredContent.main.moved, true);
+    assert.equal(reset.structuredContent.redeploy, 'started');
+
+    // Not the creator's app: the platform's 403 is the tool's answer.
+    const refused = await c.handlers.get('demo_propose')({ slug: 'someone-elses', branch: 'x', title: 'y' });
+    assert.equal(refused.isError, true);
+    assert.match(JSON.stringify(refused.structuredContent), /creator|403|forbidden/i);
+  } finally {
+    c.restore();
+  }
+});
+
+test('the demo tools sit behind the right scopes, write nothing shortened, and the charter frames them', () => {
+  for (const name of ['demo_mode', 'demo_propose', 'demo_vote', 'demo_reset']) {
+    const body = registration(name);
+    assert.match(body, /scopeGuard\(WRITE_SCOPE\)/, `${name} needs the write scope`);
+    assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
+  }
+  assert.match(registration('get_demo_status'), /scopeGuard\(READ_SCOPE\)/);
+  assert.match(registration('get_demo_status'), /annotations: readAnnotations/);
+  // The title and description are writes: checked against a limit, never clipped.
+  const propose = registration('demo_propose');
+  assert.match(propose, /max: MAX_REQUEST_TITLE_CHARS/);
+  assert.match(propose, /max: MAX_REQUEST_BODY_CHARS/);
+  assert.match(propose, /title: titleCheck\.value/);
+  // Every tool description says the partner is synthetic, or points at the
+  // one that does — a model should never learn that from the charter alone.
+  assert.match(registration('demo_mode'), /synthetic/);
+  const charterSrc = fs.readFileSync(path.join(__dirname, '../src/services/mcp-charter.js'), 'utf8');
+  assert.match(charterSrc, /id: 'demo-mode'/);
+  const charter = require('../src/services/mcp-charter');
+  assert.ok(Object.values(charter).some((v) => typeof v === 'string' && v.includes('never present the partner as a person')),
+    'the charter section is rendered into the full charter text');
 });

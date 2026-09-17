@@ -58,6 +58,10 @@ const NON_SECRET_APP_COLUMNS = [
   // secret: the admin console shows all of it.
   'db_size_bytes', 'db_size_measured_at', 'db_storage_cap_bytes',
   'db_storage_frozen_at', 'db_storage_warned_at', 'db_storage_grace_until',
+  // Demo mode (routes/demo-mode.js): the switch, its synthetic partner and
+  // the commit a reset puts main back to. The settings dialog reads the
+  // first; nothing about any of them is secret.
+  'demo_mode', 'demo_partner_id', 'demo_base_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

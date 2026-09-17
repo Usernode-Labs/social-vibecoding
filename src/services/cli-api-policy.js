@@ -92,6 +92,10 @@ function isCliApiPath(pathname) {
 // membership. A connector may describe apps, file a request, hand work to
 // the user's own coding agent and turn the result into a proposal — the
 // group still decides whether it ships.
+//
+// The demo-mode entries at the end of the list are the one deliberate
+// exception to that first sentence. The comment above them says exactly what
+// makes them safe, and tests/mcp-connector-policy.test.js pins it.
 const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
@@ -159,6 +163,24 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // (id, user_id), so a connector can only ever reopen the caller's own
   // session (see the owner-scope tests beside promote's).
   { method: 'POST', pattern: '/api/sessions/:id/resume' },
+  // Demo mode (routes/demo-mode.js): the one deliberate exception to the
+  // note above, so it is worth being exact. These five let a connected agent
+  // drive a RECORDING of the proposal flow: a synthetic partner proposes,
+  // votes, and is reset between takes. Two of them do what nothing else on
+  // this list does — demo/vote casts a vote and demo/reset moves an app's
+  // main — and the reason they may is entirely the handler's gate, which the
+  // policy tests pin: every one of these routes refuses unless the app is in
+  // demo mode AND the caller is its creator AND a full platform admin (both
+  // fences — never an admin's override on somebody else's app), and the
+  // platform's own app can never be in demo mode. Through them a connector
+  // reaches only an app its user owns and has switched into a mode whose
+  // settings say a synthetic partner is acting on it. The general vote
+  // route (/api/sessions/:id/vote) stays off this list, as it always has.
+  { method: 'POST', pattern: '/api/apps/:slug/demo-mode' },
+  { method: 'GET', pattern: '/api/apps/:slug/demo' },
+  { method: 'POST', pattern: '/api/apps/:slug/demo/propose' },
+  { method: 'POST', pattern: '/api/apps/:slug/demo/vote' },
+  { method: 'POST', pattern: '/api/apps/:slug/demo/reset' },
 ]);
 
 function matchesPattern(pathname, pattern) {

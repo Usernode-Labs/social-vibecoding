@@ -8175,7 +8175,29 @@ CREATE TABLE IF NOT EXISTS account_email_verifications (
 );
 COMMENT ON TABLE account_email_verifications IS 'staging:private';
 
+-- ── Demo mode ──────────────────────────────────────────────────────────
+--
+-- A recording of the proposal flow needs a second participant who proposes
+-- and votes on cue, and a way to put the app back afterwards. That
+-- participant is a SYNTHETIC user: a users row that cannot sign in (random
+-- discarded password, no OAuth, and refused by the session middleware and the
+-- login route even if a session row somehow named it) and that acts only
+-- through routes/demo-mode.js — every route of which checks the app is in
+-- demo mode and the caller is its creator and a full platform admin. It
+-- counts for nothing on an app that is not in demo mode.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
+-- The per-app switch, its partner, and where main stood when it was switched
+-- on — which is what a reset puts main back to.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_mode BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_base_sha VARCHAR(40);
+
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+--
+-- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
+-- applies schema.sql from this CREATE TABLE to the end of the file into a
+-- scratch schema that holds nothing else, so anything appended after it has
+-- to stand on its own there — an ALTER TABLE on users or apps does not.
 CREATE TABLE IF NOT EXISTS preview_operations (
   session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
   desired_revision TEXT NOT NULL,
