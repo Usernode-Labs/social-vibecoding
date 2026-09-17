@@ -104,6 +104,27 @@ test('github-issues route ?refresh=1 returns issues plus refresh metadata', asyn
   }
 });
 
+test('feedback report keeps the platform author visible after the body is cleared (#2427)', async () => {
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM feedback_reports fr JOIN users/.test(s)) {
+      return { rows: [{ n: 1, username: 'tester' }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.find((issue) => issue.number === 1).created_by_username, 'tester');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
 test('per-issue chatCount counts only human messages (msg_type=message)', async () => {
   // Answer the per-issue thread-count grouped query with rows shaped the
   // way Postgres would after the FILTER: issue #1 has 2 human messages

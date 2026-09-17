@@ -31,6 +31,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { DevCard, ActionButton } from '../card/dev-card';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
@@ -836,6 +837,110 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   );
 }
 
+function IssueBody({ html: initialHtml, editor }: {
+  html: string;
+  editor: NonNullable<TopicBody['issueBodyEditor']>;
+}): ReactNode {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(editor.markdown);
+  const [html, setHtml] = useState(initialHtml);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // A live issue refresh may replace the rendered Markdown. Adopt it while
+  // reading, but never overwrite a draft the author is actively typing.
+  useEffect(() => {
+    if (editing) return;
+    setDraft(editor.markdown);
+    setHtml(initialHtml);
+  }, [editor.issue, editor.markdown, initialHtml, editing]);
+
+  const cancel = () => {
+    setDraft(editor.markdown);
+    setError('');
+    setEditing(false);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+    const slug = av?.appData?.slug;
+    if (!slug) {
+      setError('This issue is not available right now.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/apps/${slug}/github-issues/${editor.issue}/body`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: draft }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Failed to update the issue body.');
+      const savedBody = typeof result.body === 'string' ? result.body : draft;
+      const rendered = typeof av?._cacheIssueBody === 'function'
+        ? av._cacheIssueBody(editor.issue, savedBody)
+        : '';
+      setDraft(savedBody);
+      setHtml(rendered);
+      setEditing(false);
+      if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update the issue body.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="dev-topic-h">About this issue</h4>
+        {editor.canEdit && !editing ? (
+          <button
+            type="button"
+            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
+            title="Edit this issue's body (you created it)"
+            aria-label="Edit issue body"
+            data-issue-body-edit={editor.issue}
+            onClick={() => { setError(''); setEditing(true); }}
+          >
+            <PencilSquareIcon className="w-4 h-4" />
+          </button>
+        ) : null}
+      </div>
+      {editing ? (
+        <form className="mt-2 space-y-3" data-issue-body-editor={editor.issue} onSubmit={save}>
+          <Textarea
+            id="dev-issue-body-input"
+            rows={10}
+            maxLength={10000}
+            width="full"
+            box="default"
+            className="resize-y"
+            value={draft}
+            autoFocus
+            disabled={saving}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+          />
+          {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
+            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save body'}</Button>
+          </div>
+        </form>
+      ) : html ? (
+        <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: html }} />
+      ) : editor.canEdit ? (
+        <p className="dev-topic-note">No description yet.</p>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * Everything the topic screen draws BELOW its card: the ledger, the About
  * sheet, the transcript, and the host the GitHub thread mounts into.
@@ -865,14 +970,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // variables rather than one so the label can never end up over an issue.
   const summaryHtml = body.summaryHtml || null;
   const issueHtml = summaryHtml ? null : (body.issueBodyHtml || null);
+  const issueEditor = summaryHtml ? null : (body.issueBodyEditor || null);
   const tiles = a && a.visuals ? a.visuals : null;
-  const hasAbout = !!(summaryHtml || issueHtml || tiles || body.proposalBody || body.note);
+  const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note);
   return (
     <>
       {body.details ? <LedgerView d={body.details} /> : null}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
-          <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4>
+          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
@@ -880,7 +986,8 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
               <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
             </>
           ) : null}
-          {issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
+          {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />
+            : issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
               {/* AppView.visualsTilesHtml's markup — four other surfaces

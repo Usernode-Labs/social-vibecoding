@@ -2459,9 +2459,9 @@
       "expectText": "[Mock] Newly filed issue — should render on top"
     },
     {
-      "name": "Issue topic head shows the author-only edit-title pencil",
+      "name": "Issue topic shows the author-only title and body edit controls (#2427)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "[data-issue-title='900008']"
+      "expectSelector": "#gc-thread-head:has([data-issue-title='900008']):has([data-issue-body-edit='900008'])"
     },
     {
       "name": "Issue topic links its attached-screenshot preview to the full-size image (#2349)",

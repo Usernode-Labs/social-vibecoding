@@ -67,6 +67,30 @@ test('an issue body is not dressed up as a user-facing summary', () => {
   assert.doesNotMatch(html, /What changes for you/);
 });
 
+test('an issue author gets the body edit control in the About sheet (#2427)', () => {
+  const html = topicHeadHtml(BLANK_CARD, {
+    actions: null,
+    aboutTitle: 'About this issue',
+    issueBodyHtml: '<div class="dev-issue-body"><p>The button does nothing.</p></div>',
+    issueBodyEditor: { issue: 900008, markdown: 'The button does nothing.', canEdit: true },
+  });
+  assert.match(html, /data-issue-body-edit="900008"/);
+  assert.match(html, /aria-label="Edit issue body"/);
+  assert.match(html, /The button does nothing/);
+  assert.doesNotMatch(html, /data-issue-body-editor=/, 'the textarea opens only after the author asks');
+});
+
+test('a reader sees the issue body without its author-only edit control', () => {
+  const html = topicHeadHtml(BLANK_CARD, {
+    actions: null,
+    aboutTitle: 'About this issue',
+    issueBodyHtml: '<div class="dev-issue-body"><p>Read only.</p></div>',
+    issueBodyEditor: { issue: 900008, markdown: 'Read only.', canEdit: false },
+  });
+  assert.match(html, /Read only/);
+  assert.doesNotMatch(html, /data-issue-body-edit=/);
+});
+
 test('a proposal with no summary shows no label rather than an invented one', () => {
   // Every proposal imported before this change is in exactly this state, and
   // nothing generates a summary for it on the way in. An empty labelled
