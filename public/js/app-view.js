@@ -3787,8 +3787,14 @@ const AppView = {
       const issue = (AppView._ghIssues || []).find((i) => Number(i.number) === Number(n));
       return { n, title: issue?.title || `Issue #${n}`, href: body.details.linked.find((link) => Number(link.n) === Number(n))?.href || `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${n}` };
     });
-    body.summaryHtml ||= '<p>No change summary has been added yet.</p>';
-    if (!body.proposalBody && mine && item.spec_md) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
+    // #2371: before review the author still needs something to read. The
+    // spec is the change's description until a summary exists; /details
+    // returns it to the owner of an underway change only.
+    const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
+    if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
+    body.summaryHtml ||= specStandIn
+      ? '<p>No change summary has been added yet. The spec this change is built from is under Technical details.</p>'
+      : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.activity = [

@@ -3009,6 +3009,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         : session;
       if (req.path.endsWith('/details')) {
         detail.busy = isSessionBusy(Number(session.id));
+        // #2371: the author reviews a change before submitting it, and before
+        // then its only description is the spec. Read separately and only for
+        // the owner of an underway change, so the shared projection above
+        // never carries it (#894).
+        if (session.user_id === req.user.id && ['active', 'paused'].includes(session.status)) {
+          const { rows: specs } = await pool.query('SELECT spec_md FROM chat_sessions WHERE id = $1', [session.id]);
+          detail.spec_md = specs[0]?.spec_md || null;
+        }
         if (detail.source === 'cli_handoff') {
           const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
           detail.proposal_state = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] }).state;
