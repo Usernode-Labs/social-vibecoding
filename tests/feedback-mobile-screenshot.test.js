@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadTsx } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -114,7 +115,7 @@ test('a capture that kills the page leaves the words in sessionStorage', () => {
   assert.match(stash, /description,\n\s*title,\n\s*titleDirty,\n\s*target: feedbackTarget,/);
   assert.ok(!/screenshotBlob|screenshotId/.test(stash), 'the stash must stay text-only');
   // Armed before the page can die: the native suspend, and the camera roll.
-  assert.match(controller, /stashCaptureDraft\(\);\n\s*suspendDialog\(\);/);
+  assert.match(controller, /stashCaptureDraft\(\);\n\s*const exited = suspendDialog\(\);/);
   assert.match(controller, /stashCaptureDraft\(\);\n\s*screenshotInput\.click\(\);/);
   // Ignored once stale, and never written from a ?shot= route (a synthetic
   // draft must not follow the reviewer into a real session).
@@ -150,4 +151,84 @@ test('the stash is handed back on the next open, and announced at boot', () => {
   assert.match(app, /App\.noticeRescuedFeedbackDraft\?\.\(\)/);
   // And dropped the moment the draft is genuinely consumed.
   assert.equal((controller.match(/clearCaptureDraft\(\)/g) || []).length >= 5, true);
+});
+
+// ── #2346: the screenshot was a picture of the feedback dialog ────────────
+//
+// Since #1474 the suspended dialog's card rides the kit's exit animation
+// rather than vanishing on the close tick, but the native capture still
+// waited only two animation frames — so the phone photographed the dialog
+// mid-fade. The capture now waits for the exit (bounded), then for the paint.
+// tests/dialog-suspend-exit.test.js runs the other half: that suspend()'s
+// promise really does resolve at the end of the exit.
+
+// The controller's own exports, bundled as they ship. screenshot-select.js is
+// stubbed out: it is imported for its `window.ScreenshotSelect` side effect,
+// and its CommonJS branch would otherwise replace this bundle's exports.
+const loadCapture = () => loadTsx('frontend/src/features/dialogs/feedback-controller.js', {
+  stubs: { './screenshot-select': {} },
+});
+
+test('a native capture waits for the dialog to finish leaving before it shoots', async () => {
+  const { captureBehindHiddenDialog } = loadCapture();
+  const events = [];
+  let finishExit;
+  const hide = () => {
+    events.push('suspend');
+    return new Promise((resolve) => { finishExit = resolve; });
+  };
+  const waitForPaint = async () => { events.push('paint'); };
+  const capture = async () => { events.push('capture'); return 'blob'; };
+
+  const shot = captureBehindHiddenDialog(hide, capture, waitForPaint, 5000);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events, ['suspend'], 'nothing is photographed while the dialog is still leaving');
+
+  events.push('exited');
+  finishExit();
+  assert.equal(await shot, 'blob');
+  assert.deepEqual(events, ['suspend', 'exited', 'paint', 'capture']);
+});
+
+test('the wait for the exit is bounded', async () => {
+  const { captureBehindHiddenDialog, DIALOG_EXIT_WAIT_MS } = loadCapture();
+  const events = [];
+  const neverExits = () => { events.push('suspend'); return new Promise(() => {}); };
+  const started = Date.now();
+  const blob = await captureBehindHiddenDialog(
+    neverExits,
+    async () => { events.push('capture'); return 'blob'; },
+    async () => { events.push('paint'); },
+    30,
+  );
+  assert.equal(blob, 'blob', 'an exit that never lands still gets a screenshot');
+  assert.deepEqual(events, ['suspend', 'paint', 'capture']);
+  assert.ok(Date.now() - started < 1000, 'after the bound, not never');
+  // Long enough to cover the kit's 300ms exit fallback; short enough that
+  // ?shot=feedback-capture-failed has the dialog restored well before its
+  // dapp.json checks give up looking.
+  assert.equal(DIALOG_EXIT_WAIT_MS, 600);
+});
+
+test('a dialog with no controller to wait on is captured straight away', async () => {
+  const { captureBehindHiddenDialog } = loadCapture();
+  const started = Date.now();
+  // suspendDialog() before hydration: `dialogController()?.suspend()` is undefined.
+  const blob = await captureBehindHiddenDialog(() => undefined, async () => 'blob', async () => {});
+  assert.equal(blob, 'blob');
+  assert.ok(Date.now() - started < 300, 'no bound is spent when there is nothing to wait for');
+});
+
+test('the capture round trip goes through that sequence, and suspend hands back its promise', () => {
+  assert.match(controller, /function suspendDialog\(\) \{ return dialogController\(\)\?\.suspend\(\); \}/);
+  const round = controller.slice(
+    controller.indexOf('const runCapture = async'),
+    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  );
+  assert.match(round, /return exited;/, 'hideDialog returns the suspension\'s exit');
+  assert.match(round,
+    /if \(nativeAttempt\) \{\n\s*blob = await captureBehindHiddenDialog\(hideDialog, capture, waitForHiddenDialogPaint\);/,
+    'the native attempt waits for the exit before the bridge call');
+  assert.doesNotMatch(round, /hideDialog\(\);\n\s*await waitForHiddenDialogPaint\(\);/,
+    'two frames alone photograph the dialog mid-fade (#2346)');
 });

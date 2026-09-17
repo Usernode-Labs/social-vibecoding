@@ -47,8 +47,13 @@ const fromFrontend = (spec) => require(require.resolve(spec, { paths: [FRONTEND]
  * `react`, `react-dom` and the JSX runtime stay external and are resolved out
  * of frontend/node_modules, so the component under test shares one React with
  * renderToStaticMarkup — two copies would fail on the first hook.
+ *
+ * `stubs` maps an import specifier, exactly as the source spells it, to the
+ * exports that import should receive instead. tests/dialog-suspend-exit.test.js
+ * uses it to run a hook against a React it can step through by hand — effects
+ * included, which renderToStaticMarkup never runs.
  */
-function loadTsx(entry) {
+function loadTsx(entry, { stubs = {} } = {}) {
   const esbuild = fromFrontend('esbuild');
   const result = esbuild.buildSync({
     entryPoints: [path.join(ROOT, entry)],
@@ -58,7 +63,7 @@ function loadTsx(entry) {
     platform: 'node',
     target: 'node22',
     jsx: 'automatic',
-    external: ['react', 'react-dom', 'react-dom/*', 'react/*'],
+    external: ['react', 'react-dom', 'react-dom/*', 'react/*', ...Object.keys(stubs)],
     // `@/…` is the shell's alias for frontend/@ — the same one
     // frontend/tsconfig.json and vite.config.ts declare.
     alias: { '@': path.join(FRONTEND, '@') },
@@ -71,7 +76,7 @@ function loadTsx(entry) {
   mod.filename = filename;
   mod.paths = Module._nodeModulePaths(path.dirname(filename));
   // The bundle's only remaining `require`s are the externals above.
-  const req = (spec) => fromFrontend(spec);
+  const req = (spec) => (Object.hasOwn(stubs, spec) ? stubs[spec] : fromFrontend(spec));
   req.resolve = (spec) => require.resolve(spec, { paths: [FRONTEND] });
   mod._compile = undefined;
   const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', code);
