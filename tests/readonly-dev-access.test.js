@@ -190,6 +190,7 @@ test("session/proposal/issue/board list routes read at 'view' level", () => {
     ['src/routes/votes.js', "'/api/apps/:slug/proposals/:id'"],
     ['src/routes/issues.js', "'/api/apps/:slug/issues'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues'"],
+    ['src/routes/issues.js', "'/api/apps/:slug/github-issues/:number'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues/:number/comments'"],
     ['src/routes/topic-attributes.js', "router.get('/api/apps/:slug/topics"],
     ['src/routes/board-order.js', "router.get('/api/apps/:slug/board-order'"],

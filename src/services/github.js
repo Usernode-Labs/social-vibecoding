@@ -1734,6 +1734,11 @@ function normalizeIssue(raw) {
     // it's the actual author, which the github-issues route uses as a
     // last-resort creator fallback.
     user: (raw.user && raw.user.login) || null,
+    // #2365: the single-issue endpoint resolves CLOSED issues too, and a
+    // proposal that closed one still links to it — so the page it opens has
+    // to know which it is. The open-issues list only ever carries 'open'.
+    state: raw.state === 'closed' ? 'closed' : 'open',
+    closedAt: raw.closed_at || null,
   };
 }
 
@@ -1974,8 +1979,15 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 
   const cacheKey = `${owner}/${repo}`;
+  // #2365: a number the merge path or the close watcher just recorded as
+  // closed (#144) is still in the open-issues cache, as OPEN — which is
+  // exactly when a reader follows the merged proposal's link to it. Ask
+  // GitHub instead of answering from a list the suppression exists to
+  // correct.
+  const suppressed = liveSuppressions(owner, repo);
+  const knownClosed = !!(suppressed && suppressed.has(n));
   const cached = issuesCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!knownClosed && cached && cached.expiresAt > Date.now()) {
     const hit = cached.result.issues.find((i) => i.number === n);
     if (hit) return { issue: hit };
   }
@@ -1983,7 +1995,7 @@ async function fetchPublicIssue(owner, repo, number) {
   // #192: a just-created issue may predate both the cache and GitHub's
   // lagging anonymous endpoints — the overlay carries its full body, so
   // serving from it costs no network call (and no rate-limit budget).
-  const overlay = liveCreatedOverlay(owner, repo);
+  const overlay = knownClosed ? null : liveCreatedOverlay(owner, repo);
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 

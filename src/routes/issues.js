@@ -1868,6 +1868,108 @@ function issueRoutes(config) {
   });
 
   // ----------------------------------------------------------------
+  // GET /api/apps/:slug/github-issues/:number
+  //
+  // #2365: ONE GitHub issue, open or CLOSED, for the topic view. The list
+  // route above carries open issues only, so a proposal's link to the issue
+  // it closed opened a page that could not find it and silently bounced to
+  // the board. github.fetchPublicIssue is cache-first, never throws, resolves
+  // closed issues through the single-issue endpoint and refuses pull
+  // requests — anything it cannot return is a 404 here. View-gated like the
+  // list. Returns `{ issue }` in the list's row shape: creator, bounty tally,
+  // discussion count and attributes are resolved the same way; the
+  // per-viewer work fields (headless run, in-progress, own session) are left
+  // empty, because a closed issue's page offers no work on it.
+  // ----------------------------------------------------------------
+  router.get('/api/apps/:slug/github-issues/:number', async (req, res) => {
+    try {
+      // View-level (#621): reading an issue is read-only.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const number = /^\d+$/.test(req.params.number) ? Number(req.params.number) : NaN;
+      if (!Number.isSafeInteger(number) || number <= 0) {
+        return res.status(400).json({ error: 'Invalid issue number' });
+      }
+      const parsed = parseOwnerRepo(app.repo_url);
+
+      // Staging: the list route's mock rows resolve here too, so a mock
+      // issue's page opened by URL behaves like one opened from the board.
+      // With ?demo=1 the mock is served without the live round trip, for the
+      // reason the comments route below gives; without it the live fetch
+      // goes first and the mock is only the fallback. No-op in production.
+      const mock = IS_STAGING
+        ? stagingMockIssues(app.repo_url).find((i) => i.number === number) || null
+        : null;
+      let issue = null;
+      if (mock && req.query.demo === '1') {
+        issue = mock;
+      } else if (github.isEnabled() && parsed) {
+        ({ issue } = await github.fetchPublicIssue(parsed.owner, parsed.repo, number));
+      }
+      if (!issue) issue = mock;
+      if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+      const { rows: bountyRows } = await pool.query(
+        `SELECT COUNT(*)::int AS cnt, BOOL_OR(giver_user_id = $3) AS mine
+           FROM issue_bounties
+          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+        [app.id, number, req.user.id]
+      );
+      const { rows: creatorRows } = await pool.query(
+        `SELECT u.username
+           FROM issues i JOIN users u ON u.id = i.created_by
+          WHERE i.app_id = $1 AND i.github_issue_number = $2
+          ORDER BY i.id DESC
+          LIMIT 1`,
+        [app.id, number]
+      );
+      const { rows: chatRows } = await pool.query(
+        `SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
+                MAX(created_at) AS last_at
+           FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2`,
+        [app.id, number]
+      );
+      const b = bountyRows[0];
+      const chat = chatRows[0];
+      const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
+        ? issue.user
+        : null;
+      const attrs = (await topicAttrs.summarizeForTargets(
+        pool, app.id, 'issue', [number], req.user.id
+      )).get(number) || topicAttrs.emptySummary();
+
+      return res.json({
+        issue: {
+          state: 'open',
+          closedAt: null,
+          ...issue,
+          bounty_count: b ? b.cnt : 0,
+          my_bounty: b ? !!b.mine : false,
+          created_by_username: (creatorRows[0] && creatorRows[0].username)
+            || creatorFromSourceLine(issue.body)
+            || ghLogin,
+          headless: null,
+          in_progress: null,
+          myPrSessionId: null,
+          chatCount: (chat && chat.cnt) || 0,
+          lastMessageAt: (chat && chat.last_at) || null,
+          title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
+          priority: attrs.priority,
+          assignee: attrs.assignee,
+          category: attrs.category,
+        },
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to fetch GitHub issue', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
   // GET /api/apps/:slug/github-issues/:number/comments
   //
   // #396: the GitHub comment thread for ONE issue, for the Dev topic

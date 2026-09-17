@@ -3232,9 +3232,13 @@ const AppView = {
     // rows live in the very same keyset-paginated Completed stream, and
     // _govProposals only ever holds OPEN governance rows — so every settled
     // close proposal outside the freshly-reset first page was a dead click.
-    if (ok && (ref.kind === 'proposal' || ref.kind === 'session' || ref.kind === 'gov')
+    // (#2365) And a CLOSED issue: _ghIssues holds open issues only, so the
+    // issue a merged proposal closed — which that proposal still links to —
+    // resolves only through its own single-issue fetch.
+    if (ok && ['proposal', 'session', 'gov', 'issue'].includes(ref.kind)
         && !AppView._findTopicItem()) {
       if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
+      else if (ref.kind === 'issue') await AppView._fetchIssueByNumber(ref.id);
       else await AppView._fetchProposalById(ref.id);
       // Re-check staleness: the user may have navigated away mid-fetch.
       t = AppView._devTopic;
@@ -3242,16 +3246,15 @@ const AppView = {
           || t.kind !== ref.kind || t.id !== ref.id) return;
     }
     if (!ok || !AppView._findTopicItem()) {
-      // Missing ref (closed issue, archived session, bad link, or a
-      // proposal that genuinely doesn't exist / is inaccessible) — fall
-      // back to the card list.
+      // Missing ref (an issue GitHub no longer serves, archived session, bad
+      // link, or a proposal that genuinely doesn't exist / is inaccessible)
+      // — fall back to the card list.
       //
       // (#1115) Say so for a GOVERNANCE topic: a click on a real, visible
       // card that lands back on the board with no explanation reads as "the
-      // click did nothing". The other kinds stay silent on purpose — a
-      // closed GitHub issue legitimately fails to resolve here (_ghIssues
-      // holds open issues only, see revealInDrawer), so toasting that would
-      // be a behaviour change beyond this fix.
+      // click did nothing". The other kinds stay silent on purpose; an issue
+      // that misses even its single-issue fetch (#2365) is a bad number or
+      // a pull request, not a card anyone could see.
       if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
         PlatformUI.toast('Couldn’t open that proposal’s discussion.');
       }
@@ -3280,7 +3283,14 @@ const AppView = {
   _findItem(kind, id) {
     const t = { kind, id };
     if (t.kind === 'issue') {
-      return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
+      // _ghIssues holds OPEN issues only; _topicIssue is the fetch-on-demand
+      // fallback (#2365) for a closed one — checked last, and keyed by number
+      // AND app, since issue numbers repeat across every app's repo.
+      return (AppView._ghIssues || []).find((i) => i.number === t.id)
+        || (AppView._topicIssue && AppView._topicIssue.number === t.id
+            && AppView._topicIssueSlug === (AppView.appData && AppView.appData.slug)
+          ? AppView._topicIssue : null)
+        || null;
     }
     if (t.kind === 'proposal') {
       // Open proposals first; merged ones stay viewable with a still-live,
@@ -3344,8 +3354,10 @@ const AppView = {
   async _refreshTopicOnDemandRow() {
     const t = AppView._devTopic;
     if (!t) return;
-    // Issues and sessions have no on-demand cache — they resolve from
-    // _ghIssues / _sharedSessions / _mySessions, which _loadDevData owns.
+    // Sessions have no on-demand cache — they resolve from _sharedSessions /
+    // _mySessions, which _loadDevData owns. Nor do issues need a refresh:
+    // _topicIssue holds a CLOSED issue, which is settled the way the lists'
+    // rows are not; its discussion thread loads live on its own.
     if (t.kind === 'issue' || t.kind === 'session') return;
     if (t.kind === 'proposal') {
       if ((AppView._proposals || []).some((p) => p.id === t.id)) return;
@@ -3430,6 +3442,36 @@ const AppView = {
       const row = data.proposal || null;
       if (!row) return null;
       AppView._topicGov = row;
+      return row;
+    } catch {
+      return null;
+    }
+  },
+
+  // (#2365) The issue twin of _topicGov: a single-item cache for an issue
+  // _ghIssues does not hold — in practice a CLOSED one, opened from the
+  // proposal that closed it. Separate from _ghIssues for the same reason the
+  // other two are separate from their lists: _loadDevData replaces that list
+  // on every refresh. _topicIssueSlug records which app it belongs to.
+  _topicIssue: null,
+  _topicIssueSlug: null,
+
+  // Fetch one GitHub issue by number, open or closed, caching it in
+  // _topicIssue. Best-effort: a miss (404 / no access / network error), or
+  // an answer for an app the view has since left, leaves the cache untouched
+  // so the caller falls back to the board.
+  async _fetchIssueByNumber(number) {
+    if (!AppView.appData || !number) return null;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = data.issue || null;
+      if (!row || row.number !== number) return null;
+      if (!AppView.appData || AppView.appData.slug !== slug) return null;
+      AppView._topicIssue = row;
+      AppView._topicIssueSlug = slug;
       return row;
     } catch {
       return null;
@@ -3784,7 +3826,7 @@ const AppView = {
       card.actions = own.actions;
     }
     body.issues = (item.linked_issues || []).map((n) => {
-      const issue = (AppView._ghIssues || []).find((i) => Number(i.number) === Number(n));
+      const issue = AppView._findItem('issue', Number(n));
       return { n, title: issue?.title || `Issue #${n}`, href: body.details.linked.find((link) => Number(link.n) === Number(n))?.href || `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${n}` };
     });
     body.summaryHtml ||= '<p>No change summary has been added yet.</p>';
@@ -3996,7 +4038,9 @@ const AppView = {
           act: { fn: 'promoteImportedSession', args: [item.id] }, passNode: true,
         });
       }
-    } else if (kind === 'issue' && !AppView.readOnly) {
+    } else if (kind === 'issue' && !AppView.readOnly && item.state !== 'closed') {
+      // (#2365) A closed issue offers none of these: nothing is left to
+      // claim, to pledge a bounty on, or to propose closing.
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
       pills.push(ipClaims.some((c) => c.mine)
@@ -4781,6 +4825,8 @@ const AppView = {
     // can never be mistaken for the one being opened now.
     AppView._topicProposal = null;
     AppView._topicGov = null;
+    AppView._topicIssue = null;
+    AppView._topicIssueSlug = null;
     // #665: an inline title edit never carries across topics — a stale
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
@@ -14066,8 +14112,20 @@ const AppView = {
         }
         : null;
 
+    // (#2365) A CLOSED issue — reachable from the proposal that closed it,
+    // through _topicIssue — is a record, not a task: its state is the one
+    // badge, and it carries no work actions and no attribute votes.
+    const closed = issue.state === 'closed';
+    const closedBadge = closed
+      ? {
+        t: 'chip', key: 'closed', cls: `dev-badge ${AppView._WORK_TONE_CLS.zinc}`,
+        label: 'Closed',
+        title: issue.closedAt ? `Closed ${relTime(issue.closedAt)}` : 'This issue is closed',
+      }
+      : null;
+
     // ── Badges: close status + work state + at most three metadata chips ──
-    const badges = [
+    const badges = closed ? [closedBadge] : [
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
@@ -14075,7 +14133,7 @@ const AppView = {
 
     // ── Actions: the state-driven primary + the claim toggle ──
     const actions = [];
-    if (!AppView.readOnly) {
+    if (!AppView.readOnly && !closed) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav });
       if (primary) actions.push(primary);
       // Promoted off the ⋯ menu: claiming an issue is what a reader does
@@ -14093,7 +14151,7 @@ const AppView = {
       ? AppView._cardPreviewSpec({ staging_url: h.stagingUrl },
         { kind: 'issue-run', sessionId: h.sessionId })
       : null;
-    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !noNav && !AppView.readOnly });
+    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !noNav && !AppView.readOnly && !closed });
 
     const extra = [];
     // #1112: the chip is four words wide — it can name the state but not
@@ -14131,7 +14189,7 @@ const AppView = {
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
-    const canEditTitle = !!(noNav && !AppView.readOnly && issue.created_by_username
+    const canEditTitle = !!(noNav && !closed && !AppView.readOnly && issue.created_by_username
       && typeof App !== 'undefined' && App.user
       && issue.created_by_username === App.user.username);
     const editing = canEditTitle && AppView._editingIssueTitle === n;
@@ -14324,7 +14382,9 @@ const AppView = {
     const meta = AppView._ghIssuesMeta || {};
     const items = [];
 
-    if (!AppView.readOnly) {
+    // (#2365) Nothing on a closed issue is actionable work; sharing it and
+    // opening it on GitHub still are.
+    if (!AppView.readOnly && issue.state !== 'closed') {
       // A finished run keeps its Review/Continue primary. New work remains
       // available through the same two-choice launcher, never a second AI CTA.
       if (h?.status === 'ready' && !h.mySessionId) items.push({

@@ -1053,3 +1053,151 @@ test('#2261 a refused GitHub read serves the last list with note + stale instead
     server.close();
   }
 });
+
+// ── #2365: GET /api/apps/:slug/github-issues/:number ────────────────────
+//
+// The list above is OPEN issues only, so the issue a merged proposal closed
+// — which that proposal still links to — had no page. This route resolves
+// one issue, open or closed, through github.fetchPublicIssue, in the list's
+// row shape. Each test scripts the single-issue response itself; number 142
+// is nowhere in the shared o/r list cache, so the endpoint is really asked.
+
+const closedGhIssue = (over) => ({
+  number: 142,
+  title: 'Toggle resets after refresh',
+  body: 'Steps.\n\n**Source:** usernode user (reporter)',
+  labels: [{ name: 'usernode' }],
+  created_at: '2026-06-01T00:00:00Z',
+  updated_at: '2026-06-09T00:00:00Z',
+  closed_at: '2026-06-09T00:00:00Z',
+  state: 'closed',
+  html_url: 'https://github.com/o/r/issues/142',
+  user: { login: 'usernode-bot' },
+  ...over,
+});
+
+function stubSingleIssue(answer) {
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com')) {
+      calls.push(String(url));
+      return answer(url);
+    }
+    return baselineFetch(url, opts);
+  };
+  return calls;
+}
+
+test('single-issue endpoint returns a CLOSED issue in the list row shape', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM issue_bounties/.test(s)) return { rows: [{ cnt: 2, mine: true }] };
+    if (/FROM chat_messages/.test(s)) return { rows: [{ cnt: 3, last_at: '2026-06-10T00:00:00Z' }] };
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(res.status, 200);
+    const { issue } = await res.json();
+    assert.ok(calls.some((u) => u.endsWith('/repos/o/r/issues/142')), 'the single-issue endpoint was asked');
+    assert.strictEqual(issue.number, 142);
+    assert.strictEqual(issue.state, 'closed');
+    assert.strictEqual(issue.closedAt, '2026-06-09T00:00:00Z');
+    assert.strictEqual(issue.title, 'Toggle resets after refresh');
+    // Enriched the way the list enriches a row.
+    assert.strictEqual(issue.created_by_username, 'reporter', 'the Source line names the creator, never the bot');
+    assert.strictEqual(issue.bounty_count, 2);
+    assert.strictEqual(issue.my_bounty, true);
+    assert.strictEqual(issue.chatCount, 3);
+    assert.strictEqual(issue.lastMessageAt, '2026-06-10T00:00:00Z');
+    assert.strictEqual(issue.headless, null);
+    assert.strictEqual(issue.in_progress, null);
+    assert.ok(issue.priority && 'top' in issue.priority, 'attribute summary rides along');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('single-issue endpoint 404s on a missing issue and on a pull request number', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    stubSingleIssue(() => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }));
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/143`);
+    assert.strictEqual(res.status, 404);
+    assert.ok((await res.json()).error);
+
+    stubSingleIssue(() => ({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => closedGhIssue({ number: 144, pull_request: { url: 'x' } }),
+    }));
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/144`);
+    assert.strictEqual(res.status, 404, 'a PR is not an issue');
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('single-issue endpoint is view-gated and validates the number before asking GitHub', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  const server = await startServer();
+  const prev = appAccess.getAppForUser;
+  try {
+    const port = server.address().port;
+    let level = null;
+    appAccess.getAppForUser = async (_pool, _slug, _user, lvl) => { level = lvl; return null; };
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(res.status, 404);
+    assert.strictEqual(level, 'view');
+    assert.strictEqual(calls.length, 0, 'an inaccessible app never reaches GitHub');
+
+    appAccess.getAppForUser = prev;
+    for (const bad of ['0', 'abc', '12x']) {
+      res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/${bad}`);
+      assert.strictEqual(res.status, 400, `rejects ${bad}`);
+    }
+    assert.strictEqual(calls.length, 0);
+  } finally {
+    appAccess.getAppForUser = prev;
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('staging demo mode serves a MOCK issue by number without the live round trip', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: false, status: 404, headers: { get: () => null }, json: async () => ({}),
+  }));
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const { issue } = await res.json();
+    assert.strictEqual(issue.number, 900008);
+    assert.strictEqual(issue.state, 'open');
+    assert.strictEqual(calls.length, 0, 'no live fetch for a number no real issue has');
+
+    // Without ?demo=1 the live fetch goes first, and the mock backs its miss.
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008`);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(calls.length, 1);
+
+    // A number that is neither real nor a mock is still a 404.
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/424242?demo=1`);
+    assert.strictEqual(res.status, 404);
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
