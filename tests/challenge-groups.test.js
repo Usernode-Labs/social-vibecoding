@@ -575,3 +575,23 @@ test('?shot=challenge-detail opens the first unfinished card, not a leading Get 
   plain.pane._renderGrid();
   assert.deepEqual(none, [], 'without the param a real user’s grid opens nothing');
 });
+
+// ─── Unnamed rows (#2394) ───────────────────────────────────────────────
+
+test('a challenge entry or profile the server could not name reads "Anonymous"', () => {
+  const { pane } = loadPane({ challenges: [ch(1, 'WEEKLY')] });
+  pane._breakdown = {
+    entries: [
+      { user_id: 4, display_name: 'dav***@***.com', points: 150, rate: null, is_non_podium: false },
+      { user_id: 9, display_name: null, points: 1, rate: null, is_non_podium: false },
+    ],
+    has_more: false,
+  };
+  const rows = pageOf(pane, pane._challenges[0]).entries.rows;
+  assert.equal(rows[0].name, 'dav***@***.com', 'a named entry is untouched');
+  assert.equal(rows[1].name, 'Anonymous', 'an unnamed one is not a bare points figure');
+
+  pane._profileUserId = 9;
+  pane._profile = { display_name: null, activities: [] };
+  assert.equal(pane.profileView().name, 'Anonymous', 'nor is the profile it opens');
+});

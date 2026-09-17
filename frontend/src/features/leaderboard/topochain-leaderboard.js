@@ -357,7 +357,9 @@ const TopochainLeaderboard = {
       index: i,
       rank: r.is_non_podium ? '—' : String(r.rank),
       nonPodium: !!r.is_non_podium,
-      user: str(r.display_name),
+      // The server resolves a name for every account it can (#2394); a row
+      // it still cannot name says so rather than showing only its points.
+      user: str(r.display_name) || 'Anonymous',
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),
@@ -570,7 +572,7 @@ const TopochainLeaderboard = {
     };
 
     return {
-      displayName: str(row.display_name),
+      displayName: str(row.display_name) || 'Anonymous',
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,

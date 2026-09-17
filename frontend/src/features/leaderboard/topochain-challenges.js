@@ -1217,7 +1217,8 @@ const TopochainChallenges = {
         rows: bd.entries.map((e, i) => ({
           key: `${e.user_id}|${i}`,
           userId: e.user_id,
-          name: str(e.display_name),
+          // Same fallback as the standings table's User cell (#2394).
+          name: str(e.display_name) || 'Anonymous',
           nonPodium: !!e.is_non_podium,
           // Points and the optional rate are ONE string, composed here: they
           // shared a single <span> in the markup this replaces, and two
@@ -1357,7 +1358,7 @@ const TopochainChallenges = {
     const p = TopochainChallenges._profile;
     return {
       kind: 'profile',
-      name: str(p.display_name),
+      name: str(p.display_name) || 'Anonymous',
       // The stats grid was six hand-written cells in the same shape; one
       // ordered list of label/value pairs is the same six, and a label can no
       // longer drift away from the field it sits over.

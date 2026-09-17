@@ -22,21 +22,25 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.now();
 const T = (offsetDays) => new Date(NOW + offsetDays * DAY);
 
+// Every fixture user also has a platform `username` (#2394). None of them
+// NEEDS it — each has an email, telegram or discord to mask — so the rows
+// that resolved a name before the username tail existed are unchanged, and
+// the username-only accounts live in their own test near the end.
 const USERS = [
-  { id: 1, email: 'alice@example.com', telegram: null, discord: null, display_name: null, exclude_podium: true },
-  { id: 2, email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null, exclude_podium: false },
-  { id: 3, email: null, telegram: 'carolTG', discord: null, display_name: 'Carol Display', exclude_podium: false },
-  { id: 4, email: 'dave@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
-  { id: 5, email: 'erin@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 1, username: 'alice', email: 'alice@example.com', telegram: null, discord: null, display_name: null, exclude_podium: true },
+  { id: 2, username: 'bob', email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null, exclude_podium: false },
+  { id: 3, username: 'carol', email: null, telegram: 'carolTG', discord: null, display_name: 'Carol Display', exclude_podium: false },
+  { id: 4, username: 'dave', email: 'dave@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 5, username: 'erin', email: 'erin@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
   // frank: enrolled (event 101) but has no snapshots/activities — a
   // participant who never scored, used by the "valid identifier, empty
   // result" tests.
-  { id: 6, email: 'frank@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 6, username: 'frank', email: 'frank@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
   // grace: an ordinary PLATFORM web account sharing the users table — no
   // enrollment, no snapshot, no onchain account. The participant-scoping
   // fix must make her unresolvable through the public endpoints exactly
   // like an unknown identifier/id (enumeration-oracle regression).
-  { id: 7, email: 'platform-only@example.com', telegram: 'graceTG', discord: 'gracediscord', display_name: 'Grace', exclude_podium: false },
+  { id: 7, username: 'grace', email: 'platform-only@example.com', telegram: 'graceTG', discord: 'gracediscord', display_name: 'Grace', exclude_podium: false },
 ];
 
 const SEASON_EVENTS = [
@@ -219,6 +223,18 @@ function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
+// A user's identity columns as a query that SELECTs them returns them: the
+// `username` key exists only when the SQL really asks for `u.username`, so a
+// query that forgets the column hands the name chain `undefined` here exactly
+// as Postgres would, instead of the fixture quietly supplying it. Only the
+// text before GROUP BY counts: a column grouped on but not selected is not
+// in the row.
+function identityCols(sql, user) {
+  const cols = { email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name };
+  if (sql.split(' GROUP BY ')[0].includes('u.username')) cols.username = user.username;
+  return cols;
+}
+
 function latestPerUserForEvent(eventId) {
   const byUser = new Map();
   for (const s of LEADERBOARD_SNAPSHOTS) {
@@ -231,7 +247,7 @@ function latestPerUserForEvent(eventId) {
   return [...byUser.values()];
 }
 
-function computeStandingsRows(seasonId) {
+function computeStandingsRows(seasonId, sql) {
   const events = SEASON_EVENTS.filter((e) => !e.internal && (seasonId == null || e.season_id === seasonId));
   const byUser = new Map();
   for (const e of events) {
@@ -261,7 +277,7 @@ function computeStandingsRows(seasonId) {
       total_produced_blocks: acc.total_produced_blocks,
       total_produced_blocks_last_event: acc.lastProduced,
       is_non_podium: user.exclude_podium,
-      email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name,
+      ...identityCols(sql, user),
     };
   });
   rows.sort((a, b) => Number(b.total_points) - Number(a.total_points) || a.user_id - b.user_id);
@@ -277,7 +293,7 @@ function makeMockPool() {
     // 'season'/'all_time' branch of fetchEventLeaderboardRows, and the
     // profile all-time mode).
     if (sql.includes('last_event AS')) {
-      return { rows: computeStandingsRows(params[0] ?? null) };
+      return { rows: computeStandingsRows(params[0] ?? null, sql) };
     }
 
     // GET /leaderboard: regular-event rows (EVENT_LEADERBOARD_SQL).
@@ -293,8 +309,7 @@ function makeMockPool() {
             && (a.season_event_id === eventId || (a.season_event_id == null && a.season_id === event.season_id)));
           return {
             ...s,
-            email: user.email, telegram: user.telegram, discord: user.discord,
-            display_name: user.display_name, exclude_podium: user.exclude_podium,
+            ...identityCols(sql, user), exclude_podium: user.exclude_podium,
             wallet_address: acct ? acct.public_key : null, bech32m: acct ? acct.address : null,
           };
         });
@@ -464,8 +479,8 @@ function makeMockPool() {
           const user = USERS.find((u) => u.id === userId);
           const snap = latestPerUserForEvent(eventId).find((s) => s.user_id === userId);
           return {
-            user_id: userId, points: points.toFixed(2), discord: user.discord, display_name: user.display_name,
-            email: user.email, telegram: user.telegram, exclude_podium: user.exclude_podium,
+            user_id: userId, points: points.toFixed(2), ...identityCols(sql, user),
+            exclude_podium: user.exclude_podium,
             event_success_rate: snap ? snap.event_success_rate : null,
           };
         })
@@ -475,9 +490,9 @@ function makeMockPool() {
     }
 
     // GET /users/{id}/profile: base user lookup (participant-scoped).
-    if (sql.includes('u.email, u.telegram, u.discord, u.display_name FROM users u')) {
+    if (sql.includes('u.email, u.telegram, u.discord, u.display_name, u.username FROM users u')) {
       const user = USERS.find((u) => u.id === params[0] && isParticipant(u.id));
-      return { rows: user ? [user] : [] };
+      return { rows: user ? [{ id: user.id, ...identityCols(sql, user) }] : [] };
     }
     // GET /users/{id}/profile (event mode): single latest snapshot.
     if (sql.includes('FROM leaderboard_snapshots') && sql.includes('user_id = $2')) {
@@ -1224,4 +1239,106 @@ test('POST /app-version/check: missing build_number -> 422', async () => {
   assert.equal(res.status, 422);
   const body = await res.json();
   assert.ok(body.details.build_number);
+});
+
+// ─── Accounts whose only name is a platform username (#2394) ─────────────
+
+test('an account with only a platform username is named by it on every standings surface; a generated topochain_ handle is not', async () => {
+  // Two accounts the shared fixture set does not have, because adding them
+  // there would move every count above: henry signed up on the platform
+  // itself (username + password, nothing else), and the other was created by
+  // the admin console, which fills the NOT NULL column with a random handle.
+  // Before #2394 both rows arrived with display_name null — points, no name.
+  const henry = { id: 8, username: 'henry', email: null, telegram: null, discord: null, display_name: null, exclude_podium: false };
+  const generated = {
+    id: 9, username: 'topochain_0123456789abcdef01234567',
+    email: null, telegram: null, discord: null, display_name: null, exclude_podium: false,
+  };
+  const base = makeMockPool();
+  const pool = {
+    async query(rawSql, params = []) {
+      const sql = collapse(rawSql);
+      const { rows } = await base.query(rawSql, params);
+      const extra = (user, fields) => ({ user_id: user.id, ...fields, ...identityCols(sql, user) });
+      if (sql.includes('accounts AS (') && params[0] === 100) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { rank: 5, total_points: '20.00' }), exclude_podium: false },
+          { ...extra(generated, { rank: 6, total_points: '10.00' }), exclude_podium: false },
+        ] };
+      }
+      if (sql.includes('last_event AS')) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { total_points: '20.00', extra_points: '0.00' }), is_non_podium: false },
+          { ...extra(generated, { total_points: '10.00', extra_points: '0.00' }), is_non_podium: false },
+        ] };
+      }
+      if (sql.includes('LEFT JOIN LATERAL') && params[0] === 11) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { points: '5.00' }), exclude_podium: false },
+          { ...extra(generated, { points: '1.00' }), exclude_podium: false },
+        ] };
+      }
+      return { rows };
+    },
+  };
+  let srv;
+  withInjectedPool(pool, ({ topochainPublicRoutes }) => {
+    const app = express();
+    app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
+    srv = app.listen(0);
+  });
+  await new Promise((r) => srv.once('listening', r));
+  const localBase = `http://127.0.0.1:${srv.address().port}`;
+  const json = async (path) => {
+    const res = await fetch(`${localBase}${path}`);
+    assert.equal(res.status, 200, path);
+    return res.json();
+  };
+  try {
+    const event = (await json('/api/v4/leaderboard?season_event_id=100')).data.leaderboard;
+    const henryRow = event.find((r) => r.rank === 5);
+    assert.equal(henryRow.display_name, 'henry', 'the event board names a username-only account');
+    assert.equal(henryRow.identifier, null, 'and still has no identifier to mask');
+    assert.equal(event.find((r) => r.rank === 6).display_name, null,
+      'a generated topochain_<hex> handle is nobody\'s name, so the row stays unnamed');
+    // The username sits at the END of the chain: rows that already had a
+    // name keep exactly the one they rendered with.
+    assert.equal(event.find((r) => r.rank === 1).display_name, 'dav***@***.com');
+    assert.equal(event.find((r) => r.rank === 2).display_name, 'bobdiscord');
+    assert.equal(event.find((r) => r.identifier === 'car***').display_name, 'Carol Display');
+
+    // The season aggregate (a 'season'-type event) and the all-time board
+    // both read services/topochain/standings.js's query.
+    const season = (await json('/api/v4/leaderboard?season_event_id=103')).data.leaderboard;
+    assert.equal(season.find((r) => r.total_points === 20).display_name, 'henry');
+    assert.equal(season.find((r) => r.total_points === 10).display_name, null);
+    const global = (await json('/api/v4/leaderboard/global')).data.leaderboard;
+    assert.equal(global.find((r) => r.total_points === 20).display_name, 'henry',
+      'the anon discord redaction does not affect a username');
+    assert.equal(global.find((r) => r.total_points === 10).display_name, null);
+
+    const entries = (await json('/api/v4/season-events/100/challenges/11/breakdown')).data.entries;
+    assert.equal(entries.find((e) => e.user_id === 8).display_name, 'henry', 'challenge entries too');
+    assert.equal(entries.find((e) => e.user_id === 9).display_name, null);
+    assert.equal(entries.find((e) => e.user_id === 4).display_name, 'dav***@***.com');
+  } finally { srv.close(); }
+});
+
+test('resolveDisplayName: discord, display_name and the masked identifier all still outrank the username', () => {
+  const { resolveDisplayName } = require('../src/services/topochain/event-standings');
+  const bare = { email: null, telegram: null, discord: null, display_name: null };
+  assert.equal(resolveDisplayName({ ...bare, username: 'henry' }), 'henry');
+  assert.equal(resolveDisplayName({ ...bare, username: 'topochain_ab12CD34' }), null, 'generated, any hex case');
+  assert.equal(resolveDisplayName({ ...bare, username: 'topochain_fan' }), 'topochain_fan',
+    'only the generated shape is hidden, not every name with that prefix');
+  assert.equal(resolveDisplayName({ ...bare, username: null }), null);
+  assert.equal(resolveDisplayName(bare), null, 'a row without the column at all');
+  assert.equal(resolveDisplayName({ ...bare, email: 'dave@example.com', username: 'dave' }), 'dav***@***.com');
+  assert.equal(resolveDisplayName({ ...bare, display_name: 'Dave D', username: 'dave' }), 'Dave D');
+  assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }), 'davediscord');
+  assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }, { includeDiscord: false }),
+    'dav***', 'the redacted global chain still masks discord before reaching the username');
 });

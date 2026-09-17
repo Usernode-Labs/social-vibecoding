@@ -481,7 +481,7 @@ test('the standings pane cross-links to the challenges tab without ever painting
 // The module is still evaluated as a CLASSIC SCRIPT, which is the whole reason
 // its store is planted rather than imported: an `import` line would make this
 // harness a syntax error. Keep it that way.
-function renderStandings(payload) {
+function loadStandings() {
   // A stand-in for lib/plain-store.js — set() is the only method the
   // controller calls, and a fresh one per call keeps the two payloads apart.
   const store = {
@@ -500,6 +500,11 @@ function renderStandings(payload) {
   const TL = new Function('window', 'document', 'module',
     `${topoJs}\nreturn TopochainLeaderboard;`)(sandbox.window, sandbox.document, undefined);
   TL._store = store;
+  return { TL, store };
+}
+
+function renderStandings(payload) {
+  const { TL, store } = loadStandings();
   TL._open = true;
   TL._loading = false;
   TL._data = payload;
@@ -513,6 +518,23 @@ const SEASON_ROW = {
   total_points: 67973.66, extra_points: 0, event_total_produced_blocks: 42,
   event_success_rate: 0, wallet_address: null, bech32m: null, discord: 'ocank14',
 };
+
+test('a standings row the server could not name reads "Anonymous", never just its points (#2394)', () => {
+  // The server now names username-only accounts too, but an account with no
+  // name at all (or only a generated topochain_<hex> handle) still arrives
+  // with display_name null — and an empty User cell beside a points figure
+  // is exactly what the issue reported.
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW, { ...SEASON_ROW, rank: 2, display_name: null, identifier: null, discord: null }],
+  });
+  assert.equal(view.rows[0].user, 'Ocank14', 'a named row is untouched');
+  assert.equal(view.rows[1].user, 'Anonymous');
+
+  const { TL } = loadStandings();
+  TL._drillRow = { ...SEASON_ROW, display_name: null };
+  assert.equal(TL.drillView().displayName, 'Anonymous', 'and so does its drill-down header');
+});
 
 test('the standings table drops the Success rate column on a season board', () => {
   const view = renderStandings({
