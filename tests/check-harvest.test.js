@@ -552,6 +552,101 @@ test('collectCheckJob waits on a running Job, re-reading the log for progress, a
   assert.deepEqual(lines, ['TEST 1', 'TEST 2'], 'each line exactly once across the re-reads');
 });
 
+test('collectCheckJob retains polled output when the successful terminal read is empty', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let polls = 0;
+  let logReads = 0;
+  kubernetes._setClientsForTest({ batch: {
+    readNamespacedJob: async () => (++polls < 2
+      ? { metadata: { name: 'j' }, status: { active: 1 } }
+      : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+  }, core: {
+    listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+      containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0, reason: 'Completed' } } }],
+    } }] }),
+    readNamespacedPodLog: async () => logReads++ === 0 ? 'TEST 1\nTEST 2\n' : '',
+  } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const pending = kubernetes.collectCheckJob(config, { name: 'j', kind: 'capture' });
+  await flush();
+  t.mock.timers.tick(2000); await flush();
+  const out = await pending;
+  assert.equal(out.state, 'succeeded');
+  assert.equal(out.stdout, 'TEST 1\nTEST 2\n');
+  assert.equal(out.partial, false);
+});
+
+for (const scenario of [
+  {
+    name: 'shorter terminal snapshot',
+    progress: 'TEST 1\nTEST 2\n',
+    terminal: 'TEST 1\n',
+    expected: 'TEST 1\nTEST 2\n',
+    lines: ['TEST 1', 'TEST 2'],
+  },
+  {
+    name: 'terminal snapshot with an unseen suffix',
+    progress: 'TEST 1\n',
+    terminal: 'TEST 1\nTEST 2\npartial',
+    expected: 'TEST 1\nTEST 2\npartial',
+    lines: ['TEST 1', 'TEST 2'],
+  },
+]) {
+  test(`collectCheckJob reconciles a ${scenario.name} without duplicate progress`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let polls = 0;
+    let logReads = 0;
+    kubernetes._setClientsForTest({ batch: {
+      readNamespacedJob: async () => (++polls < 2
+        ? { metadata: { name: 'j' }, status: { active: 1 } }
+        : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+    }, core: {
+      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+        containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0 } } }],
+      } }] }),
+      readNamespacedPodLog: async () => logReads++ === 0 ? scenario.progress : scenario.terminal,
+    } });
+    t.after(() => kubernetes._setClientsForTest(null));
+    const lines = [];
+    const pending = kubernetes.collectCheckJob(config, {
+      name: 'j', kind: 'capture', onStdoutLine: line => lines.push(line),
+    });
+    await flush();
+    t.mock.timers.tick(2000); await flush();
+    const out = await pending;
+    assert.equal(out.stdout, scenario.expected);
+    assert.deepEqual(lines, scenario.lines);
+  });
+}
+
+test('collectCheckJob keeps a complete UTF-8 line when retained output reaches maxBuffer', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let polls = 0;
+  let logReads = 0;
+  const first = 'TEST 🚀\n';
+  kubernetes._setClientsForTest({ batch: {
+    readNamespacedJob: async () => (++polls < 2
+      ? { metadata: { name: 'j' }, status: { active: 1 } }
+      : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+  }, core: {
+    listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+      containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0 } } }],
+    } }] }),
+    readNamespacedPodLog: async () => logReads++ === 0 ? `${first}SECOND\n` : '',
+  } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const pending = kubernetes.collectCheckJob(config, {
+    name: 'j', kind: 'capture', maxBuffer: Buffer.byteLength(first),
+  });
+  await flush();
+  t.mock.timers.tick(2000); await flush();
+  const out = await pending;
+  assert.equal(out.stdout, first);
+  assert.equal(out.partial, true);
+  assert.equal(out.partialReason, 'output over maxBuffer');
+  assert.equal(out.stdout.includes('\uFFFD'), false);
+});
+
 test('collectCheckJob reports a Job that disappeared as gone and a superseded adopter as aborted', async (t) => {
   kubernetes._setClientsForTest({ batch: {
     readNamespacedJob: async () => { throw Object.assign(new Error('not found'), { code: 404 }); },

@@ -409,6 +409,30 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // real merge); a behind==0 short-circuit leaves no row, matching the
     // banner-only behaviour callers had before this change.
     const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } };
+
+    // The worker owns the Git merge/push, but a CLI-handoff proposal also
+    // has immutable head pins that own its preview and check verdict. Adopt
+    // every successful outcome (including an already-synced retry after a
+    // prior partial failure) before reporting the sync complete.
+    let managedRevision = null;
+    const branchSettled = syncResult === 'already_synced'
+      || ((syncResult === 'clean' || syncResult === 'resolved') && result.pushOk);
+    if (session.source === 'cli_handoff' && branchSettled) {
+      managedRevision = await require('./cli-handoff-sync').reconcileCliHandoffSync({
+        config,
+        pool,
+        session,
+        newHead: result.sha || null,
+      });
+      if (!managedRevision.ok) {
+        const err = new Error(
+          `The branch synced, but Homeroom could not adopt its new proposal revision (${managedRevision.reason}). Retry Sync with main.`
+        );
+        err.code = 'SYNC_REVISION_NOT_ADOPTED';
+        throw err;
+      }
+    }
+
     if (emitActivity) {
       await sendStatus(message, syncMeta);
     }
@@ -450,6 +474,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       sha: result.sha || null,
       pushOk: !!result.pushOk,
       conflictFiles: result.conflictFiles || [],
+      ...(managedRevision ? { managedRevision } : {}),
       message,
     };
   } catch (err) {

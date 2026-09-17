@@ -66,9 +66,23 @@ let inFlight = null;
 // the template's fields under `t_` and the event's dates for the window
 // fallback.
 //
-// Scoped to live events the same way the snapshot builder scopes its sweep:
-// a regular event on an active season, never an internal one, so a staff
-// dry-run season cannot start paying people.
+// Scoped to live events: an active, non-internal event on an active season,
+// so a staff dry-run season can never start paying people.
+//
+// NOT scoped by event `type`, which is the shape this borrowed from the
+// snapshot builder's sweep and had to lose. The builder sweeps `regular`
+// events because those are the scoring sprints it computes standings for;
+// challenges are attached wherever the organiser put them, and in production
+// all nine of Pre Season 2's challenges hang off the SEASON-type event. With
+// the type filter in place the scorer matched none of them and every rule
+// reported "No live challenge" — the whole service silently doing nothing,
+// which is exactly the failure this screen's status column exists to expose.
+//
+// One consequence worth naming: a template-bound rule pays into EVERY live
+// challenge stamped from that template, so a template instantiated on two
+// events that are active at once is credited on both. That is the same
+// property that makes a weekly rule keep working when next week's row is
+// created; an operator who wants one instance only binds to the challenge.
 const RULE_CHALLENGES_SQL = `
   SELECT r.id AS rule_id, r.name AS rule_name, r.measure, r.target AS rule_target,
          r.points AS rule_points, r.enabled AS rule_enabled,
@@ -85,7 +99,7 @@ const RULE_CHALLENGES_SQL = `
     JOIN challenge_templates ct ON ct.id = c.challenge_template_id
     JOIN season_events se ON se.id = c.season_event_id
     LEFT JOIN seasons s ON s.id = se.season_id
-   WHERE se.type = 'regular' AND se.internal = FALSE
+   WHERE se.internal = FALSE
      AND se.is_active = TRUE AND COALESCE(s.is_active, FALSE) = TRUE
    ORDER BY r.id ASC, c.id ASC
 `;

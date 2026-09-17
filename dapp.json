@@ -2463,9 +2463,9 @@
       "expectSelector": "[data-issue-title='900008']"
     },
     {
-      "name": "Issue topic renders the attached-screenshot embed inline (#683)",
+      "name": "Issue topic links its attached-screenshot preview to the full-size image (#2349)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
-      "expectSelector": ".dc-inline-img",
+      "expectSelector": ".dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
       "expectText": "[Mock] issue with an attached screenshot"
     },
     {

@@ -37,6 +37,9 @@ const visuals = require('../src/services/visuals');
 
 const K8S = { captureRuntime: 'kubernetes' };
 
+// The check is opt-in (see isEnabled); the probe tests below run it enabled.
+process.env.ASSET_ROUTE_CHECK_ENABLED = '1';
+
 function stub(t, obj, overrides) {
   const saved = {};
   for (const [k, v] of Object.entries(overrides)) { saved[k] = obj[k]; obj[k] = v; }
@@ -196,13 +199,24 @@ test('it only runs on Kubernetes capture against an https preview origin', async
   assert.equal(await check.maybeRunAssetRouteCheck({ config: K8S, stagingOrigin: '', fetchImpl }), null);
 });
 
-test('it can be switched off', async (t) => {
+test('it is off unless explicitly enabled', async (t) => {
+  // Probing from the platform pod gets 403 "Access denied" from preview
+  // hostnames that answer 200 JavaScript everywhere else, so on by default it
+  // reported a false failure on every app proposal. Opt-in until it probes
+  // from the capture runner.
   const before = process.env.ASSET_ROUTE_CHECK_ENABLED;
-  process.env.ASSET_ROUTE_CHECK_ENABLED = 'off';
   t.after(() => { if (before === undefined) delete process.env.ASSET_ROUTE_CHECK_ENABLED; else process.env.ASSET_ROUTE_CHECK_ENABLED = before; });
-  assert.equal(await check.maybeRunAssetRouteCheck({
-    config: K8S, stagingOrigin: 'https://a--s1.example.invalid', fetchImpl: async () => assert.fail('must not probe'),
-  }), null);
+  const mustNotProbe = { config: K8S, stagingOrigin: 'https://a--s1.example.invalid', fetchImpl: async () => assert.fail('must not probe') };
+  for (const value of [undefined, '', '0', 'off', 'false', 'nonsense']) {
+    if (value === undefined) delete process.env.ASSET_ROUTE_CHECK_ENABLED;
+    else process.env.ASSET_ROUTE_CHECK_ENABLED = value;
+    assert.equal(check.isEnabled(), false, `ASSET_ROUTE_CHECK_ENABLED=${value}`);
+    assert.equal(await check.maybeRunAssetRouteCheck(mustNotProbe), null);
+  }
+  for (const value of ['1', 'true', 'on', ' ON ']) {
+    process.env.ASSET_ROUTE_CHECK_ENABLED = value;
+    assert.equal(check.isEnabled(), true, `ASSET_ROUTE_CHECK_ENABLED=${value}`);
+  }
 });
 
 test('a pass is a non-advisory row plus a passing history entry', async () => {
@@ -297,4 +311,50 @@ test('its synthetic index does not collide with the other synthetic rows', () =>
   const unitSuite = require('../src/services/unit-suite');
   assert.equal(check.ASSET_CHECK_INDEX, -4);
   assert.notEqual(check.ASSET_CHECK_INDEX, unitSuite.UNIT_CHECK_INDEX);
+});
+
+// ─── The self app is skipped ───────────────────────────────────────────
+
+test('the self app takes no asset-route row at all', async () => {
+  // deployApplication strips these three prefixes from the self app's
+  // Ingress on purpose, so its preview serves the bytes from the revision
+  // under review. With no asset route the probe falls through to the
+  // preview container, which is behind the private-app access gate, and
+  // this probe sends no credential by design. The row could therefore only
+  // ever fail there — on every Homeroom proposal — describing a routing
+  // rule the platform is not supposed to have.
+  let probed = 0;
+  const outcome = await check.maybeRunAssetRouteCheck({
+    config: { captureRuntime: 'kubernetes', selfAppSlug: 'usernode-2d5619' },
+    pool: {},
+    appId: 1,
+    appSlug: 'usernode-2d5619',
+    stagingOrigin: 'https://usernode-2d5619--s4409.example.test',
+    fetchImpl: async () => { probed += 1; throw new Error('must not probe'); },
+  });
+  assert.equal(outcome, null, 'no row, rather than a failing one');
+  assert.equal(probed, 0, 'and no probe is spent on it');
+});
+
+test('a child app on the same installation still gets the row', async () => {
+  const outcome = await check.maybeRunAssetRouteCheck({
+    config: { captureRuntime: 'kubernetes', selfAppSlug: 'usernode-2d5619' },
+    pool: { query: async () => ({ rows: [] }) },
+    appId: 2,
+    appSlug: 'recipebot',
+    stagingOrigin: 'https://recipebot--s1.example.test',
+    fetchImpl: async () => ({
+      status: 200,
+      headers: { get: () => 'application/javascript' },
+      text: async () => 'export const x = 1;',
+    }),
+  });
+  assert.ok(outcome, 'the check that protects child apps is untouched');
+});
+
+test('isSelfApp needs a configured slug and an exact match', () => {
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, 'a'), true);
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, 'b'), false);
+  assert.equal(check.isSelfApp({}, 'a'), false);
+  assert.equal(check.isSelfApp({ selfAppSlug: 'a' }, null), false);
 });

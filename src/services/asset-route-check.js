@@ -23,6 +23,16 @@
 // status plus the content type, never the bytes: a 200 that is not JavaScript
 // is exactly the failure this row exists for.
 //
+// Where it does NOT run: the platform's own self-app. deployApplication
+// deliberately strips these three prefixes from the self app's Ingress
+// (kubernetes.js, "route only for child apps") so its preview serves the
+// asset bytes from the revision under review rather than the shared
+// backend's copy of production. With no asset route, the probe falls through
+// to the preview container itself, which sits behind the private-app access
+// gate — and this probe sends no credential on purpose. So the row could
+// only ever fail there, on every self-app proposal, describing a routing
+// rule the platform is not supposed to have. It is skipped instead.
+//
 // Where it runs. Kubernetes capture only. There the preview origin is the
 // public ingress hostname, which is what a browser sees. On the docker
 // runtime the capture origin is the bare container (`http://<name>:3000`)
@@ -34,6 +44,8 @@
 // Turning it on fleet-wide therefore never blocks an app whose routing was
 // already broken before the check existed — it shows up, muted, on its
 // next proposal instead.
+//
+// Currently OFF by default — see isEnabled.
 
 'use strict';
 
@@ -54,9 +66,16 @@ const PROBE_RETRY_MS = parseInt(process.env.ASSET_ROUTE_CHECK_RETRY_MS, 10) || 2
 // without carrying a page into test_results.
 const BODY_PREVIEW_CHARS = 80;
 
+// OFF unless ASSET_ROUTE_CHECK_ENABLED is set to a true value. The probe runs
+// from the platform pod, and there a request to a preview's public hostname
+// answers 403 text/plain "Access denied" — while the very same URL returns 200
+// application/javascript from outside the cluster and from the capture
+// runner's browser. On by default, that turned into a false failure row on
+// every app proposal (seen on seven previews in a row the day it shipped).
+// It stays opt-in until the probe runs from where the browser checks run.
 function isEnabled() {
-  const v = String(process.env.ASSET_ROUTE_CHECK_ENABLED ?? '1').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off');
+  const v = String(process.env.ASSET_ROUTE_CHECK_ENABLED ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'on';
 }
 
 function preview(text) {
@@ -165,13 +184,21 @@ function shapeOutcome({ passed, reason, graduated }) {
 
 // Returns { row, history } or null when the check does not apply. Never
 // throws: the checks run must not die because this probe did.
+// The self app is the SOURCE of the three asset trees, so there is no
+// cross-hostname routing to verify on it — see the header.
+function isSelfApp(config, appSlug) {
+  const slug = String(config?.selfAppSlug || '');
+  return !!slug && String(appSlug || '') === slug;
+}
+
 async function maybeRunAssetRouteCheck({
-  config, pool, appId, sessionId = null, stagingOrigin, fetchImpl,
+  config, pool, appId, appSlug = null, sessionId = null, stagingOrigin, fetchImpl,
   probeAttempts, probeRetryMs, sleep,
 } = {}) {
   try {
     if (!isEnabled()) return null;
     if (!config || config.captureRuntime !== 'kubernetes') return null;
+    if (isSelfApp(config, appSlug)) return null;
     if (typeof stagingOrigin !== 'string' || !/^https:\/\//i.test(stagingOrigin)) return null;
 
     // Ingress replacement and edge routing converge just after the preview
@@ -214,6 +241,7 @@ async function maybeRunAssetRouteCheck({
 }
 
 module.exports = {
+  isSelfApp,
   ASSET_CHECK_NAME,
   ASSET_CHECK_PATH,
   ASSET_CHECK_INDEX,
