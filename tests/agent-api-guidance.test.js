@@ -79,6 +79,23 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
   assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
 });
 
+// The local test run is scoped to the change, and the whole suite is the
+// platform's job. Without the rule an agent runs all 13,000+ tests before
+// every push, minutes at a time, and one hung test held such a run open for
+// an hour with no failure in it; the script it names is what makes the rule
+// cheap to follow, and the timeout is what makes a hang a failure.
+test('AGENTS scopes the local test run to the files the change touched', () => {
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  assert.match(guidance, /Run the suites that pin what you changed; leave the whole suite to Homeroom/);
+  assert.match(guidance, /npm run test:changed -- --base <40-character-base-sha>/);
+  assert.match(guidance, /Run `npm test` only when shared code moved/);
+  assert.match(guidance, /re-run the failing suites and the ones for your fix/);
+  assert.match(guidance, /--test-timeout=180000/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts['test:changed'], 'node scripts/test-changed.js');
+  assert.match(pkg.scripts.test, / --test-timeout=180000 /);
+});
+
 // #1246 — the base-commit check has to be ALWAYS-ON, not skill-scoped.
 //
 // The check itself is not new: step 2 of the usernode-proposal skill has

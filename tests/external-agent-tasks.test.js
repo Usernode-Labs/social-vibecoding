@@ -2629,6 +2629,26 @@ test('the work order says to install dependencies before running anything', () =
   assert.match(block, /module-not-found/);
 });
 
+// The local run is scoped to the change. Homeroom runs every unit test and
+// every declared check against the commit on submission, so the work order
+// says what to run BEFORE it — the suites that read the changed files, with
+// the base commit it already names filled into the command — and when the
+// whole suite is still the right call. Without this an agent runs all
+// 13,000+ tests before every push, minutes at a time.
+test('the work order scopes the local test run to the files the change touched', () => {
+  const block = orderFor('ready');
+  assert.match(block, /run the tests that cover the files you changed, not the\nwhole suite/);
+  assert.match(block, /Homeroom runs every unit test and every declared check/);
+  assert.match(block, /`test:changed` script/);
+  assert.match(block, /^    npm run test:changed -- --base deadbeef$/m, 'the base commit is filled in, as a command line');
+  assert.match(block, /Run the whole suite only when shared code moved/);
+  assert.match(block, /re-run the failing\nsuites and the ones for your fix, not everything/);
+  // After the install step, before the base-commit recovery note: nothing
+  // runs before `npm ci`, and the paragraph sits with the other setup.
+  assert.ok(block.indexOf('npm ci') < block.indexOf('npm run test:changed'));
+  assert.ok(block.indexOf('npm run test:changed') < block.indexOf('fatal: not a valid object name'));
+});
+
 // ── Caller-supplied branch and fork name ───────────────────────────────
 
 test('a caller-supplied branch is validated, then used in place of the suggestion', async () => {
