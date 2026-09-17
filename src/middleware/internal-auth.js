@@ -96,6 +96,7 @@ function verifier(purposes) {
 
     req.workerSession = {
       sessionId: claims.session_id,
+      evidenceRunId: claims.evidence_run_id || null,
       // #616: set only on the PROD_DEBUG_JWT minted by
       // worker.mintProdDebugJwt for eligible turns (admin-owned session on
       // the self-edit app). The prod-debug routes additionally re-check

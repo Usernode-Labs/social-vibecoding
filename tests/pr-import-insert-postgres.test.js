@@ -70,6 +70,7 @@ const DDL = `
     status               VARCHAR(32) NOT NULL DEFAULT 'active',
     source               TEXT,
     imported_pr_head_sha VARCHAR(40),
+    handoff_base_sha     VARCHAR(40),
     imported_pr_author   VARCHAR(255),
     imported_pr_head_repo TEXT,
     promoted_at          TIMESTAMPTZ,
@@ -83,11 +84,12 @@ const DDL = `
     pr_summary_md        TEXT
   )`;
 
-// The same 16-element parameter shape the handler binds ($10 is the head
+// The same 17-element parameter shape the handler binds ($9 is the immutable
+// GitHub base SHA recorded for exact-revision visual evidence; $11 is the head
 // repository #1196 records, which is what decides whether the proposal's head
-// is in the author's fork or in the app's own repository; $14 is the request
-// the work order was prepared from, #1217; $15 is the pull request's body,
-// mirrored so get_proposal can report a description, #1333; $16 is the
+// is in the author's fork or in the app's own repository; $15 is the request
+// the work order was prepared from, #1217; $16 is the pull request's body,
+// mirrored so get_proposal can report a description, #1333; $17 is the
 // user-facing summary a submitter may send, which until now only on-platform
 // sessions had — an import wrote none, so the About sheet's plain-language
 // half was empty for every proposal that arrived this way).
@@ -101,7 +103,7 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
   return [
     1, 2, 'pr-import-test-branch', prNumber, 'https://github.com/acme/demo/pull/' + prNumber,
     'PR #' + prNumber, status,
-    'a'.repeat(40), 'external-author', 'external-author/demo',
+    'a'.repeat(40), 'b'.repeat(40), 'external-author', 'external-author/demo',
     '1. Open the board', '/board?demo=1',
     JSON.stringify([{ path: '/board?demo=1', viewport: 'desktop' }]),
     linkedIssues,

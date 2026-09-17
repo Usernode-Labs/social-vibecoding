@@ -1003,6 +1003,10 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+function visualSrc(id: string, protectedEvidence = false): string {
+  return protectedEvidence ? id : `/visuals/${id}`;
+}
+
 /**
  * Where the two stills differ, as a box in the image's own pixels.
  *
@@ -1012,10 +1016,10 @@ function loadImage(src: string): Promise<HTMLImageElement> {
  * sized, they are identical, or the change covers most of the page (a theme,
  * a redesign), where a crop would frame nothing.
  */
-async function diffPair(before: string | null, after: string | null): Promise<Geo> {
+async function diffPair(before: string | null, after: string | null, protectedEvidence = false): Promise<Geo> {
   const [a, b] = await Promise.all([
-    before ? loadImage(`/visuals/${before}`) : Promise.resolve(null),
-    after ? loadImage(`/visuals/${after}`) : Promise.resolve(null),
+    before ? loadImage(visualSrc(before, protectedEvidence)) : Promise.resolve(null),
+    after ? loadImage(visualSrc(after, protectedEvidence)) : Promise.resolve(null),
   ]);
   const main = b || a;
   if (!main) throw new Error('no still');
@@ -1083,11 +1087,11 @@ function BeforeAfter({ v, near, onFull }: {
   useEffect(() => {
     if (!near || geo || failed) return undefined;
     let live = true;
-    diffPair(v.before, v.after)
+    diffPair(v.before, v.after, v.protected === true)
       .then((g) => { if (live) setGeo(g); })
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [near, geo, failed, v.before, v.after]);
+  }, [near, geo, failed, v.before, v.after, v.protected]);
   useLayoutEffect(() => {
     const el = viewRef.current;
     if (!el || typeof ResizeObserver !== 'function') return undefined;
@@ -1129,7 +1133,7 @@ function BeforeAfter({ v, near, onFull }: {
         {id && style ? (
           <img
             className="dev-ws-media-img"
-            src={`/visuals/${id}`}
+            src={visualSrc(id, v.protected === true)}
             alt={side === 'after' ? 'After the change' : 'Before the change'}
             style={style}
             draggable={false}
@@ -1148,6 +1152,10 @@ function BeforeAfter({ v, near, onFull }: {
         data-path={v.path}
         data-viewport={v.mobile ? 'mobile' : undefined}
         data-side={side}
+        data-evidence={v.protected ? 'true' : undefined}
+        data-before-url={v.protected ? (v.before || undefined) : undefined}
+        data-head-url={v.protected ? (v.after || undefined) : undefined}
+        data-claim={v.protected ? (v.claim || v.path) : undefined}
         onClick={(e) => onFull(e.currentTarget)}
       >
         {cropped ? 'Cropped to the change · Full page ↗' : 'Full page ↗'}
@@ -1594,7 +1602,10 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const tryIt = () => {
     if (preview && preview.state === 'live') callAppView('swapToStagingForSession', preview.sessionId, preview.url);
   };
-  const openFull = (el: HTMLElement) => callAppView('openVisualComparison', el);
+  const openFull = (el: HTMLElement) => callAppView(
+    el.dataset.evidence === 'true' ? 'openEvidenceComparison' : 'openVisualComparison',
+    el,
+  );
   const menuKey = row ? row.card.rail.menuKey : undefined;
   // The card's own page, offered under More as "Open card": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's

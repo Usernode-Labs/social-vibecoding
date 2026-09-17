@@ -987,9 +987,13 @@ function buildWorkOrder({
       '   proposal\'s current commit, then moves the proposal onto it. Nothing is',
       '   force-pushed past anybody else\'s work: if the proposal moved in the',
       '   meantime the call is refused rather than overwriting it.',
-      '   The proposal keeps the testing routes it was submitted with, and its',
-      '   before/after screenshots are reshot for your new commit against those',
-      '   same routes.',
+      '   The proposal keeps its manual testing routes unless you replace them.',
+      '   Pass `visualEvidence` for this revision. If available, call',
+      '   `record_visual_evidence_intent` and pass its version-1 object unchanged:',
+      '   visible work uses impact "ui" or "motion" with one to three claims and',
+      '   their real user flows; genuinely non-visual work uses impact "none", no',
+      '   stories, and a specific rationale. Homeroom produces new exact-base/head',
+      '   evidence instead of reusing old captures.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
@@ -1107,29 +1111,38 @@ function buildWorkOrder({
       '   implementation, trade-offs and testing detail belong there and are not',
       '   lost. Write the summary from what the person voting would NOTICE, not',
       '   from what you edited. Not every member of the group is a developer.',
-      // Explicit routes override repository-declared visual scenarios. The
-      // in-platform build turn supplies the same thing through its
-      // "==== TESTING ====" block; this is that block's connector shape.
+      // testingPaths remain the human/manual test entry point. Reviewer-facing
+      // visual evidence carries the interaction that reaches the relevant
+      // state instead of pretending every state is URL-addressable.
       '   ALSO PASS `testingPaths` AND `testingSteps`. `testingPaths` is the list',
       '   of in-app routes your change is actually visible on, most important',
       '   first — e.g. ["/board?demo=1", "/settings"] — and `testingSteps` is a',
       '   few short numbered lines telling a person what to click to see it.',
-      '   Homeroom shoots a before/after screenshot pair of each route for the',
-      '   people voting and shows the steps beside the staging preview. If they',
-      '   are omitted, Homeroom uses a named dapp.json visual scenario whose',
-      '   impact globs match the diff, then falls back to the app home page if',
-      '   nothing matches. Point each route at THE SCREEN YOU',
-      '   CHANGED, not the home page; if that screen is only reachable by',
-      '   interacting, add a deep link (a query param handled at boot) in this',
-      '   same change so a URL can reach it.',
+      '   These fields drive the manual "Test this change" link and durable checks;',
+      '   they are not visual proof. Point them at THE SCREEN YOU CHANGED, not the',
+      '   home page, but do not add a screenshot-only route to expose interactive',
+      '   state.',
+      '   ALSO PASS `visualEvidence` for this exact revision. If available, call',
+      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   For a visible change use impact "ui" or "motion" and one to three stories.',
+      '   Each story names the user-visible claim, member or read_only_admin persona,',
+      '   viewport, starting path, real interaction steps, final checkpoint, focus,',
+      '   whether the UI existed on the base revision, and animation "none", "steps",',
+      '   or "motion". For a genuinely non-visual change use impact "none", an empty',
+      '   stories array, and a specific rationale. Never include secrets or personal',
+      '   data. Homeroom lets an evidence agent perform the flow, turns the successful',
+      '   interaction trace into a bounded plan, and replays it twice against exact',
+      '   base and head revisions before publishing claim-labelled evidence.',
       // #1214: the answer now says which routes it took and which it could
       // not use, so a malformed route is caught while the agent is still
       // holding the branch rather than from a boolean minutes later.
-      '   READ THE ANSWER: `testingPaths` is what the screenshots will actually',
-      '   be shot on and `testingPathsRejected` names anything Homeroom could not',
-      '   use. If a route you meant was rejected, submit once more with the',
-      '   proposal id and corrected routes — on the SAME commit that is not a',
-      '   second proposal, it only re-shoots the screenshots and clears no votes.',
+      '   READ THE ANSWER: `testingPaths` is what the manual test link will use and',
+      '   `testingPathsRejected` names anything Homeroom could not use. Correct a',
+      '   rejected route only when that manual entry point needs it. Separately,',
+      '   `visualEvidenceAccepted`, `visualEvidenceState`, and',
+      '   `visualEvidenceNextStep` report whether the interaction proof was accepted',
+      '   and what happens next. A same-commit route correction is not a second',
+      '   proposal and clears no votes.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
@@ -1195,11 +1208,12 @@ function buildWorkOrder({
       '   fix them and push again to the SAME branch: the proposal follows your',
       '   branch, so a new commit re-runs the checks by itself. Do not call',
       '   `submit_work` again and do not call `prepare_work` — the pull request',
-      '   already exists, and a second submission would duplicate it. If',
-      '   `get_proposal` reports `captureDefaultedToRoot`, neither an explicit',
-      '   route nor a named scenario matched, so the screenshots may not show',
-      '   the changed UI. Its `captureRouteSource`, `visualScenarios` and',
-      '   `capturePaths` say exactly what selected the published evidence.',
+      '   already exists, and a second submission would duplicate it.',
+      '   `get_proposal` also reports `visualEvidence`. For a user-visible',
+      '   change, verify that your structured claim and flow were accepted and',
+      '   wait for `verified`; `failed` includes a specific recovery reason.',
+      '   Homeroom does not substitute a home-page screenshot when the declared',
+      '   UI state cannot be reached.',
       '',
       'Do not open the pull request yourself in the normal path: Homeroom opens it,',
       'and the change becomes a proposal with a staging preview, automated checks',
@@ -2622,6 +2636,7 @@ async function submitUpdate(deps, params, proposalId) {
     expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
     // The agent's own name for the change. On a session it is stored and
     // names the pull request created at propose time; on a target with a PR
     // it renames it — including a fork-tracked one, which is how an agent's
@@ -2737,6 +2752,11 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
+    visualEvidenceState: result.visualEvidenceState || null,
+    visualEvidenceAccepted: result.visualEvidenceAccepted === true,
+    visualEvidenceRejected: result.visualEvidenceRejected === true,
+    visualEvidenceRequired: result.visualEvidenceRequired === true,
+    visualEvidenceNextStep: result.visualEvidenceNextStep || 'none',
     // Whether the submitted title landed — stored as the session's proposed
     // PR name, or applied as a rename of the proposal that already has one
     // (false on a repeat of the value already stored).
@@ -2786,7 +2806,7 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, testing, importProposal, updateProposal }
+//           body, testing, visualEvidence, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
@@ -3018,6 +3038,7 @@ async function submitWorkLocked(deps, params) {
       ...(params.expectedHeadSha ? { expectedHeadSha: String(params.expectedHeadSha).trim().toLowerCase() } : {}),
       ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
       ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+      ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
@@ -3065,6 +3086,11 @@ async function submitWorkLocked(deps, params) {
         previewRebuilding: !!(advanced.body && advanced.body.previewRebuilding),
         testingPaths: (advanced.body && advanced.body.testingPaths) || null,
         testingPathsRejected: (advanced.body && advanced.body.testingPathsRejected) || null,
+        visualEvidenceState: (advanced.body && advanced.body.visualEvidenceState) || null,
+        visualEvidenceAccepted: !!(advanced.body && advanced.body.visualEvidenceAccepted),
+        visualEvidenceRejected: !!(advanced.body && advanced.body.visualEvidenceRejected),
+        visualEvidenceRequired: !!(advanced.body && advanced.body.visualEvidenceRequired),
+        visualEvidenceNextStep: (advanced.body && advanced.body.visualEvidenceNextStep) || 'none',
       };
     }
 
@@ -3137,6 +3163,11 @@ async function submitWorkLocked(deps, params) {
       previewRebuilding: !!(shared.body && shared.body.previewRebuilding),
       testingPaths: (shared.body && shared.body.testingPaths) || null,
       testingPathsRejected: (shared.body && shared.body.testingPathsRejected) || null,
+      visualEvidenceState: (shared.body && shared.body.visualEvidenceState) || null,
+      visualEvidenceAccepted: !!(shared.body && shared.body.visualEvidenceAccepted),
+      visualEvidenceRejected: !!(shared.body && shared.body.visualEvidenceRejected),
+      visualEvidenceRequired: !!(shared.body && shared.body.visualEvidenceRequired),
+      visualEvidenceNextStep: (shared.body && shared.body.visualEvidenceNextStep) || 'none',
     };
   }
 
@@ -3348,7 +3379,10 @@ async function submitWorkLocked(deps, params) {
   // path and the close watcher that read it. Empty for a submission that
   // names no request — a plain `slug` + `prNumber` — which stays exactly as
   // it was.
-  const imported = await importProposal(slug, pr.number, { linkedIssues: linkedIssuesFor(task) });
+  const imported = await importProposal(slug, pr.number, {
+    linkedIssues: linkedIssuesFor(task),
+    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+  });
   if (!imported || !imported.ok) {
     // A head the platform wrote and then could not import is litter on
     // somebody's app repository. Remove it.
@@ -3412,6 +3446,11 @@ async function submitWorkLocked(deps, params) {
     appSlug: slug,
     externalAgent: label,
     submittedVia: via,
+    visualEvidenceState: (imported.body && imported.body.visualEvidenceState) || null,
+    visualEvidenceAccepted: !!(imported.body && imported.body.visualEvidenceAccepted),
+    visualEvidenceRejected: !!(imported.body && imported.body.visualEvidenceRejected),
+    visualEvidenceRequired: !!(imported.body && imported.body.visualEvidenceRequired),
+    visualEvidenceNextStep: (imported.body && imported.body.visualEvidenceNextStep) || 'none',
   };
 }
 

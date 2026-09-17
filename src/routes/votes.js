@@ -22,6 +22,9 @@ const { weekStartUtc } = require('../services/leaderboard-users');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+const visualEvidencePlan = require('../services/visual-evidence-plan');
+const visualEvidenceState = require('../services/visual-evidence-state');
+const visualEvidenceView = require('../services/visual-evidence-view');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -30,6 +33,44 @@ const {
 } = require('../services/pr-vote-revision');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
+const VISUAL_EVIDENCE_GATE_STATES = new Set(['verified', 'not_required', 'overridden']);
+
+// Evidence enforcement is deliberately scoped to proposals that have entered
+// the v2 contract. Historical proposals with no declaration keep their old
+// voting lifecycle; a proposal whose detail says evidence is required must
+// have an accepted verdict for the exact current head. The artifact route
+// independently enforces the same revision fence.
+function visualEvidenceGateForSession(config, session) {
+  if (!config?.visualEvidence?.enforce) return { applies: false, allowed: true, state: null };
+  const detail = session?.visual_evidence_detail;
+  if (!detail || typeof detail !== 'object') return { applies: false, allowed: true, state: null };
+  const required = detail.required !== false;
+  const evidenceState = session.visual_evidence_state || detail.state || 'planned';
+  const currentHead = visualHeadForSession(session);
+  const recordedHead = detail.headSha || null;
+  const exactHead = !!currentHead && !!recordedHead && sameSha(currentHead, recordedHead);
+  if (!required && evidenceState === 'not_required' && exactHead) {
+    return { applies: true, allowed: true, state: evidenceState, currentHead, recordedHead };
+  }
+  const allowed = exactHead && VISUAL_EVIDENCE_GATE_STATES.has(evidenceState);
+  const reason = !exactHead
+    ? 'Visual evidence has not been verified for the proposal’s current commit.'
+    : evidenceState === 'failed'
+      ? (detail.failureReason || 'Visual evidence failed and must be retried or overridden by an app administrator.')
+      : `Visual evidence is ${String(evidenceState).replace(/_/g, ' ')}.`;
+  return { applies: true, allowed, state: evidenceState, currentHead, recordedHead, reason };
+}
+
+async function readVisualEvidenceGate(config, pool, session) {
+  if (!config?.visualEvidence?.enforce) return visualEvidenceGateForSession(config, session);
+  const { rows } = await pool.query(
+    `SELECT source, imported_pr_head_sha, reviewed_head_sha,
+            visual_evidence_state, visual_evidence_detail
+       FROM chat_sessions WHERE id = $1`,
+    [session.id]
+  );
+  return visualEvidenceGateForSession(config, { ...session, ...(rows[0] || {}) });
+}
 
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
@@ -1390,6 +1431,12 @@ async function reconcileNativeReviewedHead({
       [liveHead, session.id]
     );
     session.reviewed_head_sha = liveHead;
+    if (session.visual_evidence_state || session.visual_evidence_detail) {
+      await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+        log.warn('votes', 'Visual evidence invalidation after revision bind failed', {
+          sessionId: session.id, headSha: liveHead, err: err.message,
+        }));
+    }
     return {
       enforced: true, headSha: liveHead, epoch: epochOf(session),
       updated: true, initialized: true, changed: false, kind: 'initialized',
@@ -1441,6 +1488,12 @@ async function reconcileNativeReviewedHead({
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
+  if (session.visual_evidence_state || session.visual_evidence_detail) {
+    await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+      log.warn('votes', 'Visual evidence invalidation after head move failed', {
+        sessionId: session.id, oldHead, headSha: liveHead, err: err.message,
+      }));
+  }
 
   // Checks policy follows who wrote the tree. A mechanical merge is pure git
   // over a tested branch and a tested main, so the verdict carries. Anything
@@ -1567,6 +1620,14 @@ function parseImportTesting(body) {
     testingMd, testingPath, testingPaths,
   } = require('../services/testing-notes').parseSubmitted(body);
   return { testingMd, testingPath, testingPaths };
+}
+
+// Structured evidence intent supplied by coding agents. There is deliberately
+// no markdown fallback: one strict parser owns the contract at every process
+// boundary, and an omitted value preserves browser imports exactly as before.
+function parseImportVisualEvidence(body) {
+  if (!body || body.visualEvidence === undefined) return undefined;
+  return visualEvidencePlan.parseIntent(body.visualEvidence);
 }
 
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by
@@ -1714,6 +1775,8 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           cs.visual_evidence_state, cs.visual_evidence_run_id,
+           cs.visual_evidence_detail, cs.visual_evidence_updated_at,
            -- #967: which external coding agent wrote it, for the "built
            -- with …" chip. Kept on merged rows for the same post-hoc read.
            cs.external_agent,
@@ -2435,6 +2498,7 @@ function voteRoutes(config) {
       }
       const headSha = pr.head?.sha || null;
       const baseRef = pr.base?.ref || 'main';
+      const baseSha = visualEvidenceState.validSha(pr.base?.sha) ? pr.base.sha : null;
       let changedFiles = [];
       try {
         changedFiles = await gh.listChangedFiles(
@@ -2452,6 +2516,7 @@ function voteRoutes(config) {
           state: pr.state,
           headBranch: pr.head?.ref || null,
           baseBranch: baseRef,
+          baseSha,
           headSha,
           // GitHub's mergeable is true/false/null (null = still computing).
           mergeable: pr.mergeable,
@@ -2504,6 +2569,10 @@ function voteRoutes(config) {
         return res.status(409).json({ error: `PR #${prNumber} is not open.` });
       }
       const headSha = pr.head?.sha || null;
+      // GitHub returns the immutable commit at the PR's base side. Persist it
+      // with the imported proposal so evidence never has to reconstruct the
+      // pair later from a moving default branch.
+      const baseSha = visualEvidenceState.validSha(pr.base?.sha) ? pr.base.sha : null;
       const headBranch = pr.head?.ref || null;
       if (!headBranch) {
         return res.status(409).json({ error: 'Could not determine the PR head branch.' });
@@ -2530,6 +2599,15 @@ function voteRoutes(config) {
       // Absent (the browser's import button never sends them) leaves all
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
+      let importVisualEvidence;
+      try {
+        importVisualEvidence = parseImportVisualEvidence(req.body);
+      } catch (err) {
+        return res.status(400).json({
+          error: err.code || 'invalid_visual_evidence',
+          message: err.message,
+        });
+      }
       // The request this pull request implements (#1217). A submission
       // prepared from a request knows its number — prepare_work records it,
       // and the work order prints it — but it stopped at the task, so a
@@ -2552,25 +2630,27 @@ function voteRoutes(config) {
       // with `promote: true`.
       const importClient = await pool.connect();
       let inserted;
+      let visualEvidenceResult = null;
       try {
         await importClient.query('BEGIN');
         ({ rows: inserted } = await importClient.query(
           `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
-            source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
+            source, imported_pr_head_sha, handoff_base_sha,
+            imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
             pr_summary_md)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8, $9, $10,
+            'imported', $8, $9, $10, $11,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $11, $12, $13::jsonb, $14, $15, $16)
+            NOW(), $12, $13, $14::jsonb, $15, $16, $17)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
             pr.title || `PR #${prNumber}`, initialStatus,
-            headSha, pr.user?.login || null, headRepoFullName,
+            headSha, baseSha, pr.user?.login || null, headRepoFullName,
             importTesting.testingMd, importTesting.testingPath,
             importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
             // Always an array, never null: the column is INTEGER[] NOT NULL
@@ -2591,6 +2671,14 @@ function voteRoutes(config) {
         await topicAttrs.selfAssignProposal(
           importClient, app.id, inserted[0].id, req.user
         );
+        if (config.visualEvidence?.collect && importVisualEvidence) {
+          visualEvidenceResult = await visualEvidenceState.recordIntent(
+            importClient,
+            inserted[0].id,
+            importVisualEvidence,
+            visualEvidenceState.validSha(headSha) ? { headSha } : {}
+          );
+        }
         await importClient.query('COMMIT');
       } catch (err) {
         await importClient.query('ROLLBACK').catch(() => {});
@@ -2605,6 +2693,7 @@ function voteRoutes(config) {
         pr_body: pr.body || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
         status: initialStatus, imported_pr_head_sha: headSha,
+        handoff_base_sha: baseSha,
         imported_pr_head_repo: headRepoFullName,
         // #1330: the capture reads its routes off THIS object — the INSERT
         // above is not what it consults. kickImportedChecks hands this literal
@@ -2621,6 +2710,8 @@ function voteRoutes(config) {
         testing_md: importTesting.testingMd,
         testing_path: importTesting.testingPath,
         testing_paths: importTesting.testingPaths,
+        visual_evidence_state: visualEvidenceResult?.state || null,
+        visual_evidence_detail: visualEvidenceResult?.detail || null,
       };
 
       if (promote) {
@@ -2652,7 +2743,24 @@ function voteRoutes(config) {
       }
 
       log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status: initialStatus });
-      res.json({ ok: true, sessionId, prNumber, status: initialStatus });
+      const evidenceSubmission = require('../services/proposal-update').visualEvidenceSubmissionFields(
+        visualEvidenceResult || {
+          state: null,
+          accepted: false,
+          rejected: !!importVisualEvidence,
+          required: false,
+          nextStep: importVisualEvidence
+            ? 'visual_evidence_collection_disabled'
+            : 'none',
+        }
+      );
+      res.json({
+        ok: true,
+        sessionId,
+        prNumber,
+        status: initialStatus,
+        ...evidenceSubmission,
+      });
 
       // Kick the SHA-pinned staging build + checks after responding.
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
@@ -2745,6 +2853,15 @@ function voteRoutes(config) {
       });
       if (revision.blocked) {
         return res.status(revision.transient ? 503 : 409).json({ error: revision.reason });
+      }
+
+      const evidenceGate = await readVisualEvidenceGate(config, pool, session);
+      if (evidenceGate.applies && !evidenceGate.allowed) {
+        return res.status(409).json({
+          error: 'visual_evidence_required',
+          message: evidenceGate.reason,
+          visualEvidenceState: evidenceGate.state,
+        });
       }
 
       // A Yes vote can be the operation that applies a value held by a
@@ -3205,6 +3322,8 @@ function voteRoutes(config) {
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           cs.visual_evidence_state, cs.visual_evidence_run_id,
+           cs.visual_evidence_detail, cs.visual_evidence_updated_at,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
@@ -3371,6 +3490,10 @@ function voteRoutes(config) {
         // platform, and self-healing on every panel refresh.
         row.resolving = isResolving(row.id);
       }
+      const evidenceBySession = config.visualEvidence?.present
+        ? await visualEvidenceView.getForSessions(pool, rows, req.params.slug)
+        : new Map();
+      for (const row of rows) row.visualEvidence = evidenceBySession.get(Number(row.id)) || null;
 
       // Community-voted priority + assigned-person summary per proposal,
       // keyed by session id (target_type='proposal'). Same minimal shape
@@ -3477,11 +3600,14 @@ function voteRoutes(config) {
           // guess from a thirteen-state precedence table — the gate knows
           // which rung refused and now says so.
           row.integration = integrationSvc.readIntegration(row);
+          row.evidenceEnforced = !!config.visualEvidence?.enforce
+            && !!(row.visual_evidence_detail && typeof row.visual_evidence_detail === 'object');
           // #2061: the whole ordered list of what is still required, rather
           // than only what is currently wrong. The card's tags say the second;
           // nothing said the first, so two of the seven gates had no UI at all.
           row.mergeRequirements = requirementsSvc.readRequirements({
             ...row,
+            evidenceEnforced: row.evidenceEnforced,
             app_main_check_state: mainCheck.state,
             app_main_check_sha: mainCheck.sha,
             app_main_check_resumed_sha: mainCheck.resumedSha,
@@ -3614,6 +3740,12 @@ function voteRoutes(config) {
         // Fetch limit+1 so an extra row signals there's another page.
         prParams
       );
+      const mergedEvidence = config.visualEvidence?.present
+        ? await visualEvidenceView.getForSessions(pool, prRows, req.params.slug)
+        : new Map();
+      for (const row of prRows) {
+        row.visualEvidence = mergedEvidence.get(Number(row.id)) || null;
+      }
 
       // Applied close-issue proposals join the Completed stream: a
       // kind='close_issue' governance row whose vote (or an admin
@@ -3881,6 +4013,9 @@ function voteRoutes(config) {
         proposal.priority = s.priority;
         proposal.assignee = s.assignee;
         proposal.category = s.category;
+        proposal.visualEvidence = config.visualEvidence?.present
+          ? await visualEvidenceView.getForSession(pool, proposal, req.params.slug)
+          : null;
       }
 
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
@@ -4048,6 +4183,19 @@ function voteRoutes(config) {
       // credential value. Keep ordinary admin merges available to the CLI.
       if (isCliCredentialManagementSession(req, session)) {
         return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+      }
+
+      // Force bypasses the vote/check gates, not the evidence audit. Refuse
+      // before returning `queued:true`; otherwise the UI would report a merge
+      // that the background task is guaranteed not to perform. An app admin
+      // can use the dedicated reasoned override endpoint, then retry.
+      const evidenceGate = await readVisualEvidenceGate(config, pool, session);
+      if (evidenceGate.applies && !evidenceGate.allowed) {
+        return res.status(409).json({
+          error: 'visual_evidence_required',
+          message: evidenceGate.reason,
+          visualEvidenceState: evidenceGate.state,
+        });
       }
 
       // Respond immediately; the merge itself runs in the background
@@ -4608,6 +4756,22 @@ async function checkAndMerge(config, pool, session, options = {}) {
     }
   }
 
+  // Force merge bypasses voting/checks by design, but it does not manufacture
+  // visual evidence. An administrator who intentionally accepts missing
+  // evidence must use the audited override endpoint first.
+  if (force && config?.visualEvidence?.enforce) {
+    const evidenceGate = await readVisualEvidenceGate(config, pool, session);
+    if (evidenceGate.applies && !evidenceGate.allowed) {
+      return {
+        merged: false,
+        blockReason: 'visual_evidence',
+        visualEvidenceBlocked: true,
+        visualEvidenceState: evidenceGate.state,
+        error: evidenceGate.reason,
+      };
+    }
+  }
+
   // The proposal's "opened for voting" anchor is promoted_at (falls back to
   // created_at defensively). All gates derive from one snapshot.
   //
@@ -4720,6 +4884,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
     headSha: reviewedHeadForSession(session) || null,
     approvalEpoch: Number.isFinite(parseInt(session.approval_epoch, 10))
       ? parseInt(session.approval_epoch, 10) : 0,
+    evidenceEnforced: !!config?.visualEvidence?.enforce
+      && !!session.visual_evidence_detail,
   });
 
   if (!force) {
@@ -5076,6 +5242,39 @@ async function checkAndMerge(config, pool, session, options = {}) {
     }
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
     gateTrace.pass('checks', { checkState });
+
+    // #2380: when enforcement is enabled, a required UI-evidence run is an
+    // exact-head merge gate. This is not pixel-regression approval: the hard
+    // replay and relevance reviewer have already done their bounded jobs.
+    // `overridden` is accepted only because the override endpoint records an
+    // app-admin identity and a visible reason.
+    const evidenceGate = await readVisualEvidenceGate(config, pool, session);
+    if (evidenceGate.applies && !evidenceGate.allowed) {
+      dstep({
+        phase: 'gate:visual_evidence', level: 'warn',
+        message: `Merge blocked: ${evidenceGate.reason}`,
+        detail: { state: evidenceGate.state, currentHead: evidenceGate.currentHead, recordedHead: evidenceGate.recordedHead },
+      });
+      gateTrace.stop('visual_evidence', evidenceGate.state === 'failed' ? 'blocked' : 'active', {
+        state: evidenceGate.state,
+        note: evidenceGate.reason,
+      });
+      gateSave();
+      dend('blocked', 'Blocked: exact-revision visual evidence is not ready.');
+      return {
+        merged: false, yesCount, needed: required,
+        blockReason: 'visual_evidence', visualEvidenceBlocked: true,
+        visualEvidenceState: evidenceGate.state,
+      };
+    }
+    if (evidenceGate.applies) {
+      dstep({
+        phase: 'gate:visual_evidence',
+        message: `Visual evidence gate: state = ${evidenceGate.state}.`,
+        detail: { state: evidenceGate.state, headSha: evidenceGate.currentHead },
+      });
+      gateTrace.pass('visual_evidence', { state: evidenceGate.state });
+    }
 
     // Platform-variables gate. A self-app proposal that ADDS a required
     // `platform_env` declaration with no value set would deploy the
@@ -6121,6 +6320,9 @@ module.exports = {
   voteMatchesApprovalEpoch,
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
+  parseImportVisualEvidence,
+  visualEvidenceGateForSession,
+  readVisualEvidenceGate,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,

@@ -68,6 +68,12 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
   }
 
   const fresh = rows[0];
+  if (session.visual_evidence_state || session.visual_evidence_detail) {
+    await require('./visual-evidence-state').markStaleForHead(pool, session.id, headSha)
+      .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head visual evidence', {
+        sessionId: session.id, headSha, err: err.message,
+      }));
+  }
   const pending = await visuals.setChecksPending(
     pool, session.id, headSha, 'building', 'sync-main'
   ).catch((err) => {

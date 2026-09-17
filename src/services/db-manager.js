@@ -47,6 +47,18 @@ function stagingDbName(slug, username, commitHash) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_${username.replace(/[^a-z0-9_]/g, '_')}_${shortHash}`;
 }
 
+// Evidence clones deliberately do not use stagingDbName(): they are owned by
+// a short-lived evidence run rather than by the proposal preview sweeper.
+// Keep the database at 57 bytes so its `_owner` role also fits PostgreSQL's
+// 63-byte identifier limit.
+function evidenceDbName(slug, runId, side) {
+  if (!['base', 'head'].includes(side)) throw new Error('evidenceDbName: side must be base or head');
+  const cleanSlug = String(slug || '').toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'app';
+  const token = crypto.createHash('sha256').update(String(runId || '')).digest('hex').slice(0, 12);
+  const suffix = `_evidence_${token}_${side === 'base' ? 'b' : 'h'}`;
+  return `app_${cleanSlug.slice(0, 57 - 4 - suffix.length)}${suffix}`;
+}
+
 function ownerRoleName(dbName) {
   return `${dbName}${ROLE_SUFFIX}`;
 }
@@ -262,9 +274,14 @@ function stagingConnectionLimit() {
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
 const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
+const EVIDENCE_CLONE_DB_RE = /^app_[a-z0-9_]+_evidence_[0-9a-f]{12}_[bh]$/;
 
 function isStagingCloneDb(name) {
   return STAGING_CLONE_DB_RE.test(String(name || ''));
+}
+
+function isEvidenceCloneDb(name) {
+  return EVIDENCE_CLONE_DB_RE.test(String(name || ''));
 }
 
 /**
@@ -275,7 +292,7 @@ function isStagingCloneDb(name) {
  */
 async function applyStagingConnectionLimit(dbName, { execute = execInDb } = {}) {
   if (!SAFE_IDENT.test(dbName)) return null;
-  if (!isStagingCloneDb(dbName)) return null;
+  if (!isStagingCloneDb(dbName) && !isEvidenceCloneDb(dbName)) return null;
   const limit = stagingConnectionLimit();
   if (limit < 0) return null;
   try {
@@ -712,6 +729,88 @@ async function cloneFromTemplate(templateDb, targetDb) {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
   return { password };
+}
+
+// #2380: freeze ONE redacted staging-template generation for a paired
+// base/head evidence run. Calling cloneDatabase(..., { viaTemplate: true })
+// twice is not equivalent: the soft-age refresh can swap the shared template
+// between those calls. A prepared source is its own immutable, no-connections
+// database and therefore gives both sides byte-equivalent starting data.
+function preparedCloneSourceName(sourceDb, sourceId) {
+  if (!SAFE_IDENT.test(sourceDb)) {
+    throw new Error(`preparedCloneSourceName: unsafe sourceDb ${JSON.stringify(sourceDb)}`);
+  }
+  const token = crypto.createHash('sha256').update(String(sourceId || '')).digest('hex').slice(0, 12);
+  const suffix = `_evsrc_${token}`;
+  return `${sourceDb.slice(0, 63 - suffix.length)}${suffix}`;
+}
+
+function isPreparedCloneSource(name) {
+  return SAFE_IDENT.test(String(name || '')) && /_evsrc_[0-9a-f]{12}$/.test(String(name));
+}
+
+async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
+  if (!sourceId) throw new Error('prepareStagingCloneSource: sourceId is required');
+  if (!stagingTemplatesEnabled()) {
+    throw new Error('prepareStagingCloneSource: staging templates are disabled');
+  }
+  return withTemplateLock(sourceDb, async () => {
+    const ensured = await ensureStagingTemplate(sourceDb);
+    const sharedTemplate = ensured.template;
+    const refreshedAtMs = await readTemplateRefreshedAt(sharedTemplate);
+    if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+
+    const preparedDb = preparedCloneSourceName(sourceDb, sourceId);
+    const preparedRole = ownerRoleName(preparedDb);
+    const sharedRole = ownerRoleName(sharedTemplate);
+    await dropDatabase(preparedDb, { strict: true });
+    await execInDb(`CREATE ROLE ${preparedRole} NOLOGIN`);
+    try {
+      await execInDb(`CREATE DATABASE ${preparedDb} TEMPLATE ${sharedTemplate} OWNER ${preparedRole}`);
+      await withDatabaseConnection(preparedDb, async (execute) => {
+        await reassignUserObjectsTo(preparedDb, sharedRole, preparedRole, execute);
+      });
+      await execInDb(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
+      const fingerprint = crypto.createHash('sha256')
+        .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
+        .digest('hex');
+      await execInDb(
+        `COMMENT ON DATABASE ${preparedDb} IS 'evidence-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}'`
+      );
+      await execInDb(`ALTER DATABASE ${preparedDb} WITH ALLOW_CONNECTIONS false`);
+      return {
+        templateDb: preparedDb,
+        sourceDb,
+        refreshedAt: new Date(refreshedAtMs).toISOString(),
+        fingerprint,
+      };
+    } catch (err) {
+      await dropDatabase(preparedDb).catch(() => {});
+      throw err;
+    }
+  });
+}
+
+async function cloneFromPreparedSource(prepared, targetDb) {
+  const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
+  if (!isPreparedCloneSource(templateDb)) {
+    throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
+  }
+  const result = await cloneFromTemplate(templateDb, targetDb);
+  await applyStagingConnectionLimit(targetDb);
+  return {
+    ...result,
+    via: 'prepared-template',
+    fixtureFingerprint: typeof prepared === 'object' ? prepared.fingerprint || null : null,
+  };
+}
+
+async function releasePreparedCloneSource(prepared) {
+  const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
+  if (!isPreparedCloneSource(templateDb)) {
+    throw new Error(`releasePreparedCloneSource: invalid prepared source ${JSON.stringify(templateDb)}`);
+  }
+  await dropDatabase(templateDb, { strict: true });
 }
 
 // Replacement for `REASSIGN OWNED BY <fromRole> TO <toRole>` in cases
@@ -1520,6 +1619,7 @@ async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } =
 module.exports = {
   appDbName,
   stagingDbName,
+  evidenceDbName,
   ownerRoleName,
   createDatabase,
   dropDatabase,
@@ -1528,6 +1628,7 @@ module.exports = {
   // Per-preview connection ceiling (#1771).
   stagingConnectionLimit,
   isStagingCloneDb,
+  isEvidenceCloneDb,
   applyStagingConnectionLimit,
   DEFAULT_STAGING_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,
@@ -1544,6 +1645,11 @@ module.exports = {
   ensureStagingTemplate,
   refreshStagingTemplate,
   cloneFromTemplate,
+  preparedCloneSourceName,
+  isPreparedCloneSource,
+  prepareStagingCloneSource,
+  cloneFromPreparedSource,
+  releasePreparedCloneSource,
   readTemplateRefreshedAt,
   queueTemplateRefresh,
   STAGING_TEMPLATE_MAX_AGE_MS,

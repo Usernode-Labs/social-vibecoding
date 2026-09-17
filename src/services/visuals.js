@@ -496,12 +496,40 @@ function deriveCapturePlan(session, declaredTests, changedFiles) {
   return { paths: ['/'], pathDefaulted: true, routeSource: 'default', scenarios: [] };
 }
 
-function shouldCaptureMedia(uiAffecting, routeSource) {
+function shouldCaptureMedia(uiAffecting, routeSource, {
+  evidenceV2Enrolled = false,
+  emergencyLegacyCapture = false,
+} = {}) {
+  // Once a proposal declares evidence-v2 intent, route-only media is no
+  // longer review evidence. Keep running the existing browser/check suite,
+  // but do not create or publish screenshots from its default `/` (or even
+  // an explicit legacy path) unless operators deliberately engage the
+  // narrowly scoped rollback valve.
+  if (evidenceV2Enrolled && !emergencyLegacyCapture) return false;
   return !!uiAffecting || routeSource === 'submitted' || routeSource === 'scenario';
 }
 
+async function evidenceV2Enrolled(pool, config, session) {
+  if (!config.visualEvidence?.collect) return false;
+  if (session?.visual_evidence_detail && typeof session.visual_evidence_detail === 'object') return true;
+  try {
+    const { rows } = await pool.query(
+      'SELECT visual_evidence_detail FROM chat_sessions WHERE id = $1',
+      [session.id]
+    );
+    return !!(rows[0]?.visual_evidence_detail && typeof rows[0].visual_evidence_detail === 'object');
+  } catch (err) {
+    log.warn('visuals', 'Evidence-v2 enrollment lookup failed — suppressing legacy media', {
+      sessionId: session.id, err: err.message,
+    });
+    // Fail closed when collection is enabled. Checks still run; only legacy
+    // review media is withheld until enrollment can be established.
+    return true;
+  }
+}
+
 // ── Capture image ──────────────────────────────────────────────────────
-// Built lazily by the platform from capture/, mirroring the worker-image
+// Built lazily by the platform from the repository root, mirroring the worker-image
 // pattern (worker.js ensureWorkerImage). Memoized per process: capture/
 // only changes when the platform itself redeploys, which restarts the
 // process anyway; Docker's layer cache makes the one build per boot fast.
@@ -514,8 +542,10 @@ function ensureCaptureImage() {
     return Promise.resolve();
   }
   if (!_imagePromise) {
-    const captureDir = path.join(__dirname, '../../capture');
-    _imagePromise = docker.buildImage(captureDir, CAPTURE_IMAGE).catch((err) => {
+    const repositoryRoot = path.join(__dirname, '../..');
+    _imagePromise = docker.buildImage(repositoryRoot, CAPTURE_IMAGE, {}, {
+      dockerfile: path.join(repositoryRoot, 'capture/Dockerfile'),
+    }).catch((err) => {
       _imagePromise = null; // allow a retry on the next capture
       throw err;
     });
@@ -1859,6 +1889,23 @@ async function publishCaptureError(pool, sessionId, revision, err, send) {
   } finally { client.release(); }
 }
 
+// The legacy checks/capture pipeline remains the preview-readiness
+// chokepoint during rollout. Once it settles (successfully or not), launch
+// revision-scoped evidence independently. The orchestrator reloads the row,
+// deduplicates by session+head, and owns its own paired application state, so
+// no stale in-memory session metadata or mutable public preview is reused.
+function scheduleVisualEvidence(config, pool, sessionId, commitHash, trigger = 'preview-ready') {
+  if (!config.visualEvidence?.execute || !/^[0-9a-f]{40}$/.test(String(commitHash || ''))) return;
+  Promise.resolve().then(() => require('./visual-evidence-orchestrator').scheduleForSession(config, {
+    pool,
+    sessionId: Number(sessionId),
+    headSha: String(commitHash).toLowerCase(),
+    trigger,
+  })).catch((err) => log.warn('visuals', 'Visual evidence scheduling failed', {
+    sessionId: Number(sessionId), headSha: commitHash, err: err.message,
+  }));
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
@@ -1968,6 +2015,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     });
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, null);
+    scheduleVisualEvidence(config, pool, session.id, commitHash, 'checks-already-decided');
     return;
   }
 
@@ -2110,19 +2158,42 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const captureRouteSource = capturePlan.routeSource;
     const visualScenarios = capturePlan.scenarios;
     const navigationPaths = capturePaths;
+    if (config.visualEvidence?.collect && uiAffecting) {
+      try {
+        await require('./visual-evidence-state').requireIntentForUiChange(
+          pool,
+          Number(session.id),
+          {
+            headSha: /^[0-9a-f]{40}$/.test(String(commitHash || ''))
+              ? String(commitHash).toLowerCase() : null,
+          }
+        );
+      } catch (err) {
+        log.warn('visuals', 'Could not persist the missing visual-evidence declaration', {
+          sessionId: session.id, commitHash, err: err.message,
+        });
+      }
+    }
     // #381: the headless run ALWAYS happens so every proposal gets a
     // console-error check. Explicit routes and named scenarios are strong
     // evidence that media was requested even if the file heuristic misses the
     // UI. Otherwise preserve the prior behaviour: UI-affecting changes shoot
     // the app root, while backend-only changes stay console-only.
-    const media = shouldCaptureMedia(uiAffecting, captureRouteSource);
+    const enrolledInEvidenceV2 = await evidenceV2Enrolled(pool, config, session);
+    const media = shouldCaptureMedia(uiAffecting, captureRouteSource, {
+      evidenceV2Enrolled: enrolledInEvidenceV2,
+      emergencyLegacyCapture: config.visualEvidence?.legacyCapture === true,
+    });
     if (captureRouteSource === 'default' && media) {
       log.info('visuals', 'No submitted route or matching visual scenario — defaulting capture to app root', {
         sessionId: session.id, ref: gitRef, captureRouteSource,
       });
     } else if (!media) {
-      log.info('visuals', 'No frontend files in commit range — console-only check', {
+      log.info('visuals', enrolledInEvidenceV2
+        ? 'Evidence-v2 proposal — legacy route media suppressed; checks continue'
+        : 'No frontend files in commit range — console-only check', {
         sessionId: session.id, ref: gitRef, captureRouteSource,
+        evidenceV2Enrolled: enrolledInEvidenceV2 || undefined,
       });
     }
 
@@ -2742,6 +2813,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
+    scheduleVisualEvidence(config, pool, session.id, commitHash);
   }
 }
 
@@ -3626,6 +3698,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
 module.exports = {
   kubernetesCaptureOrigin,
   captureForSession,
+  scheduleVisualEvidence,
   // The settlement half of a run and the in-flight seat, for the harvester
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,
@@ -3681,6 +3754,7 @@ module.exports = {
   isFrontendFile,
   isUiAffecting,
   shouldCaptureMedia,
+  evidenceV2Enrolled,
   visualImpactMatches,
   selectVisualScenarios,
   deriveCapturePlan,
@@ -3694,5 +3768,6 @@ module.exports = {
   beforeContainerName,
   resolveCaptureScale,
   CAPTURE_IMAGE,
+  ensureCaptureImage,
   MOBILE_VIEWPORT,
 };

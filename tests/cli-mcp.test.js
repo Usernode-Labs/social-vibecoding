@@ -519,6 +519,25 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
         head_sha: 'b'.repeat(40),
         history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
         tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
+        visual_evidence: {
+          version: 1,
+          impact: 'ui',
+          rationale: 'The proposal adds a new review panel.',
+          stories: [{
+            id: 'review-panel',
+            claim: 'The new review panel opens from the proposal card.',
+            persona: 'member',
+            viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+            intent: {
+              startPath: '/app/demo/dev',
+              steps: ['Open the proposal card', 'Open the review panel'],
+              checkpoint: 'The review panel is visible.',
+              focus: 'Review panel',
+              baseState: 'not_present',
+              animation: 'steps',
+            },
+          }],
+        },
       },
     });
     assert.equal(submit.structuredContent.status, 202);
@@ -586,6 +605,25 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       headSha: 'b'.repeat(40),
       history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
       tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
+      visualEvidence: {
+        version: 1,
+        impact: 'ui',
+        rationale: 'The proposal adds a new review panel.',
+        stories: [{
+          id: 'review-panel',
+          claim: 'The new review panel opens from the proposal card.',
+          persona: 'member',
+          viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+          intent: {
+            startPath: '/app/demo/dev',
+            steps: ['Open the proposal card', 'Open the review panel'],
+            checkpoint: 'The review panel is visible.',
+            focus: 'Review panel',
+            baseState: 'not_present',
+            animation: 'steps',
+          },
+        }],
+      },
     });
     assert.ok(requests.every((request) => request.authorization === `Bearer ${token}`));
   } finally {

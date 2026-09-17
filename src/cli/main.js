@@ -2079,6 +2079,31 @@ async function runMcp(args, launcherPath) {
     status: z.enum(['passed', 'failed', 'skipped']),
     summary: z.string().max(2048).optional(),
   })).max(50);
+  const visualEvidenceViewportSchema = z.object({
+    name: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/),
+    width: z.number().int().min(320).max(1920),
+    height: z.number().int().min(480).max(1440),
+  }).strict();
+  const visualEvidenceIntentSchema = z.object({
+    version: z.literal(1),
+    impact: z.enum(['ui', 'motion', 'none']),
+    rationale: z.string().min(1).max(1000),
+    stories: z.array(z.object({
+      id: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/),
+      claim: z.string().min(1).max(1000),
+      persona: z.enum(['member', 'read_only_admin']),
+      viewports: z.array(visualEvidenceViewportSchema).min(1).max(2),
+      intent: z.object({
+        startPath: z.string().min(1).max(512),
+        steps: z.array(z.string().min(1).max(200)).min(1).max(40),
+        checkpoint: z.string().min(1).max(500),
+        focus: z.string().min(1).max(200),
+        baseState: z.enum(['present', 'not_present']).optional()
+          .describe('Use not_present only for a genuinely new screen/control; base replay must still prove the stable parent or explicit absence state.'),
+        animation: z.enum(['none', 'steps', 'motion']).optional(),
+      }).strict(),
+    }).strict()).max(3),
+  }).strict().describe('Version-1 visual evidence declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. Never include credentials or screenshot-only application routes.');
   // chat_sessions.id is PostgreSQL INTEGER. Keep the MCP contract aligned
   // with the HTTP route's canonical-ID parser so an accepted tool argument
   // cannot later turn into a misleading 404.
@@ -2188,18 +2213,19 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_submit_build', {
-    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Homeroom verifies the pinned head, deploys staging, and runs its normal proposal checks. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
+    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visual_evidence while implementation context is fresh: describe the real UI flow for ui/motion changes, or explicitly use impact none with a rationale. Homeroom verifies the pinned head, deploys staging, runs checks, and independently explores then deterministically replays the evidence flow against base and head. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
     inputSchema: {
       session_id: sessionIdSchema,
       head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),
       history: proposalHistorySchema.optional(),
       spec: z.string().min(1).max(32768).optional(),
       tests: proposalTestsSchema.optional(),
+      visual_evidence: visualEvidenceIntentSchema.optional(),
       profile: apiProfileSchema,
     },
     outputSchema: apiOutputSchema,
     annotations: proposalAnnotations,
-  }, async ({ session_id: sessionId, head_sha: headSha, history, spec, tests, profile }) => mcpApiRequest({
+  }, async ({ session_id: sessionId, head_sha: headSha, history, spec, tests, visual_evidence: visualEvidence, profile }) => mcpApiRequest({
     method: 'POST',
     target: `/api/sessions/${sessionId}/proposal-handoff/build`,
     body: {
@@ -2207,6 +2233,7 @@ async function runMcp(args, launcherPath) {
       ...(history === undefined ? {} : { history }),
       ...(spec === undefined ? {} : { spec }),
       ...(tests === undefined ? {} : { tests }),
+      ...(visualEvidence === undefined ? {} : { visualEvidence }),
     },
     profileName: profile,
   }));

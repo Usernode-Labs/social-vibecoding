@@ -72,6 +72,7 @@ const STATUS_BY_CODE = {
   pr_open_failed: 502,
   import_failed: 502,
   invalid_request: 400,
+  invalid_visual_evidence: 400,
   at_capacity: 429,
   // The update path (#1054). Three of these are 409 rather than 403 on
   // purpose: `base_mismatch` and `branch_moved` mean the caller's picture of

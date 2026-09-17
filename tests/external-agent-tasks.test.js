@@ -1153,7 +1153,7 @@ test('the service never opens a proposal itself', () => {
   // The linked-issue set travels WITH the import (#1217) for the same reason
   // the testing metadata does — the route is what creates the session row —
   // but the row is still the route's to write, not this service's.
-  assert.match(SRC, /await importProposal\(slug, pr\.number, \{ linkedIssues: linkedIssuesFor\(task\) \}\)/);
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*visualEvidence/);
 });
 
 // ── #1217: a proposal built from a request is linked to it ─────────────

@@ -38,6 +38,7 @@ const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
+const { visualEvidenceRoutes } = require('./src/routes/visual-evidence');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const { avatarRoutes } = require('./src/routes/avatars');
@@ -587,6 +588,7 @@ app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
 app.use(voteRoutes(config));
+app.use(visualEvidenceRoutes(config));
 // Demo mode: a creator's synthetic partner proposes, votes and resets, on a
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
 // it borrows recordVote/checkAndMerge from.
@@ -984,6 +986,20 @@ async function becomeLeader() {
   setInterval(() => {
     runCliAuthCleanup();
   }, 6 * 60 * 60 * 1000).unref?.();
+
+  // Visual evidence is private, revision-scoped data. Recover runs whose
+  // worker died, remove their deterministic paired runtimes/databases, and
+  // enforce the shorter failed-media and bounded audit-retention windows.
+  const visualEvidenceGc = require('./src/services/visual-evidence-gc');
+  const runVisualEvidenceGc = () => visualEvidenceGc.sweep(config, getPool(config))
+    .then((counts) => {
+      if (Object.values(counts).some((count) => count > 0)) {
+        log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
+      }
+    })
+    .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }));
+  runVisualEvidenceGc();
+  setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables

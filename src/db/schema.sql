@@ -8143,6 +8143,92 @@ CREATE TABLE IF NOT EXISTS check_runs (
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
+-- #2380: agent-authored, revision-scoped visual evidence. The hot proposal
+-- reads need only the current state and a bounded public summary; executable
+-- plans, verdicts and binary artifacts live in their own private tables.
+-- A head change clears these pointers synchronously through
+-- services/visual-evidence-state.js so a screenshot from an older revision
+-- can never be presented as evidence for newer code.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_state VARCHAR(24);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_run_id VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_detail JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_updated_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS visual_evidence_runs (
+  id                     VARCHAR(32) PRIMARY KEY
+    CHECK (id ~ '^[0-9a-f]{32}$'),
+  session_id             INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  base_sha               VARCHAR(40) NOT NULL
+    CHECK (base_sha ~ '^[0-9a-f]{40}$'),
+  head_sha               VARCHAR(40) NOT NULL
+    CHECK (head_sha ~ '^[0-9a-f]{40}$'),
+  plan_version           INTEGER NOT NULL DEFAULT 1 CHECK (plan_version = 1),
+  plan_hash              VARCHAR(64)
+    CHECK (plan_hash IS NULL OR plan_hash ~ '^[0-9a-f]{64}$'),
+  intent                 JSONB NOT NULL,
+  replay_plan            JSONB,
+  trace_summary          JSONB,
+  hard_verdict           JSONB,
+  semantic_verdict       JSONB,
+  state                  VARCHAR(24) NOT NULL,
+  trigger                VARCHAR(32),
+  failure_code           VARCHAR(48),
+  failure_reason         TEXT,
+  fixture_fingerprint    VARCHAR(128),
+  base_image_digest      TEXT,
+  head_image_digest      TEXT,
+  repair_attempt         SMALLINT NOT NULL DEFAULT 0
+    CHECK (repair_attempt BETWEEN 0 AND 1),
+  override_user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  override_reason        TEXT,
+  overridden_at          TIMESTAMPTZ,
+  started_at             TIMESTAMPTZ,
+  completed_at           TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (state IN (
+    'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
+    'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden'
+  )),
+  CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
+    AND semantic_verdict IS NOT NULL AND completed_at IS NOT NULL)),
+  CHECK (state <> 'not_required' OR completed_at IS NOT NULL),
+  CHECK (state <> 'overridden' OR (override_user_id IS NOT NULL
+    AND NULLIF(BTRIM(override_reason), '') IS NOT NULL AND overridden_at IS NOT NULL
+    AND completed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_visual_evidence_runs_session_created
+  ON visual_evidence_runs(session_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_evidence_runs_current_head
+  ON visual_evidence_runs(session_id, head_sha)
+  WHERE state NOT IN ('stale', 'cancelled');
+COMMENT ON TABLE visual_evidence_runs IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS visual_evidence_artifacts (
+  id                 VARCHAR(32) PRIMARY KEY
+    CHECK (id ~ '^[0-9a-f]{32}$'),
+  run_id             VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  story_id           VARCHAR(96) NOT NULL,
+  viewport           VARCHAR(32) NOT NULL,
+  side               VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head', 'paired')),
+  variant            VARCHAR(16) NOT NULL CHECK (variant IN ('focus', 'context', 'animation')),
+  media              VARCHAR(8) NOT NULL CHECK (media IN ('png', 'webm', 'gif')),
+  content_type       VARCHAR(32) NOT NULL,
+  data               BYTEA NOT NULL,
+  width              INTEGER CHECK (width IS NULL OR width > 0),
+  height             INTEGER CHECK (height IS NULL OR height > 0),
+  bytes              INTEGER NOT NULL CHECK (bytes >= 0),
+  sha256              VARCHAR(64) NOT NULL
+    CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  focus_rect         JSONB,
+  stage_labels       JSONB,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(run_id, story_id, viewport, side, variant, media)
+);
+CREATE INDEX IF NOT EXISTS idx_visual_evidence_artifacts_run
+  ON visual_evidence_artifacts(run_id, story_id, viewport);
+COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
+
 -- ────────────────────────────────────────────────────────────────────
 -- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.
 --

@@ -23,7 +23,10 @@ function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = 
   // before this lookup and becomes an exact external input too. Workflow/
   // resolver changes invalidate the build recipe. Keep candidate branches
   // separate from main, even for identical inputs.
-  const objects = [component, WORKFLOW, RESOLVER].map(path =>
+  const componentInputs = component === 'capture'
+    ? ['capture', 'evidence', 'src/services/visual-evidence-plan.js']
+    : [component];
+  const objects = [...componentInputs, WORKFLOW, RESOLVER].map(path =>
     run('git', ['rev-parse', `${revision}:${path}`], cwd));
   const inputs = {
     component, ref, platform: 'linux/amd64', objects,

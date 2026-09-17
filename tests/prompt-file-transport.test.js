@@ -405,8 +405,8 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
 
   // A supplied system-prompt path is required and applied to every physical
   // Claude invocation, including resume failure's fresh retry.
-  assert.match(cc, /\[ "\$MODE" = "build" \] && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
-    'hosted builds fail closed if the system-context transport is omitted');
+  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "evidence" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
+    'hosted builds and evidence turns fail closed if system context is omitted');
   assert.match(cc, /\[ -s "\$SYSTEM_PROMPT_FILE" \]/);
   const systemPromptInvocations = cc.match(/\$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
   assert.equal(systemPromptInvocations.length, 3,

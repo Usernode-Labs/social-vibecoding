@@ -130,7 +130,7 @@ jobs:
               reason="Release required: Claude Code $CLAUDE_CODE_VERSION has no matching worker image."
             fi
           else
-            echo 'matrix={"include":[{"component":"platform","context":".","dockerfile":"Dockerfile.kubernetes"},{"component":"worker","context":"worker","dockerfile":"worker/Dockerfile"},{"component":"capture","context":"capture","dockerfile":"capture/Dockerfile"}]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[{"component":"platform","context":".","dockerfile":"Dockerfile.kubernetes"},{"component":"worker","context":"worker","dockerfile":"worker/Dockerfile"},{"component":"capture","context":".","dockerfile":"capture/Dockerfile"}]}' >> "$GITHUB_OUTPUT"
             echo 'should_release=true' >> "$GITHUB_OUTPUT"
             reason="Normal source release."
           fi

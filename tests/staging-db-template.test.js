@@ -261,6 +261,53 @@ test('the template name is not a preview clone, and the freshness stamp parses',
   } finally { restore(); }
 });
 
+test('evidence clone names are bounded, side-specific, and connection-limited without joining preview reaping', () => {
+  const { dbManager, restore } = loadDbManager();
+  try {
+    const runId = 'a'.repeat(32);
+    const base = dbManager.evidenceDbName('x'.repeat(80), runId, 'base');
+    const head = dbManager.evidenceDbName('x'.repeat(80), runId, 'head');
+    assert.notEqual(base, head);
+    assert.ok(base.length <= 57, 'database plus _owner fits PostgreSQL identifier limit');
+    assert.equal(dbManager.isEvidenceCloneDb(base), true);
+    assert.equal(dbManager.isEvidenceCloneDb(head), true);
+    assert.equal(dbManager.isStagingCloneDb(base), false, 'the ordinary preview sweeper does not own evidence clones');
+    assert.throws(() => dbManager.evidenceDbName('demo', runId, 'other'), /side/);
+  } finally { restore(); }
+});
+
+test('one immutable prepared source feeds both evidence sides before cleanup', async () => {
+  const { dbManager, calls, restore } = loadDbManager({ templateComment: fresh() });
+  try {
+    const prepared = await dbManager.prepareStagingCloneSource('app_demo', {
+      sourceId: 'evidence-run-0123456789abcdef',
+    });
+    assert.equal(dbManager.isPreparedCloneSource(prepared.templateDb), true);
+    assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(prepared.refreshedAt.length > 0, true);
+    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa');
+    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s92_bbbbbb');
+    await dbManager.releasePreparedCloneSource(prepared);
+
+    const creates = sqls(calls).filter((sql) => /CREATE DATABASE app_demo_staging_s9[12]_/.test(sql));
+    assert.equal(creates.length, 2);
+    assert.ok(creates.every((sql) => sql.includes(`TEMPLATE ${prepared.templateDb}`)),
+      'both sides clone the exact prepared database, not the moving shared template');
+    assert.ok(sqls(calls).some((sql) => new RegExp(`ALTER DATABASE ${prepared.templateDb} WITH ALLOW_CONNECTIONS false`).test(sql)));
+    assert.ok(sqls(calls).some((sql) => new RegExp(`DROP DATABASE IF EXISTS ${prepared.templateDb}$`).test(sql)),
+      'cleanup drops the run-scoped prepared source');
+  } finally { restore(); }
+});
+
+test('prepared evidence sources require a run identity and cannot adopt arbitrary databases', async () => {
+  const { dbManager, restore } = loadDbManager({ templateComment: fresh() });
+  try {
+    await assert.rejects(dbManager.prepareStagingCloneSource('app_demo'), /sourceId is required/);
+    await assert.rejects(dbManager.cloneFromPreparedSource('app_demo_stgtmpl', 'app_demo_staging_s1_aaaaaa'), /invalid prepared source/);
+    await assert.rejects(dbManager.releasePreparedCloneSource('app_demo'), /invalid prepared source/);
+  } finally { restore(); }
+});
+
 test('the preview build asks for the template and records how the clone went', () => {
   const fs = require('node:fs');
   const path = require('node:path');

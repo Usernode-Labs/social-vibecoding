@@ -15,12 +15,14 @@ WORKDIR /app
 
 # puppeteer-core only — the browser comes from the distro package above,
 # so no Chromium download at npm-install time.
-RUN npm install puppeteer-core@^23 \
+RUN npm install puppeteer-core@^23 playwright-core@1.55.1 zod@3.25.76 \
   && chown -R node:node /app
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-COPY capture.js /app/capture.js
+COPY capture/capture.js /app/capture.js
+COPY evidence/replay-runner.js /app/evidence-replay.js
+COPY src/services/visual-evidence-plan.js /app/visual-evidence-plan.js
 
 USER node
 
