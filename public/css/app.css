@@ -6717,11 +6717,11 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* ── #15: reply / quote ─────────────────────────────────── */
 
-/* Quoted block shown above a message that is itself a reply, and the
-   composer "Replying to …" preview chip — they share styling so a reply
-   looks the same before and after it's sent. */
-.gc-quoted,
-.gc-reply-preview-inner {
+/* Quoted block shown above a message that is itself a reply. The same
+   accent border opens the composer's "Replying to …" strip below, so the
+   two still read as one thing; the strip itself is sized for the composer
+   it sits on (#2391). */
+.gc-quoted {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -6729,14 +6729,26 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-radius: 4px;
   background: var(--bg-card);
   max-width: min(560px, 100%);
-}
-.gc-quoted {
   margin: 2px 0 4px;
   padding: 3px 8px;
   cursor: pointer;
 }
 .gc-quoted:hover { filter: brightness(1.08); }
-.gc-reply-preview-inner { padding: 6px 8px; }
+
+/* #2391: the staged-reply strip is the Messages screen's reply draft
+   (.messages-reply-draft): full composer width, the accent tint, an open
+   rounded edge, and text at the composer's reading size. It was the sent
+   quote's 11/12px chip, capped at 560px with 4px corners, under a 22px-radius
+   composer card. */
+.gc-reply-preview-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 12px 12px 0;
+  background: var(--accent-tint);
+  padding: 6px 8px 6px 10px;
+}
 
 .gc-quoted-author,
 .gc-reply-preview-label {
@@ -6751,6 +6763,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.gc-reply-preview-label { font-size: 13px; font-weight: 700; }
 .gc-quoted-snippet,
 .gc-reply-preview-snippet {
   font-size: 12px;
@@ -6766,6 +6779,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   max-width: 100%;
 }
 .gc-quoted { flex-direction: column; align-items: flex-start; gap: 0; }
+.gc-reply-preview-snippet { font-size: 15px; }
 
 #gc-reply-preview { margin-bottom: 6px; }
 .gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
@@ -6783,7 +6797,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-radius: 9999px;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 20px;
   line-height: 1;
   padding: 0;
   flex-shrink: 0;

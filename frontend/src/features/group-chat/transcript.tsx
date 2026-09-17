@@ -98,11 +98,11 @@ function Body({ html }: { html: string }) {
  * quoted reply rendered "1 reply alice" — no icon, no snippet, and the wrong
  * sentence. `.gc-quoted` is restored here, class for class.
  *
- * It stays on app.css for now because it SHARES its rules with
- * `.gc-reply-preview-inner`, the composer's staged-reply chip — one border,
- * one author line, one snippet line, drawn twice. That chip is still an HTML
- * string in a host `public/js/app-view.js` owns, so reskinning this half alone
- * would split a deliberate pair. Both convert together when the composer does.
+ * It stays on app.css for now, beside `.gc-reply-preview-inner`, the
+ * composer's staged-reply strip. The two open with the same accent border and
+ * author line; since #2391 the strip is sized for the composer (the Messages
+ * screen's reply draft) while this block keeps its compact in-transcript
+ * form. Both convert together when the composer does.
  *
  * ── The attributes are the handler's ──────────────────────────────────
  *
