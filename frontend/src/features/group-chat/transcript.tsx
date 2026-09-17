@@ -59,22 +59,19 @@ import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
-import { transcriptStore, type Attachment, type Quote, type TranscriptMessage } from './transcript-store';
+import { EventRow } from './proposal-event';
+import { QuietCard } from './quiet-card';
+import { swatchFor } from './swatch';
+import {
+  transcriptStore,
+  type Attachment,
+  type Quote,
+  type TranscriptMessage,
+  type TranscriptView,
+} from './transcript-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
-}
-
-/**
- * A stable colour per author, so the same person is the same swatch in every
- * row without the server having to store one. Same idea as `tintFor` for app
- * tiles, and deliberately not the accent ramp: an identity is not a state.
- */
-const SWATCHES = ['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'];
-function swatchFor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return SWATCHES[h % SWATCHES.length];
 }
 
 /**
@@ -368,7 +365,11 @@ export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] 
   return out;
 }
 
-/** A system or vote row — one line of text, plus whatever the module fills in. */
+/**
+ * A system or vote row — one line of text, plus whatever the module fills in.
+ * The topic threads' form; the general chat draws its two proposal events as
+ * ./proposal-event.tsx's row instead, and nothing else of this kind.
+ */
 export function SystemRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <div
@@ -500,16 +501,37 @@ function SpecSnippet({ html }: { html: string }) {
   return <div className="gc-spec-card-snippet" dangerouslySetInnerHTML={wrapper} />;
 }
 
-export function MessageRow({ msg }: { msg: TranscriptMessage }) {
+/**
+ * A person's message.
+ *
+ * `bubbled` is the general chat's spelling of it: the body — the quoted
+ * reply, the text, the files — sits in a bubble, the Messages screen's own
+ * (app.css `.gc-bubble` restates `.messages-bubble`), and the viewer's own
+ * message sits on the RIGHT with no avatar, in the accent tint the dev chat
+ * gives your turns and the Messages screen gives yours. Reactions stay under
+ * the bubble, on its side. A topic thread does not pass it and keeps the
+ * flat named row it always drew, including `gc-msg-self`, which the
+ * reaction bar and the thread's own tint key off in both cases.
+ */
+export function MessageRow({ msg, bubbled = false }: { msg: TranscriptMessage; bubbled?: boolean }) {
+  const me = bubbled && msg.mine;
+  const body = (
+    <>
+      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
+      <Body html={msg.bodyHtml} />
+      <Attachments items={msg.attachments} />
+    </>
+  );
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
+      from={me ? 'me' : 'them'}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
-      avatar={(
+      avatar={me ? undefined : (
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
         </Avatar>
@@ -531,9 +553,7 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       )}
       actions={<RowActions msg={msg} />}
     >
-      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-      <Body html={msg.bodyHtml} />
-      <Attachments items={msg.attachments} />
+      {bubbled ? <div className={me ? 'gc-bubble gc-bubble-self' : 'gc-bubble'}>{body}</div> : body}
       <Reactions msg={msg} />
     </ChatMessageRow>
   );
@@ -573,6 +593,62 @@ export function Transcript({ source = 'main' }: { source?: string }) {
   }, [voteRows]);
 
   if (!state.ready || !view) return null;
+  return <TranscriptRows view={view} source={source} />;
+}
+
+/**
+ * One row, by kind. `fallbackKey` is for a row the server has not stamped
+ * with an id yet. In the general chat (`main`) a person's message is a
+ * bubble, on the right when it is the viewer's own, and a row that carries a
+ * proposal event is that event's message row; the thread draws every row
+ * flat, and the line itself where the general chat draws an event.
+ */
+function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false) {
+  const key = msg.id != null ? `m${msg.id}` : fallbackKey;
+  if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
+  if (msg.kind === 'message') return <MessageRow key={key} msg={msg} bubbled={main} />;
+  if (main && msg.event) return <EventRow key={key} msg={msg} />;
+  return <SystemRow key={key} msg={msg} />;
+}
+
+/**
+ * What the general chat draws: people, shared specs, and the two proposal
+ * events. Every other notice the platform posts into the stream — a request
+ * closing, a check verdict, main's suite going red, a settings change — is
+ * left in the data and in the topic thread it was dual-posted to, and not
+ * drawn here. The thread transcript keeps them all (see TranscriptRows).
+ */
+export function drawnInGeneralChat(m: TranscriptMessage): boolean {
+  return m.kind === 'message' || m.kind === 'spec_share' || !!m.event;
+}
+
+/**
+ * The rows of one transcript, given its view: the lead, the rows, and for the
+ * general chat the two things that make a quiet app's Discussion readable.
+ *
+ * ── The general chat draws people and proposals; the thread draws all ──
+ *
+ * `source === 'main'` keeps only the rows `drawnInGeneralChat` admits — people,
+ * shared specs, and a proposal put up for a vote or merged, each of those a
+ * message from whoever did it (./proposal-event.tsx). The thread transcript
+ * is a proposal's or an issue's own Discussion, where every notice is the
+ * story of that topic, so it keeps them all, in the centred form.
+ *
+ * And when no message from a PERSON is among the loaded rows, the general
+ * chat ends with the quiet card (./quiet-card.tsx). The rows decide that,
+ * not the module: a reply that lands live is appended to the same list, and
+ * the card goes with the next render.
+ *
+ * Separate from `Transcript` so it can be rendered from a view directly,
+ * without the store, which is how tests/group-chat-proposal-events.test.js
+ * checks it.
+ */
+export function TranscriptRows({ view, source }: { view: TranscriptView; source: string }) {
+  const main = source === 'main';
+  const rows = foldRepeats(view.messages).filter((m) => !main || drawnInGeneralChat(m));
+  const quiet = main && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
+    ? view.lead.quiet
+    : null;
   return (
     <>
       {view.lead.earlier ? (
@@ -590,12 +666,8 @@ export function Transcript({ source = 'main' }: { source?: string }) {
       {view.lead.placeholder ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {foldRepeats(view.messages).map((msg, i) => {
-        const key = msg.id != null ? `m${msg.id}` : `i${i}`;
-        if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
-        if (msg.kind === 'message') return <MessageRow key={key} msg={msg} />;
-        return <SystemRow key={key} msg={msg} />;
-      })}
+      {rows.map((msg, i) => renderRow(msg, `i${i}`, main))}
+      {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );
 }

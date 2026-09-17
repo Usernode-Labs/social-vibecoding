@@ -97,6 +97,7 @@ async function migrate(config) {
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
+  await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
   // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
@@ -5442,6 +5443,89 @@ async function seedStagingReadonlyDevTab(pool) {
     log.info('db', 'Staging read-only dev-tab fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging read-only dev-tab seeding failed', { message: err.message });
+  }
+}
+
+// A QUIET app for the general chat's proposal events and quiet card
+// (features/group-chat/proposal-event.tsx, quiet-card.tsx): an app whose
+// Discussion holds nothing but the platform's own notices and not one message
+// from a person. The general chat draws only two of those notices — a
+// proposal put up for a vote and a proposal merged — so the rows below are
+// two settled submissions with their merges, two notices of other kinds that
+// the chat must NOT draw, and one submission whose vote is still open. The
+// declared checks read the open one as a message from its proposer with a
+// box that links to the proposal, a merge as a message from the app, and the
+// quiet card after them. The platform app's own staging transcript cannot
+// serve here: its fixtures seed dozens of human rows, which is exactly what
+// makes the card go away.
+//
+// The open submission carries the metadata tag the live promote path writes,
+// so `GroupChat._eventHref` links it and `_votePhase` resolves it out of
+// /promoted; the two settled ones carry none, the shape of a row that
+// predates the tag, so their PR numbers come out of the wording alone.
+// Read-only viewers see the same rows. Ids in the free 90011x range;
+// idempotent via explicit ids + ON CONFLICT DO NOTHING; a no-op outside
+// staging.
+async function seedStagingQuietDiscussion(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900110, 'staging-demo-quiet-builder', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900110, 'Staging demo quiet app', 'staging-demo-quiet', 'running',
+               'private', 'public', 900110)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES (900110, 900110, 'member', 900110, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at)
+       VALUES (900110, 900110, 900110, 'staging-demo/quiet-open-proposal', 900110,
+               'Staging demo: a proposal that is still up for a vote', 'promoted',
+               NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
+       ON CONFLICT DO NOTHING`
+    );
+    // The general stream (thread_type NULL), oldest first, worded like the
+    // platform's own lines (routes/votes.js) with "Staging demo" in each so
+    // nobody mistakes one for history.
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, created_at)
+       VALUES
+         (900111, 900110, NULL,
+          'staging-demo-quiet-builder promoted PR #900107: Staging demo: the first change for voting',
+          'vote', '{}', NOW() - INTERVAL '3 hours'),
+         (900112, 900110, NULL,
+          'Staging demo: the first change is live (PR #900107). Thanks to everyone who voted (1/1 votes)',
+          'system', '{}', NOW() - INTERVAL '2 hours 40 minutes'),
+         (900113, 900110, NULL,
+          'staging-demo-quiet-builder promoted PR #900108: Staging demo: the second change for voting',
+          'vote', '{}', NOW() - INTERVAL '2 hours'),
+         (900114, 900110, NULL,
+          'Staging demo: issue #900110 closed by group vote (1/1)',
+          'system', '{}', NOW() - INTERVAL '1 hour 50 minutes'),
+         (900115, 900110, NULL,
+          'Staging demo: the second change is live (PR #900108). Thanks to everyone who voted (1/1 votes)',
+          'system', '{}', NOW() - INTERVAL '1 hour 40 minutes'),
+         (900116, 900110, NULL,
+          'Staging demo: PR #900109: an earlier change reached the vote threshold but is still running its tests. Merge is blocked until checks pass.',
+          'system', '{}', NOW() - INTERVAL '1 hour 10 minutes'),
+         (900117, 900110, NULL,
+          'staging-demo-quiet-builder promoted PR #900110: Staging demo: a proposal that is still up for a vote for voting',
+          'vote', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', NOW() - INTERVAL '30 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging quiet-discussion fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging quiet-discussion seeding failed', { message: err.message });
   }
 }
 

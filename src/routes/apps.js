@@ -2058,7 +2058,9 @@ function appRoutes(config) {
   // check the periodic poller does, but on demand. Returns a structured
   // result so the UI can show a useful toast (no_drift / redeployed /
   // rebuild_failed / fetch_failed). Only meaningful for repo-backed
-  // apps; rejects with 400 otherwise.
+  // apps; rejects with 400 otherwise. `manual` skips the poller's
+  // backoff on a commit that has failed to rebuild before: an admin
+  // pressing this has usually just fixed the thing that was failing.
   router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
@@ -2072,7 +2074,7 @@ function appRoutes(config) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      const result = await driftPoller.checkAndRedeployOne(config, pool, app);
+      const result = await driftPoller.checkAndRedeployOne(config, pool, app, { manual: true });
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });

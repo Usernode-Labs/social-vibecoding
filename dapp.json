@@ -4148,6 +4148,42 @@
       "expectSelector": "#dev-chat-body .gc-msg-time[title]"
     },
     {
+      "id": "group-chat.proposal-event",
+      "name": "General chat: a proposal still up for a vote is a message from whoever proposed it, name and stamp on the header line, and one Current-status box with a glyph and a line of text that opens the proposal; the two notices of other kinds are not drawn",
+      "path": "/app/staging-demo-quiet/dev/chat",
+      "expectSelector": "#gc-messages > .gc-event[data-event=\"submitted\"][data-open][data-msg-id=\"900117\"]:has(a.gc-event-box[href*=\"/dev/proposals/900110\"] > .dev-card-icon + .gc-event-text) span:has(> [data-event-sender]) + span > .gc-msg-time[title]",
+      "expectText": "Proposed PR #900110 for a vote",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/group-chat/**",
+        "public/js/group-chat.js",
+        "src/db/migrate.js"
+      ]
+    },
+    {
+      "name": "General chat: the open proposal's header names who proposed it, where a person's message names its author",
+      "path": "/app/staging-demo-quiet/dev/chat",
+      "expectSelector": "#gc-messages > .gc-event[data-msg-id=\"900117\"] [data-event-sender]",
+      "expectText": "staging-demo-quiet-builder"
+    },
+    {
+      "name": "General chat: a merge is a message from the app itself, its box saying how the change landed, with the done glyph and no door until its proposal is known",
+      "path": "/app/staging-demo-quiet/dev/chat",
+      "expectSelector": "#gc-messages > .gc-event[data-event=\"merged\"][data-msg-id=\"900115\"]:not([data-open]) div.gc-event-box > .dev-card-icon + .gc-event-text",
+      "expectText": "went live with 1/1 votes"
+    },
+    {
+      "name": "General chat: a person's message sits in a bubble under their name and stamp, the Messages screen's own bubble, with their reactions beneath it",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": "#gc-messages > .gc-msg:not(.gc-msg-self) .gc-bubble > .gc-msg-content"
+    },
+    {
+      "name": "General chat: with no message from a person on screen, the transcript ends with the quiet card, after the open proposal and above the composer",
+      "path": "/app/staging-demo-quiet/dev/chat",
+      "expectSelector": "#gc-messages > .gc-event[data-msg-id=\"900117\"] ~ .gc-quiet[data-quiet-chat]",
+      "expectText": "Nobody has said anything here yet"
+    },
+    {
       "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
       "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"

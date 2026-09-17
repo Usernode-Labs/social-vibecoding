@@ -167,7 +167,12 @@ test('the tint goes through the model, and the fill does not', () => {
   // The row's class is React's, so it is patched, not written.
   assert.doesNotMatch(refresh[1], /classList/,
     'no class is written onto a row the transcript renders');
-  assert.match(refresh[1], /patchTranscriptMessage\(id, \{ voteRowClass: GroupChat\._rowVoteClass\(pr\) \}\)/);
+  // The phase rides in the same patch since the activity digest: a vote row
+  // learns here whether it stands or folds (tests/group-chat-activity-digest.test.js).
+  assert.match(
+    refresh[1],
+    /patchTranscriptMessage\(id, \{\s*voteRowClass: GroupChat\._rowVoteClass\(pr\),\s*votePhase: GroupChat\._votePhase\(pr\),\s*\}\)/,
+  );
   // And the component renders that class.
   const html = renderComponent(TRANSCRIPT, 'SystemRow', {
     msg: { ...base, kind: 'vote', voteRowClass: 'gc-vote-voted', voteRef: { sessionId: '1', prNumber: '' } },
