@@ -225,12 +225,14 @@ test('a successful fork deploys the cloned source tree, not starter-template fil
     execFileAsync: async (command, args, options = {}) => {
       if (command === 'rm') {
         fs.rmSync(args[1], { recursive: true, force: true });
-      } else if (command === 'git') {
+      } else if (command === 'git' && args[0] === 'clone') {
         const destination = args[args.length - 1];
         fs.mkdirSync(`${destination}/public`, { recursive: true });
         fs.writeFileSync(`${destination}/dapp.json`, JSON.stringify({ name: 'Source App' }));
         fs.writeFileSync(`${destination}/public/index.html`, '<main>SOURCE APP CONTENT</main>');
-      } else if (command === 'bash' && options.env?.PUSHURL) {
+      } else if (command === 'git' && args[0] === 'rev-parse') {
+        // The squashed commit's sha, read back after the push: its own git
+        // step now, not the last line of a bash script's stdout.
         return { stdout: 'source-copy-sha\n', stderr: '' };
       }
       return { stdout: '', stderr: '' };

@@ -94,6 +94,40 @@ async function findForkSource(pool, forkApp) {
 // and we want an independent app with its own issues/PRs. Leaves the
 // fork's working tree on disk at `tempDir` for finalizeDeploy to build
 // from, and returns { repoUrl, mainSha }.
+
+// The credential helper the push runs with: an inline shell function git
+// itself executes under /bin/sh, reading the PAT from the environment.
+// Same pattern as services/worker.js execPushFromWorker. Kept literal —
+// no template interpolation — so the secret is never in an argument.
+const PUSH_CREDENTIAL_HELPER =
+  'credential.helper=!f() { echo username=x-access-token; echo password=$PAT; }; f';
+
+// Strip every `.git` under `dir` — the top-level repository directory and
+// the `.git` FILE a submodule checkout leaves in its place — without
+// descending into what is removed, and the top-level `.gitmodules`. In
+// process, on fs alone: the runtime image has no bash, and the
+// `find … -prune -exec rm` this replaces was the first "spawn bash ENOENT"
+// a fork hit. A nested submodule's own .gitmodules is left as the plain
+// file it now is, exactly as the find did.
+async function flattenTree(dir) {
+  await stripGitEntries(dir);
+  // Top level only, as the find's companion `rm -f "$DIR/.gitmodules"` was.
+  await fs.promises.rm(path.join(dir, '.gitmodules'), { force: true });
+}
+async function stripGitEntries(dir) {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.name === '.git') {
+      await fs.promises.rm(full, { recursive: true, force: true });
+      continue;
+    }
+    // Symlinks are not directories here, and are not followed — as find
+    // without -L did not.
+    if (entry.isDirectory()) await stripGitEntries(full);
+  }
+}
+
 async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir }) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
   if (!botToken) {
@@ -120,13 +154,11 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
     throw err;
   }
 
-  // Flatten to a history-free tree: strip every .git (top-level dir and
+  // Flatten to a history-free tree: strip every .git (the top-level dir and
   // any submodule .git files) plus .gitmodules, so `git add -A` commits
   // the materialised working tree (submodule contents become plain
   // files) rather than gitlinks. Then rewrite the display name.
-  await docker.execFileAsync('bash', ['-c',
-    'set -e; find "$DIR" -name .git -prune -exec rm -rf {} + ; rm -f "$DIR/.gitmodules"',
-  ], { timeout: 30000, env: { ...process.env, DIR: tempDir } });
+  await flattenTree(tempDir);
   rewriteDappName(tempDir, forkName);
   writeConnectorScaffold(tempDir);
 
@@ -145,28 +177,35 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   const repoUrl = repo.html_url;
   const pushUrl = `https://github.com/${botUsername}/${forkSlug}.git`;
 
-  const script =
-    'set -e; cd "$DIR" && ' +
-    'git init -q -b main && ' +
-    'git add -A && ' +
-    'git -c user.email="bot@usernode" -c user.name="usernode-bot" commit -q -m "$MSG" && ' +
-    'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" ' +
-    'push -q --force "$PUSHURL" HEAD:main >&2 && ' +
-    'git rev-parse HEAD';
-
+  // One git process per step, with the fork's tree as cwd — no shell in
+  // between. The runtime image has no bash (node:22-alpine plus git and
+  // postgresql-client, Dockerfile.kubernetes), so the `bash -c` script that
+  // used to run these five commands failed with "spawn bash ENOENT" before
+  // it wrote anything, and every fork with it.
+  //
+  // The PAT reaches git the way the comment above promises: through the
+  // environment, read by the inline credential helper when git runs it
+  // under its own /bin/sh. The old script did not actually keep that
+  // promise — its helper string sat inside bash double quotes, so bash
+  // expanded $PAT into git's argument list. Passed as a literal argument
+  // here, $PAT is expanded by nothing but the helper.
+  const git = (args, extra = {}) => docker.execFileAsync('git', args, {
+    cwd: tempDir, timeout: 120000, ...extra,
+  });
   let mainSha = null;
   try {
-    const { stdout } = await docker.execFileAsync('bash', ['-c', script], {
-      timeout: 120000,
-      env: {
-        ...process.env,
-        DIR: tempDir,
-        MSG: `Forked from ${sourceApp.slug}`,
-        PAT: botToken,
-        PUSHURL: pushUrl,
-      },
-    });
-    mainSha = (stdout || '').trim().split('\n').pop() || null;
+    await git(['init', '-q', '-b', 'main']);
+    await git(['add', '-A']);
+    await git([
+      '-c', 'user.email=bot@usernode', '-c', 'user.name=usernode-bot',
+      'commit', '-q', '-m', `Forked from ${sourceApp.slug}`,
+    ]);
+    await git([
+      '-c', PUSH_CREDENTIAL_HELPER,
+      'push', '-q', '--force', pushUrl, 'HEAD:main',
+    ], { env: { ...process.env, PAT: botToken } });
+    const { stdout } = await git(['rev-parse', 'HEAD']);
+    mainSha = (stdout || '').trim() || null;
   } catch (err) {
     const clean = String(err.message || '').replace(botToken, '***');
     const pushError = new Error(`fork repo push failed: ${clean}`);
@@ -309,4 +348,4 @@ async function forkApp(config, appRow, sourceApp) {
   }
 }
 
-module.exports = { forkApp, copyRepoTree, findForkSource };
+module.exports = { forkApp, copyRepoTree, findForkSource, flattenTree };
