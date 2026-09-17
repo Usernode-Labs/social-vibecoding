@@ -183,12 +183,12 @@ export function Shell() {
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
           leaderboard and the season's challenges, as a three-tab strip.
-          Hash routes #leaderboard (the STANDINGS — the primary tab, labelled
-          simply "Leaderboard"), #leaderboard/[prs|users|history|users/<name>]
-          (Kudos) and #leaderboard/challenges.
-          The legacy #topochain/leaderboard and #leaderboard/topochain hashes
-          alias onto the standings tab and self-heal to the bare
-          #leaderboard; #challenges and #topochain/seasons alias onto the
+          Hash routes #leaderboard/challenges (the default tab, which the
+          bare #leaderboard opens and self-heals to — #2374),
+          #leaderboard/[prs|users|history|users/<name>] (Kudos) and
+          #leaderboard/topochain (the STANDINGS, labelled simply
+          "Leaderboard"). The legacy #topochain/leaderboard hash aliases onto
+          the standings tab; #challenges and #topochain/seasons alias onto the
           challenges tab. Mounted by App.navigateToLeaderboard.
 
           A React island as of #1083 chunk F, and the chunk's biggest step:
@@ -271,10 +271,10 @@ export function Shell() {
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
           merged it into the Leaderboard screen above, where it is now the
-          PRIMARY (default) tab: #topochain-leaderboard-root lives inside
+          standings tab: #topochain-leaderboard-root lives inside
           #leaderboard-screen and TopochainLeaderboard renders into it
           unchanged. The legacy #topochain/leaderboard hash still works —
-          the router replaceStates it to the bare #leaderboard.
+          the router replaceStates it to #leaderboard/topochain.
       */}
       {/*
           The Topochain seasons/events screen used to be its own <main> here
@@ -676,9 +676,9 @@ export function Shell() {
 
           They moved TOGETHER with leaderboard.js because they are one screen:
           the Leaderboard module mounts them lazily when their tab is first
-          shown — #leaderboard -> TopochainLeaderboard.open() (the default tab,
-          so that one mounts on the screen's first open),
-          #leaderboard/challenges -> TopochainChallenges.open() — and both read
+          shown — #leaderboard/challenges -> TopochainChallenges.open() (the
+          default tab, so that one mounts on the screen's first open),
+          #leaderboard/topochain -> TopochainLeaderboard.open() — and both read
           the event selection from TopochainEventContext, which owns the shared
           picker + hero. Inside the bundle that is an ordinary import in
           features/leaderboard/index.tsx rather than an order implied by these

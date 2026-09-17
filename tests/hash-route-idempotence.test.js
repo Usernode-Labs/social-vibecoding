@@ -11,7 +11,7 @@
 // saw the PREVIOUS cohort's screen. Three such places existed:
 //
 //   a. Leaderboard remembered its last section, so a bare #leaderboard
-//      arriving from #leaderboard/challenges kept the challenges tab.
+//      arriving from another tab kept that tab.
 //   b. AdminConsole.route() bails out when level+section are unchanged, but
 //      #admin/seasons' tail lives BELOW the section segment, so every
 //      #admin/seasons/<tail> switch returned without repainting.
@@ -52,28 +52,28 @@ const body = (src, start) => {
   return src.slice(from, from + 1400);
 };
 
-// ─── (a) The leaderboard's bare hash resets to the standings ─────────────
+// ─── (a) The leaderboard's bare hash resets to Challenges ────────────────
 
 test('_routeLeaderboard treats the ABSENCE of a sub-segment as an instruction', () => {
   const fn = body(appJs, '_routeLeaderboard(sub, profileUser, challengeTarget) {');
   assert.match(fn, /!sub && window\.Leaderboard\?\._setSection/,
     'a falsy sub selects a section rather than falling through');
-  assert.match(fn, /_setSection\('topochain'\)/,
-    'and the section it selects is the standings');
+  assert.match(fn, /_setSection\('challenges'\)/,
+    'and the section it selects is Challenges, the default tab (#2374)');
   // Ordering matters: a profile deep link (#leaderboard/users/<name>) is
   // still a sub-segment arrival and must not be swallowed by the reset.
   assert.ok(
-    fn.indexOf('openProfile') < fn.indexOf("_setSection('topochain')"),
+    fn.indexOf('openProfile') < fn.indexOf("_setSection('challenges')"),
     'the profile deep link is still resolved first'
   );
 });
 
 test('the bare-#leaderboard reset is the declared contract, not an opinion', () => {
   const t = (manifest.tests || []).find((x) => x.path === '/#leaderboard'
-    && /opens on the standings/.test(x.name || ''));
-  assert.ok(t, 'a declared check pins bare #leaderboard to the standings');
-  assert.match(t.expectSelector, /#topochain-leaderboard-root:not\(\.hidden\)/,
-    'and asserts the standings pane is the visible one');
+    && /opens on Challenges/.test(x.name || ''));
+  assert.ok(t, 'a declared check pins bare #leaderboard to Challenges');
+  assert.match(t.expectSelector, /#challenges-root:not\(\.hidden\)/,
+    'and asserts the challenges pane is the visible one');
 });
 
 // ─── (b) Admin sections re-read a tail the router cannot see ─────────────

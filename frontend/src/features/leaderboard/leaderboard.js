@@ -3,12 +3,12 @@
 // challenges, as three top-level sections of one screen.
 //
 // Two levels of tabs:
-//   1. SECTION (Leaderboard | Kudos | Challenges), rendered into
-//      #standings-tabs by this module. 'topochain' — the PRIMARY section,
-//      labelled simply "Leaderboard" and the one a fresh visit opens on —
+//   1. SECTION (Challenges | Kudos | Leaderboard), rendered into
+//      #standings-tabs by this module. 'challenges' — the one a fresh visit
+//      opens on (#2374) — reveals #challenges-root and hands off to
+//      TopochainChallenges; 'topochain', labelled simply "Leaderboard",
 //      reveals #topochain-leaderboard-root and hands off to the
-//      TopochainLeaderboard module; 'challenges' reveals #challenges-root
-//      and hands off to TopochainChallenges. Both are Topochain-domain
+//      TopochainLeaderboard module. Both are Topochain-domain
 //      views of one EVENT, so they also share the screen-level event bar
 //      (#leaderboard-event-bar, owned by TopochainEventContext) — hidden
 //      on Kudos, which has no event dimension. Everything below this
@@ -63,7 +63,7 @@ const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
 function leaderboardSectionStore() {
   let store = window[LEADERBOARD_SECTION_STORE_KEY];
   if (!store) {
-    store = { mounted: false, section: 'topochain', listeners: new Set() };
+    store = { mounted: false, section: 'challenges', listeners: new Set() };
     window[LEADERBOARD_SECTION_STORE_KEY] = store;
   }
   return store;
@@ -81,10 +81,9 @@ const Leaderboard = {
   // TopochainLeaderboard / TopochainChallenges modules in the sibling
   // panes. Remembered for the session (the object outlives close()), so
   // re-opening the screen lands where you left it; a fresh page load
-  // starts on the PRIMARY section — the Topochain standings, which is
-  // what "the leaderboard" means on this platform, and which the tab
-  // strip therefore labels simply "Leaderboard".
-  section: 'topochain',  // 'topochain' | 'kudos' | 'challenges'
+  // starts on Challenges (#2374) — the first tab of the strip, what you
+  // can do next ahead of the ranking it feeds.
+  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -149,8 +148,8 @@ const Leaderboard = {
 
   // ── Section (Kudos | Topochain | Challenges) ─────────────────────
 
-  // Every section, in TAB ORDER — the primary standings first. The two
-  // that live in the Topochain event domain (i.e. the ones the shared
+  // Every section. The strip's ORDER lives in the island's SECTION_TABS
+  // (./index.tsx), Challenges first since #1917. The two that live in the Topochain event domain (i.e. the ones the shared
   // event bar applies to) are declared separately below.
   SECTIONS: ['topochain', 'kudos', 'challenges'],
   EVENT_SECTIONS: ['topochain', 'challenges'],
@@ -328,12 +327,13 @@ const Leaderboard = {
   // before we get here, so the startsWith guard holds for those entry paths
   // too.
   //
-  // The standings are the PRIMARY section, so their canonical address is the
-  // BARE '#leaderboard' — which also means an arriving '#leaderboard/topochain'
-  // bookmark self-heals to it, exactly as the legacy hashes self-heal here.
+  // Both Topochain-domain sections address by NAME, the default one
+  // included: a bare '#leaderboard' opens Challenges (#2374) and self-heals
+  // here to '#leaderboard/challenges', and the standings — the bare address
+  // until then — are '#leaderboard/topochain'.
   _syncHash() {
     const target = Leaderboard.section === 'topochain'
-      ? '#leaderboard'
+      ? '#leaderboard/topochain'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
         : Leaderboard.profileUser
