@@ -85,12 +85,12 @@ Ordered by how badly an agent working offline gets each one wrong.
    free "loads with no console errors" check. Checks GATE MERGE — a proposal whose checks
    are not passing cannot merge even with a winning vote. The test route
    renders against an empty staging database, so seed what it needs.
-   For interaction-only UI, add a deep link (a query param handled at boot).
-   Report THAT screen in `path:` / `testingPaths`, never the home page; it
-   drives voters' before/after screenshots.
-   Explicit routes win; otherwise changed files select matching scenarios.
-   With no match, capture keeps and marks the app-home default so an
-   irrelevant result is visible and correctable.
+   Demo routes are fine for regression tests, but never add a
+   screenshot-only query parameter. After a visible change, call
+   `record_visual_evidence_intent` with the claim, real user flow, focus,
+   persona, viewports, and optional animation. Homeroom performs it against
+   exact base/head revisions and replays it twice. For a non-visual change,
+   record `impact: "none"` with a specific rationale.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -550,21 +550,19 @@ the closest thing to production the gate can reach.
 
 ### Make the changed screen URL-reachable — screenshot-state deep links
 
-The before/after screenshots and the "Test this change" button can only
-**navigate to a URL** — they never click, play, or fill anything in. A
-screen reached by interacting (starting a game match, opening a modal or
-bottom sheet, stepping through a wizard) is invisible to them unless some
-URL renders it directly; without one the screenshots fall back to the
-home screen and show a screen the change never touched.
+Legacy proposals could only navigate to a URL, so this section historically
+required a query/hash parameter that forced an interaction-only state open.
+Agent-authored visual evidence removes that requirement: the evidence agent
+can perform the real clicks, typing, keyboard input, selection, hover,
+scrolling, and bounded pointer gestures, then ordinary platform code replays
+the accepted plan twice. It never falls back to the home screen.
 
-So when your change affects UI that plain navigation can't reach, you
-MUST make it reachable: add a **screenshot-state deep link** — a query or
-hash param the app handles at boot to programmatically enter that state —
-and point the TESTING block's `path:` at it. Example: a game's settlement
-panel only exists mid-match, so handle `/?shot=settlement-sheet` by
-starting a solo match on a fixed map seed, selecting the player
-settlement and opening its panel; then emit
-`path: /?shot=settlement-sheet`.
+Do **not** add a screenshot-only route for a modal, bottom sheet, wizard, game
+state, or menu. Call `record_visual_evidence_intent` instead and describe how a
+person reaches the state. A deterministic demo/deep route is still useful when
+it is part of the product, seeds a durable `dapp.json` regression check, or
+gives reviewers a stable "Test this change" entry point; in those cases keep
+it as an actual supported testing surface rather than capture-only plumbing.
 
 Rules:
 
@@ -583,11 +581,9 @@ Rules:
 - **Verify it renders.** On a build turn, load the exact `path:` URL in
   the in-loop browser and confirm the changed UI is actually visible
   before you commit.
-- Expect the FIRST proposal that adds a state link to show the home
-  screen on its "before" side — production doesn't know the param yet.
-  That's fine: the "after" side is what matters, and every later proposal
-  to the same screen gets a real before shot. State links accumulate in
-  the repo exactly like `dapp.json` tests.
+- If a new screen genuinely has no base-side equivalent, declare a stable
+  parent container and assertions that prove absence before and presence
+  after. Do not manufacture a base-only fallback route.
 
 Two related notes on `path:` form:
 
@@ -696,10 +692,12 @@ Per-test fields:
   `*`, `?`, or `**`. A changed file must match. Keep this mapping in
   `dapp.json`, not in source functions.
 
-Visual scenarios reuse the check's path and assertions. Homeroom waits for
-them before photographing staging, records scenario provenance, and uses at
-most three matches in declaration order. Explicit `testingPaths` still win;
-when neither exists, capture falls back to `/` and records that it defaulted.
+Visual scenario metadata remains useful executable documentation and durable
+regression coverage. Reviewer-facing visual evidence is proposal-specific:
+the authoring agent declares up to three claims, a purpose-bound evidence
+agent explores the real interaction on exact base/head previews, and the
+platform replays the resulting typed plan twice. No matching scenario and no
+submitted legacy route is ever permission to publish `/` as a fallback.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the
@@ -2939,7 +2937,8 @@ Behaviour:
 
 ## In-loop browser (build turns) — optional, encouraged
 
-On a **build** turn (not scout/sync) Claude Code has a headless browser
+On a **build** turn (not scout/sync) both hosted Claude Code and hosted Codex
+have a headless browser
 available through the **Playwright MCP server** — `browser_navigate`,
 `browser_console_messages`, `browser_take_screenshot`, and friends. It
 lets the agent load the app it just edited and *see* the result —
@@ -2966,16 +2965,13 @@ locally inside the worker the same way a staging container does:
   (or this app's declared `dapp.json` entrypoint).
 - Private secrets resolve from the manifest's `staging_default` /
   `default` only, same as a real staging build — never the prod store.
-- Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
-  route(s) you put in the TESTING block's `path:` lines. Self-app app screens
-  stay under `/app/<slug>/...`; put its other SPA routes after the `#`.
-- **EXPECTED when you added a screenshot-state deep link this turn**
-  (see "Make the changed screen URL-reachable"): load the exact `path:`
-  URL and confirm the changed UI is actually visible before committing —
-  for a mobile-only change, resize the browser to a phone-sized frame
-  (390×844) first (every path is captured in both frames automatically).
-  A state link that renders the home screen means the before/after
-  screenshots will too.
+- Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
+  the flow you will declare. Self-app app screens stay under
+  `/app/<slug>/...`; put its other SPA routes after the `#`.
+- Exercise the real interaction and make the evidence intent concrete. For a
+  mobile-only change, resize to the viewport you will declare (for example
+  390×844). This local check helps you fix the head revision; the later paired
+  evidence run independently explores and replays both revisions.
 - A **blank or empty page usually means missing seed data, not a bug** —
   the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
   route) per "Staging mock data" and re-check, rather than "fixing"
@@ -2986,9 +2982,10 @@ locally inside the worker the same way a staging container does:
   visual check and commit anyway. The in-loop browser must never block
   or fail the turn.
 
-This is an agent-facing quality aid. The before/after screenshots and
-the "Test this change" button (driven by the TESTING block) remain the
-reviewer-facing tools and are unchanged.
+This is an agent-facing quality aid. Before finishing a user-visible build,
+call `record_visual_evidence_intent`; the exact-revision paired replay is the
+reviewer-facing proof and the "Test this change" action remains a separate
+manual aid.
 
 ## Writing user-facing copy: no em dashes
 

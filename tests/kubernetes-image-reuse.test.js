@@ -22,7 +22,8 @@ function repository(t) {
     fs.writeFileSync(path.join(cwd, file), contents);
   };
   for (const file of ['worker/Dockerfile', 'worker/worker-run.sh', 'capture/Dockerfile',
-    'capture/capture.js', '.github/workflows/build-kubernetes-images.yml',
+    'capture/capture.js', 'evidence/replay-runner.js', 'src/services/visual-evidence-plan.js',
+    '.github/workflows/build-kubernetes-images.yml',
     'scripts/resolve-kubernetes-image.js', 'frontend/ui.js']) write(file, `original ${file}\n`);
   // Real Git trees, without commits or user Git signing hooks/configuration.
   const revision = () => { git('add', '.'); return git('write-tree'); };
@@ -78,10 +79,15 @@ test('all component inputs invalidate reuse, including modes, removals and Docke
 test('worker and capture inputs are independent', t => {
   const repo = repository(t);
   const worker = resolve(repo).reuse_tag;
-  const capture = resolve(repo, { component: 'capture' }).reuse_tag;
-  repo.write('capture/capture.js', 'new capture behavior\n');
-  assert.equal(resolve(repo).reuse_tag, worker);
-  assert.notEqual(resolve(repo, { component: 'capture' }).reuse_tag, capture);
+  let capture = resolve(repo, { component: 'capture' }).reuse_tag;
+  for (const file of ['capture/capture.js', 'evidence/replay-runner.js',
+    'src/services/visual-evidence-plan.js']) {
+    repo.write(file, `new ${file} behavior\n`);
+    const next = resolve(repo, { component: 'capture' }).reuse_tag;
+    assert.equal(resolve(repo).reuse_tag, worker);
+    assert.notEqual(next, capture);
+    capture = next;
+  }
 });
 
 test('the resolved Claude Code version invalidates only the worker image', t => {

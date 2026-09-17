@@ -24,11 +24,14 @@ function loadRuntime() {
     Object.entries(ids).map(([key, id]) => [key, require.cache[id]])
   );
   const calls = [];
+  let dockerRunOptions = null;
+  let kubernetesDeployOptions = null;
 
   stub(ids.docker, {
     stopAndRemove: async (name) => { calls.push(['remove', name]); },
-    runContainer: async (name) => {
+    runContainer: async (name, options) => {
       calls.push(['run', name]);
+      dockerRunOptions = options;
       return 'f'.repeat(64);
     },
     waitForHealthy: async (name) => { calls.push(['healthy', name]); },
@@ -39,11 +42,14 @@ function loadRuntime() {
     stagingHostname: (slug, suffix) => `${slug}--${suffix}.example.test`,
   });
   stub(ids.kubernetes, {
-    deployApplication: async () => ({
+    deployApplication: async (_config, options) => {
+      kubernetesDeployOptions = options;
+      return ({
       runtimeKind: 'kubernetes',
       runtimeName: 'widget-s42',
       url: 'https://widget-s42.example.test',
-    }),
+      });
+    },
   });
 
   delete require.cache[ids.subject];
@@ -54,7 +60,11 @@ function loadRuntime() {
       else delete require.cache[id];
     }
   };
-  return { subject, calls, restore };
+  return {
+    subject, calls, restore,
+    dockerRunOptions: () => dockerRunOptions,
+    kubernetesDeployOptions: () => kubernetesDeployOptions,
+  };
 }
 
 const input = {
@@ -93,4 +103,27 @@ test('Kubernetes deploy preserves the adapter-provided runtime name', async () =
   } finally {
     restore();
   }
+});
+
+test('internal-only Docker deploy uses only its run-scoped name and returns an internal origin', async () => {
+  const { subject, dockerRunOptions, restore } = loadRuntime();
+  try {
+    const deployed = await subject.deploy({ appRuntime: 'docker' }, {
+      ...input, runtimeName: 'usernode-evidence-deadbeef-base', internalOnly: true,
+    });
+    assert.equal(deployed.runtimeName, 'usernode-evidence-deadbeef-base');
+    assert.equal(deployed.url, 'http://usernode-evidence-deadbeef-base:3000');
+    assert.deepEqual(dockerRunOptions().aliases, []);
+  } finally { restore(); }
+});
+
+test('internal-only and explicit runtime identity reach the Kubernetes adapter', async () => {
+  const { subject, kubernetesDeployOptions, restore } = loadRuntime();
+  try {
+    await subject.deploy({ appRuntime: 'kubernetes' }, {
+      ...input, runtimeName: 'sv-evidence-deadbeef-b', internalOnly: true,
+    });
+    assert.equal(kubernetesDeployOptions().runtimeName, 'sv-evidence-deadbeef-b');
+    assert.equal(kubernetesDeployOptions().internalOnly, true);
+  } finally { restore(); }
 });

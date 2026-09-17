@@ -348,16 +348,16 @@
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "6f9879190eeee3449e50",
+      "fingerprint": "54dd8eb1a1332fd75652",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
+      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.visual_evidence_sta"
     },
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "833e3444d61ff7d2ffa2",
+      "fingerprint": "7a53d4df5fb40b5a2b8a",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.source, cs.imported"
+      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
     },
     {
       "source": "src/routes/home-panels.js",
@@ -733,7 +733,7 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "543a15b0ec2c046015be",
+      "fingerprint": "5ec5bdddd1f7612be181",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
@@ -1191,6 +1191,27 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/visual-evidence-state.js",
+      "kind": "structural-template",
+      "fingerprint": "1f4574f3e4b897aca423",
+      "count": 1,
+      "preview": "`UPDATE visual_evidence_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`"
+    },
+    {
+      "source": "src/services/visual-evidence-state.js",
+      "kind": "structural-template",
+      "fingerprint": "6a67945b61daee1ee974",
+      "count": 1,
+      "preview": "`SELECT r.*, s.visual_evidence_run_id AS current_run_id, s.visual_evidence_state AS current_evidence_state, s.visual_evidence_detail AS current_evidence_detail "
+    },
+    {
+      "source": "src/services/visual-evidence-state.js",
+      "kind": "structural-template",
+      "fingerprint": "7e0905f05fc931ffadc4",
+      "count": 1,
+      "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },
     {
       "source": "src/services/workshop-themes.js",

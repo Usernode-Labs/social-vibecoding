@@ -6951,14 +6951,18 @@ const DevChat = {
           // #195: before/after tiles. Visuals are latest-set-per-session, so
           // only the NEWEST staging card carries them.
           let visualsHtml = '';
-          if (window.AppView && session?.visuals) {
+          if (window.AppView && (session?.visualEvidence || session?.visuals)) {
             let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
               if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
                 latest = DevChat.messages[vi]; break;
               }
             }
-            if (latest === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latest === msg && msg.stagingUrl) {
+              visualsHtml = session.visualEvidence
+                ? AppView.visualEvidenceHtml(session.visualEvidence, { sessionId: session.id })
+                : AppView.visualsTilesHtml(session.visuals);
+            }
           }
           // #405: driven by the shared lifecycle helper so the card tracks
           // In vote → Passed → Merging… → ✓ Merged rather than freezing on

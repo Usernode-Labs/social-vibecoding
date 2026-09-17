@@ -3034,8 +3034,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.check_state, cs.check_phase, cs.check_trigger,
                 cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
-                cs.checks_base_verdict, cs.checks_base_behind_by
+                cs.checks_base_verdict, cs.checks_base_behind_by,
+                cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
+                cs.visual_evidence_state, cs.visual_evidence_run_id,
+                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+                a.slug AS app_slug
            FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [parseInt(req.params.id, 10)]
       );
@@ -3062,6 +3067,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
           detail.proposal_state = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] }).state;
         }
+        detail.visualEvidence = config.visualEvidence?.present
+          ? await require('../services/visual-evidence-view')
+            .getForSession(pool, detail, detail.app_slug)
+          : null;
       }
       res.set('Cache-Control', 'no-store').json({ session: detail });
     } catch (err) {
@@ -3264,6 +3273,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           pool, session.id, visualHeadForSession(session)
         );
       } catch { session.visuals = null; }
+      try {
+        session.visualEvidence = config.visualEvidence?.present
+          ? await require('../services/visual-evidence-view')
+            .getForSession(pool, session, session.app_slug)
+          : null;
+      } catch { session.visualEvidence = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`

@@ -278,6 +278,45 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.equal(result.url, 'https://demo.apps.example.test');
 });
 
+test('internal-only evidence deploy creates no Ingress or shared public asset route', async () => {
+  kubernetes._resetPlatformAssetBackendForTest();
+  const written = [];
+  let deployment = null;
+  const missing = async () => { throw notFound(); };
+  const record = (kind) => async ({ body }) => {
+    written.push({ kind, body });
+    if (kind === 'Deployment') deployment = body;
+    return body;
+  };
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing, createNamespacedSecret: record('Secret'),
+      readNamespacedService: missing, createNamespacedService: record('Service'),
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (!deployment) throw notFound();
+        return { ...deployment, metadata: { ...deployment.metadata, name, generation: 1 },
+          status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: record('Deployment'),
+    },
+    networking: {
+      async readNamespacedIngress() { throw new Error('internal deploy must not read Ingress'); },
+      async createNamespacedIngress() { throw new Error('internal deploy must not create Ingress'); },
+    },
+  });
+  const result = await kubernetes.deployApplication(config(), {
+    app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    runtimeName: 'sv-evidence-0123456789abcdef-b', internalOnly: true,
+  });
+  assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Secret', 'Service']);
+  assert.equal(result.runtimeName, 'sv-evidence-0123456789abcdef-b');
+  assert.equal(result.url, 'http://sv-evidence-0123456789abcdef-b.social-apps.svc:3000');
+  assert.equal(result.hostname, 'sv-evidence-0123456789abcdef-b.social-apps.svc');
+});
+
 for (const [name, environment, database, preferred] of [
   ['configured staging', 'staging', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
   ['production with database configuration', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, false],

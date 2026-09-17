@@ -96,7 +96,7 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v10 publishes bootstrap readiness and fences turns after container restarts.
 // v11 refreshes warm workers so synthetic OpenRouter models use a
 // provider-neutral identity instead of claiming to be GPT (#2120).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v11';
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v12';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -136,6 +136,10 @@ function mintProdDebugJwt(sessionId) {
   return platformJwt.signProdDebugToken({ sessionId });
 }
 
+function mintEvidenceJwt(sessionId, runId) {
+  return platformJwt.signEvidenceToken({ sessionId, runId });
+}
+
 // One backend decision, used everywhere in a turn's dispatch so the
 // runner, tokens, env, and active-turn record can never disagree (review
 // Commit 1 / plan 3.1). Rejects unknown backends instead of silently
@@ -164,12 +168,13 @@ function requireNonEmptySecret(value, name) {
 function buildTurnSecretEnv({
   mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
+  evidenceJwt, evidenceMemberToken, evidenceAdminToken,
 }) {
   const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
   if (!isClaude && !isCodex) {
     throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
   }
-  if (mode !== 'scout' && mode !== 'build' && mode !== 'sync') {
+  if (!['scout', 'build', 'sync', 'evidence'].includes(mode)) {
     throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
   }
   if (isCodex && mode === 'sync') {
@@ -180,12 +185,15 @@ function buildTurnSecretEnv({
     // Codex receives ONLY its own credential plus narrow capability tokens
     // (review Commit 1 / plan 3.3). It must never receive a general
     // worker:session token, an Anthropic key/base, or a relay token.
-    const env = {
-      OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey'),
-      ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
-    };
+    const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
+    if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
     if (mode === 'build') {
       env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
+    }
+    if (mode === 'evidence') {
+      env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
+      env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
+      env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
     }
     return env;
   }
@@ -199,13 +207,18 @@ function buildTurnSecretEnv({
     ANTHROPIC_API_KEY: useProxy
       ? requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt')
       : requireNonEmptySecret(anthropicApiKey, 'anthropicApiKey'),
-    ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
   };
-  if (mode !== 'scout') {
+  if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+  if (mode !== 'scout' && mode !== 'evidence') {
     env.WORKER_JWT = requireNonEmptySecret(workerSessionJwt, 'workerSessionJwt');
   }
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
+  }
+  if (mode === 'evidence') {
+    env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
+    env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
+    env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
   }
   return env;
 }
@@ -2169,6 +2182,9 @@ async function execInWorker(sessionId, {
   agentModelMetadata = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
+  evidenceRunId = null,
+  evidenceOrigins = null,
+  evidenceAuthTokens = null,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2289,8 +2305,21 @@ async function execInWorker(sessionId, {
   if (resumeFallbackPrompt && !resumeSessionId) {
     throw new Error('execInWorker: resumeFallbackPrompt requires resumeSessionId');
   }
-  if (isClaude && mode === 'build' && !systemPrompt) {
-    throw new Error('execInWorker: hosted Claude build requires systemPrompt');
+  if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
+    throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
+  }
+  if (mode === 'evidence') {
+    if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))
+        || !evidenceOrigins || !evidenceAuthTokens) {
+      throw new Error('execInWorker: evidence mode requires a run id, paired origins, and auth tokens');
+    }
+    for (const side of ['base', 'head']) {
+      let parsed;
+      try { parsed = new URL(evidenceOrigins[side]); } catch {}
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.pathname !== '/') {
+        throw new Error(`execInWorker: invalid ${side} evidence origin`);
+      }
+    }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
@@ -2309,7 +2338,9 @@ async function execInWorker(sessionId, {
   let issuesReadJwt = null;
   let anthropicProxyJwt = null;
   let prodDebugJwt = null;
-  issuesReadJwt = mintIssuesReadJwt(sessionId);
+  let evidenceJwt = null;
+  if (mode !== 'evidence') issuesReadJwt = mintIssuesReadJwt(sessionId);
+  else evidenceJwt = mintEvidenceJwt(sessionId, evidenceRunId);
   if (isCodex) {
     if (mode === 'build') {
       workerPushJwt = mintWorkerPushJwt(sessionId);
@@ -2318,9 +2349,9 @@ async function execInWorker(sessionId, {
     // A scout must never mint a general token at all. Hiding WORKER_JWT while
     // placing the same capability in ISSUES_JWT/ANTHROPIC_API_KEY is not an
     // isolation boundary when the agent has Bash.
-    if (mode !== 'scout') workerSessionJwt = mintWorkerJwt(sessionId);
+    if (mode !== 'scout' && mode !== 'evidence') workerSessionJwt = mintWorkerJwt(sessionId);
     if (useAnthropicProxy) anthropicProxyJwt = mintAnthropicProxyJwt(sessionId);
-    if (prodDebug && mode !== 'sync') {
+    if (prodDebug && mode !== 'sync' && mode !== 'evidence') {
       prodDebugJwt = mintProdDebugJwt(sessionId);
     }
   }
@@ -2365,6 +2396,9 @@ async function execInWorker(sessionId, {
     anthropicApiKey,
     prodDebugJwt,
     openrouterApiKey,
+    evidenceJwt,
+    evidenceMemberToken: evidenceAuthTokens?.member,
+    evidenceAdminToken: evidenceAuthTokens?.read_only_admin,
   });
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
@@ -2374,6 +2408,11 @@ async function execInWorker(sessionId, {
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    ...(mode === 'evidence' ? {
+      EVIDENCE_RUN_ID: evidenceRunId,
+      EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
+      EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
+    } : {}),
     ...(isClaude ? {
       MODEL: models.resolve(model),
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
@@ -3771,6 +3810,7 @@ module.exports = {
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
+  mintEvidenceJwt,
   buildTurnSecretEnv,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,

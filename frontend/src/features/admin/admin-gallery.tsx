@@ -76,6 +76,11 @@ interface Proposal {
   captureState?: string;
   captureReason?: string;
   visuals?: Visuals;
+  visualEvidence?: {
+    state?: string;
+    failureReason?: string;
+    [key: string]: unknown;
+  } | null;
 }
 
 interface Stats {
@@ -87,6 +92,11 @@ interface Stats {
   root_only?: number;
   failed_or_skipped?: number;
   unknown_state?: number;
+  evidence_verified?: number;
+  relevance_failure?: number;
+  replay_failure?: number;
+  unsupported_agent?: number;
+  override?: number;
 }
 
 interface AppOption { value: string; label: string }
@@ -137,6 +147,10 @@ const PROBLEMS: Array<[string, string]> = [
   ['before_fell_back', 'Before fell back to home page'],
   ['root_only', 'Shot at the front page only'],
   ['failed_or_skipped', 'Capture failed or skipped'],
+  ['relevance_failure', 'Evidence not relevant'],
+  ['replay_failure', 'Evidence replay failed'],
+  ['unsupported_agent', 'Unsupported evidence agent'],
+  ['override', 'Evidence overridden'],
 ];
 
 const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
@@ -154,9 +168,14 @@ const LINK = 'text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:ho
 
 function ProposalCard({ p }: { p: Proposal }) {
   const appView = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const tiles: string = (appView && p.visuals)
-    ? appView.visualsTilesHtml(p.visuals, { preload: 'none', overlay: false })
-    : '';
+  // A v2 record owns this proposal's visual story even while pending or
+  // failed. Never fall back to a route-only capture that may show a different
+  // screen. Both paths use AppView's shared reviewer renderer.
+  const tiles: string = appView && p.visualEvidence
+    ? appView.visualEvidenceHtml(p.visualEvidence, { sessionId: p.id })
+    : ((appView && p.visuals)
+      ? appView.visualsTilesHtml(p.visuals, { preload: 'none', overlay: false })
+      : '');
   const appLabel = p.appName || p.appSlug || `app ${p.appId}`;
   const merged = fmtDate(p.mergedAt);
 
@@ -190,7 +209,13 @@ function ProposalCard({ p }: { p: Proposal }) {
             ))}
           </div>
         </div>
-        <div className="shrink-0"><Chip state={p.captureState} reason={p.captureReason} /></div>
+        <div className="shrink-0"><Chip
+          state={p.visualEvidence
+            ? (p.visualEvidence.state === 'verified' ? 'captured'
+              : (p.visualEvidence.state === 'failed' ? 'failed' : 'partial'))
+            : p.captureState}
+          reason={(p.visualEvidence?.failureReason as string | undefined) || p.captureReason}
+        /></div>
       </div>
       {/* No tiles is a real state, not an error: console_only / failed
           proposals legitimately stored nothing. Say which, using the
@@ -226,6 +251,11 @@ function StatsStrip({ s }: { s: Stats }) {
       {item('before fell back', s.before_fell_back || 0, true)}
       {item('front page only', s.root_only || 0, true)}
       {item('failed / skipped', s.failed_or_skipped || 0, true)}
+      {item('evidence verified', s.evidence_verified || 0, true)}
+      {item('relevance failures', s.relevance_failure || 0, true)}
+      {item('replay failures', s.replay_failure || 0, true)}
+      {item('unsupported agents', s.unsupported_agent || 0, true)}
+      {item('overrides', s.override || 0, true)}
       {s.unknown_state ? item('outcome not recorded', s.unknown_state, true) : null}
     </section>
   );
@@ -328,15 +358,14 @@ function GallerySection() {
 
   return (
     <div id="admin-gallery-root">
-      <h2 className="text-lg font-semibold mb-4">Screenshot gallery</h2>
+      <h2 className="text-lg font-semibold mb-4">Visual evidence gallery</h2>
       {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
 
       {ready ? (
         <main id="admin-gallery-content" className="space-y-4">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Before/after screenshots of every merged proposal, newest first. Each row
-            shows the screen it was shot at and the frame it was shot in; recordings
-            play on click.
+            Claim-labelled, exact-revision evidence for merged proposals, newest first.
+            Historical proposals retain their legacy capture diagnostics.
           </p>
 
           {/* Filter bar */}

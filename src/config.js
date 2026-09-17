@@ -459,6 +459,35 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
+    // #2380 agent-authored visual evidence. Collection, execution,
+    // presentation and enforcement are separately reversible; the umbrella
+    // flag supplies the default for the first three while enforcement remains
+    // opt-in until the production relevance targets have been met.
+    visualEvidence: (() => {
+      const enabled = String(process.env.VISUAL_EVIDENCE_V2_ENABLED || 'false') === 'true';
+      const bool = (name, fallback) => process.env[name] === undefined
+        ? fallback : String(process.env[name]) === 'true';
+      const boundedInt = (name, fallback, minimum) => {
+        const parsed = Number.parseInt(process.env[name] || String(fallback), 10);
+        return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
+      };
+      return {
+        enabled,
+        collect: bool('VISUAL_EVIDENCE_V2_COLLECT', enabled),
+        execute: bool('VISUAL_EVIDENCE_V2_EXECUTE', enabled),
+        present: bool('VISUAL_EVIDENCE_V2_PRESENT', enabled),
+        enforce: bool('VISUAL_EVIDENCE_V2_ENFORCE', false),
+        // Temporary rollback valve for the legacy route-only screenshots.
+        // This is deliberately independent from presentation/enforcement:
+        // disabling a gate must never make a default `/` screenshot look
+        // like verified evidence again.
+        legacyCapture: bool('VISUAL_EVIDENCE_V2_LEGACY_CAPTURE', false),
+        maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 720_000, 60_000),
+        maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 240_000, 30_000),
+        failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
+        failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
+      };
+    })(),
     // Automatic challenge scoring (services/topochain/challenge-scorer.js).
     // `intervalMinutes` 0 switches the schedule off entirely — the admin's
     // Run now button still works, which is what makes "off" a usable
@@ -810,6 +839,7 @@ function load() {
   }
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  APP_RUNTIME=${config.appRuntime} WORKER_RUNTIME=${config.workerRuntime} CAPTURE_RUNTIME=${config.captureRuntime}`);
+  console.log(`  VISUAL_EVIDENCE_V2=collect:${config.visualEvidence.collect} execute:${config.visualEvidence.execute} present:${config.visualEvidence.present} enforce:${config.visualEvidence.enforce}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);

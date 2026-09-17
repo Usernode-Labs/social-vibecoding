@@ -1,12 +1,10 @@
 // Tests for the worker-container wiring of the optional in-loop browser:
 // worker/Dockerfile, worker/worker-run.sh, worker/run-cc.sh.
 //
-// These assert the build-ONLY gating at the shell layer (where it actually
-// lives) without needing Docker: the Playwright MCP server is wired into
-// `claude` for MODE=build only, scout/sync invocations are byte-for-byte
-// unchanged, and the commit/push/result emission is independent of the
-// browser path (so a turn whose app won't boot still commits — graceful
-// degradation).
+// These assert the purpose-bound browser gating at the shell layer (where it
+// actually lives) without needing Docker: build gets the general browser,
+// evidence gets its isolated paired-origin browser, scout/sync stay unchanged,
+// and commit/push/result emission remains independent of browser availability.
 //
 // Run with: node --test tests/worker-inloop-browser-wiring.test.js
 
@@ -69,7 +67,7 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /--isolated/);
 });
 
-// ── run-cc.sh: build-only MCP flags, strict config, scout/sync untouched ─
+// ── run-cc.sh: purpose-bound MCP flags, strict config, scout/sync untouched ─
 
 test('run-cc.sh gates the MCP flags on MODE=build and uses --strict-mcp-config', () => {
   const cc = read('run-cc.sh');
@@ -102,14 +100,14 @@ test('the sync-branch claude invocation does NOT get browser tooling', () => {
 
 // ── graceful degradation: commit/push/result is independent of browser ───
 
-test('scout/sync get empty browser flags by default (var initialised empty before the build gate)', () => {
+test('scout/sync stay browser-free while evidence gets only its purpose-bound MCP config', () => {
   const cc = read('run-cc.sh');
-  // scout still short-circuits with its own RESULT line
-  assert.match(cc, /mode=scout/);
-  // BROWSER_MCP_FLAGS is initialised to "" and only reassigned inside the
-  // MODE=build gate, so scout/sync invocations expand it to nothing —
-  // their claude calls are unchanged.
+  // The shared read-only terminal branch reports the actual lightweight mode.
+  assert.match(cc, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "evidence" \]; then[\s\S]*mode=\$MODE/);
+  // The flag starts empty, build may receive the general config, and evidence
+  // replaces it only after creating its isolated run-scoped configuration.
   assert.match(cc, /BROWSER_MCP_FLAGS=""\s*\nif \[ "\$MODE" = "build" \]/);
+  assert.match(cc, /if \[ "\$MODE" = "evidence" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$EVIDENCE_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
 });
 
 test('build commit + push + RESULT are emitted unconditionally, not under any browser guard', () => {
