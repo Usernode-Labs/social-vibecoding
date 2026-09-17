@@ -278,6 +278,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2370: the social-account scope disclosure ───────────────────
+  'github-link-scope': '#2370: the "What Homeroom can see" disclosure under the provider rows. The three scope facts it holds — no repository access, no provider token, and that this is account control rather than proof of unique humanity — used to sit in a 76-word section lead that everyone read before they could act. They are needed when the authorization is decided, not before, so they moved one tap from the rows they describe.',
   // ── #2266: password-reset completion ─────────────────────────────
   'login-reset-success': '#2266: the durable success notice shown on the login form after a completed email password reset. The reset form is terminal now, so its old inline status has no successful state to render.',
   // ── #1911: the create-app dialog is three steps ───────────────────

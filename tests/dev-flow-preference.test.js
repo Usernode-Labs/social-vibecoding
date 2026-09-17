@@ -235,9 +235,17 @@ test('Settings offers the same preference as a dropdown', () => {
   const html = shellMarkup();
   assert.ok(html.includes('id="settings-dev-flow"'),
     'so the dropdown IS in the prerendered document');
-  assert.ok(html.indexOf('id="dev-flow-pref-section"') < html.indexOf('id="github-link-section"'),
-    'above the GitHub block, where the injection put it — the preference reads '
-    + 'as the question and the link below it as one of the answers');
+  // ── This assertion INVERTED again (#2370) ──────────────────────────
+  //
+  // It required the preference to sit ABOVE the GitHub block, reading as the
+  // question with the link below it as one answer. #2370 measured the pane at
+  // 390x844: the social-account block started at 5,703px of a 6,330px page,
+  // last on a screen whose nav item is named after it. Social accounts leads
+  // now, and the preference stays last — it is about work you have not started
+  // yet, not the thing you opened this pane to do.
+  assert.ok(html.indexOf('id="github-link-section"') < html.indexOf('id="dev-flow-pref-section"'),
+    'social accounts leads the pane (#2370) and the build-flow preference '
+    + 'follows it');
   // Nothing builds it any more.
   const render = js.slice(js.indexOf('    _renderDevFlowSection() {'));
   assert.doesNotMatch(render.slice(0, 1400), /createElement|innerHTML|insertBefore/,

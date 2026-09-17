@@ -528,7 +528,7 @@ test('each allow-rules block names the file it is for, above the block', () => {
   // And the copy buttons step down off the violet fill, which #connector-url-copy
   // (the section's real primary action) keeps.
   for (const id of ['connector-allow-rules-copy', 'connector-repo-allow-rules-copy']) {
-    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,400}?</Button>`));
+    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,700}?</Button>`));
     assert.ok(btn, `#${id} is a Button`);
     assert.match(btn[0], /variant="outline"/, `#${id} is the neutral bordered control`);
     assert.match(btn[0], /min-h-\[44px\] sm:min-h-\[36px\]/,

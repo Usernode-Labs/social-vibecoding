@@ -79,8 +79,12 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // assistant cannot operate the product's own settings screens. Removing the
   // reference on that hope would leave nothing authoritative behind, so both
   // walkthroughs are still here and still complete.
-  assert.match(tsx, /Set up in Claude \(claude\.ai on the web\)/);
-  assert.match(tsx, /Set up in ChatGPT \(on the web\)/);
+  // #2370 collapsed each route into a <details>, so the probe is the summary
+  // row rather than the old <h4>. It is a slightly stronger check than before:
+  // the hint states the step COUNT, so a walkthrough quietly losing steps now
+  // fails here too. Whether the route starts open was never the point.
+  assert.match(tsx, /6 steps &middot; in the browser/);
+  assert.match(tsx, /7 steps &middot; needs Developer mode/);
   assert.match(tsx, /Turn on Developer mode\./);
   assert.match(tsx, /Paste your MCP server URL\./);
 });

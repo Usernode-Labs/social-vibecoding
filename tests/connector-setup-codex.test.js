@@ -47,7 +47,8 @@ const GENERIC = block('connector-setup-generic', 'connector-prompt-help');
 // ── The Codex CLI block ────────────────────────────────────────────────
 
 test('#1892: the Codex block carries both forms the CLI takes, under the canonical name', () => {
-  assert.match(CODEX, /Set up in Codex/);
+  // #2370: the route is a <details>; its summary names it and its step count.
+  assert.match(CODEX, /3 steps &middot; in the terminal/);
   // Verified against codex-rs/cli/src/mcp_cmd.rs on main (2026-09-14):
   // `codex mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)`.
   const add = TSX.match(/const CODEX_ADD_COMMAND = `([^`]*)`/);
@@ -123,7 +124,7 @@ test('#1892: the Codex block says what the hosted platform refuses, and why, ins
 // ── The generic block ──────────────────────────────────────────────────
 
 test('#1892: the generic block names the transport and the auth-discovery path the route serves', () => {
-  assert.match(GENERIC, /Any other MCP client or agent/);
+  assert.match(GENERIC, /4 steps &middot; any MCP client/);
   assert.match(GENERIC, /Streamable HTTP/);
   assert.match(GENERIC, /JSON-RPC over POST/);
   // /mcp is POST-only; there is no GET/SSE handler to promise.
