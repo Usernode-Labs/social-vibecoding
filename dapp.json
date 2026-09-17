@@ -84,6 +84,12 @@
       "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
     },
     {
+      "key": "VISUAL_EVIDENCE_V2_ENABLED",
+      "group": "Platform",
+      "default": "true",
+      "description": "Emergency kill switch for agent-authored proposal evidence. The mechanism is enabled by default; set exactly false only to stop intent collection, paired replay, and reviewer presentation together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
+    },
+    {
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",

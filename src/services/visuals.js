@@ -497,19 +497,23 @@ function deriveCapturePlan(session, declaredTests, changedFiles) {
 }
 
 function shouldCaptureMedia(uiAffecting, routeSource, {
-  evidenceV2Enrolled = false,
-  emergencyLegacyCapture = false,
+  suppressLegacyMedia = false,
 } = {}) {
   // Once a proposal declares evidence-v2 intent, route-only media is no
   // longer review evidence. Keep running the existing browser/check suite,
   // but do not create or publish screenshots from its default `/` (or even
-  // an explicit legacy path) unless operators deliberately engage the
-  // narrowly scoped rollback valve.
-  if (evidenceV2Enrolled && !emergencyLegacyCapture) return false;
+  // an explicit legacy path). The global v2 kill switch also suppresses this
+  // media: an emergency stop must not make the old irrelevant screenshots
+  // look trustworthy again.
+  if (suppressLegacyMedia) return false;
   return !!uiAffecting || routeSource === 'submitted' || routeSource === 'scenario';
 }
 
-async function evidenceV2Enrolled(pool, config, session) {
+async function suppressLegacyMediaForSession(pool, config, session) {
+  // Production config ties collect/execute/present to this one switch. Treat
+  // disabled as "no review media" rather than falling back to route capture;
+  // checks and staging still run through the legacy pipeline below.
+  if (config.visualEvidence?.enabled === false) return true;
   if (!config.visualEvidence?.collect) return false;
   if (session?.visual_evidence_detail && typeof session.visual_evidence_detail === 'object') return true;
   try {
@@ -2179,21 +2183,20 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // evidence that media was requested even if the file heuristic misses the
     // UI. Otherwise preserve the prior behaviour: UI-affecting changes shoot
     // the app root, while backend-only changes stay console-only.
-    const enrolledInEvidenceV2 = await evidenceV2Enrolled(pool, config, session);
+    const suppressLegacyMedia = await suppressLegacyMediaForSession(pool, config, session);
     const media = shouldCaptureMedia(uiAffecting, captureRouteSource, {
-      evidenceV2Enrolled: enrolledInEvidenceV2,
-      emergencyLegacyCapture: config.visualEvidence?.legacyCapture === true,
+      suppressLegacyMedia,
     });
     if (captureRouteSource === 'default' && media) {
       log.info('visuals', 'No submitted route or matching visual scenario — defaulting capture to app root', {
         sessionId: session.id, ref: gitRef, captureRouteSource,
       });
     } else if (!media) {
-      log.info('visuals', enrolledInEvidenceV2
-        ? 'Evidence-v2 proposal — legacy route media suppressed; checks continue'
+      log.info('visuals', suppressLegacyMedia
+        ? 'Legacy route media suppressed; checks continue'
         : 'No frontend files in commit range — console-only check', {
         sessionId: session.id, ref: gitRef, captureRouteSource,
-        evidenceV2Enrolled: enrolledInEvidenceV2 || undefined,
+        legacyMediaSuppressed: suppressLegacyMedia || undefined,
       });
     }
 
@@ -3754,7 +3757,7 @@ module.exports = {
   isFrontendFile,
   isUiAffecting,
   shouldCaptureMedia,
-  evidenceV2Enrolled,
+  suppressLegacyMediaForSession,
   visualImpactMatches,
   selectVisualScenarios,
   deriveCapturePlan,

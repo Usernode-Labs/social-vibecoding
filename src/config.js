@@ -459,29 +459,24 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
-    // #2380 agent-authored visual evidence. Collection, execution,
-    // presentation and enforcement are separately reversible; the umbrella
-    // flag supplies the default for the first three while enforcement remains
-    // opt-in until the production relevance targets have been met.
+    // #2380 agent-authored visual evidence. The mechanism is ON by default:
+    // authors can submit intent, the platform executes it, and reviewers see
+    // the verified result without an operator rollout step. One emergency
+    // kill switch turns those three pieces off together. Enforcement remains
+    // advisory until a separate reviewed product change enables it; the kill
+    // switch must never revive legacy default-root screenshots.
     visualEvidence: (() => {
-      const enabled = String(process.env.VISUAL_EVIDENCE_V2_ENABLED || 'false') === 'true';
-      const bool = (name, fallback) => process.env[name] === undefined
-        ? fallback : String(process.env[name]) === 'true';
+      const enabled = process.env.VISUAL_EVIDENCE_V2_ENABLED !== 'false';
       const boundedInt = (name, fallback, minimum) => {
         const parsed = Number.parseInt(process.env[name] || String(fallback), 10);
         return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
       };
       return {
         enabled,
-        collect: bool('VISUAL_EVIDENCE_V2_COLLECT', enabled),
-        execute: bool('VISUAL_EVIDENCE_V2_EXECUTE', enabled),
-        present: bool('VISUAL_EVIDENCE_V2_PRESENT', enabled),
-        enforce: bool('VISUAL_EVIDENCE_V2_ENFORCE', false),
-        // Temporary rollback valve for the legacy route-only screenshots.
-        // This is deliberately independent from presentation/enforcement:
-        // disabling a gate must never make a default `/` screenshot look
-        // like verified evidence again.
-        legacyCapture: bool('VISUAL_EVIDENCE_V2_LEGACY_CAPTURE', false),
+        collect: enabled,
+        execute: enabled,
+        present: enabled,
+        enforce: false,
         maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 720_000, 60_000),
         maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 240_000, 30_000),
         failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),

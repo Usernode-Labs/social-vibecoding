@@ -119,15 +119,21 @@ test('the root default preserves UI screenshots without adding media to backend-
   assert.equal(visuals.shouldCaptureMedia(false, 'submitted'), true);
   assert.equal(visuals.shouldCaptureMedia(false, 'scenario'), true);
   assert.equal(visuals.shouldCaptureMedia(true, 'default', {
-    evidenceV2Enrolled: true,
+    suppressLegacyMedia: true,
   }), false);
   assert.equal(visuals.shouldCaptureMedia(true, 'submitted', {
-    evidenceV2Enrolled: true,
+    suppressLegacyMedia: true,
   }), false);
+});
+
+test('the evidence kill switch stops v2 without reviving legacy review media', async () => {
+  const pool = { query: async () => { throw new Error('kill switch must not query enrollment'); } };
+  assert.equal(await visuals.suppressLegacyMediaForSession(pool, {
+    visualEvidence: { enabled: false, collect: false },
+  }, {}), true);
   assert.equal(visuals.shouldCaptureMedia(true, 'default', {
-    evidenceV2Enrolled: true,
-    emergencyLegacyCapture: true,
-  }), true);
+    suppressLegacyMedia: true,
+  }), false);
 });
 
 test('UI-affecting captures persist a missing evidence declaration before choosing legacy media', () => {
