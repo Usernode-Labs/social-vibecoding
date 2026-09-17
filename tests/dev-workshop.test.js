@@ -461,7 +461,7 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
   assert.equal(AppView._kanbanFiltersActive(), true);
   assert.equal(AppView._kanbanFilterCount(), 1);
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
-  assert.deepEqual(plain(AppView._kanbanActiveChips().map((c) => [c.key, c.label])), [['theme', 'Theme: Theming']]);
+  assert.deepEqual(plain(AppView._kanbanActiveChips().map((c) => [c.key, c.label])), [['theme', 'Category: Theming']]);
   AppView._dismissKanbanFilter('theme');
   assert.equal(AppView._kanbanFilters.theme, null);
 });
@@ -537,7 +537,7 @@ test('the numbers are tiles, and the pane always has a sentence under them', () 
   // outcome: an app can sit a long time with no model paragraph, and a
   // heading over four tiles and no sentence reads as a broken feature
   // rather than a deliberate silence.
-  assert.match(html, /class="dev-ws-open-line"[^>]*>3 open items across 1 theme\./);
+  assert.match(html, /class="dev-ws-open-line"[^>]*>3 open items across 1 category\./);
   assert.ok(!html.includes('most of the movement'),
     'but still no unearned superlative: two untouched issues are the absence of movement');
 });
@@ -634,7 +634,7 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   const derived = workshopHtml(AppView);
-  assert.match(derived, /3 open items across 1 theme\./);
+  assert.match(derived, /3 open items across 1 category\./);
   assert.match(derived, /Worked out from the board; the model writes one on the next pass\./);
 
   // And when the last attempt FAILED, the footnote says why. That failure
@@ -687,7 +687,7 @@ test('the digest survives the fetch that loads it', async () => {
   empty._repaintBoardSurface = () => {};
   await empty._loadWorkshopThemes('demo-app');
   assert.equal(empty._workshopThemes.digest, null);
-  assert.match(workshopHtml(empty), /3 open items across 1 theme\./);
+  assert.match(workshopHtml(empty), /3 open items across 1 category\./);
 });
 
 // ── the three digest cards ───────────────────────────────────────────
@@ -1048,7 +1048,7 @@ test('an empty window draws no card at all', async () => {
   const none = await loadWith(responseBody({ digestCards: { lastWeek: '', thisWeek: '', open: '' } }));
   assert.equal(none._workshopThemes.digestCards, null);
   assert.ok(!workshopHtml(none).includes('data-ws-cards'));
-  assert.match(workshopHtml(none), /3 open items across 1 theme\./, 'the derived sentence is back');
+  assert.match(workshopHtml(none), /3 open items across 1 category\./, 'the derived sentence is back');
 });
 
 test('a row written before the cards still says its paragraph', async () => {
@@ -2182,7 +2182,7 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
 
-test('the footnote says what is actually happening to the theme grouping', () => {
+test('the footnote says what is actually happening to the grouping', () => {
   // The first cut said "once an AI model is available" while the model was
   // mid-draft — on exactly the first visit after a deploy. Four states now.
   const AppView = makeAppView();
@@ -2194,23 +2194,23 @@ test('the footnote says what is actually happening to the theme grouping', () =>
   });
   AppView._workshopThemes = cat({ pending: true });
   let html = workshopHtml(AppView, 'all');
-  assert.match(html, /drafting themes…/, 'pending on the theme grouping says so in the eyebrow');
+  assert.match(html, /drafting categories…/, 'pending on the grouping says so in the eyebrow');
   assert.match(html, /Categories are being drafted from the board now\./);
-  assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of themes that do not exist yet');
+  assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of categories that do not exist yet');
 
   AppView._workshopThemes = cat({ lastError: 'boom' });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /The last attempt to draft themes failed \(boom\)\./);
+  assert.match(html, /The last attempt to draft categories failed \(boom\)\./);
 
   AppView._workshopThemes = cat({});
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /No AI model is configured, so items are grouped by their voted category\./);
+  assert.match(html, /No AI model is configured, so items are grouped by the categories the group has voted for\./);
   assert.ok(!html.includes('drafted once an AI model is available'), 'the misleading copy is gone');
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /placing new cards…/, 'pending placement on real themes says so');
+  assert.match(html, /placing new cards…/, 'pending placement on real categories says so');
   // The stamp has to sit inside `relStamp`'s relative window for that copy to
   // be the copy under test at all. Pinned here so a fixture that drifts out of
   // it fails as "the fixture went stale" rather than as a grouping bug — which
@@ -2234,8 +2234,8 @@ test('the footnote says what is actually happening to the theme grouping', () =>
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /re-drafting themes…/, 'a pending discovery on real themes is a re-draft');
-  assert.match(html, /3 cards did not fit a theme and wait for the next draft\./);
+  assert.match(html, /re-drafting categories…/, 'a pending discovery on real categories is a re-draft');
+  assert.match(html, /3 cards did not fit a category and wait for the next draft\./);
   assert.match(html, /The last attempt failed \(placement: boom\); it is retried shortly\./);
   assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Not yet grouped<\/div>/);
   assert.ok(!html.includes('dev-ws-placing'), 'declined cards wear no marker');
@@ -2575,20 +2575,20 @@ test('no declared check asserts a card\'s text at the lander\'s own route', () =
 // Board view mode does, from the same published view model, so nothing about
 // the board is re-derived or duplicated.
 
-test('the grouping is a two-tab control, and theme is what an untouched Workshop shows', () => {
+test('the grouping is a two-tab control, and category is what an untouched Workshop shows', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([
     { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
   ]);
-  assert.equal(AppView._getWorkshopGroup(), 'theme');
+  assert.equal(AppView._getWorkshopGroup(), 'category');
   const html = workshopHtml(AppView, 'all');
-  const cat = html.indexOf('data-ws-group="theme"');
+  const cat = html.indexOf('data-ws-group="category"');
   const stage = html.indexOf('data-ws-group="stage"');
-  assert.ok(cat > 0 && stage > cat, 'both tabs render, theme first');
+  assert.ok(cat > 0 && stage > cat, 'both tabs render, category first');
   assert.match(html.slice(cat, cat + 400), /aria-selected="true"/,
-    'the theme tab is the selected one by default');
-  assert.ok(html.includes('By theme') && html.includes('By stage'), 'the labels');
+    'the category tab is the selected one by default');
+  assert.ok(html.includes('By category') && html.includes('By stage'), 'the labels');
   // The tabs sit UNDER the general discussion and the summary strip, which is
   // the whole arrangement: those are facts about the app, not about how you
   // are sorting it, so they do not move when the pane does.
@@ -2637,7 +2637,7 @@ test('the grouping is a two-tab control, and theme is what an untouched Workshop
   // card, so the count here is 0; the singular/plural agreement is pinned
   // in the test below, against a board that has one.)
   const sort = html.slice(html.indexOf('class="dev-ws-sort"'), html.indexOf('dev-ws-themes'));
-  assert.match(sort, /class="dev-ws-eyebrow">\d+ theme/);
+  assert.match(sort, /class="dev-ws-eyebrow">\d+ categor/);
 });
 
 test('the sort row reports the state of the grouping after the count', () => {
@@ -2646,13 +2646,13 @@ test('the sort row reports the state of the grouping after the count', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), source: 'category' };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 theme · grouped by category for now</);
+  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · grouped by category for now</);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 theme · re-drafting themes…</);
+  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · re-drafting categories…</);
   AppView._workshopThemes = {
     ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true, pendingStage: 'placement',
   };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 theme · placing new cards…</);
+  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · placing new cards…</);
 });
 
 test('"By stage" swaps the pane for the board\'s own columns, and keeps everything above it', () => {
@@ -2747,19 +2747,19 @@ test('the tabs are no longer additive: the Board view mode retired onto them', (
     'and a declared check proves that landing draws the columns');
 });
 
-test('the grouping preference lasts, and an unknown stored value is theme', () => {
+test('the grouping preference lasts, and an unknown stored value is category', () => {
   const store = {};
   const AppView = makeAppView({ localStorage: store });
   AppView._setWorkshopGroup('stage');
   assert.equal(store.devWorkshopGroup, 'stage', 'persisted, and to localStorage');
   assert.equal(AppView._getWorkshopGroup(), 'stage');
   AppView._setWorkshopGroup('nonsense');
-  assert.equal(AppView._getWorkshopGroup(), 'theme', 'an unknown mode falls back');
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'an unknown mode falls back');
   store.devWorkshopGroup = 'themes';
-  assert.equal(AppView._getWorkshopGroup(), 'theme', 'and so does an unknown stored one');
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
 });
 
-test('a retired Board preference opens on the columns, not on the themes', () => {
+test('a retired Board preference opens on the columns, not on the categories', () => {
   // The other half of retiring the Board VIEW MODE. RETIRED_VIEW_MODES stops a
   // stored 'kanban' naming a mode that no longer exists — but on its own it
   // forgets what the viewer actually chose, which was the COLUMNS, and hands
@@ -2774,14 +2774,14 @@ test('a retired Board preference opens on the columns, not on the themes', () =>
   // never chose columns.
   for (const mode of ['feed', 'list', 'workshop']) {
     const AppView = makeAppView({ localStorage: { devViewMode: mode } });
-    assert.equal(AppView._getWorkshopGroup(), 'theme', `${mode} lands on the lander`);
+    assert.equal(AppView._getWorkshopGroup(), 'category', `${mode} lands on the lander`);
   }
   // A grouping the viewer actually chose outranks the migration — it is read
   // first, so the migration only ever fills a gap.
   const chosen = makeAppView({
     localStorage: { devViewMode: 'kanban', devWorkshopGroup: 'category' },
   });
-  assert.equal(chosen._getWorkshopGroup(), 'theme');
+  assert.equal(chosen._getWorkshopGroup(), 'category');
   // READ-TIME, like every other migration here: nothing is written back, so
   // the day they pick a pane that choice is what persists.
   const store = { devViewMode: 'kanban' };
@@ -2822,17 +2822,17 @@ test('reaching the retired Board takes BOTH answers: the All items tab and the s
   }
 
   // ...and none of those three may drag anybody else onto the board.
-  assert.equal(at({ localStorage: {} }), 'status/theme', 'the lander default');
-  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status/theme',
+  assert.equal(at({ localStorage: {} }), 'status/category', 'the lander default');
+  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status/category',
     'the Workshop replaced feed: that viewer never chose columns');
 
   // The parameters still being offered, and the viewer's own taps, outrank
   // every hop above — each half independently.
   assert.equal(at(loc('?view=kanban&ws=needs')), 'needs/stage', 'an explicit tab wins');
-  assert.equal(at(loc('?view=kanban&group=category')), 'all/theme', 'the old spelling of an explicit pane still resolves');
+  assert.equal(at(loc('?view=kanban&group=category')), 'all/category', 'an explicit pane wins');
   assert.equal(at({
     localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs', devWorkshopGroup: 'category' },
-  }), 'needs/theme', 'and choices they have actually made win over the migration');
+  }), 'needs/category', 'and choices they have actually made win over the migration');
 });
 
 test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
@@ -2869,7 +2869,7 @@ test('the grouping strip is the lander\'s own tab control, not a second vocabula
   // WHAT STAYS DIFFERENT IS THE WIDTH, and that is the real distinction from
   // the sort chips a row below: full width of the reading column, split
   // evenly. `flex: 1 1 0`, not `1 1 auto` — on `auto` the halves would be
-  // sized by their labels, so "By theme" would take more than "By stage".
+  // sized by their labels, so "By category" would take more than "By stage".
   assert.match(CSS, /\.dev-ws-group-tab \{[^}]*flex: 1 1 0/);
   assert.ok(!/\.dev-ws-group \{[^}]*align-self: flex-start/.test(CSS),
     'and the rail itself is not shrunk to its content');
@@ -2891,13 +2891,13 @@ test('?group=stage is a deep link to the pane, and a tap retires it', () => {
   // The preference still wins once the viewer states one — otherwise ?group=
   // would keep overriding every later tap, which is the bug `_setViewMode`
   // already carries a comment about.
-  AppView._setWorkshopGroup('theme');
-  assert.equal(AppView._getWorkshopGroup(), 'theme', 'a tap retires the override');
-  assert.equal(store.devWorkshopGroup, 'theme');
+  AppView._setWorkshopGroup('category');
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'a tap retires the override');
+  assert.equal(store.devWorkshopGroup, 'category');
   // A junk value is not a pane. The retired spelling 'category' IS one — it
-  // resolves to 'theme' — but 'lanes' was never a grouping.
+  // resolves to 'category' — but 'lanes' was never a grouping.
   const junk = makeAppView({ location: { search: '?group=lanes', hash: '', href: 'http://x/' } });
-  assert.equal(junk._getWorkshopGroup(), 'theme');
+  assert.equal(junk._getWorkshopGroup(), 'category');
 });
 
 test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
@@ -2965,7 +2965,7 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   const pane = html.indexOf('data-ws-pane');
   const head = html.indexOf('dev-ws-pane-head');
   const actions = html.indexOf('id="dev-actions"');
-  const tabs = html.indexOf('data-ws-group="theme"');
+  const tabs = html.indexOf('data-ws-group="category"');
   const themesList = html.indexOf('dev-ws-themes');
   assert.ok(pane > 0, 'the pane renders');
   assert.ok(pane < head && head < tabs, 'the sticky head is the pane’s first child');
@@ -3001,7 +3001,7 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
   assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
-  assert.ok(html.includes('data-ws-group="theme"'), 'and the grouping tabs');
+  assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
   // The rows' place says why they are gone, UNDER the controls it is about.
   assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
   assert.ok(html.indexOf('id="dev-actions"') < html.indexOf('data-ws-empty'), 'beneath the toolbar');
@@ -3172,7 +3172,7 @@ test('the grouping strip is one node, in the ear above 768px and the head below'
   // twin is the copy they would find first.
   assert.match(WORKSHOP, /function GroupStrip\(\{ group \}: \{ group: string \}\)/,
     'the strip is a component, so the two sites cannot drift');
-  assert.equal((WORKSHOP.match(/data-ws-group="theme"/g) || []).length, 1,
+  assert.equal((WORKSHOP.match(/data-ws-group="category"/g) || []).length, 1,
     'and it is written once');
   assert.match(WORKSHOP, /const earUp = useMediaFlag\(EAR_QUERY\);/);
   assert.match(WORKSHOP, /\{earUp \? \(\s*<div className="dev-ws-ear" data-ws-ear="">\s*<GroupStrip group=\{group\} \/>/,
@@ -4555,15 +4555,20 @@ test('#2182: a guest has no strip to keep', () => {
 // it. The chip is the theme's name on the card's meta line, looked up by the
 // same key the server placed the card under.
 
-test('#1933: a card names the auto-drafted category it was placed in, once the themes have arrived', () => {
+test('#1933: a card names the category it was placed in, and tapping it votes', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._sharedSessions = [
     { id: 56, session_title: 'Shared thing', status: 'active', shared_at: at(1), linked_issues: [], created_at: at(1), last_activity_at: at(0) },
   ];
-  const chipOf = (card) => (card.badges || []).find((b) => b && b.key === 'theme') || null;
+  // ONE chip. The bespoke `key: 'theme'` badge is gone: there is one grouping
+  // now, so the card's own CATEGORY chip shows it — and unlike the badge it
+  // replaced, a tap on it opens the attribute popover and lets you vote.
+  const chipOf = (card) => (card.badges || []).find((b) => b && b.key === 'attr:category') || null;
 
-  // No themes yet: nothing is drawn, so a slow fetch never paints a wrong name.
+  // No categories yet and no votes: nothing is drawn at all, so a slow fetch
+  // never paints a name it has not confirmed. (A dense card omits an unset
+  // chip; that is the behaviour this rides on, unchanged.)
   AppView._workshopThemes = null;
   assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[0])), null);
 
@@ -4571,54 +4576,41 @@ test('#1933: a card names the auto-drafted category it was placed in, once the t
     { id: 'theming', name: 'Theming', items: ['issue:12', 'session:34', 'session:56', 'session:78'] },
   ]);
   const issue = chipOf(AppView._issueCardModel(AppView._ghIssues[0]));
-  assert.ok(issue, 'the issue the theme names carries the chip');
-  assert.equal(issue.t, 'chip');
-  assert.equal(issue.meta, true, 'it rides the meta line beside the priority / assignee / category tags');
-  assert.equal(issue.label, 'Theming');
-  assert.deepEqual(plain(issue.data), { 'data-theme-chip': 'theming' });
-  assert.match(issue.cls, /^dev-badge /);
-  assert.equal(issue.cls, `dev-badge ${AppView._categoryTint('theming').cls}`,
+  assert.ok(issue, 'the issue the category names carries the chip');
+  // The shape that makes it tappable: the same `t: 'attr'` the priority and
+  // assignee chips use, addressed at the row this card votes under.
+  assert.equal(issue.t, 'attr');
+  assert.equal(issue.field, 'category');
+  assert.equal(issue.targetType, 'issue');
+  assert.equal(issue.targetRef, 12);
+  assert.equal(issue.readonly, false);
+  assert.equal(issue.label.text, 'Theming', 'and it names where the card actually sits');
+  assert.equal(issue.cls, AppView._categoryTint('theming').cls,
     'one category is one colour on every card, through the same hash the custom category chips use');
-  assert.match(issue.title, /Category: Theming/);
-  assert.doesNotMatch(issue.title, /—/, 'platform copy carries no em dashes');
-
-  // Not named by any theme: no chip. A card the placer declined is simply
-  // absent from every list, so it reads the same way.
-  assert.equal(chipOf(AppView._issueCardModel(AppView._ghIssues[1])), null);
-
-  // Every card kind the server keys: a proposal and a merge by their
-  // chat_sessions row, a shared session likewise.
-  assert.equal(chipOf(AppView._proposalCardModel(AppView._proposals[0])).label, 'Theming');
-  assert.equal(chipOf(AppView._sharedSessionCardModel(AppView._sharedSessions[0])).label, 'Theming');
-  assert.equal(chipOf(AppView._mergedRowModel(AppView._merged[0])).label, 'Theming');
-
-  // And it reaches the Board's markup, on the card the columns draw.
-  const html = kanbanHtml(AppView);
-  assert.ok(html.includes('data-theme-chip="theming"'), 'the chip is in the kanban markup');
-  assert.ok(/data-theme-chip="theming"[^>]*>Theming</.test(html), 'with the category\'s name as its text');
-  // On the folded row the declared check selects through, under the item
-  // hook the row carries (`data-issue-row`), not the open card's `data-ref-issue`.
-  assert.match(html, /data-issue-row="12"[^]*?data-theme-chip="theming"/, 'inside the folded row for issue 12');
+  // The title says the placement is the MODEL'S and can be voted away — the
+  // question the old flat badge left a reader with and could not answer.
+  assert.match(issue.title, /Placed automatically/);
+  assert.match(issue.title, /vote for a different category/);
 });
 
-test('#1933: under the "By theme" pane the chip is dropped, because the heading already says it', () => {
+test('#1933: under the "By category" pane the chip is dropped, because the heading already says it', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 'theming', name: 'Theming', items: ['issue:12', 'session:34'] }]);
-  const chipOf = (row) => (row.card.badges || []).find((b) => b && b.key === 'theme') || null;
+  const chipOf = (row) => (row.card.badges || []).find((b) => b && b.key === 'attr:category') || null;
   const lane = (t, k) => t.lanes.find((l) => l.key === k);
 
-  AppView._getWorkshopGroup = () => 'theme';
+  AppView._getWorkshopGroup = () => 'category';
   const grouped = AppView._workshopView();
   assert.equal(chipOf(lane(grouped.themes[0], 'open').rows[0]), null, 'no chip under its own heading');
   assert.equal(chipOf(lane(grouped.themes[0], 'review').rows[0]), null);
-  // The vote strip is not grouped by theme, so its card keeps the name.
+  // The vote strip is not grouped by category, so its card keeps the name.
   assert.equal(grouped.votes.rows.length, 1);
-  assert.equal(chipOf(grouped.votes.rows[0]).label, 'Theming');
+  assert.equal(chipOf(grouped.votes.rows[0]).label.text, 'Theming');
 
   AppView._getWorkshopGroup = () => 'stage';
   const staged = AppView._workshopView();
-  assert.equal(chipOf(lane(staged.themes[0], 'open').rows[0]).label, 'Theming', 'the stage pane sorts by state, so the chip stays');
+  assert.equal(chipOf(lane(staged.themes[0], 'open').rows[0]).label.text, 'Theming', 'the stage pane sorts by state, so the chip stays');
 });
 
 test('#1933: the themes landing repaints whichever surface is up, not only the Workshop pane', async () => {
@@ -4641,7 +4633,11 @@ test('#1933: the declared check reads the chip off a demo issue card on the boar
   // `data-issue-row`, not `data-ref-issue`: the Board draws FOLDED rows, and
   // a folded row carries only the item hooks (fold.tsx ITEM_HOOKS), which is
   // the one the first run of this check learned the hard way.
-  assert.match(check.expectSelector, /#dev-kanban \[data-issue-row="900001"\] \[data-theme-chip="demo-appearance"\]/);
+  // The chip is a real attribute chip now, not a flat badge, so the check
+  // selects the hooks that make it votable rather than the retired
+  // `data-theme-chip` marker — a stronger assertion than the one it replaces.
+  assert.match(check.expectSelector,
+    /#dev-kanban \[data-issue-row="900001"\] \[data-attr-chip\]\[data-attr-field="category"\]/);
   assert.equal(check.expectText, '[Mock] Appearance & theming');
   // The name and the placement it asserts are the staging demo theme's.
   const route = read('src/routes/workshop-themes.js');
@@ -4712,7 +4708,7 @@ test('the ear outranks the nav, or the grouping strip is decorative', () => {
   assert.ok(earZ < 45, `and below the overlay tiers (${earZ})`);
   // The buttons are real buttons with a real handler — the hit test is what
   // was broken, not the wiring.
-  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'theme'\)\}/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'category'\)\}/);
   assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'stage'\)\}/);
 });
 

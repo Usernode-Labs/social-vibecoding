@@ -1,5 +1,5 @@
 /**
- * `#attr-popover` — the priority / category / assignee / theme picker — as the only
+ * `#attr-popover` — the priority / category / assignee picker — as the only
  * React writer below that host.
  *
  * The host stays app-view.js's: it creates the element, places it under the
@@ -12,7 +12,7 @@
  *     The click is an onClick here rather than a delegated handler — unlike
  *     the group chat's menus, this host is destroyed and rebuilt on every
  *     open, so there is no long-lived element for one listener to sit on.
- *   * `#attr-category-input` / `#attr-assignee-input` / `#attr-theme-input` stay UNCONTROLLED and
+ *   * `#attr-category-input` / `#attr-assignee-input` stay UNCONTROLLED and
  *     keep their ids: `submit()` reads `.value` off them, and the assignee box
  *     is focused and selected by the module after the mount. A controlled
  *     field would put the typed text in React state and leave the module

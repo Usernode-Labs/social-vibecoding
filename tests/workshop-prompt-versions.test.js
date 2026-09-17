@@ -38,12 +38,18 @@ const STAGES = {
     // 3 merges the Workshop's grouping with the voted categories onto one
     // mechanism: "previousThemes" now carry `pinned`, and a pinned theme —
     // one the group has voted cards into — must come back unchanged.
-    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a' },
+    // 4 is the ONE-LIST merge: the grouping is the app's CATEGORIES again,
+    // `previousThemes` became `previousCategories`, and the draft is handed
+    // `builtInCategories` so it works around the six the platform ships.
+    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a', 4: 'd6ca79b69d490122' },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',
     builder: llm.placeWorkshopItems,
-    pinned: { 1: 'd82abd8a00088937' },
+    // 2: the placer sorts into CATEGORIES, and the card's own category is no
+    // longer fed to it — that is the thing being decided, so offering it back
+    // would anchor the answer to the value already there.
+    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873' },
   },
   digest: {
     constant: 'WORKSHOP_DIGEST_VERSION',
@@ -70,12 +76,15 @@ const STAGES = {
     // ordered ahead of the lines, so the tally has to exist before there is
     // a sentence to lead with. Every app's digest is re-drafted; that is one
     // short call per app, and the lines are what the pane shows.
+    // 7 puts the noun back: the grouping is called categories again, so the
+    // user-facing line has to be re-asked under the right one.
     pinned: {
       2: '14c1ca1864a4fb96',
       3: '98f17a8ffee59b3b',
       4: '5ae848d3fe65b9d1',
       5: 'fa7bbe7465b5aea4',
       6: '84cedc3ec42f85d4',
+      7: '95951e15d7808fa2',
     },
   },
 };

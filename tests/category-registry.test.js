@@ -1,5 +1,5 @@
-// The merge of the Workshop's AI grouping with the community-voted
-// attributes onto ONE mechanism (src/db/schema.sql `app_theme_registry`).
+// The Workshop's AI grouping and the community-voted attribute are ONE
+// list now (src/db/schema.sql `app_category_registry`).
 //
 // What this pins, in the order the pieces have to hold:
 //
@@ -46,24 +46,41 @@ function fakePool(routes) {
   };
 }
 
-test('one slug function: a typed theme and the model’s drafted id meet on the same key', () => {
+test('one slug function: a typed category and the model\u2019s drafted id meet on the same key', () => {
   // The model's own ids come from this function (services/workshop-themes.js
   // assigns `slugify(t.name)`), so these two ARE the same call.
-  assert.equal(attrs.slugifyTheme('Signing in'), 'signing-in');
-  assert.deepEqual(attrs.normalizeThemeInput('  Signing   in '), { slug: 'signing-in', label: 'Signing in' });
+  assert.equal(attrs.slugifyCategory('Signing in'), 'signing-in');
+  assert.deepEqual(attrs.normalizeCategoryInput('  Signing   in '),
+    { slug: 'signing-in', label: 'Signing in', typed: 'Signing in' });
   // Casing and inner whitespace collapse, so "SIGNING IN" votes for the
-  // existing theme rather than minting a near-duplicate beside it.
-  assert.equal(attrs.normalizeThemeInput('SIGNING IN').slug, 'signing-in');
-  // A theme gets more room than a category chip, and still has a ceiling.
-  assert.equal(attrs.normalizeThemeInput('x'.repeat(attrs.MAX_THEME_LEN)).slug.length > 0, true);
-  assert.equal(attrs.normalizeThemeInput('x'.repeat(attrs.MAX_THEME_LEN + 1)), null);
-  // Pure punctuation is not a theme, and neither is a non-string.
-  assert.equal(attrs.normalizeThemeInput('---'), null);
-  assert.equal(attrs.normalizeThemeInput(''), null);
-  assert.equal(attrs.normalizeThemeInput(null), null);
-  // `theme` is a field of the shared vote table now, not a system of its own.
-  assert.ok(attrs.FIELDS.includes('theme'));
-  assert.equal(attrs.normalizeValue('theme', 'Game Corner'), 'game-corner');
+  // existing category rather than minting a near-duplicate beside it.
+  assert.equal(attrs.normalizeCategoryInput('SIGNING IN').slug, 'signing-in');
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN)).slug.length > 0, true);
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN + 1)), null);
+  // Pure punctuation is not a category, and neither is a non-string.
+  assert.equal(attrs.normalizeCategoryInput('---'), null);
+  assert.equal(attrs.normalizeCategoryInput(''), null);
+  assert.equal(attrs.normalizeCategoryInput(null), null);
+  // ONE grouping field, not two.
+  assert.deepEqual(attrs.FIELDS, ['priority', 'assignee', 'category']);
+  assert.equal(attrs.normalizeValue('theme', 'Game Corner'), null, 'the second axis is gone');
+  assert.equal(attrs.normalizeValue('category', 'Game Corner'), 'game-corner');
+});
+
+test('a name stored under the old lower-cased rule keeps voting for its own row', async () => {
+  // #780 stored a custom category as the bare lower-cased string, so
+  // "dev experience" is out there with a SPACE. The key is a slug now, and
+  // typing that name again must not mint "dev-experience" beside it.
+  assert.deepEqual(attrs.categoryKeyCandidates('dev experience'), ['dev-experience', 'dev experience']);
+  const legacy = fakePool([[/FROM app_category_registry/, { rows: [{ category_key: 'dev experience' }] }]]);
+  assert.equal(await attrs.resolveCategoryKey(legacy, 7, 'Dev Experience'), 'dev experience');
+  // With nothing stored under either spelling, the slug is what gets minted.
+  const fresh = fakePool([[/FROM app_category_registry/, { rows: [] }]]);
+  assert.equal(await attrs.resolveCategoryKey(fresh, 7, 'Dev Experience'), 'dev-experience');
+  // A built-in always wins, and costs no query.
+  const builtin = fakePool([]);
+  assert.equal(await attrs.resolveCategoryKey(builtin, 7, 'Bug'), 'bug');
+  assert.equal(builtin.sent.length, 0);
 });
 
 test('the cap counts LIVE rows, so a model that re-drafts daily never exhausts it', async () => {
@@ -71,52 +88,52 @@ test('the cap counts LIVE rows, so a model that re-drafts daily never exhausts i
   // total but holds nothing, so the next draft mints freely. An append-only
   // registry is exactly what this would have blocked for good.
   const pool = fakePool([
-    [/FROM app_theme_registry\s+WHERE app_id = \$1 AND theme_key/, { rows: [] }],
+    [/FROM app_category_registry\s+WHERE app_id = \$1 AND category_key/, { rows: [] }],
     [/COUNT\(\*\)::int AS live/, { rows: [{ live: 0 }] }],
   ]);
-  await attrs.ensureTheme(pool, 7, { slug: 'new-theme', label: 'New theme' }, null, { pin: false });
-  const insert = pool.sent.find((q) => /INSERT INTO app_theme_registry/.test(q.sql));
+  await attrs.ensureCategory(pool, 7, { slug: 'new-theme', label: 'New theme' }, null, { pin: false });
+  const insert = pool.sent.find((q) => /INSERT INTO app_category_registry/.test(q.sql));
   assert.ok(insert, 'a fresh theme is minted');
   assert.equal(insert.params[5], 'ai', 'and attributed to the model, not a member');
   assert.equal(insert.params[7], null, 'an AI draft does not pin');
 
   // At the live cap, a NEW key is refused — the group is holding every slot.
   const full = fakePool([
-    [/FROM app_theme_registry\s+WHERE app_id = \$1 AND theme_key/, { rows: [] }],
-    [/COUNT\(\*\)::int AS live/, { rows: [{ live: attrs.MAX_THEMES_PER_APP }] }],
+    [/FROM app_category_registry\s+WHERE app_id = \$1 AND category_key/, { rows: [] }],
+    [/COUNT\(\*\)::int AS live/, { rows: [{ live: attrs.MAX_CUSTOM_CATEGORIES_PER_APP }] }],
   ]);
   await assert.rejects(
-    () => attrs.ensureTheme(full, 7, { slug: 'one-too-many', label: 'One too many' }, null, {}),
-    (err) => err.message === attrs.THEME_CAP_ERROR
+    () => attrs.ensureCategory(full, 7, { slug: 'one-too-many', label: 'One too many' }, null, {}),
+    (err) => err.message === attrs.CATEGORY_CAP_ERROR
   );
-  assert.ok(!full.sent.some((q) => /INSERT INTO app_theme_registry/.test(q.sql)), 'and nothing is written');
+  assert.ok(!full.sent.some((q) => /INSERT INTO app_category_registry/.test(q.sql)), 'and nothing is written');
 });
 
 test('a retired theme is revived, never duplicated, and a member’s vote pins it', async () => {
   const pool = fakePool([
-    [/FROM app_theme_registry\s+WHERE app_id = \$1 AND theme_key/, { rows: [{ id: 3, live: false }] }],
+    [/FROM app_category_registry\s+WHERE app_id = \$1 AND category_key/, { rows: [{ id: 3, live: false }] }],
     [/COUNT\(\*\)::int AS live/, { rows: [{ live: 1 }] }],
   ]);
-  await attrs.ensureTheme(pool, 7, { slug: 'signing-in', label: 'Signing in' }, 42, { pin: true });
+  await attrs.ensureCategory(pool, 7, { slug: 'signing-in', label: 'Signing in' }, 42, { pin: true });
   const revive = pool.sent.find((q) => /SET\s+retired_at\s+= NULL/.test(q.sql));
   assert.ok(revive, 'the existing row comes back rather than a second row being inserted');
   assert.equal(revive.params[5], true, 'and the vote that revived it pins it');
-  assert.ok(!pool.sent.some((q) => /INSERT INTO app_theme_registry/.test(q.sql)));
+  assert.ok(!pool.sent.some((q) => /INSERT INTO app_category_registry/.test(q.sql)));
 
   // Reviving consumes a live slot, so it goes through the cap like a mint.
   const full = fakePool([
-    [/FROM app_theme_registry\s+WHERE app_id = \$1 AND theme_key/, { rows: [{ id: 3, live: false }] }],
-    [/COUNT\(\*\)::int AS live/, { rows: [{ live: attrs.MAX_THEMES_PER_APP }] }],
+    [/FROM app_category_registry\s+WHERE app_id = \$1 AND category_key/, { rows: [{ id: 3, live: false }] }],
+    [/COUNT\(\*\)::int AS live/, { rows: [{ live: attrs.MAX_CUSTOM_CATEGORIES_PER_APP }] }],
   ]);
   await assert.rejects(
-    () => attrs.ensureTheme(full, 7, { slug: 'signing-in', label: 'Signing in' }, 42, { pin: true }),
-    (err) => err.message === attrs.THEME_CAP_ERROR
+    () => attrs.ensureCategory(full, 7, { slug: 'signing-in', label: 'Signing in' }, 42, { pin: true }),
+    (err) => err.message === attrs.CATEGORY_CAP_ERROR
   );
 });
 
 test('retirement spares a pinned theme, in SQL rather than on trust', async () => {
-  const pool = fakePool([[/UPDATE app_theme_registry/, { rows: [{ theme_key: 'dropped' }] }]]);
-  const retired = await attrs.retireThemesExcept(pool, 7, ['kept', 'kept']);
+  const pool = fakePool([[/UPDATE app_category_registry/, { rows: [{ category_key: 'dropped' }] }]]);
+  const retired = await attrs.retireCategoriesExcept(pool, 7, ['kept', 'kept']);
   assert.deepEqual(retired, ['dropped']);
   const q = pool.sent[0];
   // The three clauses that make retirement safe. `pinned_at IS NULL` is the
@@ -124,7 +141,7 @@ test('retirement spares a pinned theme, in SQL rather than on trust', async () =
   // somebody voted for cannot be retired by a model that stopped naming it.
   assert.match(q.sql, /retired_at IS NULL/);
   assert.match(q.sql, /pinned_at IS NULL/);
-  assert.match(q.sql, /NOT \(theme_key = ANY\(\$2::text\[\]\)\)/);
+  assert.match(q.sql, /NOT \(category_key = ANY\(\$2::text\[\]\)\)/);
   // A stamp, never a DELETE, so the votes and placements pointing at the
   // theme can never dangle.
   assert.match(q.sql, /SET\s+retired_at = NOW\(\)/);
@@ -132,18 +149,24 @@ test('retirement spares a pinned theme, in SQL rather than on trust', async () =
   assert.deepEqual(q.params[1], ['kept'], 'the keep list is deduped');
 });
 
-test('a theme vote registers and PINS; a category vote does neither', async () => {
+test('a category vote registers the value and PINS it', async () => {
   const pool = fakePool([
-    [/FROM app_theme_registry\s+WHERE app_id = \$1 AND theme_key/, { rows: [{ id: 9, live: true }] }],
+    [/FROM app_category_registry\s+WHERE app_id = \$1 AND category_key/, { rows: [{ id: 9, live: true }] }],
   ]);
-  await attrs.castVote(pool, 7, 'issue', 12, 'theme', 'signing-in', 42, [], 'Signing in');
-  const pin = pool.sent.find((q) => /UPDATE app_theme_registry/.test(q.sql));
+  await attrs.castVote(pool, 7, 'issue', 12, 'category', 'signing-in', 42, [], 'Signing in');
+  const pin = pool.sent.find((q) => /UPDATE app_category_registry/.test(q.sql));
   assert.ok(pin, 'the registry row is touched');
   assert.equal(pin.params[5], true, 'and pinned, because a human cast this');
   const vote = pool.sent.find((q) => /INSERT INTO topic_attribute_votes/.test(q.sql));
-  assert.ok(vote, 'the vote lands in the SAME table every other attribute uses');
-  assert.equal(vote.params[3], 'theme');
+  assert.ok(vote, 'the vote lands in the same table every other attribute uses');
+  assert.equal(vote.params[3], 'category');
   assert.equal(vote.params[4], 'signing-in', 'the slug is the stored value, not the typed label');
+});
+
+test('a built-in category needs no row, and cannot be retired', async () => {
+  const pool = fakePool([]);
+  await attrs.ensureCategory(pool, 7, { slug: 'bug', label: 'Bug' }, 42, { pin: true });
+  assert.equal(pool.sent.length, 0, 'the six are not registry rows at all');
 });
 
 // ── The overlay: the group's answer beats the model's ─────────────────
@@ -249,7 +272,7 @@ test('the first vote on a pre-placements row does not drop every other card', ()
 });
 
 test('an empty draft never empties the registry', async () => {
-  const pool = fakePool([[/UPDATE app_theme_registry/, { rows: [{ theme_key: 'everything' }] }]]);
-  assert.deepEqual(await attrs.retireThemesExcept(pool, 7, []), []);
+  const pool = fakePool([[/UPDATE app_category_registry/, { rows: [{ category_key: 'everything' }] }]]);
+  assert.deepEqual(await attrs.retireCategoriesExcept(pool, 7, []), []);
   assert.equal(pool.sent.length, 0, 'no statement is sent at all');
 });

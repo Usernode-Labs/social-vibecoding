@@ -363,19 +363,18 @@ const AppView = {
   // sessionStorage: which way you read the board is a lasting preference,
   // not a scratch narrowing that should quietly expire.
   WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
-  WORKSHOP_GROUPS: ['theme', 'stage'],
-  // The pane used to be called 'category', which was the name of the OTHER
-  // grouping entirely: this one is the app's THEMES (what the work is about,
-  // drafted by the model and now votable), while a category is the kind of
-  // work — feature, bug, docs. Two groupings both labelled "category" is what
-  // the merge of the two systems set out to end.
+  WORKSHOP_GROUPS: ['category', 'stage'],
+  // #2332 spelled this pane 'theme' for one release, on the argument that it
+  // groups by what the work is ABOUT while a category is what KIND of work it
+  // is. That split is gone: there is ONE grouping and it is a category, which
+  // is what this file's own chip tooltip had been saying all along.
   //
-  // The stored value and `?group=` are both public surfaces, so the old
-  // spelling keeps resolving rather than silently falling back to the
-  // default: a viewer who last chose this pane opens on it, and an old link
-  // still lands where it used to. Read-time only, like every other migration
-  // here — the new spelling is written the next time they tap a tab.
-  WORKSHOP_GROUP_ALIASES: { category: 'theme' },
+  // The stored value and `?group=` are both public surfaces, so the retired
+  // spelling keeps resolving rather than falling back to the default: a
+  // viewer who chose the pane under #2332 opens on it, and a link from that
+  // release still lands where it did. Read-time only, like every other
+  // migration here — the current spelling is written on the next tap.
+  WORKSHOP_GROUP_ALIASES: { theme: 'category' },
   _migrateWorkshopGroup(v) {
     if (AppView.WORKSHOP_GROUPS.includes(v)) return v;
     return AppView.WORKSHOP_GROUP_ALIASES[v] || null;
@@ -406,7 +405,7 @@ const AppView = {
   // override without a query parameter: `#app/<slug>/board` resolves onto the
   // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
   // exactly as `?group=` is — it does NOT write the stored preference, and a
-  // tap on "By theme" clears it through _setWorkshopGroup — so following an
+  // tap on "By category" clears it through _setWorkshopGroup — so following an
   // old board link shows those columns without re-deciding how this viewer
   // reads the board from then on.
   _overrideWorkshopGroup(group) {
@@ -436,11 +435,11 @@ const AppView = {
       // every other migration here: nothing is written back, so the day they
       // do choose a pane, that choice is what persists.
       if (AppView._storedBoardPreference()) return 'stage';
-      return 'theme';
-    } catch { return 'theme'; }
+      return 'category';
+    } catch { return 'category'; }
   },
   _setWorkshopGroup(mode) {
-    const next = AppView._migrateWorkshopGroup(mode) || 'theme';
+    const next = AppView._migrateWorkshopGroup(mode) || 'category';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?group=` would keep winning over every later click.
     AppView._workshopGroupUrlOverride = null;
@@ -4213,9 +4212,6 @@ const AppView = {
     github: '↗',           // ↗ leaves the platform
     priority: '⚑',         // ⚑ the same flag the priority chip uses
     category: '🏷',   // 🏷
-    // The app's THEMES — what the work is about, as opposed to the label
-    // above, which is what KIND of work it is. Two axes, so two glyphs.
-    theme: '◈',            // ◈
     assignee: '@',              // the assignee chip renders "@name"
     progress: '◐',         // ◐ half-filled: in progress
     clear: '○',            // ○ the same circle, emptied
@@ -6598,22 +6594,60 @@ const AppView = {
   // deterministic hash the custom category chips use, so one category is one
   // colour across every card, and every class in the pair is a literal in
   // CATEGORY_CUSTOM_TINTS.
-  _workshopThemeChipSpec(kind, item) {
-    const t = AppView._workshopThemeData();
-    if (!t) return null;
-    const key = AppView._workshopItemKey(kind, item);
-    if (!key) return null;
-    const theme = (t.themes || []).find((x) => Array.isArray(x.items) && x.items.indexOf(key) !== -1);
-    if (!theme || !theme.name) return null;
-    const name = String(theme.name);
-    return {
-      t: 'chip', key: 'theme', meta: true,
-      cls: `dev-badge ${AppView._categoryTint(theme.id).cls}`,
-      label: name,
-      title: `Category: ${name}. Placed automatically, so it can move on the next re-draft.`,
-      data: { 'data-theme-chip': String(theme.id) },
-    };
+  // Which board key a card votes under, from the pair the vote table uses.
+  // The Workshop keys cards `issue:<number>`, `session:<id>` and `gov:<id>`;
+  // topic_attribute_votes addresses them as ('issue', number) and
+  // ('proposal', id). `session:` is tried first because a promoted proposal
+  // is the common case and the two share the 'proposal' type.
+  _workshopKeysForTarget(targetType, targetRef) {
+    const n = parseInt(targetRef, 10);
+    if (!Number.isInteger(n) || n <= 0) return [];
+    if (targetType === 'issue') return [`issue:${n}`];
+    if (targetType === 'proposal') return [`session:${n}`, `gov:${n}`];
+    return [];
   },
+
+  // The category the model PLACED this card in, when the group has not voted
+  // one. This is what lets the single category chip tell the truth on a
+  // freshly grouped board: every card is in a category, but none of them has
+  // a vote yet, and a chip reading "Set category" under a heading that names
+  // the category would be saying the opposite of what the screen shows.
+  // Returns { name, id, voted } or null.
+  _placedCategoryFor(targetType, targetRef) {
+    const t = AppView._workshopThemeData();
+    if (!t || !Array.isArray(t.themes)) return null;
+    const index = AppView._placementIndex(t);
+    for (const key of AppView._workshopKeysForTarget(targetType, targetRef)) {
+      const theme = index.get(key);
+      if (theme && theme.name) {
+        return { name: String(theme.name), id: String(theme.id), voted: !!(t.votes && t.votes[key]) };
+      }
+    }
+    return null;
+  },
+
+  // key -> category, built ONCE per themes payload and cached on it.
+  //
+  // The lookup this replaces was a scan of every category's `items` for every
+  // card, and it is now consulted twice per card — once for the chip and once
+  // for the omitUnset test. On a thousand-issue board against a dozen
+  // categories that is a million string comparisons per repaint; an index
+  // makes it one map lookup. Cached against the payload object itself, so a
+  // new fetch builds a new index and a repaint over the same data does not.
+  _placementIndex(data) {
+    if (data.__placementIndex) return data.__placementIndex;
+    const index = new Map();
+    for (const theme of (data.themes || [])) {
+      for (const k of (Array.isArray(theme.items) ? theme.items : [])) {
+        if (!index.has(k)) index.set(k, theme);
+      }
+    }
+    try {
+      Object.defineProperty(data, '__placementIndex', { value: index, enumerable: false });
+    } catch { /* frozen payload: recompute rather than fail */ }
+    return index;
+  },
+
 
   // While a regeneration is pending server-side, the re-fetch schedule in
   // ms: a model drafting a full board takes tens of seconds, and the first
@@ -6849,7 +6883,7 @@ const AppView = {
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
     AppView._workshopThemes = next;
     // Every surface, not only the Workshop pane: the Board's cards carry the
-    // category chip (#1933, _workshopThemeChipSpec), so the columns have to
+    // category chip (#1933), so the columns have to
     // repaint when the themes land too. _repaintBoardSurface is mode-aware
     // and the kanban repaint no-ops with no board mounted.
     AppView._repaintBoardSurface();
@@ -7028,13 +7062,13 @@ const AppView = {
     // the heading on every line. It is dropped from the rows this pane draws
     // and kept everywhere else: the stage pane's columns, the Board, and the
     // vote and own-work strips, which are not grouped by category.
-    const underThemeHeading = AppView._getWorkshopGroup() === 'theme';
+    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
     const add = (kind, item, lane, build) => {
       if (!match(kind, item)) return;
       let card = build();
       if (!card) return;
-      if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'theme')) {
-        card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'theme')) };
+      if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
+        card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'attr:category')) };
       }
       const row = AppView._attachRowConversation({ t: 'card', key: card.key, card }, kind, item);
       const created = createdOf(kind, item);
@@ -8577,7 +8611,12 @@ const AppView = {
       if (f.assignedToMe) chips.push({ key: 'assignedToMe', label: 'Assigned to you' });
       if (f.createdByMe) chips.push({ key: 'createdByMe', label: 'Created by you' });
     }
-    if (f.theme) chips.push({ key: 'theme', label: `Theme: ${AppView._workshopThemeName(f.theme)}` });
+    // `theme` is the GROUPING-membership filter (it follows a card's linked
+    // issues, which a plain value match would not), kept as a separate key
+    // from the value filter above. One list means it reads as a category to
+    // whoever set it, which is what this label says; unifying the two inputs
+    // is the piece this change deliberately leaves.
+    if (f.theme) chips.push({ key: 'theme', label: `Category: ${AppView._workshopThemeName(f.theme)}` });
     return chips;
   },
   // The category vocabulary as DATA — built-ins then this app's customs,
@@ -9258,7 +9297,6 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: true })
           : []),
-        AppView._workshopThemeChipSpec('my-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         AppView._sessionVenueChipSpec(s),
@@ -9334,7 +9372,6 @@ const AppView = {
         ...(imported
           ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: !noNav })
           : []),
-        AppView._workshopThemeChipSpec('shared-session', s),
         AppView._sessionStatusTagSpec(s),
         AppView._importedSessionBadgeSpec(s),
         ...AppView.issueChipSpecs(s.linked_issues),
@@ -10125,7 +10162,6 @@ const AppView = {
     const badges = [
       ...AppView.statusTagSpecs(pr, {}),
       ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
-      AppView._workshopThemeChipSpec('proposal', pr),
     ].filter(Boolean);
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
@@ -12627,7 +12663,14 @@ const AppView = {
       linked: [],
       badges: [
         AppView._govApplyBadgeSpec(applyState),
-        AppView._workshopThemeChipSpec('gov', issue),
+        // Governance cards carry no other attribute chips, so the category
+        // is added on its own rather than by pulling in priority and
+        // assignee they have never shown — and only once it HAS one, since
+        // an unset chip here would be a "Set category" call to action on a
+        // card type that has never offered one.
+        ((issue && issue.category && issue.category.top) || AppView._placedCategoryFor('proposal', issue.id))
+          ? AppView._attrChipSpec('category', 'proposal', issue.id, issue && issue.category, AppView.readOnly)
+          : null,
       ].filter(Boolean),
       chatCount: parseInt(issue.chat_count) || 0,
       actions,
@@ -13060,24 +13103,11 @@ const AppView = {
   _customCategories() {
     return (AppView._appCategories || []).filter((c) => c.custom);
   },
-  // The app's LIVE theme vocabulary, as the Workshop GET last served it
+  // The app's LIVE category vocabulary, as the Workshop GET last served it
   // (`registry`) or as the attribute popover's own response refreshed it.
-  // Themes are drafted by the model and pinned by the group, so unlike the
-  // categories there is no built-in set to fall back on — an app whose first
-  // draft has not run yet simply offers a text box.
+  // One list: the six built-ins the platform ships, plus whatever the model
+  // has drafted for this app and whatever members have typed.
   _appThemes: [],
-  _themeOptions() {
-    return AppView._appThemes || [];
-  },
-  // A theme's display label, and its emoji when the model chose one. Falls
-  // back to the raw key so a vote for a theme the registry has since retired
-  // still reads as something rather than as nothing.
-  _themeMeta(value) {
-    const found = AppView._themeOptions().find((t) => t.value === value);
-    const label = (found && found.label) || String(value || '');
-    return { label, icon: (found && found.icon) || '', cls: 'attr-dot-theme' };
-  },
-  ATTR_THEME_MAX_LEN: 48,
 
   // #780: adopt a `categories` payload from any attributes GET/POST (or the
   // dedicated vocabulary endpoint) so a category typed just now can be
@@ -13156,8 +13186,20 @@ const AppView = {
     } else if (field === 'category') {
       // #504: lead with the small colour swatch (the same attr-dot used in
       // the popover) so the category reads at a glance, then the label.
+      //
+      // The voted value first, then — since the merge — the one the MODEL
+      // placed the card in. One grouping means one chip, and the chip has to
+      // show where the card actually sits, not only where somebody voted.
+      // Either way the chip is votable: tapping it opens the same popover.
       const meta = AppView._categoryMeta(s.top);
+      const placed = meta ? null : AppView._placedCategoryFor(targetType, targetRef);
+      const placedMeta = placed ? AppView._categoryMeta(placed.id) : null;
       if (meta) { label = { kind: 'dot', cls: meta.cls, text: meta.label }; cls = meta.cls; hover = meta.hover; }
+      else if (placed) {
+        const tint = placedMeta || AppView._categoryTint(placed.id);
+        label = { kind: 'dot', cls: tint.cls, text: placed.name };
+        cls = tint.cls; hover = tint.hover || 'hover:bg-zinc-500/20';
+      }
       else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (s.top) {
       // #489: the assignee leads with a coloured initial-avatar (an at-a-
@@ -13181,7 +13223,9 @@ const AppView = {
     if (field === 'priority') {
       title = 'Vote on this card\'s priority';
     } else if (field === 'category') {
-      title = 'Vote on this card\'s category';
+      title = (!s.top && AppView._placedCategoryFor(targetType, targetRef))
+        ? 'Placed automatically. Tap to vote for a different category'
+        : 'Vote on this card\'s category';
     } else {
       title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
     }
@@ -13218,7 +13262,11 @@ const AppView = {
     ];
     const out = [];
     for (const [field, summary] of fields) {
-      if (omitUnset && !(summary && summary.top)) continue;
+      // A category the MODEL placed counts as set: the dense card would
+      // otherwise drop the one chip that says where the card sits.
+      const placed = field === 'category' && !(summary && summary.top)
+        && !!AppView._placedCategoryFor(targetType, targetRef);
+      if (omitUnset && !(summary && summary.top) && !placed) continue;
       out.push(AppView._attrChipSpec(field, targetType, targetRef, summary, readonly));
     }
     return out;
@@ -13236,13 +13284,11 @@ const AppView = {
       priority: ['Set priority…', 'Change priority…'],
       category: ['Set category…', 'Change category…'],
       assignee: ['Assign someone…', 'Change assignee…'],
-      // The Workshop groups by theme and a model drafts that grouping; this
-      // row is how a member OVERRIDES the placement it chose. It is the
-      // whole of "corrected by the group" that the Workshop has always
-      // claimed to be — before the merge there was no write path at all.
-      theme: ['Move to theme…', 'Change theme…'],
     };
-    return ['priority', 'category', 'assignee', 'theme'].map((field) => {
+    // No separate grouping row: the card's own CATEGORY chip is the
+    // affordance now — tapping it opens this same popover — so a fourth row
+    // would be a second door to one place.
+    return ['priority', 'category', 'assignee'].map((field) => {
       const set = !!(it[field] && it[field].top);
       return {
         label: labels[field][set ? 1 : 0],
@@ -13251,8 +13297,8 @@ const AppView = {
         icon: field,
         title: field === 'assignee'
           ? 'Suggest or vote on who should take this'
-          : (field === 'theme'
-            ? 'Vote on which theme this card belongs to'
+          : (field === 'category'
+            ? 'Vote on which category this card belongs to'
             : `Vote on this card's ${field}`),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
@@ -13519,34 +13565,6 @@ const AppView = {
         defaultValue: '',
         suggest: false,
       };
-    } else if (field === 'theme') {
-      // The app's live vocabulary — the model's standing draft plus whatever
-      // the group has pinned — refreshed from this response so a theme
-      // somebody minted a moment ago is already on offer. There is no
-      // built-in set: an app whose first draft has not run shows the box
-      // alone, and typing into it is how the group starts its own.
-      if (Array.isArray(data.themes)) AppView._appThemes = data.themes;
-      const themes = AppView._themeOptions();
-      if (themes.length) {
-        groups.push({
-          head: 'Theme',
-          divided: false,
-          options: themes.map((t) => {
-            const meta = AppView._themeMeta(t.value);
-            return row(t.value, meta.cls, meta.icon ? `${meta.icon} ${meta.label}` : meta.label);
-          }),
-        });
-      } else {
-        emptyNote = 'No themes drafted yet. Type one to start.';
-      }
-      add = {
-        inputId: 'attr-theme-input',
-        buttonId: 'attr-theme-add',
-        placeholder: 'Type a theme…',
-        maxLength: AppView.ATTR_THEME_MAX_LEN,
-        defaultValue: '',
-        suggest: false,
-      };
     } else {
       const opts = data.options || [];
       groups.push({
@@ -13605,21 +13623,6 @@ const AppView = {
         ? lower
         : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
       AppView._castAttrVote(known || typed);
-      return;
-    }
-    if (ctx.field === 'theme') {
-      const input = document.getElementById('attr-theme-input');
-      const typed = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
-      if (!typed) return;
-      // Match an existing theme case-insensitively by LABEL, so typing
-      // "signing in" votes for the model's own `signing-in` rather than
-      // minting a near-duplicate. The server slugs either way; this only
-      // decides which label the registry row keeps.
-      const lower = typed.toLowerCase();
-      const known = AppView._themeOptions()
-        .find((t) => String(t.label || '').toLowerCase() === lower
-          || String(t.value || '').toLowerCase() === lower);
-      AppView._castAttrVote(known ? known.value : typed);
       return;
     }
     const input = document.getElementById('attr-assignee-input');
@@ -14011,7 +14014,6 @@ const AppView = {
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
-      AppView._workshopThemeChipSpec('issue', issue),
     ].filter(Boolean);
 
     // ── Actions: the state-driven primary + the claim toggle ──
@@ -14666,7 +14668,6 @@ const AppView = {
       linked: AppView.closesPillSpecs(pr),
       badges: [
         ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
-        AppView._workshopThemeChipSpec('merged', pr),
       ].filter(Boolean),
       chatCount: parseInt(pr.chat_count) || 0,
       actions: hasKudos ? [{ key: 'kudos', label: '', kudos: pr.id }] : [],

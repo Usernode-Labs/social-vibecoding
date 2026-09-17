@@ -421,13 +421,13 @@ function fingerprintKeys(keys) {
 // ONE slug function, shared with services/topic-attributes.js, because a
 // theme id the model drafts and a theme name a member types must land on
 // the same key — that identity is what lets a vote override a placement.
-const slugify = topicAttrs.slugifyTheme;
+const slugify = topicAttrs.slugifyCategory;
 
 // The model is ASKED to keep a pinned theme (see llm.js's discovery prompt),
 // and this is where that stops being a request. Any previous theme carrying
 // `pinned` that the draft did not return is appended, definition intact, so
 // a theme the group voted for cannot be lost to a model that simply stopped
-// mentioning it. Retirement of everything else happens in syncRegistry.
+// mentioning it. Retirement of everything else happens in syncCategories.
 function keepPinned(themes, previous) {
   const drafted = new Set(themes.map((t) => t.id));
   const kept = themes.slice();
@@ -841,7 +841,7 @@ function themesWithItems(row, keys, placements, votes = {}, registry = []) {
 
 // ── The registry: minting, retiring and the member overlay ────────────
 //
-// app_theme_registry is the app's live theme vocabulary and the bridge
+// app_category_registry is the app's live vocabulary and the bridge
 // between the model's grouping and the group's votes. `themes_json` on
 // app_workshop_themes remains the DRAFT the placer works against; the
 // registry is what the picker offers and what a vote can name.
@@ -862,7 +862,9 @@ function targetOfKey(key) {
   return null;
 }
 
-// The group's theme votes for the cards on the board, as key -> theme key.
+// The group's CATEGORY votes for the cards on the board, as key -> category
+// key. This is the one grouping now: the model's placement is a seed and
+// whatever the group voted wins over it.
 // Ranking is topic-attributes' own (count desc, earliest suggestion, then
 // alphabetical), reused rather than re-implemented so a theme chip and a
 // Workshop row can never disagree about who won.
@@ -880,7 +882,7 @@ async function loadThemeVotes(pool, appId, keys) {
     if (!refs.length) continue;
     const summaries = await topicAttrs.summarizeForTargets(pool, appId, targetType, refs, null);
     for (const [ref, summary] of summaries) {
-      const top = summary && summary.theme && summary.theme.top;
+      const top = summary && summary.category && summary.category.top;
       if (!top) continue;
       const key = byType[targetType].get(ref);
       if (key) out[key] = top;
@@ -890,13 +892,29 @@ async function loadThemeVotes(pool, appId, keys) {
 }
 
 // The app's live vocabulary, in the shape discovery reads as
-// `previousThemes` — ids, names and, crucially, `pinned`.
-async function registryThemes(pool, appId) {
-  const rows = await topicAttrs.listThemes(pool, appId);
-  return rows.map((r) => ({
-    id: r.value, name: r.label, description: r.description || '',
-    icon: r.icon || '', pinned: !!r.pinned, origin: r.origin || 'ai',
-  }));
+// `previousCategories` — ids, names and, crucially, `pinned`.
+//
+// The six BUILT-INS are deliberately not here. They are offered to members
+// and given to the prompt as context (builtInCategories below), but they are
+// not rows, nothing can retire them, and `keepPinned` must not force all six
+// into every draft — that would make the model sort cards by kind of work as
+// well as by part of the product, which is the junk-drawer the discovery
+// prompt's one-axis rule exists to prevent.
+async function registryCategories(pool, appId) {
+  const rows = await topicAttrs.listCategories(pool, appId);
+  return rows
+    .filter((r) => r.custom)
+    .map((r) => ({
+      id: r.value, name: r.label, description: r.description || '',
+      icon: r.icon || '', pinned: !!r.pinned, origin: r.origin || 'ai',
+    }));
+}
+
+// The built-in six, as context for the draft: the model is told they exist
+// and that members vote for them, so it neither redraws them nor treats the
+// board as if they were missing.
+function builtInCategories() {
+  return topicAttrs.CATEGORY_VALUES.map((v) => ({ id: v, name: v }));
 }
 
 // Publish a draft into the registry: mint or revive everything it drew,
@@ -908,27 +926,27 @@ async function registryThemes(pool, appId) {
 // Best-effort by design: a registry write that fails must not lose a draft
 // the model was paid for, so the caller logs and carries on with the
 // themes in hand.
-async function syncRegistry(pool, appId, themes) {
+async function syncCategories(pool, appId, themes) {
   const keep = [];
   for (const t of themes) {
     if (!t || !t.id) continue;
     keep.push(t.id);
     try {
-      await topicAttrs.ensureTheme(
+      await topicAttrs.ensureCategory(
         pool, appId,
         { slug: t.id, label: t.name || t.id, description: t.description || '', icon: t.icon || '' },
         null, { pin: false }
       );
     } catch (err) {
-      // THEME_CAP_ERROR here means the group has pinned every slot. The
+      // CATEGORY_CAP_ERROR here means the group has pinned every slot. The
       // draft still stands for placement; it simply cannot also be offered
-      // in the picker until a pinned theme is freed.
-      log.warn('workshop-themes', 'theme registry write skipped', { appId, theme: t.id, message: err.message });
+      // in the picker until a pinned category is freed.
+      log.warn('workshop-themes', 'category registry write skipped', { appId, category: t.id, message: err.message });
     }
   }
-  const retired = await topicAttrs.retireThemesExcept(pool, appId, keep);
+  const retired = await topicAttrs.retireCategoriesExcept(pool, appId, keep);
   if (retired.length) {
-    log.info('workshop-themes', 'themes retired', { appId, count: retired.length, themes: retired });
+    log.info('workshop-themes', 'categories retired', { appId, count: retired.length, categories: retired });
   }
   return { kept: keep, retired };
 }
@@ -955,7 +973,6 @@ function placementCard(it) {
     kind: it.kind,
     title: it.title,
     excerpt: it.excerpt || undefined,
-    category: it.category || undefined,
     by: it.by || undefined,
     linked: it.linked && it.linked.length ? it.linked : undefined,
   };
@@ -970,7 +987,13 @@ function chunk(arr, n) {
 async function discover({ pool, app, input, previous }) {
   const keys = input.items.map((i) => i.key);
   const result = await llm.generateWorkshopThemeDefinitions({
-    inputJson: JSON.stringify({ ...input, previousThemes: previous }),
+    inputJson: JSON.stringify({
+      ...input,
+      previousCategories: previous,
+      // The six the platform ships. Named so the draft works AROUND them
+      // instead of redrawing "bug" as a category of its own.
+      builtInCategories: builtInCategories(),
+    }),
     appName: app.name || app.slug,
     itemKeys: keys,
     telemetryContext: { pool, appId: app.id },
@@ -1364,7 +1387,7 @@ async function reconcile({ pool, app, reason }) {
       // losing the standing vocabulary.
       let previous = [];
       try {
-        previous = await registryThemes(pool, app.id);
+        previous = await registryCategories(pool, app.id);
       } catch (err) {
         log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
       }
@@ -1378,14 +1401,6 @@ async function reconcile({ pool, app, reason }) {
         const disc = await discover({ pool, app, input, previous });
         themes = disc.themes;
         model = disc.model;
-        // Publish the new vocabulary: mint what it drew, retire the unpinned
-        // themes it dropped. Best-effort — a registry failure must not throw
-        // away a draft the platform has already paid for.
-        try {
-          await syncRegistry(pool, app.id, themes);
-        } catch (err) {
-          log.warn('workshop-themes', 'registry sync failed', { app: app.slug, message: err.message });
-        }
         next.placements = {};
         next.unplaced = new Set();
         for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
@@ -1448,6 +1463,28 @@ async function reconcile({ pool, app, reason }) {
       result.placed = Object.keys(out.placed).length;
       result.none = out.none.length;
       result.failed = out.failed.length;
+    }
+
+    // Publish the standing vocabulary: mint what the draft drew, retire the
+    // unpinned categories it dropped.
+    //
+    // This runs on EVERY pass that has categories, not only on a pass that
+    // re-drafted them. #2332 called it inside the discovery branch alone,
+    // which left the registry — and therefore the picker a member opens from
+    // a card's chip — EMPTY for any app until a re-draft happened to run,
+    // while the grouping those categories name was visibly on screen above
+    // it. Idempotent by construction: ensureCategory upserts, and on a
+    // non-discovery pass `themes` IS the standing draft, so the retire step
+    // matches what is already there and removes nothing.
+    //
+    // Best-effort — a registry failure must not throw away a draft the
+    // platform has already paid for.
+    if (themes.length) {
+      try {
+        await syncCategories(pool, app.id, themes);
+      } catch (err) {
+        log.warn('workshop-themes', 'category registry sync failed', { app: app.slug, message: err.message });
+      }
     }
 
     const dig = wantDigest ? await makeDigest({ pool, app, input, themes }) : { digest: null, error: null };
@@ -1571,7 +1608,7 @@ async function getThemes({ pool, app }) {
   try {
     [votes, registry] = await Promise.all([
       loadThemeVotes(pool, app.id, keys),
-      registryThemes(pool, app.id),
+      registryCategories(pool, app.id),
     ]);
   } catch (err) {
     log.warn('workshop-themes', 'theme vote overlay failed', { app: app.slug, message: err.message });
@@ -1654,7 +1691,7 @@ async function getThemes({ pool, app }) {
 module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
-  keepPinned, targetOfKey, loadThemeVotes, registryThemes, syncRegistry,
+  keepPinned, targetOfKey, loadThemeVotes, registryCategories, builtInCategories, syncCategories,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a

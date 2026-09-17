@@ -47,7 +47,7 @@ test('normalizeValue: assignee trims, rejects empty + over-long, keeps casing', 
 // #780: category is free text now (a typed value becomes a per-app option),
 // so normalizeValue returns the lower-cased SLUG for anything typeable —
 // it no longer rejects values outside the built-in six.
-test('normalizeValue: category lower-cases + trims any typeable value', () => {
+test('normalizeValue: category slugifies + trims any typeable value', () => {
   assert.equal(attrs.normalizeValue('category', 'bug'), 'bug');
   assert.equal(attrs.normalizeValue('category', 'BUG'), 'bug'); // case-folded
   assert.equal(attrs.normalizeValue('category', '  Feature '), 'feature'); // trimmed
@@ -55,27 +55,33 @@ test('normalizeValue: category lower-cases + trims any typeable value', () => {
   assert.equal(attrs.normalizeValue('category', 'urgent'), 'urgent'); // #780: custom, accepted
   assert.equal(attrs.normalizeValue('category', ''), null);
   assert.equal(attrs.normalizeValue('category', 7), null);
-  assert.equal(attrs.normalizeValue('category', 'x'.repeat(25)), null); // over the cap
-  // The exported vocabulary is exactly the BUILT-IN set (customs live in the
-  // app_topic_categories registry, not in this constant).
+  assert.equal(attrs.normalizeValue('category', 'x'.repeat(attrs.MAX_CATEGORY_LEN + 1)), null); // over the cap
+  // The exported vocabulary is exactly the BUILT-IN set (everything else
+  // lives in the app_category_registry, not in this constant).
   assert.deepEqual(attrs.CATEGORY_VALUES, ['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
   assert.ok(attrs.FIELDS.includes('category'), 'category is a recognised field');
 });
 
-test('normalizeCategoryInput: returns { slug, label } keeping the typed casing', () => {
-  assert.deepEqual(attrs.normalizeCategoryInput('performance'), { slug: 'performance', label: 'performance' });
-  // Casing is preserved for display but lower-cased for the dedupe key, so
+test('normalizeCategoryInput: returns { slug, label, typed } keeping the typed casing', () => {
+  assert.deepEqual(attrs.normalizeCategoryInput('performance'), { slug: 'performance', label: 'performance', typed: 'performance' });
+  // Casing is preserved for display but folded into the dedupe key, so
   // "iOS" reads right on the chip yet collapses with a later "ios".
-  assert.deepEqual(attrs.normalizeCategoryInput('iOS'), { slug: 'ios', label: 'iOS' });
-  assert.deepEqual(attrs.normalizeCategoryInput('  Dev Experience  '), { slug: 'dev experience', label: 'Dev Experience' });
+  assert.deepEqual(attrs.normalizeCategoryInput('iOS'), { slug: 'ios', label: 'iOS', typed: 'iOS' });
+  // The key is SLUGIFIED since the merge, so a typed name can equal an id
+  // the model drafted. resolveCategoryKey is what keeps a value stored under
+  // the old bare-lower-cased rule reachable.
+  assert.deepEqual(attrs.normalizeCategoryInput('  Dev Experience  '), { slug: 'dev-experience', label: 'Dev Experience', typed: 'Dev Experience' });
   // Internal whitespace runs collapse, so "dev  experience" is one option.
-  assert.deepEqual(attrs.normalizeCategoryInput('dev  experience'), { slug: 'dev experience', label: 'dev experience' });
+  assert.deepEqual(attrs.normalizeCategoryInput('dev  experience'), { slug: 'dev-experience', label: 'dev experience', typed: 'dev experience' });
   // Control characters become a space rather than gluing words together.
   const tabbed = attrs.normalizeCategoryInput(`a${String.fromCharCode(9)}b`);
-  assert.deepEqual(tabbed, { slug: 'a b', label: 'a b' });
+  assert.deepEqual(tabbed, { slug: 'a-b', label: 'a b', typed: 'a b' });
   assert.equal(attrs.normalizeCategoryInput(`x${String.fromCharCode(0)}`).slug, 'x');
   // Length boundary: exactly at the cap passes, one over fails.
-  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN)).slug, 'x'.repeat(attrs.MAX_CATEGORY_LEN));
+  // The label keeps every character up to the cap; the KEY is slugified,
+  // and slugifyCategory bounds a key at 40.
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN)).label.length, attrs.MAX_CATEGORY_LEN);
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN)).slug.length, 40);
   assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN + 1)), null);
   // Rejections.
   assert.equal(attrs.normalizeCategoryInput(''), null);
@@ -84,7 +90,9 @@ test('normalizeCategoryInput: returns { slug, label } keeping the typed casing',
   assert.equal(attrs.normalizeCategoryInput('!!!'), null);
   assert.equal(attrs.normalizeCategoryInput(7), null, 'non-strings rejected');
   assert.equal(attrs.normalizeCategoryInput(null), null);
-  assert.equal(attrs.MAX_CATEGORY_LEN, 24);
+  // 48, not #780's 24: a category names a part of the product now as well as
+  // a kind of work, so it needs the room the AI grouping had.
+  assert.equal(attrs.MAX_CATEGORY_LEN, 48);
 });
 
 test('emptySummary carries a category slot', () => {
@@ -122,7 +130,7 @@ function makeMockPool() {
   const store = []; // { app_id, target_type, target_ref, field, value, user_id, created_at }
   // #780: the per-app custom-category registry, modelled with its real
   // UNIQUE(app_id, slug) so first-label-wins and the cap are exercised.
-  const cats = []; // { app_id, slug, label, created_by, created_at, id }
+  const cats = []; // { app_id, slug, label, origin, pinned_at, retired_at, created_at, id }
   let seq = 0;
   let catSeq = 0;
   const norm = (field, value) => (field === 'assignee' ? String(value).toLowerCase() : String(value));
@@ -154,38 +162,74 @@ function makeMockPool() {
     store,
     cats,
     async query(sql, params) {
-      // ── #780: app_topic_categories (the custom-category registry) ──
-      // ensureCategory's cap probe: total rows for the app + whether this
-      // slug is already registered.
-      if (/SELECT COUNT\(\*\)::int FROM app_topic_categories/.test(sql)) {
-        const [appId, slug] = params;
-        return {
-          rows: [{
-            total: cats.filter((c) => c.app_id === appId).length,
-            existing: cats.filter((c) => c.app_id === appId && c.slug === slug).length,
-          }],
-        };
+      // ── The category registry (app_category_registry) ──────────────
+      // ONE vocabulary since the merge: the model's drafted categories and
+      // the ones members type live in the same generational table, so the
+      // fake speaks its shape rather than #780's append-only one.
+      //
+      // ensureCategory's first read: does this key exist, and is it live?
+      if (/SELECT id, \(retired_at IS NULL\) AS live FROM app_category_registry/.test(sql)) {
+        const [appId, key] = params;
+        const row = cats.find((c) => c.app_id === appId && c.slug === key);
+        return { rows: row ? [{ id: row.id, live: !row.retired_at }] : [] };
       }
-      // ensureCategory's insert — ON CONFLICT (app_id, slug) DO NOTHING.
-      if (/INSERT INTO app_topic_categories/.test(sql)) {
-        const [appId, slug, label, userId] = params;
-        if (!cats.some((c) => c.app_id === appId && c.slug === slug)) {
+      // resolveCategoryKey: which spelling this app already stores.
+      if (/SELECT category_key FROM app_category_registry/.test(sql)) {
+        const [appId, candidates] = params;
+        const row = cats
+          .filter((c) => c.app_id === appId && candidates.includes(c.slug))
+          .sort((a, b) => (Number(!!a.retired_at) - Number(!!b.retired_at)) || (a.id - b.id))[0];
+        return { rows: row ? [{ category_key: row.slug }] : [] };
+      }
+      // The cap probe: LIVE rows only, which is what lets the model churn.
+      if (/SELECT COUNT\(\*\)::int AS live FROM app_category_registry/.test(sql)) {
+        const [appId] = params;
+        return { rows: [{ live: cats.filter((c) => c.app_id === appId && !c.retired_at).length }] };
+      }
+      // The two UPDATE shapes: refresh-and-maybe-pin, and revive.
+      if (/UPDATE app_category_registry/.test(sql) && /SET\s+retired_at = NOW\(\)/.test(sql)) {
+        const [appId, keep] = params;
+        const hit = cats.filter((c) => c.app_id === appId && !c.retired_at && !c.pinned_at && !keep.includes(c.slug));
+        for (const c of hit) c.retired_at = new Date().toISOString();
+        return { rows: hit.map((c) => ({ category_key: c.slug })) };
+      }
+      if (/UPDATE app_category_registry/.test(sql)) {
+        const [id, appId, label, description, icon, pin] = params;
+        const row = cats.find((c) => c.id === id && c.app_id === appId);
+        if (row) {
+          if (/retired_at  = NULL/.test(sql)) row.retired_at = null;
+          if (label != null) row.label = row.label || label;
+          if (description != null) row.description = description;
+          if (icon != null) row.icon = icon;
+          if (pin && !row.pinned_at) row.pinned_at = new Date().toISOString();
+        }
+        return { rows: [] };
+      }
+      // ensureCategory's insert — ON CONFLICT (app_id, category_key).
+      if (/INSERT INTO app_category_registry/.test(sql)) {
+        const [appId, key, label, description, icon, origin, userId, pinnedAt] = params;
+        if (!cats.some((c) => c.app_id === appId && c.slug === key)) {
           catSeq += 1;
           cats.push({
-            id: catSeq, app_id: appId, slug, label, created_by: userId,
+            id: catSeq, app_id: appId, slug: key, label, description, icon, origin,
+            created_by: userId, pinned_at: pinnedAt || null, retired_at: null,
             created_at: new Date(Date.now() + catSeq).toISOString(),
           });
         }
         return { rows: [] };
       }
-      // listCategories — the app's registry rows, in creation order.
-      if (/SELECT slug, label FROM app_topic_categories/.test(sql)) {
+      // listCategories — the app's LIVE rows, pinned first then minted order.
+      if (/SELECT category_key, label, description, icon, origin/.test(sql)) {
         const [appId] = params;
         return {
           rows: cats
-            .filter((c) => c.app_id === appId)
-            .sort((a, b) => (Date.parse(a.created_at) - Date.parse(b.created_at)) || (a.id - b.id))
-            .map((c) => ({ slug: c.slug, label: c.label })),
+            .filter((c) => c.app_id === appId && !c.retired_at)
+            .sort((a, b) => (Number(!a.pinned_at) - Number(!b.pinned_at))
+              || (Date.parse(a.created_at) - Date.parse(b.created_at)) || (a.id - b.id))
+            .map((c) => ({
+              category_key: c.slug, label: c.label, description: c.description || '',
+              icon: c.icon || '', origin: c.origin || 'ai', pinned: !!c.pinned_at,
+            })),
         };
       }
       // listCategories — the self-heal tail: category values in use that
@@ -639,14 +683,14 @@ test('DELETE withdraws the caller\'s assignee vote (drag-to-Unassigned)', async 
 // ── #780: custom categories over HTTP ──────────────────────────────────
 
 test('POST rejects a category that is empty, punctuation-only, or over-long', async () => {
-  for (const value of ['', '   ', '---', 'x'.repeat(25)]) {
+  for (const value of ['', '   ', '---', 'x'.repeat(attrs.MAX_CATEGORY_LEN + 1)]) {
     const r = await fetch(`${base}/api/apps/demo/topics/issue/60/attributes`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ field: 'category', value }),
     });
     assert.equal(r.status, 400, `rejected ${JSON.stringify(value)}`);
     const body = await r.json();
-    assert.match(body.error, /Category must be 1–24 characters/);
+    assert.match(body.error, new RegExp(`Category must be 1–${attrs.MAX_CATEGORY_LEN} characters`));
   }
 });
 
@@ -658,9 +702,9 @@ test('POST a typed category registers it and returns the app vocabulary', async 
   assert.equal(r.status, 200);
   const body = await r.json();
   // The vote landed on the normalized slug; the chip reads the label.
-  assert.equal(body.myValue, 'developer experience');
+  assert.equal(body.myValue, 'developer-experience');
   assert.ok(Array.isArray(body.categories), 'POST carries the vocabulary');
-  const added = body.categories.find((c) => c.value === 'developer experience');
+  const added = body.categories.find((c) => c.value === 'developer-experience');
   assert.deepEqual(
     { label: added.label, custom: added.custom },
     { label: 'Developer Experience', custom: true },
@@ -675,8 +719,8 @@ test('POST a typed category registers it and returns the app vocabulary', async 
   // GET the same card's category options — the vocabulary rides along there
   // too, so opening the dropdown self-heals a stale FE cache.
   const get = await fetch(`${base}/api/apps/demo/topics/issue/61/attributes?field=category`).then((x) => x.json());
-  assert.ok(get.categories.some((c) => c.value === 'developer experience'));
-  assert.equal(get.myValue, 'developer experience');
+  assert.ok(get.categories.some((c) => c.value === 'developer-experience'));
+  assert.equal(get.myValue, 'developer-experience');
 });
 
 test('GET/POST carry `categories` ONLY for the category field', async () => {
@@ -721,7 +765,7 @@ test('POST returns a distinct 400 (not a 500) once the app is at its category ca
   });
   assert.equal(r.status, 400, 'a user error, not a server fault');
   const body = await r.json();
-  assert.match(body.error, /maximum of 24 custom categories/);
+  assert.match(body.error, /maximum of 24 categories in use/);
 
   // Voting for a BUILT-IN still works at the cap (no registry row needed).
   const builtin = await fetch(`${base}/api/apps/demo/topics/issue/62/attributes`, {
@@ -886,7 +930,9 @@ test('staging seeds a custom-category vocabulary + cards using it', () => {
   // One mock ISSUE and one mock PROPOSAL carry a custom category, so the
   // chip colour + the filter narrowing are reviewable on both card types.
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
-  assert.match(issuesSrc, /category: \{ top: 'staging demo perf'/, 'a mock issue leads with a custom category');
+  // The key is slugified since the merge, so the mock has to name the key the
+  // vocabulary actually offers or the chip falls back to a capitalised slug.
+  assert.match(issuesSrc, /category: \{ top: 'staging-demo-perf'/, 'a mock issue leads with a custom category');
   const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
   assert.match(votesSrc, /category: \{ top: 'staging demo onboarding'/, 'a mock proposal too');
 });
