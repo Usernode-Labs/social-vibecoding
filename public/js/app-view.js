@@ -14182,14 +14182,15 @@ const AppView = {
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
-  // Start work makes the choice explicit: interactive work or an AI build.
-  // The latter still goes through its existing credit confirmation.
+  // Start work opens a session with an agent. #2376: automated sessions
+  // ("Start AI build") are switched off for now, so the choice between the
+  // two is gone and Start work goes straight to the interactive one.
+  // `confirmAutoSession` and the server route stay, unreferenced from here,
+  // so bringing the option back is putting this sheet back; runs that
+  // already exist keep their Generating / Review / Go to session actions.
   chooseIssueWork(number) {
     if (AppView.readOnly) return;
-    PlatformUI.actionSheet({ actions: [
-      { label: 'Work with an agent', handler: () => AppView.createPrForIssue(number) },
-      { label: 'Start AI build (uses credits)', handler: () => AppView.confirmAutoSession(number) },
-    ] });
+    AppView.createPrForIssue(number);
   },
   _issuePrimaryActionSpec(issue, opts) {
     const noNav = !!(opts && opts.noNav);
@@ -14241,7 +14242,7 @@ const AppView = {
         if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: 'Start work', act: { fn: 'chooseIssueWork', args: [n] } };
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'This auto-solve run has a question. Answer it on this issue, then use Start work → Start AI build to re-run',
+          title: 'This auto-solve run has a question. Answer it on this issue',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
