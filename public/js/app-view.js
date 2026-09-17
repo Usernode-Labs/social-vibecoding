@@ -6653,43 +6653,61 @@ const AppView = {
   },
 
   /**
-   * The digest as a WALK BACKWARDS, newest last.
+   * The digest's WEEKS, as a walk backwards.
    *
-   * The three fixed windows were drawn as three cards, all three at once,
-   * and that is the whole history the lander could ever show: a reader who
-   * wanted the week before last had nowhere to go. This builds the same
-   * three as the first three steps of an arbitrarily long walk — open, this
-   * week, last week, then "N weeks ago" for as many as the server has
-   * written — and the component reveals them one at a time from the newest
-   * end.
+   * The fixed windows were drawn all at once, and that was the whole
+   * history the lander could ever show: a reader who wanted the week before
+   * last had nowhere to go. This builds them as the first steps of an
+   * arbitrarily long walk — this week, last week, then as many earlier
+   * windows as the server has written — and the component reveals them one
+   * at a time from the newest end.
    *
-   * Order is NEWEST FIRST: `open` — the present, and the only entry that is
-   * not a window at all — then this week, last week, and back. The walk was
-   * built the other way round at first, growing upwards from the bottom of
-   * the stack, on the reasoning that a column of dates reads oldest-at-the-
-   * top like any timeline. It does, but this is not a timeline being read:
-   * it is one card with a way to ask for more, and growing UPWARDS moved
-   * the card you were looking at down the screen on every press. Now the
-   * present stays put and the history unrolls beneath it.
+   * WEEKS ONLY. `open` used to lead this list, as the entry that is not a
+   * window at all, which cost twice: the pane's one always-visible sentence
+   * sat inside a control about history, and "Show past week" revealed THIS
+   * week on its first press. It is `dashboard.openLine` now.
+   *
+   * Order is NEWEST FIRST. The walk was built the other way round at first,
+   * growing upwards from the bottom of the stack, on the reasoning that a
+   * column of dates reads oldest-at-the-top like any timeline. It does, but
+   * this is not a timeline being read: it is one card with a way to ask for
+   * more, and growing UPWARDS moved the card you were looking at down the
+   * screen on every press. Now the present stays put and the history
+   * unrolls beneath it.
+   *
+   * `counts` carries what the server can stand behind per window — the same
+   * `shippedWeek`/`shippedPrevWeek` the figures use, passed in rather than
+   * recomputed so the two can never disagree about one week.
    */
-  _workshopWeeks(cards, nowMs) {
+  _workshopWeeks(cards, nowMs, counts) {
     if (!cards) return [];
     const WEEK = AppView.WORKSHOP_WEEK_MS;
     const thisStart = AppView._weekStart(nowMs);
     const out = [];
-    // The present first: it is the default card and the only one always
-    // drawn, so it is index 0 and the reveal walks forward from there.
-    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    // `open` IS NOT A WINDOW AND NO LONGER WALKS. It used to be entry 0 of
+    // this list — the one card drawn by default, with every real week behind
+    // a press — which made "Show past week" reveal THIS week on its first
+    // press and left the pane's only always-visible line inside a control
+    // about history. It is the dashboard's lead paragraph now
+    // (`dashboard.openLine`), so this list holds weeks and only weeks, and
+    // the button's label is true on every press including the first.
     if (cards.thisWeek) {
       out.push({
         key: 'thisWeek', title: 'This week', line: cards.thisWeek,
         startMs: thisStart, endMs: nowMs,
+        counts: (counts && counts.thisWeek) || null,
       });
     }
     if (cards.lastWeek) {
       out.push({
-        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
+        // NAMED BY ITS DATES, like every older window below. "Last week" and
+        // "2 weeks ago" are both relative counts the reader has to decode
+        // against today, and the second is arithmetic nobody should be asked
+        // to do; a range is an absolute fact. Only the live window keeps a
+        // word, because it is the one whose meaning really is "now".
+        key: 'lastWeek', title: '', line: cards.lastWeek,
         startMs: thisStart - WEEK, endMs: thisStart,
+        counts: (counts && counts.lastWeek) || null,
       });
     }
     const older = [];
@@ -6706,8 +6724,12 @@ const AppView = {
       const n = Math.round((thisStart - w.start) / WEEK);
       if (n < 2) continue;
       older.push({
-        key: `week:${w.start}`, title: `${n} weeks ago`, line: w.line,
+        // Its dates, as above. The server has never written a count for a
+        // window this old, so it carries none — the pane draws the line
+        // alone rather than a zero it cannot stand behind.
+        key: `week:${w.start}`, title: '', line: w.line,
         startMs: w.start, endMs: w.start + WEEK,
+        counts: null,
       });
     }
     // Newest of the older windows first, continuing the walk backwards.
@@ -7233,9 +7255,27 @@ const AppView = {
         // The newest stamp among the new rows, for `Clear` (see
         // _workshopClearSince). Zero when nothing is new.
         through: moved.length ? moved[0].t : 0,
-        shipped: entries.filter((e) => e.kind === 'merged' && e.created > baseline).length,
-        opened: entries.filter((e) => e.kind === 'issue' && e.created > baseline).length,
-        proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
+        // ── THE SUMMARY COUNTS THE LIST IT SITS OVER ───────────────────
+        //
+        // These three ran over `entries` filtered on `created`, while the
+        // rows below them ran over `moved` — the same array filtered on
+        // `t`. Two different clocks: `activityOf` takes the later of the
+        // item's own stamp and its last message, `createdOf` takes the
+        // stamp alone. So a proposal merged before your last visit that
+        // picked up one comment since was IN the list and absent from the
+        // sentence above it, which is the common case, not a corner. The
+        // capped `rows` made the head's count disagree too.
+        //
+        // One predicate now, over the uncapped `moved`, so the sentence
+        // describes exactly the rows underneath it and `total` is what the
+        // head shows. `sinceWords` names the three biggest kinds; the
+        // others (gov, shared sessions, the discussion) are in `total`
+        // without being named, which is why the head counts and the
+        // sentence enumerates rather than both trying to do both.
+        total: moved.length,
+        shipped: moved.filter((e) => e.kind === 'merged').length,
+        opened: moved.filter((e) => e.kind === 'issue').length,
+        proposed: moved.filter((e) => e.kind === 'proposal').length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
         seen: {
           total: seen.length,
@@ -7281,21 +7321,30 @@ const AppView = {
     // server) the loaded page is counted, and `partial` below says it is a
     // floor.
     const serverShipped = AppView._mergedShipped || null;
+    // Hoisted out of the literal below because the week walk states the same
+    // two numbers per window and an object cannot read its own fields while
+    // it is being built. One expression, two readers — the tile and the walk
+    // can never drift into disagreeing about the same week.
+    const shippedThisWeek = serverShipped
+      ? serverShipped.week
+      : allMerged.filter((m) => mergedAtOf(m) >= weekStartMs).length;
+    // The week before, for a rate rather than a count. Same source as the
+    // week above so the two are comparable.
+    const shippedPrev = serverShipped
+      ? serverShipped.prevWeek
+      : allMerged.filter((m) => {
+        const t = mergedAtOf(m);
+        return t < weekStartMs && t >= weekStartMs - WEEK;
+      }).length;
+    // Page-counted numbers are floors; server counts never are. The walk
+    // marks its own figures with this for the same reason the tiles do.
+    const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
     const dashboard = {
       open: openEntries.length,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
-      shippedWeek: serverShipped
-        ? serverShipped.week
-        : allMerged.filter((m) => mergedAtOf(m) >= weekStartMs).length,
-      // The week before, for a rate rather than a count. Same source as the
-      // week above so the two are comparable.
-      shippedPrevWeek: serverShipped
-        ? serverShipped.prevWeek
-        : allMerged.filter((m) => {
-          const t = mergedAtOf(m);
-          return t < weekStartMs && t >= weekStartMs - WEEK;
-        }).length,
+      shippedWeek: shippedThisWeek,
+      shippedPrevWeek: shippedPrev,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
@@ -7305,10 +7354,23 @@ const AppView = {
       // sentence the client can always build stays the last resort — the
       // same relationship the category grouping has to the drafted themes.
       cards: (tData && tData.digestCards) || null,
-      // The same lines as a walk backwards through the app's weeks, oldest
-      // first. The pane draws only the last of these (`open`) and reveals
-      // the rest one step at a time; see _workshopWeeks.
-      weeks: AppView._workshopWeeks((tData && tData.digestCards) || null, nowMs),
+      // THE LEAD PARAGRAPH: what the open, unfinished work is about. It used
+      // to be entry 0 of the walk below, which is why the reveal button
+      // opened on "This week" — see _workshopWeeks. It is not a window, so it
+      // is not in a list of windows.
+      openLine: (tData && tData.digestCards && tData.digestCards.open) || '',
+      // The weeks, newest first, each with what the server can stand behind
+      // for it. `shippedWeek`/`shippedPrevWeek` are the SAME two numbers the
+      // tiles use (#1922: counted over the whole merged history server-side,
+      // so exact whatever the page holds) — the walk states them per window
+      // rather than recomputing anything. There is no `opened` counterpart:
+      // nothing counts issues created per window, and deriving one from the
+      // capped board snapshot would put a floor next to an exact number and
+      // read as if both were counts.
+      weeks: AppView._workshopWeeks((tData && tData.digestCards) || null, nowMs, {
+        thisWeek: { closed: shippedThisWeek, partial: weekCountsPartial },
+        lastWeek: { closed: shippedPrev, partial: weekCountsPartial },
+      }),
       // The Monday of the app's first week of activity, when the server has
       // said. The walk stops when `weeks` runs out either way; this is only
       // how the pane can tell "that is the whole history" from "that is all

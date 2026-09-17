@@ -65,13 +65,13 @@ import {
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { DevCard } from '../card/dev-card';
+import { CardIcon, Chevron, metaLineNodes } from '../card/dev-card';
 import { DevKanban } from '../card/dev-kanban';
 import { DevActionsRow } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { DevWorkshopView, WorkshopTheme } from '../card/model';
+import type { DevCardModel, DevWorkshopView, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
@@ -499,37 +499,108 @@ function pace(d: Dash): string {
  * the number is then a floor and not a total. That is the same fact `pace()`
  * refuses to compare on, said in one character.
  */
+/**
+ * The general discussion, as one row at the foot of the dashboard pane.
+ *
+ * It replaces a whole section — eyebrow, frosted surface, and a `DevCard`
+ * inside it — whose only job was to navigate to the chat. The card's own
+ * model is still what supplies it, node for node (the same glyph, the same
+ * meta line naming who spoke last and when), so the row and the screen it
+ * opens cannot drift apart; what it drops is the three surfaces that were
+ * wrapped around that one line.
+ *
+ * `data-discussion-row` is load-bearing and not decoration: the delegated
+ * handler on `#dev-body` (app-view.js) selects on it to switch to the chat
+ * sub-view. A `<button>` carries it rather than the card's `div`, because
+ * with the card gone this row IS the control.
+ *
+ * The chevron is the one the card wore (`DEV_CARD_CHEVRON` / `Chevron`),
+ * kept deliberately. Every other rounded surface on this tab is something
+ * you read, so without a mark the only thing saying this one is a door was
+ * the cursor — which a phone does not have.
+ */
+function DiscussionRow({ card }: { card: DevCardModel }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="dev-ws-chat-row"
+      data-ws-chat-row=""
+      data-discussion-row="1"
+      title={card.title.title}
+    >
+      {card.icon ? <CardIcon spec={{ ...card.icon, small: true }} /> : null}
+      <span className="dev-ws-chat-said">{metaLineNodes(card)}</span>
+      <Chevron />
+    </button>
+  );
+}
+
+/**
+ * The four figures.
+ *
+ * ── ONE ROW, NOT FOUR CARDS ──
+ * They were four floating tiles inside the pane, each with its own fill,
+ * hairline and drop shadow, sitting above a fifth box holding the summary
+ * line — six surfaces inside one surface, which is what made the pane read
+ * as a stack of things rather than one answer. They are one ruled row now:
+ * hairlines between the figures, no fill of their own, on the pane's own
+ * ground. Two up on a phone and four across from 420px, which is the
+ * breakpoint they already used.
+ *
+ * ── THE ORDER IS AN ARGUMENT ──
+ * The backlog, then the part of it nobody has taken, then the decision
+ * waiting on you, then what actually landed. It reads as a progression and
+ * it ends on the one number that says the app is moving. The old order —
+ * open, shipped, votes, unclaimed — put the outcome second and buried the
+ * unclaimed count at the end, away from the total it qualifies.
+ *
+ * ── THE MARK IS BESIDE THE LABEL, NOT ON THE NUMBER ──
+ * Tone used to be a colour on the integer itself: a green `6`, an amber `3`.
+ * That is state carried by hue alone, which says nothing to a reader who
+ * cannot separate the two, and it puts a status colour on text where the
+ * rest of the product keeps text in text ink. The number takes
+ * `--text-primary` like every other figure and a dot beside the label
+ * carries the state. Only the two figures that are a CALL wear one: a zero
+ * is not a warning, and "nobody on them" is a fact about the backlog, not an
+ * alarm — it had no tone before and gains none here.
+ */
 function DashTiles({ d }: { d: Dash }): ReactNode {
-  const cells: { key: string; n: number; label: string; cls?: string; title?: string }[] = [
+  const cells: { key: string; n: number; label: string; dot?: string; title?: string }[] = [
     { key: 'open', n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
-    {
-      key: 'shipped',
-      n: d.shippedWeek,
-      label: 'shipped this week',
-      cls: d.shippedWeek ? 'dev-ws-dash-good' : undefined,
-      title: d.partial
-        ? 'At least this many: the merged history is longer than the page loaded.'
-        : 'This calendar week, counted from Monday 00:00 UTC.',
-    },
+    { key: 'unclaimed', n: d.unclaimed, label: 'nobody on them' },
     {
       key: 'votes',
       n: d.votesWaiting,
       label: d.votesWaiting === 1 ? 'waiting on a vote' : 'waiting on votes',
-      cls: d.votesWaiting ? 'dev-ws-dash-warn' : undefined,
+      dot: d.votesWaiting ? 'dev-ws-dash-dot-warn' : undefined,
     },
-    { key: 'unclaimed', n: d.unclaimed, label: 'with nobody on them' },
+    {
+      key: 'shipped',
+      n: d.shippedWeek,
+      label: 'shipped this week',
+      dot: d.shippedWeek ? 'dev-ws-dash-dot-good' : undefined,
+      title: d.partial
+        ? 'At least this many: the merged history is longer than the page loaded.'
+        : 'This calendar week, counted from Monday 00:00 UTC.',
+    },
   ];
   return (
     <div className="dev-ws-dash" data-ws-dash="">
       {cells.map((c) => (
         <span
           key={c.key}
-          className={c.cls ? `dev-ws-dash-cell ${c.cls}` : 'dev-ws-dash-cell'}
+          className="dev-ws-dash-cell"
           data-ws-dash-cell={c.key}
           title={c.title}
         >
           <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
-          {c.label}
+          <span className="dev-ws-dash-label">
+            {/* A GRID in app.css, not an inline run: the label wraps at phone
+                widths, and a centred mark floated to the middle of a two-line
+                label while its second line ran back underneath the dot. */}
+            {c.dot ? <i className={`dev-ws-dash-dot ${c.dot}`} aria-hidden="true" /> : null}
+            <span>{c.label}</span>
+          </span>
         </span>
       ))}
     </div>
@@ -553,10 +624,20 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
  * client's normaliser returns null), so the pane falls through to the
  * paragraph and then to the derived sentence, and never renders an empty box.
  */
-/** "Aug 25 – Aug 31" for a window whose `endMs` is the Monday after it. */
-function weekRange(startMs: number, endMs: number): string {
+/**
+ * "Aug 25 – Aug 31" for a window whose `endMs` is the Monday after it, and
+ * "Sep 14 → now" for the one that has not finished.
+ *
+ * THE LIVE WINDOW IS NOT A RANGE OF TWO DATES. Its `endMs` is the current
+ * instant, so the completed-week arithmetic named yesterday and the caption
+ * read "Sep 14 – Sep 15" on a Tuesday — a two-day week, and a range whose
+ * right end moves every midnight for no reason the reader can see. It runs
+ * from its Monday to NOW, so that is what it says.
+ */
+function weekRange(startMs: number, endMs: number, live?: boolean): string {
   const fmt = (ms: number) => new Date(ms)
     .toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  if (live) return `${fmt(startMs)} → now`;
   // `endMs` is EXCLUSIVE — the next Monday — so the caption names the Sunday
   // before it. Captioning a Monday–Sunday week with two Mondays is the kind
   // of off-by-one a reader notices and cannot explain.
@@ -571,31 +652,62 @@ function weekRange(startMs: number, endMs: number): string {
  * had nowhere to go, and a reader who wanted none of them still paid three
  * cards of vertical space before reaching the board.
  *
- * So the present is the default — `Open issues`, the one entry that is not a
- * week at all — and everything earlier is one step behind a button. Each
- * press reveals the next-oldest window BELOW the stack, and the control
- * moves down with it. It grew upwards first, on the reasoning that a column
- * of dated cards reads oldest-at-the-top like any timeline. It does, but
- * this is not a timeline being read: it is one card with a way to ask for
- * more, and growing upwards pushed the card you were looking at further
- * down the screen on every press. Downwards, the present stays where it is
- * and the history unrolls under it.
+ * So NOTHING is drawn until it is asked for, and each press reveals the
+ * next-oldest window BELOW the stack, with the control moving down with it.
+ * The live window is behind the first press like every other: what the pane
+ * always shows is the lead paragraph above this walk, which is a sentence
+ * about now rather than a window. It grew upwards first, on the
+ * reasoning that a column of dated cards reads oldest-at-the-top like any
+ * timeline. It does, but this is not a timeline being read: it is one card
+ * with a way to ask for more, and growing upwards pushed the card you were
+ * looking at further down the screen on every press. Downwards, the present
+ * stays where it is and the history unrolls under it.
  *
- * The walk ends where the server's lines end. When the server has also said
- * when the app's first week was (`firstWeek`) and the walk has reached it,
- * the pane says so — otherwise running out of lines is silent, because "no
- * more written yet" and "no more to write" are different facts and only one
- * of them is the app's beginning.
+ * `Open issues` used to be the default entry, and it was never a week — so
+ * the first press of "Show past week" revealed THIS week, which is not a
+ * past week. It is the pane's lead paragraph now, above this walk and
+ * outside it, and the button's label is true on every press.
+ *
+ * The walk ends where the server's lines end, and SAYS SO. `firstWeek` is
+ * the app's beginning and the server has never sent one, so the only thing
+ * that ever happened when the lines ran out was the button silently
+ * leaving — which reads as a control that broke. "As far back as the
+ * summary goes" is the weaker statement and the true one: it is a fact
+ * about the summary's reach, not a claim about the app's age, and it can
+ * always be made.
  */
-function WeekWalk({ weeks, firstWeek, note }: {
+export function WeekWalk({ weeks, firstWeek, note, initialShown = 0 }: {
   weeks: Dash['weeks'];
   firstWeek: number | null;
   /** Why the summary is what it is, when something is wrong with it. */
   note?: string;
+  /**
+   * How many windows are open on the first render. The pane passes nothing
+   * and gets none, which is the product behaviour; this exists so the suite
+   * can assert what an OPENED walk draws.
+   *
+   * It is a test seam and worth saying so plainly. The alternative was to
+   * leave a window drawn unasked purely so a static render could see one —
+   * which is letting the tests choose the product's default state, and this
+   * walk's default is the whole question. `renderToStaticMarkup` runs no
+   * effects and dispatches no events (tests/lib/render-tsx.js says so in its
+   * header), so there is no press for a test to make.
+   */
+  initialShown?: number;
 }): ReactNode {
-  // How many entries from the END of the list are on screen. The list is
-  // oldest-first, so one means `open` alone.
-  const [shown, setShown] = useState(1);
+  // How many windows are on screen. NONE, until asked: the pane opens on its
+  // lead paragraph — what the open work is about — and the whole history,
+  // the live week included, is behind the press. That is the bargain this
+  // walk has always made; what changed is only WHAT is always on screen,
+  // because `open` is a sentence about now rather than a window and has left
+  // the walk for the paragraph above it.
+  //
+  // The label stays "Show past week" on every press, which makes its first
+  // press the one place it overstates: This week is not a past week. The
+  // alternative — drawing the live window unasked — buys that one word at
+  // the cost of opening every visit on a block nobody asked for, and reads
+  // as a pane that forgot to collapse.
+  const [shown, setShown] = useState(initialShown);
   if (!weeks.length) return null;
   const drawn = weeks.slice(0, shown);
   const more = weeks.length - drawn.length;
@@ -606,15 +718,39 @@ function WeekWalk({ weeks, firstWeek, note }: {
       {drawn.map((w) => (
         <article key={w.key} className="dev-ws-card" data-ws-card={w.key}>
           <h4 className="dev-ws-card-title">
-            {w.title}
-            {/* The dates only where the NAME stops being one. "This week" and
-                "Last week" are unambiguous to anyone reading them on the day;
-                "4 weeks ago" is a count the reader would otherwise have to do
-                the arithmetic for. */}
-            {w.startMs && w.key.startsWith('week:')
-              ? <span className="dev-ws-card-range">{weekRange(w.startMs, w.endMs)}</span>
-              : null}
+            {/* ONE NAMED WINDOW, THE REST DATED. A window with a title keeps
+                it and wears its range as a gloss; every other window IS its
+                dates, and the range takes the heading slot. "Last week" and
+                "3 weeks ago" are both relative counts a reader decodes
+                against today, and the second is arithmetic nobody should be
+                asked to do — a range is an absolute fact that stays true
+                however deep the walk goes. */}
+            {w.title
+              ? (
+                <>
+                  {w.title}
+                  {w.startMs ? (
+                    <span className="dev-ws-card-range">
+                      {weekRange(w.startMs, w.endMs, w.key === 'thisWeek')}
+                    </span>
+                  ) : null}
+                </>
+              )
+              : <span className="dev-ws-card-dates">{weekRange(w.startMs, w.endMs)}</span>}
           </h4>
+          {/* What the window COST and what it PAID, where the server can
+              stand behind the figure. Drawn small: it is a footnote to the
+              tiles above, not a second dashboard. A window the server has
+              written no count for draws none rather than a zero. */}
+          {w.counts ? (
+            <p className="dev-ws-card-counts" data-ws-card-counts="">
+              <span className="dev-ws-card-count">
+                <CheckIcon className="dev-ws-card-count-ic" aria-hidden="true" />
+                <b>{w.counts.partial && w.counts.closed ? `${w.counts.closed}+` : w.counts.closed}</b>
+                {w.counts.closed === 1 ? 'change landed' : 'changes landed'}
+              </span>
+            </p>
+          ) : null}
           <p className="dev-ws-card-line">{w.line}</p>
         </article>
       ))}
@@ -632,8 +768,17 @@ function WeekWalk({ weeks, firstWeek, note }: {
           Show past week
         </button>
       ) : null}
+      {/* The walk's floor. `atStart` is the app's BEGINNING and needs the
+          server's `firstWeek`, which it has never sent — so the only thing
+          that ever happened when the lines ran out was the button silently
+          leaving, which reads as a control that broke. The weaker statement
+          is the true one and can always be made: this is as far as the
+          SUMMARY reaches, which is not a claim about the app's age. */}
       {atStart ? (
         <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
+      ) : null}
+      {!more && !atStart ? (
+        <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the summary goes.</p>
       ) : null}
     </div>
   );
@@ -695,7 +840,9 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
     s.opened ? `${s.opened} new ${s.opened === 1 ? 'issue' : 'issues'}` : null,
     s.proposed ? `${s.proposed} new ${s.proposed === 1 ? 'proposal' : 'proposals'}` : null,
   ].filter(Boolean);
-  return bits.length ? bits.join(', ') : `${s.rows.length} things moved`;
+  // `total`, not `rows.length`: the rows are capped for drawing and this
+  // sentence describes the whole population the head counts.
+  return bits.length ? bits.join(', ') : `${s.total} things moved`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -2605,43 +2752,75 @@ export function DevWorkshop(): ReactNode {
           className="dev-ws-strip"
           data-ws-dashboard=""
         >
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Where the app is</span>
-            {v.since && v.since.shipped
-              ? <span className="dev-ws-pill dev-ws-pill-good">{`${v.since.shipped} shipped since`}</span>
-              : null}
+          {/* THE HEADING IS A SENTENCE, NOT AN EYEBROW. Three all-caps
+              labels and one sentence-case header were doing the same job in
+              four different weights, and the caps one is the weaker of the
+              two: it reads as a tag on a box rather than a name for what is
+              in it. Every section on this tab wears this now, so the only
+              thing that distinguishes them is what they hold. */}
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">Where the app is</span>
           </div>
           <DashTiles d={v.dashboard} />
-          {/* The weeks, newest on screen and the rest one press away. The
-              derived sentence is still the fallback for a board that has
-              never had a line written for it — see summarise(). */}
-          {v.dashboard.weeks.length
-            ? (
-              <WeekWalk
-                weeks={v.dashboard.weeks}
-                firstWeek={v.dashboard.firstWeek}
-                note={digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
-              />
-            )
-            : summarise(v.dashboard)
-              ? (
-                <>
-                  <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
-                  {/* The note belongs to whichever sentence is on screen. With
-                      no cards there is no walk to hang it inside, and this is
-                      the very case it exists for: "no draft yet" and "the call
-                      keeps failing" both leave the derived sentence up there
-                      and are otherwise indistinguishable. */}
-                  {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
-                    <p className="dev-ws-digest-note" data-ws-digest-note="">
-                      {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
-                    </p>
-                  ) : null}
-                </>
-              )
-              : null}
-          {/* The note about the summary rides INSIDE the walk (above "Show
+          {/* THE LEAD PARAGRAPH. It was the first card of the week walk,
+              titled "Open issues" — so the pane's one always-visible
+              sentence lived inside a control about history, and the button
+              under it opened on This week. It is not a window; it does not
+              sit in a list of windows. The derived sentence is still the
+              fallback for a board that has never had a line written for it
+              — see summarise(). */}
+          {/* PRECEDENCE, unchanged from when this was the walk's first card:
+              the model's own line, then the flattened paragraph a row
+              written under the previous prompt still holds, then the
+              sentence derived from the counts. The fallbacks only apply
+              when there is NO walk — a board whose `open` window is empty
+              but whose weeks are not has a summary already, and dropping
+              the paragraph in above it would state the same thing twice. */}
+          {v.dashboard.openLine || (!v.dashboard.weeks.length && summarise(v.dashboard)) ? (
+            <>
+              <p className="dev-ws-open-line" data-ws-open-line="">
+                {v.dashboard.openLine || summarise(v.dashboard)}
+              </p>
+              {/* The note belongs to whichever sentence is on screen, and
+                  with no walk below there is nothing else to hang it on.
+                  This is the very case it exists for: "no draft yet" and
+                  "the call keeps failing" both leave the derived sentence up
+                  there and are otherwise indistinguishable. */}
+              {!v.dashboard.weeks.length
+                && digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
+                  <p className="dev-ws-digest-note" data-ws-digest-note="">
+                    {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+                  </p>
+                ) : null}
+            </>
+          ) : null}
+          {/* The weeks, the live one on screen and the rest one press away.
+              The note about the summary rides INSIDE the walk (above "Show
               past week"), with the card it is about — see WeekWalk. */}
+          {v.dashboard.weeks.length ? (
+            <WeekWalk
+              weeks={v.dashboard.weeks}
+              firstWeek={v.dashboard.firstWeek}
+              note={digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+            />
+          ) : null}
+          {/* ── The door to the general chat, at the foot of this pane ──
+              It had a section of its own: an eyebrow, a frosted surface and
+              a card inside it, all to carry one row whose only job is to
+              navigate somewhere else — and the card it held already draws
+              its own surface, so it was a card inside a card inside a
+              section. It belongs HERE because it is the same subject: this
+              pane says where the app is, and this is where people are
+              talking about it. None of it is about you, which is what the
+              pane below is for.
+
+              It keeps no pill of its own. A rounded capsule on a rounded
+              pane is a shape inside a shape, and this pane already has an
+              internal rhythm — hairline, block, hairline — that the weeks
+              above it use. The row joins that rhythm. */}
+          {v.discussion && v.discussion.t === 'card' ? (
+            <DiscussionRow card={v.discussion.card} />
+          ) : null}
         </section>
       ) : null}
 
@@ -2653,8 +2832,9 @@ export function DevWorkshop(): ReactNode {
           under a heading about the theme. */}
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What you are working on</span>
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">What you are working on</span>
+            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
             {/* #2182: the strip does not leave when the viewer has nothing
@@ -2675,14 +2855,25 @@ export function DevWorkshop(): ReactNode {
                 onToggle={() => toggleRow('mine', row.key)}
               />
             ) : null))}
+            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
+                grey pill (`gc-vote-btn`) while "Show past week" and "Show
+                older" — which do the identical thing one pane up and one
+                pane down — were centred muted text with a caret. Three
+                spellings of one gesture. It is `.dev-ws-reveal` now, and the
+                caret turns over when there is nothing left to reveal, which
+                is what that class already does for the since list. */}
             {v.mine.rows.length > v.mine.shown ? (
               <button
                 type="button"
-                className="gc-vote-btn dev-ws-lane-btn"
+                className="dev-ws-reveal dev-ws-mine-more"
                 aria-expanded={allMine}
                 data-ws-mine-more=""
                 onClick={() => setAllMine(!allMine)}
               >
+                {/* No flip class: `.dev-ws-reveal[aria-expanded="true"]`
+                    already turns the caret over, and this button carries
+                    that attribute. */}
+                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
                 {allMine ? 'Show fewer' : `${v.mine.count - v.mine.shown} more of yours`}
               </button>
             ) : null}
@@ -2690,21 +2881,9 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── The door to the general chat ──
-          The card used to sit bare between the strips: same width, no
-          surface of its own, and therefore the one thing on the lander that
-          belonged to no pane. It reads as a stray row of the pane above it.
-          Its own strip, with its own eyebrow, says what it is before you
-          reach the card — and gives the lander one shape all the way down:
-          every block is an eyebrow and what is under it. */}
-      {v.discussion && v.discussion.t === 'card' ? (
-        <section className="dev-ws-strip" data-ws-discussion="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Talk about the app</span>
-          </div>
-          <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
-        </section>
-      ) : null}
+      {/* The general discussion had its own section here. It is a row at the
+          foot of the dashboard pane now (DiscussionRow) — same subject as
+          that pane, and one row does not earn a section. */}
       {/* ── What moved while you were away ──
           SHOWN, not offered. It was one collapsed line — the label, the count
           and a caret — on the reasoning that most visits do not need the
@@ -2740,7 +2919,10 @@ export function DevWorkshop(): ReactNode {
               on. It is live while there is a walk below the line too. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
             <span className="dev-ws-since-label">Since your last visit</span>
-            <span className="dev-ws-since-n">{v.since.rows.length}</span>
+            {/* THE WHOLE POPULATION, not the page of it that is drawn.
+                `rows` is capped at WORKSHOP_SINCE_MAX, so on a busy week the
+                head said 30 over a list the reader could keep revealing. */}
+            <span className="dev-ws-since-n">{v.since.total}</span>
             <button
               type="button"
               className="dev-ws-since-clear"
@@ -2751,6 +2933,17 @@ export function DevWorkshop(): ReactNode {
               Clear
             </button>
           </div>
+          {/* WHAT MOVED, IN WORDS — under the heading that gives it an
+              antecedent. This was a green `N shipped since` pill on the
+              DASHBOARD pane's head, four blocks up the page: a sentence
+              fragment whose object was missing, next to numbers about the
+              board rather than about you. `sinceWords` has been in this file
+              since the strip was written and had no caller; it says all
+              three of what landed, what opened and what was proposed, where
+              the pill said one. */}
+          {v.since.rows.length ? (
+            <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
+          ) : null}
           {v.since.rows.slice(0, sinceShown).map((row) => (row.t === 'card' ? (
             <CardRowView
               key={row.key}

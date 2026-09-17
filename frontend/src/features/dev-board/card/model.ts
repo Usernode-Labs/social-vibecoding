@@ -467,6 +467,18 @@ export interface DevWorkshopView {
     baseline: number;
     /** Newest activity stamp among `rows`, for Clear; 0 when nothing is new. */
     through: number;
+    /**
+     * Everything that moved, uncapped — what the head counts. `rows` below
+     * is the same population capped for drawing, so this is the number and
+     * that is the page of it.
+     */
+    total: number;
+    /**
+     * The three biggest kinds within `total`, for the summary sentence.
+     * They count the SAME population `rows` is drawn from (activity since
+     * the baseline), not items created since it — the two disagreed, and
+     * the sentence was describing a different set from the list under it.
+     */
     shipped: number;
     opened: number;
     proposed: number;
@@ -518,12 +530,15 @@ export interface DevWorkshopView {
     /**
      * The same lines as a WALK BACKWARDS through the app's weeks, oldest
      * first — which is the order they are drawn, top to bottom. The pane
-     * shows only the last entry (`open`) and reveals the rest one step at a
-     * time, newest end first. Empty when no line has ever been written.
+     * shows the live window and reveals the rest one step at a time. Empty
+     * when no line has ever been written.
+     *
+     * WEEKS ONLY. `open` used to lead this list, which made the reveal
+     * button's first press land on This week; it is `openLine` below now.
      *
      * `startMs`/`endMs` bound the window a line was written from, so the
-     * pane can caption an older week with its dates; both are 0 on `open`,
-     * which is not a window at all.
+     * pane can name an older week by its dates. `title` is empty on every
+     * window but the live one — a dated window IS its range.
      */
     weeks: {
       key: string;
@@ -531,7 +546,20 @@ export interface DevWorkshopView {
       line: string;
       startMs: number;
       endMs: number;
+      /**
+       * What the server can stand behind for this window. Null where it has
+       * written nothing — an older window, or a board with no server counts
+       * — and the pane then draws the line alone rather than a zero.
+       * `partial` marks a page-counted floor, as the tiles' own does.
+       */
+      counts: { closed: number; partial: boolean } | null;
     }[];
+    /**
+     * What the app's open, unfinished work is about: the pane's lead
+     * paragraph, under the figures. Empty string when no line has been
+     * written, and `summary` then supplies the fallback.
+     */
+    openLine: string;
     /** Monday of the app's first week of activity, when the server says. */
     firstWeek: number | null;
     /**

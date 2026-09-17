@@ -12187,6 +12187,60 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    baseline aligned to the bottom of the ring and the two read as two rows. */
 .dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* ── ONE HEADING, FOR EVERY SECTION ON THE TAB ───────────────────────────
+   There were two vocabularies doing one job: three panes wore
+   `.dev-ws-eyebrow` — 11px, caps, letterspaced, muted — and the fourth wore
+   a sentence-case label with a count beside it and an action at its far
+   end. The second is the one that reads as a heading; the caps one reads as
+   a tag stuck on a box. So it is this, everywhere, and the sections are
+   told apart by what they HOLD rather than by four weights of label.
+
+   `.dev-ws-since-head` keeps its own class because it also carries Clear
+   and the disabled state that goes with it; the two match by value. */
+.dev-ws-head { display: flex; align-items: center; gap: 8px; }
+.dev-ws-head-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.dev-ws-head-n {
+  height: 19px; min-width: 19px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand-tint); color: var(--brand-ink);
+  font-size: 11.5px; font-weight: 700;
+  display: grid; place-items: center;
+  font-variant-numeric: tabular-nums;
+}
+/* The pane's lead paragraph: what the open work is about. It was the first
+   card of the week walk, which put the one line the pane always shows
+   inside a control about history. */
+.dev-ws-open-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+/* What moved, in words, under the heading that gives it an antecedent. It
+   was a `N shipped since` pill on the dashboard's head four blocks up — a
+   fragment with its object missing, beside numbers about the board. */
+.dev-ws-since-sum { margin: -2px 0 2px; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }
+/* ── The general discussion, at the foot of the dashboard pane ───────────
+   No pill and no card. A rounded capsule on a rounded pane is a shape
+   inside a shape, and this pane already has an internal rhythm — hairline,
+   block, hairline — that the weeks above it use. The row joins it: one more
+   rule, then the row, full-bleed to the pane's own padding. */
+.dev-ws-chat-row {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  margin-top: 12px; padding: 12px 0 0;
+  border: 0; border-top: 1px solid var(--app-sheet-line);
+  background: none; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--text-secondary); text-align: left;
+}
+.dev-ws-chat-row:hover .dev-ws-chat-said { color: var(--text-primary); }
+.dev-ws-chat-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* The glyph keeps the card's chip geometry but drops its tinted plate: on a
+   row this size the plate was the largest object in the line. */
+.dev-ws-chat-row > .dev-card-icon {
+  flex: none; width: 20px; height: 20px;
+  background: transparent; border-radius: 0;
+}
+.dev-ws-chat-row > .dev-card-icon > svg { width: 17px; height: 17px; }
+/* ONE LINE, clipped. The last thing said can be any length, and a row that
+   grows to hold it stops being a row. */
+.dev-ws-chat-said {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* ── The digest's three cards ────────────────────────────────
    One paragraph became three, because one paragraph was answering three
    questions — what landed last week, what has landed this week, what is
@@ -12202,7 +12256,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    makes the block scannable rather than just subdivided. It inherits the
    pane's own line colour, so the cards read as divisions OF the pane rather
    than as objects sitting on it. */
-.dev-ws-cards { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-cards { display: flex; flex-direction: column; }
 /* Each card is ONE line: the label, a middot, the sentence. It was a title
    stacked above its line, which cost three rows of vertical space to carry
    three short sentences and made the block read as three objects rather than
@@ -12220,62 +12274,61 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    `--dc-sheet-fill`, which is translucent, so a solid card reads as a card
    ON the pane rather than another wash of the same surface. */
 .dev-ws-card {
-  display: flex;
-  /* CENTRE, not baseline. On the one card whose sentence wraps to two rows,
-     a baseline-aligned label sits against the FIRST row and reads as if it
-     were floating above its own text; centred, it holds the block. */
-  align-items: center;
-  gap: 6px;
-  border-radius: 10px;
-  padding: 7px 10px;
-  background-color: var(--dc-sheet);
-  /* The hairline plus a real lift. `--dc-sheet` is #ffffff and the strip
-     behind it is `--dc-sheet-fill` at 50% white, so on a light page the
-     inset line was the ONLY thing separating card from pane and the block
-     read flat. Screenshots, not the diff, are what showed that.
-     CAUTION: one invalid var() anywhere in this list voids the WHOLE
-     declaration, hairline included — a missing token here renders as a
-     card with no outline at all, which is exactly how it failed in
-     preview. */
-  box-shadow:
-    0 0 0 1px var(--app-sheet-line) inset,
-    0 1px 2px var(--app-sheet-shadow-near),
-    0 4px 10px var(--app-sheet-shadow-far);
-}
-.dev-ws-card-title {
-  margin: 0;
-  flex: none;
-  /* A fixed COLUMN, so all three sentences share a left edge. "Last week",
-     "This week" and "Open" are different widths, so without it the text
-     started at three different x-positions — which defeats the point of the
-     one-line layout, where you read down the labels and across only where
-     you want the detail. 84px cleared the longest of the ORIGINAL three at
-     13.5px, with a note that a fourth window with a longer name would need
-     it revisited. The walk backwards is that fourth window and then some —
-     "12 weeks ago" over a date range — so the column is 104px and the label
-     is a two-row stack. */
+  /* A BLOCK ON A RULE, not a lifted card. These were white cards with a
+     hairline and a two-layer drop shadow, floating inside a pane that is
+     itself a surface — and the walk stacks them, so the deeper it went the
+     more the pane read as a pile of objects. They are divisions OF the pane
+     now: a hairline above each, the heading, its figures, its sentence.
+     One surface, an internal rhythm. */
   display: flex;
   flex-direction: column;
-  width: 104px;
-  font-size: 13.5px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  /* The accent, so the label separates from its sentence by colour as well
-     as by column. It is not interactive; nothing else in this pane is
-     either, so the blue is not competing with a real affordance. */
-  color: var(--accent);
+  border-top: 1px solid var(--app-sheet-line);
+  margin-top: 12px;
+  padding-top: 11px;
 }
-.dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
-/* The window's dates, under its name. Muted and lighter than the label it
-   sits beneath: the name is what you navigate by, the range is what you
-   check once you have arrived. */
+/* The heading: a name and its range side by side, or — on every window but
+   the live one — the range alone, standing as the name. */
+.dev-ws-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+/* A dated window IS its dates, so they take the heading's own weight and
+   ink. `tabular-nums` because a column of ranges is read down. */
+.dev-ws-card-dates { font-variant-numeric: tabular-nums; }
+/* What the window paid, drawn SMALL — a footnote to the figures at the top
+   of the pane, not a second row of them. */
+.dev-ws-card-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+}
+.dev-ws-card-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.dev-ws-card-count > b {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.dev-ws-card-count-ic { width: 13px; height: 13px; flex: none; color: var(--state-ok); }
+.dev-ws-card-line { margin: 7px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 .dev-ws-card-range {
-  display: block;
-  margin-top: 1px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 /* THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT, and it always was — the
@@ -12363,6 +12416,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    full-width rows exactly as that one does, so it takes the centred form
    rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
    the air between it and the last row. */
+/* THE WALK'S OWN SPACING, which the cards no longer supply. `.dev-ws-cards`
+   carried `gap: 6px` while every window was a floating card; the windows
+   space themselves across their own rules now (12px above, 11px below), so
+   the gap went — and took the air under the last window with it, leaving
+   this button flush against a sentence it is 23px away from on the other
+   side. 11px mirrors the padding the rule above each window uses, so the
+   control sits in the same rhythm as the blocks it follows. */
+.dev-ws-week-more { margin-top: 11px; }
 .dev-ws-since-more { margin-top: 2px; }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
@@ -13469,8 +13530,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   }
 }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
+/* Same story as the button above: `.dev-ws-cards`' gap used to hold this
+   note off the last window, and the windows space themselves now. */
 .dev-ws-week-note {
-  margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
+  margin: 11px 0 0; font-size: 12px; color: var(--text-muted); text-align: center;
 }
 /* ── One offer at a time, paged sideways ───────────────────────
    The track is the scroller and each item is exactly its width, so a swipe
@@ -13594,31 +13657,66 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    Two up on a phone, four across from 420px. `auto-fit` rather than a fixed
    count so the row never leaves one tile stranded on a line of its own. */
 .dev-ws-dash {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
-  margin-top: 2px;
+  /* ONE RULED ROW, NOT FOUR CARDS. Each figure used to carry the pane's own
+     surface, a hairline and the two-layer lift the week cards had — four
+     objects inside an object, above a fifth holding the summary line. The
+     figures are the pane's content, so they sit on the pane: hairlines
+     between them and nothing else. Two up on a phone, four across from
+     420px, which is the breakpoint they already used. */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 4px;
 }
-@media (min-width: 420px) { .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .dev-ws-dash-cell {
-  display: flex; flex-direction: column; gap: 1px;
-  padding: 8px 10px; border-radius: 14px;
-  /* Same surface and the same lift as the cards below them: the tiles sit on
-     the same translucent strip and had the same flatness problem. */
-  background: var(--dc-sheet);
-  box-shadow:
-    0 0 0 1px var(--app-sheet-line) inset,
-    0 1px 2px var(--app-sheet-shadow-near),
-    0 4px 10px var(--app-sheet-shadow-far);
-  font-size: 11.5px; color: var(--text-muted); line-height: 1.25;
+  min-width: 0;
+  padding: 10px 14px;
+  border-left: 1px solid var(--app-sheet-line);
+  border-top: 1px solid var(--app-sheet-line);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+.dev-ws-dash-cell:nth-child(2n+1) { border-left: 0; padding-left: 2px; }
+.dev-ws-dash-cell:nth-child(-n+2) { border-top: 0; padding-top: 2px; }
+@media (min-width: 420px) {
+  .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dev-ws-dash-cell { border-top: 0; padding-top: 2px; padding-bottom: 2px; }
+  .dev-ws-dash-cell:nth-child(2n+1) {
+    border-left: 1px solid var(--app-sheet-line);
+    padding-left: 14px;
+  }
+  .dev-ws-dash-cell:first-child { border-left: 0; padding-left: 2px; }
+  .dev-ws-dash-cell:last-child { padding-right: 2px; }
 }
 .dev-ws-dash-cell b {
-  font-size: 22px; font-weight: 600; color: var(--text-primary);
-  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+  display: block;
+  /* THE TEXT TOKEN, always. Tone used to be painted on the integer itself —
+     a green 6, an amber 3 — which is state carried by hue alone and unread
+     by anyone who cannot separate the two, and it put a status colour on
+     text where the rest of the product keeps text in text ink. The mark
+     moved to the label; the number is a number. */
+  font-size: 26px; font-weight: 600; line-height: 1.1;
+  letter-spacing: -.02em; color: var(--text-primary);
 }
-/* Tone marks the two tiles that are a CALL, not a fact: something shipped,
-   something is blocked on you. A zero wears neither — nothing is waiting on
-   you is not a warning, and the component leaves the class off. */
-.dev-ws-dash-good b { color: var(--state-ok); }
-.dev-ws-dash-warn b { color: var(--state-attention); }
+/* A GRID, not an inline run. The label wraps at phone widths, and under
+   `align-items: center` the dot floated to the middle of a two-line label
+   while its second line ran back underneath it. Two columns keep the mark
+   on the first line and the wrapped text in its own column. */
+.dev-ws-dash-label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0 5px;
+  margin-top: 2px;
+}
+.dev-ws-dash-label:not(:has(> .dev-ws-dash-dot)) { grid-template-columns: 1fr; }
+/* Only the two figures that are a CALL wear one. A zero is not a warning
+   (the component leaves the class off), and "nobody on them" is a fact
+   about the backlog rather than an alarm — it had no tone before and gains
+   none here. */
+.dev-ws-dash-dot { width: 6px; height: 6px; border-radius: 999px; margin-top: 5px; }
+.dev-ws-dash-dot-good { background: var(--state-ok); }
+.dev-ws-dash-dot-warn { background: var(--state-attention); }
 /* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
    are alternatives over one board, and a shared rail says that where a gap
    between pills would read as two unrelated toggles. Deliberately NOT
