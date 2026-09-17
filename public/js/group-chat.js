@@ -1028,10 +1028,13 @@ const GroupChat = {
   // way removes the question of which one wins.
   _renderQuotePreview() {
     const q = GroupChat.replyDraft;
+    // #2391: "Replying to message" named nothing. A row with no author is
+    // either a platform message (a proposal event, #2390) or a message whose
+    // author is gone; say which.
     const view = q ? {
       label: q.source === 'pr'
         ? `PR #${q.prNumber || ''}`.trim()
-        : (q.author ? `@${q.author}` : 'message'),
+        : (q.author ? `@${q.author}` : (q.source === 'event' ? 'a platform message' : 'a message')),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
     GroupChat._publishComposer('general', { quote: view });

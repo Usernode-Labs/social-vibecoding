@@ -144,9 +144,10 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   assert.doesNotMatch(fn[1], /innerHTML|classList|getElementById/);
   assert.match(fn[1], /_publishComposer\('general', \{ quote: view \}\)/);
   assert.match(fn[1], /_publishComposer\('thread', \{ quote: view \}\)/);
-  // The label the two sources produce: a PR number, an @author, or the word.
+  // The label the sources produce: a PR number, an @author, or what an
+  // authorless row is (#2391).
   assert.match(fn[1], /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);
-  assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : 'message'/);
+  assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : \(q\.source === 'event' \? 'a platform message' : 'a message'\)/);
 });
 
 test('the attach error line hides itself when there is nothing to say', () => {
