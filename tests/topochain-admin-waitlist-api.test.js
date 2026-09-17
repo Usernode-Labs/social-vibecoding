@@ -28,7 +28,7 @@ let currentMockPool = null;
 poolMod.getPool = () => currentMockPool;
 
 const { topochainAdminRoutes } = require('../src/routes/topochain/admin');
-const { SECTIONS } = require('../src/services/waitlist-signals');
+const { SECTIONS, signalsFor } = require('../src/services/waitlist-signals');
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -513,6 +513,15 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
     'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
     'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
     'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+    // The survey, APPENDED — the twenty-four above are read by column
+    // position out in the world, so this assertion is what stops a
+    // reorder or a rename from shipping.
+    'questions_answered', 'questions_total',
+    'q1_question', 'q1_answer', 'q2_question', 'q2_answer',
+    'q3_question', 'q3_answer', 'q4_question', 'q4_answer',
+    'q5_question', 'q5_answer', 'q6_question', 'q6_answer',
+    'q7_question', 'q7_answer',
+    'other_answers',
   ].join(','));
 
   const byId = new Map(rows.map((r) => [r.signup_id, r]));
@@ -582,5 +591,149 @@ test('export-csv neutralises formula injection and quotes awkward cells', async 
   assert.equal(row.found_us_detail, `'=HYPERLINK("http://evil.invalid","x")`);
   assert.equal(row.city, 'Paris, France');
   assert.equal(row.made_url, 'line one\nline two');
+  assert.equal(parseCsv(text).length, 5);
+});
+
+// ── The survey columns ────────────────────────────────────────────────────
+// The file used to carry contact details, dates and handles and say nothing
+// about what anybody ANSWERED — the admin screen's "N of 7 answered" line
+// was not even reproducible from it. These pin the seven question/answer
+// pairs, the count beside them, and the one number that must agree with
+// the screen.
+
+test('export-csv writes every question with its answer, resolved to sentences', async () => {
+  signupRows[4].answers = {
+    _version: 3,
+    made_url: 'https://example.invalid/synth',
+    made_note: 'A synth, in the browser',
+    country: 'UY',
+    discovery: { source: 'reddit' },
+    group: {
+      name: 'Bike co-op',
+      size: '10-50',
+      role: 'organizer',
+      tools: ['whatsapp', 'docs'],
+      need: 'Dues, votes and a roster',
+    },
+    loss: {
+      had: 'yes',
+      product: 'Google Reader',
+      kind: ['shutdown', 'api'],
+      story: 'Everyone scattered',
+    },
+    handles: { farcaster: 'cass', other: 'twitch.tv/cass' },
+    followed_claim: true,
+  };
+
+  const row = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text)
+    .find((r) => r.signup_id === '5');
+
+  assert.equal(row.questions_answered, '7');
+  assert.equal(row.questions_total, '7');
+
+  // The question wording is the form's, on every row, so a column is
+  // readable without knowing the survey.
+  assert.equal(row.q1_question, "Link something you've made");
+  assert.equal(row.q2_question, 'Country');
+  assert.equal(row.q3_question, 'How did you find us?');
+  assert.equal(row.q4_question,
+    "Tell us about a group you're part of that could use its own app.");
+  assert.equal(row.q5_question,
+    'Ever had a tool you relied on get killed, paywalled, or ruined?');
+  assert.equal(row.q6_question, 'Where else are you?');
+  assert.equal(row.q7_question, 'I followed along (self-reported, not verified)');
+
+  // The part that answers the question leads, unlabelled; follow-ups carry
+  // a label; multi-selects are slash-separated; and every code is resolved
+  // to the sentence the form showed rather than written out as `lt10`.
+  assert.equal(row.q1_answer,
+    'https://example.invalid/synth · What is it, in one line?: A synth, in the browser');
+  assert.equal(row.q2_answer, 'Uruguay');
+  assert.equal(row.q3_answer, 'Reddit or a forum');
+  assert.equal(row.q4_answer, [
+    'Bike co-op',
+    'Roughly how many people?: 10 – 50',
+    'Your role in it: I run or moderate it',
+    'What does it run on today?: WhatsApp / Notion or Google Docs',
+    "What would its own app do that those tools can't?: Dues, votes and a roster",
+  ].join(' · '));
+  assert.equal(row.q5_answer, [
+    'Yes, and it still annoys me',
+    'Which one?: Google Reader',
+    'What happened?: Shut down for good / API closed to third parties',
+    'Then what?: Everyone scattered',
+  ].join(' · '));
+  // No single part answers "where else are you?", so each network is
+  // labelled and an unanswered one leaves no dangling label behind.
+  assert.equal(row.q6_answer, 'Farcaster: cass · Anywhere else: twitch.tv/cass');
+  assert.equal(row.q7_answer, 'Yes');
+  assert.equal(row.other_answers, '');
+});
+
+// The count in the file and the "N of M answered" line on the screen read
+// the ONE catalogue, so this asserts against signalsFor rather than a
+// literal: a definition that drifts fails here instead of shipping two
+// numbers for the same survey.
+test('export-csv question count matches the signals the screen renders', async () => {
+  const rows = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text);
+  const byId = new Map(rows.map((r) => [r.signup_id, r]));
+  for (const signup of signupRows) {
+    const expected = signalsFor(signup);
+    const row = byId.get(String(signup.id));
+    assert.equal(row.questions_answered, String(expected.sections.length),
+      `signup ${signup.id}`);
+    assert.equal(row.questions_total, String(expected.sections_total));
+  }
+});
+
+// A blank answer must be a BLANK, not a missing column: every row carries
+// all seven pairs so a formula can point at one.
+test('export-csv keeps the question text on a signup with no answers at all', async () => {
+  const row = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text)
+    .find((r) => r.signup_id === '2');
+  assert.equal(row.questions_answered, '0');
+  assert.equal(row.questions_total, '7');
+  assert.equal(row.q1_question, "Link something you've made");
+  assert.equal(row.q7_question, 'I followed along (self-reported, not verified)');
+  for (let i = 1; i <= 7; i += 1) {
+    assert.equal(row[`q${i}_answer`], '', `q${i}_answer`);
+    assert.notEqual(row[`q${i}_question`], '', `q${i}_question`);
+  }
+  assert.equal(row.other_answers, '');
+});
+
+// An answers blob spans several schema versions. A retired shape answers
+// none of the seven, and dropping it would silently lose what somebody
+// actually told us — the same reason the admin screen shows it.
+test('export-csv keeps answers no current question covers', async () => {
+  signupRows[3].answers = {
+    role: 'Validator',
+    chain: 'Testnet',
+    why: 'Because',
+    admit_together: true,
+    made_url: 'https://example.invalid/retired',
+  };
+
+  const row = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text)
+    .find((r) => r.signup_id === '4');
+  assert.equal(row.questions_answered, '1');
+  assert.equal(row.other_answers,
+    'admit_together: true · chain: Testnet · role: Validator · why: Because');
+  assert.equal(row.q1_answer, 'https://example.invalid/retired');
+});
+
+// The composed Q&A cells are free text from a PUBLIC form opened in a
+// spreadsheet, so they take the same hardening the flat columns do.
+test('export-csv hardens the composed question cells too', async () => {
+  signupRows[0].answers = {
+    group: { name: '=cmd|\' /C calc\'!A0', need: 'Money, membership, votes' },
+    loss: { had: 'yes', story: 'line one\nline two' },
+  };
+
+  const { text } = await getCsv('/api/v4/admin/waitlist/export-csv');
+  const row = parseCsv(text).find((r) => r.signup_id === '1');
+  assert.match(row.q4_answer, /^'=cmd\|/);
+  assert.match(row.q4_answer, /What would its own app do that those tools can't\?: Money, membership, votes$/);
+  assert.equal(row.q5_answer, 'Yes, and it still annoys me · Then what?: line one\nline two');
   assert.equal(parseCsv(text).length, 5);
 });

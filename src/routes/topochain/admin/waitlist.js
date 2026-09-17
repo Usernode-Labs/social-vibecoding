@@ -20,6 +20,9 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
 const { signalsFor } = require('../../../services/waitlist-signals');
+const {
+  WAITLIST_QUESTIONS, answeredCount, answerLines, otherAnswers,
+} = require('../../../services/waitlist-questions');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -101,12 +104,35 @@ function bareHandle(v) {
 // (answers.verified) first, and otherwise the identity connected on its
 // linked ACCOUNT — `x_handle_source` says which, since only the first is
 // the waitlist row's own claim.
+//
+// The survey follows the first twenty-four columns and is APPEND-ONLY:
+// spreadsheets, scripts and formulas out in the world read this file by
+// column position, so nothing before `questions_answered` may be
+// reordered or renamed.
+//
+// `questions_total` travels beside the count for the same reason
+// `sections_total` travels with the signals — a reader that hardcodes the
+// denominator is a reader that will one day be a question behind.
+//
+// Each question's WORDING is written per row rather than folded into the
+// header, so a `q4_answer` column stays readable when a spreadsheet
+// filters or reorders it, and so the header keeps machine-stable
+// snake_case names. Every row carries all seven pairs even when the
+// answer is empty: a column that appears and disappears by row is a
+// column no formula can point at.
+const EXPORT_QUESTION_COLUMNS = WAITLIST_QUESTIONS.flatMap(
+  (_q, i) => [`q${i + 1}_question`, `q${i + 1}_answer`]
+);
+
 const EXPORT_HEADER = [
   'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
   'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
   'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
   'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
   'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+  'questions_answered', 'questions_total',
+  ...EXPORT_QUESTION_COLUMNS,
+  'other_answers',
 ];
 
 function exportRow(r) {
@@ -141,6 +167,18 @@ function exportRow(r) {
     discovery.source || '',
     discovery.detail || '',
     a.made_url || '',
+    // The survey. `answeredCount` reads the same predicates
+    // `signalsFor(row).sections` does — one catalogue, so this number and
+    // the "N of M answered" line on the admin screen cannot disagree.
+    // Called directly rather than through `signalsFor`, because this
+    // SELECT does not carry the invite count that function also reads.
+    answeredCount(a),
+    WAITLIST_QUESTIONS.length,
+    ...answerLines(a).flatMap((q) => [q.question, q.answer]),
+    // Anything the catalogue does not cover, verbatim: an answers blob
+    // spans several schema versions, and a retired shape nobody reads any
+    // more is still something a person told us.
+    otherAnswers(a),
   ];
 }
 
@@ -233,7 +271,9 @@ function waitlistAdminRoutes(config) {
   // Every signup the `?status=` / `?only=` filters select, unpaginated, as
   // a CSV — newest signup first, which is the order someone cross-checking
   // recent requests for access wants. Carries the X handle a signup
-  // connected (see exportRow for where it is read from).
+  // connected (see exportRow for where it is read from) and the whole
+  // two-stage survey — how many of the seven questions were answered, and
+  // each question's wording beside that person's answer.
   //
   // `adminWriteGate` on a GET, for the reason users.js's export-csv gives:
   // a view-only admin can read these rows page by page, but walking away

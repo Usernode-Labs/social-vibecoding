@@ -226,6 +226,44 @@ test('SPA navigations may fall back to the cached shell', () => {
   assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
 });
 
+// No page of the app lives under /api/, so a DOCUMENT navigation to one is
+// a download or another non-app response and the shell fallback can never
+// stand in for it. Three admin exports set `window.location.href` so the
+// browser's own downloader receives the streamed attachment; all three used
+// to classify as 'navigate' and lose the 200ms race to the precached
+// /index.html, which landed the admin on the app home screen with no file
+// and no error. Same failure the OAuth and chat-attachment bypasses above
+// each fixed one path at a time.
+//
+// 'bypass' and not 'api': networkFirstApi persists every 200 into the
+// non-versioned API cache, so routing these through it would write a full
+// dump of every signup's email address to the admin's disk under a key that
+// survives a shell version bump.
+test('/api/ document navigations bypass the worker entirely (admin downloads)', () => {
+  for (const path of [
+    '/api/v4/admin/waitlist/export-csv',
+    '/api/v4/admin/waitlist/export-csv?status=pending&only=confirmed',
+    '/api/v4/admin/users/export-csv/42',
+    '/api/admin/db-export?t=a-download-token',
+    '/api/anything/at/all',
+  ]) {
+    assert.equal(classify('GET', path, 'text/csv', 'navigate'), 'bypass', path);
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'bypass', path);
+  }
+});
+
+// The two assertions that stop the rule above from over-reaching: an app
+// route still falls back to the cached shell, and ordinary fetch/XHR
+// traffic to /api/ is untouched because it arrives as 'cors' or
+// 'same-origin' rather than 'navigate'.
+test('the /api/ navigation bypass does not touch SPA routes or fetch traffic', () => {
+  assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/api/apps', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/api/apps', 'application/json', 'same-origin'), 'api');
+  assert.equal(classify('GET', '/api/v4/admin/waitlist', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/api/auth/me', 'application/json', 'cors'), 'api');
+});
+
 // #860: the seven standalone admin pages became #admin console sections and
 // their old URLs are redirect stubs into the SPA — exactly the shape the
 // auth pages already had, so the cached shell is the right offline

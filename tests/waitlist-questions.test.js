@@ -237,3 +237,110 @@ test('publicOptions exposes exactly the option sets the validators accept', () =
   assert.equal('discovery_detail_labels' in opts, false);
   assert.equal(q.DISCOVERY_DETAIL_LABELS, undefined);
 });
+
+// ─── 4. The question catalogue ────────────────────────────────────────
+// ONE list of the seven questions, read by two things that must agree:
+// waitlist-signals.js derives its SECTIONS from it (so the admin screen's
+// "N of M answered" counts these), and the waitlist CSV export writes
+// `questions_answered` plus the seven question/answer pairs from it. The
+// denominator has drifted once already when there were two lists.
+
+test('the catalogue is the seven survey sections, in file order', () => {
+  assert.deepEqual(q.WAITLIST_QUESTIONS.map((x) => x.key),
+    ['made', 'where', 'found', 'group', 'loss', 'handles', 'follow']);
+  for (const item of q.WAITLIST_QUESTIONS) {
+    assert.equal(typeof item.question, 'string');
+    assert.ok(item.question.length > 0, item.key);
+    assert.equal(typeof item.answered, 'function', item.key);
+    assert.equal(typeof item.answer, 'function', item.key);
+  }
+});
+
+test('waitlist-signals derives its sections from this catalogue', () => {
+  const { SECTIONS } = require('../src/services/waitlist-signals');
+  assert.deepEqual(SECTIONS.map(([k]) => k), q.WAITLIST_QUESTIONS.map((x) => x.key));
+  assert.equal(SECTIONS.length, q.WAITLIST_QUESTIONS.length);
+});
+
+// The wording in an export is the wording the person READ. A reworded form
+// with a stale question string in the catalogue is a file that misreports
+// what was asked, and nothing else would catch it — so each question is
+// pinned against the JSX that renders it.
+//
+// The JSX writes apostrophes as `&rsquo;`, so the source is normalised
+// before the match. `follow`'s question carries a caveat the checkbox
+// label does not ("(self-reported, not verified)"): that is deliberate —
+// a column of "Yes" must not read as something we verified — so only the
+// part before the parenthetical is looked for.
+test('every question is the wording its form actually shows', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8')
+    .replace(/&rsquo;/g, "'")
+    .replace(/&amp;/g, '&');
+  const sources = {
+    stage1: read('frontend/src/features/auth/waitlist.tsx'),
+    stage2: read('frontend/src/features/auth/more.tsx'),
+  };
+  const WHERE_ASKED = {
+    made: 'stage2',
+    where: 'stage1',
+    found: 'stage1',
+    group: 'stage2',
+    loss: 'stage2',
+    handles: 'stage2',
+    follow: 'stage2',
+  };
+  for (const item of q.WAITLIST_QUESTIONS) {
+    const asked = item.question.replace(/\s*\([^)]*\)$/, '');
+    assert.ok(sources[WHERE_ASKED[item.key]].includes(asked),
+      `${item.key}: "${asked}" is not in ${WHERE_ASKED[item.key]}`);
+  }
+});
+
+test('answeredCount and answerLines survive a blob that is not an object', () => {
+  for (const bad of [null, undefined, 'nope', 42, ['a'], true]) {
+    assert.equal(q.answeredCount(bad), 0);
+    const lines = q.answerLines(bad);
+    assert.equal(lines.length, 7);
+    assert.deepEqual(lines.map((l) => l.answer), Array(7).fill(''));
+    assert.equal(q.otherAnswers(bad), '');
+  }
+});
+
+// Retired option keys are never remapped — a row holding one still has to
+// say something, so the code itself is the fallback rather than a blank.
+test('an unknown answer code falls back to the code', () => {
+  const lines = q.answerLines({
+    discovery: { source: 'farcaster' },
+    group: { size: 'gt9000', tools: ['pigeon'] },
+    country: 'X-LA',
+  });
+  const by = Object.fromEntries(lines.map((l) => [l.key, l.answer]));
+  assert.equal(by.found, 'farcaster');
+  assert.equal(by.where, 'Elsewhere in Latin America (region)');
+  assert.match(by.group, /Roughly how many people\?: gt9000/);
+  assert.match(by.group, /What does it run on today\?: pigeon/);
+});
+
+// A section counts only when it holds real content: a partial save can
+// leave an empty object behind, and an empty object is not an answer.
+test('an empty section object is not an answered question', () => {
+  assert.equal(q.answeredCount({ group: {}, loss: {}, handles: {} }), 0);
+  assert.equal(q.answeredCount({ followed_claim: false }), 0);
+  assert.equal(q.answeredCount({ followed_claim: true }), 1);
+  // `city` alone still answers "where" — rows answered it before the form
+  // stopped asking, and dropping the read would un-answer them.
+  assert.equal(q.answeredCount({ city: 'Berlin' }), 1);
+});
+
+test('otherAnswers carries what no question covers, sorted, objects as JSON', () => {
+  assert.equal(q.otherAnswers({
+    _version: 3,
+    made_url: 'https://x.invalid',
+    verified: { x: true },
+    why: 'Because',
+    role: 'Validator',
+    nested: { a: 1 },
+  }), 'nested: {"a":1} · role: Validator · why: Because');
+});

@@ -703,6 +703,25 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (mode === 'navigate') {
     if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
     if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';
+    // No page of the app lives under /api/, so a DOCUMENT navigation to one
+    // is a download or another non-app response — never something the shell
+    // fallback could stand in for. Three admin exports set
+    // `window.location.href` deliberately, so the browser's own download
+    // machinery receives the streamed attachment: the waitlist CSV, the
+    // programme-users CSV and the database export. All three classified as
+    // 'navigate' here and lost the 200ms race to the precached
+    // /index.html, so clicking Export landed the admin on the app home
+    // screen with no file and no error. Same bug as the OAuth and
+    // chat-attachment cases above, generalised: the per-path bypasses only
+    // ever caught the /api/ navigations somebody had already reported.
+    //
+    // 'bypass' and not 'api': networkFirstApi persists every 200 into the
+    // non-versioned API cache, which for these routes would write a full
+    // dump of every signup's email address to the admin's disk under a key
+    // that survives a shell version bump. A file download has nothing to
+    // gain from a cache entry. XHR/fetch traffic to /api/ arrives as 'cors'
+    // or 'same-origin' and is untouched by this rule.
+    if (p.startsWith('/api/')) return 'bypass';
     return 'navigate';
   }
 

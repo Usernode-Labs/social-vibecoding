@@ -15,7 +15,7 @@
 // module's header for why the buckets and the pseudo-codes went.
 'use strict';
 
-const { ISO_COUNTRIES } = require('./countries');
+const { ISO_COUNTRIES, countryLabel } = require('./countries');
 
 const ANSWERS_VERSION = 3;
 
@@ -294,6 +294,210 @@ function validateStage2(body) {
   return { ok: true, value };
 }
 
+// ── The question catalogue ──────────────────────────────────────────────
+// The seven survey questions as a reader encounters them: the wording the
+// form asked, whether a given answers blob answered it, and that answer
+// rendered as one line of prose.
+//
+// TWO consumers, ONE list, which is the whole point of it living here.
+// waitlist-signals.js derives its `SECTIONS` from `key` + `answered`, so
+// the admin screen's "N of M answered" counts exactly the questions the
+// CSV export writes `questions_answered` from. That denominator has
+// drifted once already (see the `sections_total` note in that module);
+// two lists that must agree is the shape that let it.
+//
+// Deliberately NOT here: any weight, score or ordering by worth. This is
+// a catalogue of what was asked and what came back — see
+// waitlist-signals.js's header for why ranking the queue is an unmade
+// product decision rather than a default somebody guessed.
+//
+// `question` is the form's own copy, verbatim (tests/waitlist-questions.test.js
+// pins each string against the JSX that renders it, so a reworded form
+// cannot leave a stale question in an export). Sub-question labels are
+// SHORT FORMS of the form's placeholders rather than verbatim: several run
+// to a sentence and a list of examples, which is fine under an input and
+// wrong inside a spreadsheet cell.
+
+// Sub-answers within one answer, and picks within one multi-select. Both
+// are chosen to survive a CSV round-trip without needing a quote: neither
+// is a comma, a quote or a newline, so `csvField` leaves a composed cell
+// alone unless the person's own free text needs the quoting.
+const ANSWER_SEPARATOR = ' · ';
+const MULTI_SEPARATOR = ' / ';
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+// A stored CODE as the sentence it stands for, falling back to the code
+// itself. The fallback is deliberate and matches the admin screen's:
+// retired option keys are never remapped, so a row holding `farcaster`
+// or `search` from an older survey must still say something.
+function labelFor(map, code) {
+  if (!code) return '';
+  const key = String(code);
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : key;
+}
+
+function labelList(map, codes) {
+  if (!Array.isArray(codes)) return '';
+  return codes.map((c) => labelFor(map, c)).filter(Boolean).join(MULTI_SEPARATOR);
+}
+
+// A labelled follow-up, or nothing at all when it was not answered. An
+// empty follow-up must not leave a dangling "Label:" in the cell.
+function sub(label, value) {
+  const text = value == null ? '' : String(value).trim();
+  return text ? `${label}: ${text}` : '';
+}
+
+// The parts of one answer as a single line. The part that answers the
+// top-level question is passed unlabelled and leads; follow-ups carry
+// their own label.
+function joinParts(parts) {
+  return parts.filter(Boolean).join(ANSWER_SEPARATOR);
+}
+
+const WAITLIST_QUESTIONS = [
+  {
+    key: 'made',
+    question: "Link something you've made",
+    answered: (a) => !!a.made_url,
+    answer: (a) => joinParts([a.made_url, sub('What is it, in one line?', a.made_note)]),
+  },
+  {
+    // `city` is still read even though the form stopped collecting it:
+    // rows that answered before 27 Aug 2026 kept the key, and dropping
+    // the read would retroactively un-answer a section somebody filled in.
+    key: 'where',
+    question: 'Country',
+    answered: (a) => !!(a.country || a.city),
+    answer: (a) => joinParts([countryLabel(a.country), sub('City', a.city)]),
+  },
+  {
+    key: 'found',
+    question: 'How did you find us?',
+    answered: (a) => !!asObject(a.discovery).source,
+    answer: (a) => {
+      const d = asObject(a.discovery);
+      return joinParts([
+        labelFor(DISCOVERY_SOURCES, d.source),
+        // The free-text follow-up is retired, but rows that answered it
+        // keep it. Its label was per-source ("Which account?", "Which
+        // subreddit?"), so the export uses a neutral one.
+        sub('More detail', d.detail),
+      ]);
+    },
+  },
+  {
+    key: 'group',
+    question: "Tell us about a group you're part of that could use its own app.",
+    answered: (a) => !!Object.keys(asObject(a.group)).length,
+    answer: (a) => {
+      const g = asObject(a.group);
+      return joinParts([
+        g.name,
+        sub('Roughly how many people?', labelFor(GROUP_SIZES, g.size)),
+        sub('Your role in it', labelFor(GROUP_ROLES, g.role)),
+        sub('What does it run on today?', labelList(GROUP_TOOLS, g.tools)),
+        sub("What would its own app do that those tools can't?", g.need),
+      ]);
+    },
+  },
+  {
+    key: 'loss',
+    question: 'Ever had a tool you relied on get killed, paywalled, or ruined?',
+    answered: (a) => !!Object.keys(asObject(a.loss)).length,
+    answer: (a) => {
+      const l = asObject(a.loss);
+      return joinParts([
+        labelFor(LOSS_ANSWERS, l.had),
+        sub('Which one?', l.product),
+        sub('What happened?', labelList(LOSS_KINDS, l.kind)),
+        sub('Then what?', l.story),
+      ]);
+    },
+  },
+  {
+    // No single part answers this one, so every network is labelled.
+    key: 'handles',
+    question: 'Where else are you?',
+    answered: (a) => !!Object.keys(asObject(a.handles)).length,
+    answer: (a) => {
+      const h = asObject(a.handles);
+      return joinParts([
+        sub('Farcaster', h.farcaster),
+        sub('Discord', h.discord),
+        sub('Telegram', h.telegram),
+        sub('Anywhere else', h.other),
+      ]);
+    },
+  },
+  {
+    // A CLAIM, not a verification — the name says so everywhere it is
+    // read, and the question text carries the caveat into the export so a
+    // column of "Yes" cannot be mistaken for something we checked. See
+    // the `followed_claim` note in validateStage2 for why no network will
+    // confirm a follow for us.
+    key: 'follow',
+    question: 'I followed along (self-reported, not verified)',
+    answered: (a) => !!a.followed_claim,
+    answer: (a) => (a.followed_claim ? 'Yes' : ''),
+  },
+];
+
+// Keys the catalogue above accounts for. Anything else in an answers blob
+// is shown verbatim rather than dropped: the blob spans several schema
+// versions, and a reader is entitled to see what is actually stored.
+// `_version` is bookkeeping; `verified` is OAuth proof, which the export
+// carries in its own handle columns. Mirrors KNOWN_ANSWER_KEYS on the
+// admin screen, which does the same thing for the same reason.
+const CATALOGUED_ANSWER_KEYS = new Set([
+  '_version', 'made_url', 'made_note', 'country', 'city', 'discovery',
+  'referrer_handle', 'group', 'loss', 'verified', 'handles', 'followed_claim',
+  'invites',
+]);
+
+// How many of the seven a blob answered. Identical by construction to
+// `signalsFor(row).sections.length`, which reads the same predicates.
+function answeredCount(answers) {
+  const a = asObject(answers);
+  return WAITLIST_QUESTIONS.filter((q) => q.answered(a)).length;
+}
+
+// Every catalogued question against one blob: `{ key, question, answer }`,
+// in file order, with an empty `answer` where the question went
+// unanswered. A caller gets all seven for every row so a column means the
+// same thing down the whole file.
+function answerLines(answers) {
+  const a = asObject(answers);
+  return WAITLIST_QUESTIONS.map((q) => ({
+    key: q.key,
+    question: q.question,
+    answer: q.answered(a) ? q.answer(a) : '',
+  }));
+}
+
+// Whatever the catalogue does not cover, as one line. Objects are
+// JSON-stringified so a nested blob from a retired schema version is at
+// least readable.
+function otherAnswers(answers) {
+  const a = asObject(answers);
+  return Object.keys(a)
+    .filter((k) => !CATALOGUED_ANSWER_KEYS.has(k))
+    .sort()
+    .map((k) => {
+      const v = a[k];
+      let text;
+      if (v == null) text = '';
+      else if (typeof v === 'object') {
+        try { text = JSON.stringify(v); } catch { text = String(v); }
+      } else text = String(v);
+      return `${k}: ${text}`;
+    })
+    .join(ANSWER_SEPARATOR);
+}
+
 // The public shape served to the SPA so the form renders from the same
 // definitions the server validates against.
 function publicOptions() {
@@ -318,6 +522,13 @@ module.exports = {
   LOSS_KINDS,
   COUNTRIES,
   countryCodes,
+  WAITLIST_QUESTIONS,
+  CATALOGUED_ANSWER_KEYS,
+  ANSWER_SEPARATOR,
+  MULTI_SEPARATOR,
+  answeredCount,
+  answerLines,
+  otherAnswers,
   normalizeMadeUrl,
   validateStage1,
   validateStage2,

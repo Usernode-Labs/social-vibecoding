@@ -11777,7 +11777,7 @@ async function seedStagingTopochain(pool, config) {
        VALUES
          (900500, 'staging-demo-topochain-waitlist-1@example.invalid',
           NOW() - INTERVAL '30 days', NULL,
-          '{"made_url": "https://staging-demo.example.invalid/what-i-made", "made_note": "Staging demo build note.", "country": "UY", "discovery": {"source": "friend", "detail": "Staging demo: heard about it at lunch."}, "group": {"name": "Staging demo crew", "size": "lt10", "role": "organizer", "tools": ["groupchat", "spreadsheet"], "need": "Staging demo group need."}, "loss": {"had": "yes", "product": "Staging demo defunct tool", "kind": ["shutdown"], "story": "Staging demo loss story."}, "handles": {"farcaster": "staging-demo"}, "followed_claim": true}'::jsonb,
+          '{"made_url": "https://staging-demo.example.invalid/what-i-made", "made_note": "Staging demo build note.", "country": "UY", "discovery": {"source": "friend", "detail": "Staging demo: heard about it at lunch."}, "group": {"name": "Staging demo crew", "size": "lt10", "role": "organizer", "tools": ["groupchat", "spreadsheet"], "need": "Staging demo group need."}, "loss": {"had": "yes", "product": "Staging demo defunct tool", "kind": ["shutdown"], "story": "Staging demo loss story."}, "handles": {"farcaster": "staging-demo"}, "followed_claim": true, "verified": {"x": true}}'::jsonb,
           NULL, NULL, NOW() - INTERVAL '29 days', NULL),
          (900501, 'staging-demo-topochain-waitlist-2@example.invalid',
           NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL, NULL),
@@ -11843,6 +11843,13 @@ async function seedStagingTopochain(pool, config) {
         },
         handles: { farcaster: 'staging-demo' },
         followed_claim: true,
+        // The one thing no fixture carried: an OAuth-proved handle from
+        // the waitlist's own connect flow. Without it the CSV export's
+        // `x_handle_source = 'waitlist'` branch is unreachable in a
+        // staging preview — every row reads the linked account's identity
+        // or nothing, so the column that says WHICH of the two a handle
+        // came from cannot be reviewed at all.
+        verified: { x: true },
       })]
     );
     await pool.query(
@@ -11858,6 +11865,18 @@ async function seedStagingTopochain(pool, config) {
         WHERE id = $1 AND answers IS NOT NULL
           AND answers->>'country' IS DISTINCT FROM $2`,
       [900503, 'X-LA']
+    );
+
+    // A database seeded after the wholesale rewrite above already has the
+    // right SHAPE, so the statement that rewrites it is a no-op there and
+    // `verified` would never arrive. Add just that key, gated on its
+    // absence so an edited fixture is left alone.
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = jsonb_set(answers, '{verified}', $2::jsonb, TRUE)
+        WHERE id = $1 AND answers IS NOT NULL
+          AND answers->'verified' IS NULL`,
+      [900500, JSON.stringify({ x: true })]
     );
 
     // The epoch-policy cutover cannot carry these two historical staging

@@ -518,7 +518,7 @@ test('the waitlist fixtures seed both a real country and a retired region', () =
       `row ${id}'s country is re-asserted by a follow-up UPDATE`
     );
   }
-  assert.equal((block.match(/UPDATE waitlist_signups/g) || []).length, 3,
+  assert.equal((block.match(/UPDATE waitlist_signups/g) || []).length, 4,
     'one UPDATE per re-asserted fixture, and no broader rewrite');
   // The third is 900500's answers, rewritten wholesale because the row used
   // to carry the retired {role, chain, why} shape and ON CONFLICT DO NOTHING
@@ -526,6 +526,17 @@ test('the waitlist fixtures seed both a real country and a retired region', () =
   // gated on that shape being present so it is a no-op on a correct row.
   assert.match(block, /AND answers->>'role' IS NOT NULL/,
     "the wholesale rewrite only fires on the retired shape it is replacing");
+  // The fourth adds `verified` to 900500, which no fixture carried. It is
+  // the CSV export's `x_handle_source = 'waitlist'` branch — the column
+  // saying whether a handle is the signup's own OAuth proof or its linked
+  // account's identity — and without it that branch is unreachable in a
+  // preview. Narrowly gated on the key's ABSENCE rather than folded into
+  // the wholesale rewrite above, which is a no-op on a database seeded
+  // after it landed.
+  assert.match(block, /jsonb_set\(answers, '\{verified\}'/,
+    "900500's verified handle is re-asserted for an already-correct row");
+  assert.match(block, /AND answers->'verified' IS NULL/,
+    'and only when the key is missing, so an edited fixture is left alone');
 });
 
 test('user_enrollments: a mix of season-wide (NULL event) and event-scoped rows, every row carrying the same season_id', () => {

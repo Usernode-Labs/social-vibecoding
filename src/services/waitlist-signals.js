@@ -15,27 +15,28 @@
 // the queue cannot disagree about what "answered the group question" means.
 'use strict';
 
-// The survey sections, mapped to the answers keys that carry them. A
-// section counts only when it holds real content: a partial save can leave
-// an empty object behind, and an empty object is not a signal.
+const { WAITLIST_QUESTIONS } = require('./waitlist-questions');
+
+// The survey sections, DERIVED from the one question catalogue in
+// waitlist-questions.js rather than restated here. A section counts only
+// when it holds real content: a partial save can leave an empty object
+// behind, and an empty object is not a signal — the catalogue's
+// `answered` predicates are where that judgement lives.
 //
-// `where` still reads `a.city` even though the form stopped collecting it:
-// rows that answered it before 27 Aug 2026 kept the key, and dropping the
-// read would retroactively un-answer a section somebody did fill in.
+// This used to be its own list of seven `[name, predicate]` pairs, which
+// meant the admin screen's "N of M answered" and anything else counting
+// the same survey were two definitions that merely happened to agree. The
+// CSV export needs the same count and the question wording alongside it,
+// so the pairs moved to the catalogue and this reads them. The shape here
+// is unchanged, and so is the restraint above: the catalogue carries no
+// weights either.
 //
-// `follow` is a SELF-REPORT and is kept out of `verified` on purpose — see
-// the note on `followed_claim` in waitlist-questions.js for why no network
-// will confirm a follow for us. A reader that conflates the two would
+// `where` still reads `a.city` even though the form stopped collecting it
+// (see the note on that question in waitlist-questions.js), and `follow`
+// is a SELF-REPORT kept out of `verified` on purpose — no network will
+// confirm a follow for us, and a reader that conflates the two would
 // claim we checked something we did not.
-const SECTIONS = [
-  ['made', (a) => !!a.made_url],
-  ['where', (a) => !!(a.country || a.city)],
-  ['found', (a) => !!(a.discovery && a.discovery.source)],
-  ['group', (a) => !!(a.group && Object.keys(a.group).length)],
-  ['loss', (a) => !!(a.loss && Object.keys(a.loss).length)],
-  ['handles', (a) => !!(a.handles && Object.keys(a.handles).length)],
-  ['follow', (a) => !!a.followed_claim],
-];
+const SECTIONS = WAITLIST_QUESTIONS.map((q) => [q.key, q.answered]);
 
 // Arrays and strings both pass a bare `typeof x === 'object'` check (well,
 // arrays do), and neither is an answers blob. These rows come from a public
