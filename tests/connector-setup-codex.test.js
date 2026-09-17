@@ -42,7 +42,16 @@ function block(id, nextId) {
 const stripComments = (src) => src.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 
 const CODEX = block('connector-setup-codex', 'connector-setup-generic');
-const GENERIC = block('connector-setup-generic', 'connector-prompt-help');
+// #2370: the permission panel used to FOLLOW this block, so its id was the end
+// marker. It lives inside the Claude.ai route now, ahead of both, so the block
+// ends where its own row does.
+const GENERIC = (() => {
+  const start = TSX.indexOf('id="connector-setup-generic"');
+  assert.ok(start > 0, '#connector-setup-generic exists');
+  const end = TSX.indexOf('</Disclosure>', start);
+  assert.ok(end > start, 'the generic row closes');
+  return TSX.slice(start, end);
+})();
 
 // ── The Codex CLI block ────────────────────────────────────────────────
 
@@ -172,10 +181,24 @@ test('#1892: both blocks are numbered walkthroughs in the same idiom as the Clau
     }
     assert.match(src, /<ol className="space-y-2">/);
   }
-  // The four walkthroughs sit together, before the permission-prompt panel.
-  const order = ['Set up in Claude', 'Set up in ChatGPT', 'id="connector-setup-codex"', 'id="connector-setup-generic"', 'id="connector-prompt-help"']
+  // The four routes sit together in one card, in reading order. The first two
+  // needles used to be 'Set up in Claude' / 'Set up in ChatGPT', which matched
+  // nothing after #2370's first pass, so indexOf answered -1 twice and the
+  // sort check passed without looking at them. They are the rows' own titles
+  // now, and a missing one fails.
+  const order = ['<Disclosure title="Claude.ai"', '<Disclosure title="ChatGPT"', 'id="connector-setup-codex"', 'id="connector-setup-generic"']
     .map((needle) => TSX.indexOf(needle));
+  assert.ok(order.every((at) => at > 0), 'all four routes exist');
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'walkthroughs are in reading order');
+  // The permission panel is a consequence of the Claude.ai route and of no
+  // other: Claude Code takes the connector from the claude.ai account it is
+  // added to, and ChatGPT and Codex have no per-call prompt to stop. So it
+  // sits INSIDE that row, where a ChatGPT reader never meets it.
+  const claude = TSX.slice(order[0], order[1]);
+  assert.match(claude, /id="connector-prompt-help"/, 'the permission panel is inside the Claude.ai route');
+  assert.match(claude, /title="Name it homeroom"/, 'and so is the naming note step 2 points at');
+  assert.match(claude, /also sets up Claude Code/,
+    'the row says so, because the in-chat tip sends already-connected people here for those rules');
 });
 
 test('#1892: user-facing copy in the new blocks carries no em dash', () => {

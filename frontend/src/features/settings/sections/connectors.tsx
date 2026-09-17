@@ -147,36 +147,91 @@ function SetupStep({ n, title, children }: {
  * checks on this pane therefore name a body element by selector and a summary
  * by text.
  */
-function Disclosure({ id, title, hint, children }: {
+function Disclosure({ id, title, hint, nested, children }: {
   id?: string;
   title: string;
   hint: string;
+  /**
+   * A row INSIDE another row's open body. Two things change, both literal:
+   * the type steps down (a nested row must not read as a peer of the route it
+   * sits in), and the chevron keys off a NAMED group — `group-open:` compiles
+   * to `.group[open] .x`, which matches any open ancestor, so an unnamed inner
+   * chevron would turn the moment the OUTER row opened.
+   */
+  nested?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <details
       id={id}
-      className="group [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800"
+      className={nested
+        ? 'group/sub [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-700'
+        : 'group [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800'}
     >
-      <summary className="list-none cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800">
+      <summary className={nested
+        ? 'list-none cursor-pointer active:bg-zinc-200 dark:active:bg-zinc-700'
+        : 'list-none cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800'}
+      >
         <ListRow
-          className="py-3"
+          className={nested ? 'gap-3 px-3 py-2.5' : 'py-3'}
           inset="none"
           chevron={false}
           title={title}
-          titleClassName="font-medium"
+          titleClassName={nested ? 'text-[0.9375rem] font-medium' : 'font-medium'}
           subtitle={hint}
-          subtitleClassName="whitespace-normal"
+          subtitleClassName={nested ? 'whitespace-normal text-[0.8125rem]' : 'whitespace-normal'}
           trailing={(
             <ChevronRightIcon
               aria-hidden="true"
-              className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 transition-transform group-open:rotate-90"
+              className={nested
+                ? 'h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform group-open/sub:rotate-90'
+                : 'h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 transition-transform group-open:rotate-90'}
             />
           )}
         />
       </summary>
-      <div className="px-4 pb-4">{children}</div>
+      <div className={nested ? 'px-3 pb-3' : 'px-4 pb-4'}>{children}</div>
     </details>
+  );
+}
+
+/**
+ * "Ask <product> to guide you" — the first thing inside a route (#1607, #2370).
+ *
+ * These two links used to sit on the overview as "Set it up in Claude" and
+ * "Set it up in ChatGPT", directly above rows called "Claude.ai" and "ChatGPT".
+ * Same two products, same goal, and nothing in either label said what differed:
+ * one opens a chat that TALKS you through setup, the other is the written
+ * steps. A reader met the choice of HOW before the choice of WHICH, twice.
+ *
+ * So the overview asks one question — which app — and the route answers the
+ * second: the guided chat first, because it is the shorter path, then "Or
+ * follow the steps". The ids are unchanged; settings.js writes each href by id
+ * from the live connector URL, and a closed <details> keeps the node in the
+ * document for it to find.
+ *
+ * An anchor, styled as the list's tinted control (the same surface as Connect
+ * on the social rows) rather than a second filled button under Copy.
+ */
+function GuidedSetup({ id, href, product }: { id: string; href: string; product: string }) {
+  return (
+    <>
+      <a
+        id={id}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex min-h-[44px] w-full items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-4 text-[0.9375rem] font-semibold text-violet-700 dark:text-violet-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+      >
+        {`Ask ${product} to guide you`}
+      </a>
+      <p className="mt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+        {`Opens a new ${product} chat with your connector details already filled in.`}
+      </p>
+      <h5 className="mt-5 mb-3 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500">
+        Or follow the steps
+      </h5>
+    </>
   );
 }
 
@@ -225,8 +280,15 @@ export function ConnectorsSection() {
         <SectionHeading title="Connectors">
           Work on your apps from a Claude or ChatGPT chat, without using your daily credits.
         </SectionHeading>
+        {/*
+            "MCP server URL", not "Connector URL" (#2370). The second was ours
+            alone. The field this gets pasted into is labelled "Remote MCP
+            server URL" in Claude and "MCP Server URL" in ChatGPT, and Codex's
+            command is `codex mcp add` — so the label is the words the reader
+            will be hunting for on the other side.
+        */}
         <Label className="mb-1" htmlFor="connector-url">
-          Connector URL
+          MCP server URL
         </Label>
         <div className="flex gap-2 mb-2">
           {/*
@@ -253,56 +315,35 @@ export function ConnectorsSection() {
             type="button"
             layout="shrink"
             className="min-h-[44px] sm:min-h-[36px]"
-            aria-label="Copy the connector URL"
+            aria-label="Copy the MCP server URL"
           >
             Copy
           </Button>
         </div>
         {/*
-            #1607: the walkthroughs below are six and seven steps, and the
-            complaint was that reading them is the cost. These two links hand
-            the same job to the assistant that is going to use the connector:
-            they open a NEW chat pre-loaded with the server URL and the two
-            facts people get wrong (dynamic client registration, so there is
-            no client secret to hunt for; and the exact name `usernode`, per
-            #1218), and ask it to walk the reader through one step at a time.
-
-            They do not REPLACE the steps below, and the request's hope that
-            they would is worth answering plainly: an assistant in a chat
-            cannot click through Claude's or ChatGPT's own settings UI. What
-            it can do is answer "where is that button" without the reader
-            re-reading a wall of prose, which is the back-and-forth the
-            request is actually about. So this is a shortcut past the reading,
-            not a replacement for the reference.
-
-            The href is built at click time from the LIVE #connector-url value
-            by Settings._renderConnectors(), never hardcoded, so a fork or a
-            config change cannot stale it — the same rule the prose below
-            follows. Nothing secret travels: the connector URL is
-            `${origin}/mcp`, a public endpoint, and auth is OAuth inside the
-            product rather than anything carried in a link.
+            What the address IS, for the reader who has never met "MCP". Opens
+            in place, like every other disclosure on this pane, and under the
+            field rather than over it — so Copy stays where it was and nothing
+            needs a second one.
         */}
-        <div className="mb-6 flex flex-wrap gap-2">
-          <a
-            id="connector-open-claude"
-            href="https://claude.ai/new"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-[44px] items-center rounded-full bg-white dark:bg-zinc-900 px-4 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            Set it up in Claude
-          </a>
-          <a
-            id="connector-open-chatgpt"
-            href="https://chatgpt.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-[44px] items-center rounded-full bg-white dark:bg-zinc-900 px-4 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            Set it up in ChatGPT
-          </a>
-        </div>
-        <h4 className={GROUP_LABEL}>Set one up</h4>
+        <details className="group/help">
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 px-1 text-[0.9375rem] font-medium text-violet-700 dark:text-violet-400">
+            How it works
+            <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/help:rotate-90" />
+          </summary>
+          <div className="space-y-2 px-1 pb-2">
+            <p className={BODY}>
+              This is Homeroom&rsquo;s address for AI apps. MCP is the standard they use to connect.
+            </p>
+            <p className={BODY}>
+              Paste it into Claude, ChatGPT or another app that supports MCP. That app can then see your Homeroom apps, file requests and open proposals for you.
+            </p>
+            <p className={BODY}>
+              You need no password or key. The app opens a Homeroom page, and you approve it there.
+            </p>
+          </div>
+        </details>
+        <h4 className={`${GROUP_LABEL} mt-4`}>Choose your app</h4>
         <GroupedList className="mx-0">
         {/*
             #1289: the one-line "Settings → Connectors, paste the URL" summary
@@ -320,16 +361,41 @@ export function ConnectorsSection() {
             these are pre-connection instructions, so the reader by
             definition hasn't told us which product they're in yet.
         */}
-        <Disclosure title="Claude.ai" hint="6 steps &middot; in the browser">
+        <Disclosure title="Claude.ai" hint="6 steps &middot; also sets up Claude Code">
+          {/*
+              #1607: the walkthroughs below are six and seven steps, and the
+              complaint was that reading them is the cost. These two links hand
+              the same job to the assistant that is going to use the connector:
+              they open a NEW chat pre-loaded with the server URL and the two
+              facts people get wrong (dynamic client registration, so there is
+              no client secret to hunt for; and the exact name `usernode`, per
+              #1218), and ask it to walk the reader through one step at a time.
+
+              They do not REPLACE the steps below, and the request's hope that
+              they would is worth answering plainly: an assistant in a chat
+              cannot click through Claude's or ChatGPT's own settings UI. What
+              it can do is answer "where is that button" without the reader
+              re-reading a wall of prose, which is the back-and-forth the
+              request is actually about. So this is a shortcut past the reading,
+              not a replacement for the reference.
+
+              The href is built at click time from the LIVE #connector-url value
+              by Settings._renderConnectors(), never hardcoded, so a fork or a
+              config change cannot stale it — the same rule the prose below
+              follows. Nothing secret travels: the connector URL is
+              `${origin}/mcp`, a public endpoint, and auth is OAuth inside the
+              product rather than anything carried in a link.
+          */}
+          <GuidedSetup id="connector-open-claude" href="https://claude.ai/new" product="Claude" />
             <ol className="space-y-2">
               <SetupStep n={1} title="Open connector settings.">
                 Go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Customize &rarr; Connectors</strong> in Claude (<code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>). This is where both directory connectors and your own custom ones live.
               </SetupStep>
               <SetupStep n={2} title="Start a custom connector.">
-                Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. In the dialog, put <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code> in the Name field, exactly that spelling (the &ldquo;Name it homeroom&rdquo; row below says why). On Team or Enterprise plans this option isn&rsquo;t there for members, so an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
+                Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. In the dialog, put <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code> in the Name field, exactly that spelling (&ldquo;Name it homeroom&rdquo;, under these steps, says why). On Team or Enterprise plans this option isn&rsquo;t there for members, so an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
               </SetupStep>
               <SetupStep n={3} title="Paste your MCP server URL.">
-                For Homeroom that is the connector URL in the field above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
+                For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
               </SetupStep>
               <SetupStep n={4} title="Add OAuth credentials if needed.">
                 If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Homeroom: it uses dynamic client registration, so there is nothing to enter.
@@ -341,8 +407,196 @@ export function ConnectorsSection() {
                 In a chat, use the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button at the lower left, then &ldquo;Connectors&rdquo;, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.
               </SetupStep>
             </ol>
+          {/*
+              #2370, second pass: these two used to be a card of their own on the
+              overview ("Claude Code permissions"). They are consequences of THIS
+              route and no other — Claude Code gets the connector from the
+              claude.ai account it is added to (src/services/prompts.js says so
+              to the agent itself), the name typed in step 2 is what the
+              permission rules match on, and ChatGPT and Codex have no per-call
+              prompt to stop. So a ChatGPT reader never meets them, and a Claude
+              reader finds them where the steps that cause them are.
+
+              The route's summary says "also sets up Claude Code", because the
+              connector's in-chat tip (mcp-tools.js, buildSetupHint) sends people
+              who are ALREADY connected to this page for these rules, and nobody
+              opens a row called "6 steps" to fix a prompt.
+          */}
+          <h5 className="mt-5 px-3 pb-2 text-[0.8125rem] font-normal text-zinc-500 dark:text-zinc-500">
+            If you use Claude Code
+          </h5>
+          <div className="overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800">
+          {/*
+              #1218: the Name field in Claude.ai's "Add custom connector" dialog
+              is where the permission-rule server segment comes from — the client
+              builds tool names from what the human types, not from the server's
+              own serverInfo.name. One account typed `Uesrnode`, and because a
+              permission rule's server segment cannot be wildcarded, every rule
+              Homeroom ships missed it SILENTLY. So the canonical name is stated
+              here, at the moment the field is filled in, rather than left to
+              chance. `homeroom` is exactly what serverInfo.name reports, so a
+              client that derives the name and one where it was typed agree.
+              The pre-rename spellings are still in the shipped block, so an
+              existing connector keeps working and only a NEW one needs the
+              name below.
+          */}
+          <Disclosure nested title="Name it homeroom" hint="So the ready-made rules match">
+            <p className={BODY}>
+              Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Homeroom ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code> as well, so the capitalised form is safe. It also still covers <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, the names this connector went by before, so a connector you added earlier keeps working and there is nothing to redo. Anything else needs the rules rewritten, which the field under &ldquo;Stop the permission prompts&rdquo; does for you.
+            </p>
+          </Disclosure>
+          {/*
+              #1218 follow-up: the same three rules land in two different files
+              depending on where Claude Code is running, and a single block
+              headed "add this to ~/.claude/settings.json" was wrong for the
+              surface that needs it most. A web session's container is built
+              fresh, so a file on the user's own machine is not in it; the only
+              thing that travels is the repo, so the per-repo copy is the one
+              that applies there. Hence three labelled cases rather than one
+              block of prose: a user reads the case they are in.
+
+              Static markup, not a stateful island: both copy buttons and the
+              case filtering are wired by Settings._renderConnectors()'s sibling
+              handlers, exactly like #connector-url-copy above it. The cases
+              render VISIBLE and are hidden by that code, so a client name it
+              cannot classify — and a page whose script has not run yet — shows
+              everything rather than nothing.
+          */}
+          <Disclosure nested id="connector-prompt-help" title="Stop the permission prompts" hint="If Claude Code asks before every call">
+              <p className={`${BODY} mb-3`}>
+                Claude Code asks you to approve <em>every</em> connector call by default, including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
+              </p>
+              {/*
+                  #1222 follow-up: the page used to present the blocks below with
+                  no statement of whose job it is to apply them, and a reasonable
+                  reader concluded Homeroom had a switch it was choosing not to
+                  offer. It does not — permission rules live in the user's own
+                  settings file or their own repo, and nothing this server sends
+                  can put them there. Saying so is not an apology; it is what
+                  turns "why is this still asking me" into a task with an owner.
+              */}
+              <p className={`${BODY} mb-3`}>
+                Homeroom cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either, which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
+              </p>
+
+              <div id="connector-case-cc-local" className="mb-3">
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+                  Claude Code on your own machine
+                </h5>
+                <p className={`${BODY} mb-2`}>
+                  Add this to your own <code className="font-mono text-zinc-600 dark:text-zinc-400">~/.claude/settings.json</code>. It is the only one of the three that covers <strong className="font-semibold text-zinc-600 dark:text-zinc-400">every</strong> repo at once, including repos Homeroom never made.
+                </p>
+                {/*
+                    #1290: Copy lives in a header row ABOVE the block, not beside
+                    it. Beside it, the button was a flex sibling of a twelve-line
+                    <pre> and `align-items: stretch` made it a ~210px violet slab
+                    — louder than #connector-url-copy, which is the section's real
+                    primary action — while taking ~80px of width off a block that
+                    already scrolls sideways on a phone. The row is the idiom
+                    sections/agent-files.tsx uses for its upload controls, and it
+                    is also where the destination filename belongs: the two blocks
+                    are byte-identical, so the file each one is for is the only
+                    thing that distinguishes them.
+                */}
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">~/.claude/settings.json</span>
+                  <Button
+                    id="connector-allow-rules-copy"
+                    type="button"
+                    layout="shrink"
+                    variant="outline"
+                    size="xsText"
+                    ink="muted"
+                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+                    aria-label="Copy the allow rules for your personal settings file"
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <pre id="connector-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
+              </div>
+
+              <div id="connector-case-cc-web" className="mb-3">
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+                  Claude Code on the web
+                </h5>
+                <p className={`${BODY} mb-2`}>
+                  A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out, so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Homeroom writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
+                </p>
+                {/* Same header row as the case above — see the note there. */}
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">.claude/settings.json</span>
+                  <Button
+                    id="connector-repo-allow-rules-copy"
+                    type="button"
+                    layout="shrink"
+                    variant="outline"
+                    size="xsText"
+                    ink="muted"
+                    className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+                    aria-label="Copy the allow rules to commit in your app repo"
+                  >
+                    Copy
+                  </Button>
+                </div>
+                {/* `mb-2` was the flex row's; the trailing paragraph still needs it. */}
+                <pre id="connector-repo-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-2">{PERSONAL_ALLOW_RULES}</pre>
+                <p className={BODY}>
+                  Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled. If you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
+                </p>
+              </div>
+
+              <div id="connector-case-chat" className="mb-3">
+                <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+                  Claude.ai chat, ChatGPT and Codex
+                </h5>
+                <p className={BODY}>
+                  Nothing to do. You approve the connector once when you connect it and it does not ask again per call. The two blocks above are Claude Code&rsquo;s file format and have no effect in those products.
+                </p>
+              </div>
+
+              <p className={BODY}>
+                Reads only. Anything that acts on your behalf (filing a request, opening or advancing a proposal) still asks every time, on purpose.
+              </p>
+              {/*
+                  The blocks above cover `homeroom` and `Homeroom`, plus the
+                  pre-rename `usernode` and `Usernode`. Any other spelling — a
+                  typo, a name someone chose — needs the same rules with that
+                  segment, and telling a user to hand-edit twenty JSON strings is
+                  telling them to make a twenty-first mistake. So the page does
+                  the edit: type what your tools are actually called, and both
+                  blocks above are rewritten in place. Typing a name the block
+                  already covers puts the shipped rules back, rather than
+                  narrowing them to the one spelling that was typed.
+
+                  Static markup with a sibling handler, like the copy buttons: the
+                  rewrite is Settings._wireConnectorNameSpelling(), which writes
+                  textContent (never innerHTML) into the two <pre> elements from a
+                  sanitised segment. It ships EMPTY so the prerendered document
+                  shows the canonical rules, which is the right answer for almost
+                  everyone and the only one that is right before script runs.
+              */}
+              <div className="mt-3">
+                <Label className="mb-1" htmlFor="connector-name-spelling">
+                  Connector registered under a different name?
+                </Label>
+                <p className={`${BODY} mb-2`}>
+                  Check what your tools are called in your session, the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
+                </p>
+                <Input
+                  id="connector-name-spelling"
+                  type="text"
+                  spellCheck="false"
+                  width="flex"
+                  mono
+                  placeholder="homeroom"
+                />
+              </div>
+          </Disclosure>
+          </div>
         </Disclosure>
         <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+          <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ol className="space-y-2">
               <SetupStep n={1} title="Use ChatGPT on the web.">
                 Open ChatGPT in your browser. Custom MCP setup is currently a web feature.
@@ -357,7 +611,7 @@ export function ConnectorsSection() {
                 The <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button lets you add your own MCP-backed app.
               </SetupStep>
               <SetupStep n={5} title="Enter your MCP server details.">
-                Enter the URL of the remote MCP server (for Homeroom, the connector URL in the field above) and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+                Enter the URL of the remote MCP server (for Homeroom, the MCP server URL above) and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
               </SetupStep>
               <SetupStep n={6} title="Create the app.">
                 ChatGPT connects to the MCP server and discovers the tools it exposes. Once that succeeds, save/create the app.
@@ -467,7 +721,7 @@ export function ConnectorsSection() {
                 Homeroom registers a client only if its OAuth callback is on <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">claude.com</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">chatgpt.com</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">openai.com</code> (or a host the deployment&rsquo;s operator has added). A callback on localhost, which command-line clients use, is accepted only by a Homeroom running in local-development mode. A refused registration answers <code className="font-mono text-zinc-600 dark:text-zinc-400">invalid_redirect_uri</code>, and that is a limit on the platform side rather than something to fix in the client.
               </SetupStep>
               <SetupStep n={4} title="Name it homeroom and read your tool list.">
-                Tools arrive as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code> in most clients, or as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__claude_ai_homeroom__whoami</code> where the client namespaces by product. The part between the first and last <code className="font-mono text-zinc-600 dark:text-zinc-400">__</code> is the server name the permission rules are written for; if it is not one of the spellings they cover, type it into the field under &ldquo;Stop the permission prompts&rdquo;. Have the agent call <code className="font-mono text-zinc-600 dark:text-zinc-400">get_connector_guidance</code> first: it returns the connector&rsquo;s full operating charter.
+                Tools arrive as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code> in most clients, or as <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__claude_ai_homeroom__whoami</code> where the client namespaces by product. The part between the first and last <code className="font-mono text-zinc-600 dark:text-zinc-400">__</code> is the server name the permission rules are written for; if it is not one of the spellings they cover, type it into the field under Claude.ai &rarr; &ldquo;Stop the permission prompts&rdquo;. Have the agent call <code className="font-mono text-zinc-600 dark:text-zinc-400">get_connector_guidance</code> first: it returns the connector&rsquo;s full operating charter.
               </SetupStep>
             </ol>
         </Disclosure>
@@ -475,176 +729,6 @@ export function ConnectorsSection() {
         <p className={GROUP_NOTE}>
           Whichever you use, approve the connection in the browser page that opens.
         </p>
-        <h4 className={`${GROUP_LABEL} mt-6`}>Claude Code permissions</h4>
-        <GroupedList className="mx-0">
-        {/*
-            #1218: the Name field in Claude.ai's "Add custom connector" dialog
-            is where the permission-rule server segment comes from — the client
-            builds tool names from what the human types, not from the server's
-            own serverInfo.name. One account typed `Uesrnode`, and because a
-            permission rule's server segment cannot be wildcarded, every rule
-            Homeroom ships missed it SILENTLY. So the canonical name is stated
-            here, at the moment the field is filled in, rather than left to
-            chance. `homeroom` is exactly what serverInfo.name reports, so a
-            client that derives the name and one where it was typed agree.
-            The pre-rename spellings are still in the shipped block, so an
-            existing connector keeps working and only a NEW one needs the
-            name below.
-        */}
-        <Disclosure title="Name it homeroom" hint="So the ready-made rules match">
-          <p className={BODY}>
-            Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Homeroom ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code> as well, so the capitalised form is safe. It also still covers <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, the names this connector went by before, so a connector you added earlier keeps working and there is nothing to redo. Anything else needs the rules rewritten, which the field under &ldquo;Stop the permission prompts&rdquo; does for you.
-          </p>
-        </Disclosure>
-        {/*
-            #1218 follow-up: the same three rules land in two different files
-            depending on where Claude Code is running, and a single block
-            headed "add this to ~/.claude/settings.json" was wrong for the
-            surface that needs it most. A web session's container is built
-            fresh, so a file on the user's own machine is not in it; the only
-            thing that travels is the repo, so the per-repo copy is the one
-            that applies there. Hence three labelled cases rather than one
-            block of prose: a user reads the case they are in.
-
-            Static markup, not a stateful island: both copy buttons and the
-            case filtering are wired by Settings._renderConnectors()'s sibling
-            handlers, exactly like #connector-url-copy above it. The cases
-            render VISIBLE and are hidden by that code, so a client name it
-            cannot classify — and a page whose script has not run yet — shows
-            everything rather than nothing.
-        */}
-        <Disclosure id="connector-prompt-help" title="Stop the permission prompts" hint="If Claude Code asks before every call">
-            <p className={`${BODY} mb-3`}>
-              Claude Code asks you to approve <em>every</em> connector call by default, including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
-            </p>
-            {/*
-                #1222 follow-up: the page used to present the blocks below with
-                no statement of whose job it is to apply them, and a reasonable
-                reader concluded Homeroom had a switch it was choosing not to
-                offer. It does not — permission rules live in the user's own
-                settings file or their own repo, and nothing this server sends
-                can put them there. Saying so is not an apology; it is what
-                turns "why is this still asking me" into a task with an owner.
-            */}
-            <p className={`${BODY} mb-3`}>
-              Homeroom cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either, which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
-            </p>
-
-            <div id="connector-case-cc-local" className="mb-3">
-              <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                Claude Code on your own machine
-              </h5>
-              <p className={`${BODY} mb-2`}>
-                Add this to your own <code className="font-mono text-zinc-600 dark:text-zinc-400">~/.claude/settings.json</code>. It is the only one of the three that covers <strong className="font-semibold text-zinc-600 dark:text-zinc-400">every</strong> repo at once, including repos Homeroom never made.
-              </p>
-              {/*
-                  #1290: Copy lives in a header row ABOVE the block, not beside
-                  it. Beside it, the button was a flex sibling of a twelve-line
-                  <pre> and `align-items: stretch` made it a ~210px violet slab
-                  — louder than #connector-url-copy, which is the section's real
-                  primary action — while taking ~80px of width off a block that
-                  already scrolls sideways on a phone. The row is the idiom
-                  sections/agent-files.tsx uses for its upload controls, and it
-                  is also where the destination filename belongs: the two blocks
-                  are byte-identical, so the file each one is for is the only
-                  thing that distinguishes them.
-              */}
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">~/.claude/settings.json</span>
-                <Button
-                  id="connector-allow-rules-copy"
-                  type="button"
-                  layout="shrink"
-                  variant="outline"
-                  size="xsText"
-                  ink="muted"
-                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                  aria-label="Copy the allow rules for your personal settings file"
-                >
-                  Copy
-                </Button>
-              </div>
-              <pre id="connector-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{PERSONAL_ALLOW_RULES}</pre>
-            </div>
-
-            <div id="connector-case-cc-web" className="mb-3">
-              <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                Claude Code on the web
-              </h5>
-              <p className={`${BODY} mb-2`}>
-                A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out, so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Homeroom writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
-              </p>
-              {/* Same header row as the case above — see the note there. */}
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500 truncate">.claude/settings.json</span>
-                <Button
-                  id="connector-repo-allow-rules-copy"
-                  type="button"
-                  layout="shrink"
-                  variant="outline"
-                  size="xsText"
-                  ink="muted"
-                  className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
-                  aria-label="Copy the allow rules to commit in your app repo"
-                >
-                  Copy
-                </Button>
-              </div>
-              {/* `mb-2` was the flex row's; the trailing paragraph still needs it. */}
-              <pre id="connector-repo-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-2">{PERSONAL_ALLOW_RULES}</pre>
-              <p className={BODY}>
-                Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled. If you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
-              </p>
-            </div>
-
-            <div id="connector-case-chat" className="mb-3">
-              <h5 className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                Claude.ai chat, ChatGPT and Codex
-              </h5>
-              <p className={BODY}>
-                Nothing to do. You approve the connector once when you connect it and it does not ask again per call. The two blocks above are Claude Code&rsquo;s file format and have no effect in those products.
-              </p>
-            </div>
-
-            <p className={BODY}>
-              Reads only. Anything that acts on your behalf (filing a request, opening or advancing a proposal) still asks every time, on purpose.
-            </p>
-            {/*
-                The blocks above cover `homeroom` and `Homeroom`, plus the
-                pre-rename `usernode` and `Usernode`. Any other spelling — a
-                typo, a name someone chose — needs the same rules with that
-                segment, and telling a user to hand-edit twenty JSON strings is
-                telling them to make a twenty-first mistake. So the page does
-                the edit: type what your tools are actually called, and both
-                blocks above are rewritten in place. Typing a name the block
-                already covers puts the shipped rules back, rather than
-                narrowing them to the one spelling that was typed.
-
-                Static markup with a sibling handler, like the copy buttons: the
-                rewrite is Settings._wireConnectorNameSpelling(), which writes
-                textContent (never innerHTML) into the two <pre> elements from a
-                sanitised segment. It ships EMPTY so the prerendered document
-                shows the canonical rules, which is the right answer for almost
-                everyone and the only one that is right before script runs.
-            */}
-            <div className="mt-3">
-              <Label className="mb-1" htmlFor="connector-name-spelling">
-                Connector registered under a different name?
-              </Label>
-              <p className={`${BODY} mb-2`}>
-                Check what your tools are called in your session, the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
-              </p>
-              <Input
-                id="connector-name-spelling"
-                type="text"
-                spellCheck="false"
-                width="flex"
-                mono
-                placeholder="homeroom"
-              />
-            </div>
-        </Disclosure>
-        </GroupedList>
         {/*
             Read-only, and empty until Settings._renderConnectors() fills it:
             rendering it populated would mismatch hydration, and there is

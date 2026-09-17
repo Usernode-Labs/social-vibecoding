@@ -555,7 +555,9 @@ test('copying reports the destination, and reports failure honestly', () => {
   // the thumb is over it — so the toast names the destination.
   assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
   assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
-  assert.match(settingsJs, /Connector URL copied/);
+  // #2370: the field is labelled "MCP server URL" — the words Claude, ChatGPT
+  // and Codex use for the box it gets pasted into — and the toast agrees.
+  assert.match(settingsJs, /MCP server URL copied/);
   // The URL button used to write 'Copied' even when writeText had rejected.
   assert.match(settingsJs, /'Copy failed'/);
   assert.match(settingsJs, /\{ error: true \}/);

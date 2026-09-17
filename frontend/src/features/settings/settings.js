@@ -374,8 +374,8 @@
           const field = document.getElementById('connector-url');
           return field ? field.value : null;
         },
-        successMessage: 'Connector URL copied',
-        failureMessage: 'Could not copy the connector URL',
+        successMessage: 'MCP server URL copied',
+        failureMessage: 'Could not copy the MCP server URL',
         selectOnFail: () => {
           const field = document.getElementById('connector-url');
           if (field) field.select();

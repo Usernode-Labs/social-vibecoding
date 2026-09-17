@@ -1012,19 +1012,19 @@
       "name": "Claude Code on the web is told to commit the repo file, not edit one on its machine (#1219)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-case-cc-web:not(.hidden) #connector-repo-allow-rules",
-      "expectText": "Stop the permission prompts"
+      "expectText": "also sets up Claude Code"
     },
     {
       "name": "Each allow-rules block spans the panel under its own Copy row (#1290)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "#connector-case-cc-local > pre#connector-allow-rules",
-      "expectText": "Stop the permission prompts"
+      "expectText": "also sets up Claude Code"
     },
     {
       "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
       "path": "/?demo=connectors-chatgpt#settings/connectors",
       "expectSelector": "#connector-prompt-help #connector-case-cc-local.hidden",
-      "expectText": "Stop the permission prompts"
+      "expectText": "also sets up Claude Code"
     },
     {
       "name": "The setup tip's status says when it was last sent in chat (#1219)",
