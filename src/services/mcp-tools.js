@@ -138,8 +138,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // The four demo tools are the connector's one group that acts on an app
 // directly rather than filing something for a vote: a synthetic partner
 // votes, and a reset rewinds main. They may because of where they are
-// refused — on every app not in demo mode, and on any app the caller did
-// not create (routes/demo-mode.js has the whole argument). Here they are
+// refused — on every app not in demo mode, on any app the caller did not
+// create, and for a caller who is not a full platform admin
+// (routes/demo-mode.js has the whole argument). Here they are
 // acting tools like the rest: out of the setup hint, out of the shipped
 // allow rules, prompted like any other write.
 //
@@ -3708,7 +3709,8 @@ function registerTools(server, ctx) {
   // shot stays untouched: the partner proposes, the notification lands, the
   // partner has already voted yes, the viewer votes, it merges, and a reset
   // puts the app back for the next take. The platform answers 403 to every
-  // one of them unless the app is in demo mode and this user created it —
+  // one of them unless the app is in demo mode and this user both created it
+  // and is a full platform admin —
   // the tools add nothing to that and replay the caller's own token, so a
   // connector can do here exactly what its user can do, and no more.
   const demoPath = (slug, tail) => `/api/apps/${slug}/demo${tail}`;
@@ -3717,7 +3719,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('get_demo_status', {
     title: 'Demo mode: is the next take ready?',
-    description: 'What state an app\'s demo mode is in and, more usefully, what would spoil a take: `reasons` names every condition that would stop the notification or the vote from landing — the "New proposals to vote on" preference that defaults off, a creator who has not used the app in 10 days and so is not counted as a voter, a vote threshold that is not 2. `ready` is true when that list is empty. Also reports the partner, the commit demo_reset puts main back to, and the partner\'s open proposal with its tally and preview URL. Read-only; answers for any app this user created, in demo mode or not.',
+    description: 'What state an app\'s demo mode is in and, more usefully, what would spoil a take: `reasons` names every condition that would stop the notification or the vote from landing — the "New proposals to vote on" preference that defaults off, a creator who has not used the app in 10 days and so is not counted as a voter, a vote threshold that is not 2. `ready` is true when that list is empty. Also reports the partner, the commit demo_reset puts main back to, and the partner\'s open proposal with its tally and preview URL. Read-only; answers for any app this user created (this user must also be a full platform admin), in demo mode or not.',
     inputSchema: { slug: z.string().describe('The app slug, as returned by list_apps.') },
     outputSchema: {
       demoMode: z.boolean(),
@@ -3779,7 +3781,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('demo_mode', {
     title: 'Switch demo mode on or off for an app you created',
-    description: 'Switch an app this user created into demo mode, or out of it. ON creates the synthetic partner — `partnerName` is a username (letters, digits, underscores), and it is what the proposal card and the notification show, so choose what should be on camera — records where main stands so demo_reset can put it back, and gives the partner standing as a voter on this app. The partner cannot sign in and acts only through demo_propose, demo_vote and demo_reset. OFF removes the partner and its standing; it is refused while the partner still has proposals on the app, so demo_reset first. Refused on the platform app and on any app this user did not create. Never present the partner as a person: its proposals and votes are synthetic, and the app\'s settings say so.',
+    description: 'Switch an app this user created into demo mode, or out of it; this user must also be a full platform admin, and both are required. ON creates the synthetic partner — `partnerName` is a username (letters, digits, underscores), and it is what the proposal card and the notification show, so choose what should be on camera — records where main stands so demo_reset can put it back, and gives the partner standing as a voter on this app. The partner cannot sign in and acts only through demo_propose, demo_vote and demo_reset. OFF removes the partner and its standing; it is refused while the partner still has proposals on the app, so demo_reset first. Refused on the platform app, on any app this user did not create, and for a user who is not a full platform admin. Never present the partner as a person: its proposals and votes are synthetic, and the app\'s settings say so.',
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       enabled: z.boolean().describe('true to switch demo mode on, false to switch it off.'),

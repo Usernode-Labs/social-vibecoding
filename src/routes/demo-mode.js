@@ -44,8 +44,14 @@ const votes = require('./votes');
 //      login route refuse an is_synthetic row outright (middleware/auth.js,
 //      routes/auth.js) — a session row that named it is no session.
 //   2. Every route here checks the app is in demo mode AND the caller is
-//      its creator. Not an admin, not an app admin: the creator. Demo mode
-//      is a thing you do to your own app.
+//      its creator AND a full platform admin. Two fences, not one: the
+//      creator fence keeps this off anybody else's app; the admin fence
+//      keeps it a platform-people feature rather than something every
+//      creator holds over an app other people use — the partner's yes
+//      counts like a person's, and on a small shared app creator plus
+//      partner reach the unopposed threshold. Never admin INSTEAD of
+//      creator: that would be the override that acts on somebody else's
+//      app. Demo mode is a thing you do to your own app.
 //   3. The platform's own app can never be in demo mode.
 //   4. The partner's standing as a voter (services/active-users.js) is
 //      written for the demo app only and removed when demo mode goes off.
@@ -99,9 +105,11 @@ function demoModeRoutes(config) {
 
   // The one gate. Answers the app row, or null with the refusal already sent.
   //
-  // Creator only, and deliberately not canAdminWrite: the containment
-  // argument for a synthetic voter is that it exists on YOUR app at YOUR
-  // request, and an admin override would turn that into "somebody's app".
+  // Creator AND full platform admin — rule 2 above. canAdminWrite is
+  // required on top of the creator check, never accepted in place of it:
+  // the containment argument for a synthetic voter is that it exists on
+  // YOUR app at YOUR request, and an admin override would turn that into
+  // "somebody's app".
   async function loadDemoApp(req, res, { requireDemoMode = true } = {}) {
     const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', '*');
     if (!app) {
@@ -114,6 +122,10 @@ function demoModeRoutes(config) {
     }
     if (req.user?.id == null || app.created_by !== req.user.id) {
       res.status(403).json({ error: 'Only the app\'s creator can use demo mode.' });
+      return null;
+    }
+    if (!req.user.canAdminWrite) {
+      res.status(403).json({ error: 'Demo mode is for an app\'s creator who is also a full platform admin.' });
       return null;
     }
     if (requireDemoMode && !app.demo_mode) {

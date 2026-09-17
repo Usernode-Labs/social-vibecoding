@@ -179,7 +179,8 @@ of the allow rules Homeroom ships, which is the subject of the next section.
 
 Demo mode (`routes/demo-mode.js`) exists so a recording of the proposal flow
 can be driven from a connected agent while the phone in shot stays untouched.
-An app's creator switches the app into demo mode and names a *partner*: a
+An app's creator, when they are also a full platform admin, switches the app
+into demo mode and names a *partner*: a
 synthetic account the platform owns, with no usable password and no OAuth,
 that the session middleware and the login route refuse outright. Through four
 tools, and only these, the partner acts:
@@ -193,8 +194,9 @@ tools, and only these, the partner acts:
 
 Two of them do what the rest of the connector never does: `demo_vote` votes,
 and `demo_reset` rewinds `main`. They may because of where the platform
-refuses them — on every app not in demo mode, and on any app the caller did
-not create (the creator; not an admin's override). The partner counts as a
+refuses them — on every app not in demo mode, on any app the caller did not
+create, and for a creator who is not a full platform admin (both fences;
+never an admin's override on somebody else's app). The partner counts as a
 voter on the demo app alone, the app's settings say it is in demo mode and
 name the partner, and the read-only `get_demo_status` lists what would spoil
 a take. In the permission model they are acting tools like the others: out of

@@ -20,8 +20,14 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const REPO = 'https://github.com/usernode-bot/demo-app';
-const CREATOR = { id: 7, username: 'evan', isAdmin: false, canAdminWrite: false };
-// A full platform admin, on purpose: demo mode is the creator's, not admin's.
+// The creator, and a full platform admin: demo mode needs both.
+const CREATOR = { id: 7, username: 'evan', isAdmin: true, canAdminWrite: true };
+// The same creator without the admin half.
+const PLAIN_CREATOR = { id: 7, username: 'evan', isAdmin: false, canAdminWrite: false };
+// A view-only admin is not a full admin: canAdminWrite is the gate, not isAdmin.
+const READONLY_ADMIN_CREATOR = { id: 7, username: 'evan', isAdmin: true, adminReadonly: true, canAdminWrite: false };
+// A full platform admin who is NOT the creator, on purpose: admin is required
+// on top of creator, never accepted instead of it.
 const ADMIN = { id: 8, username: 'ops', isAdmin: true, canAdminWrite: true };
 
 // ── World ────────────────────────────────────────────────────────────────
@@ -272,6 +278,22 @@ test('on somebody else\'s app, every route refuses — a platform admin included
   }
   const s = await get('/api/apps/demo-app/demo');
   assert.equal(s.status, 403);
+});
+
+test('a creator who is not a full platform admin is refused: the admin half is required too', async () => {
+  for (const who of [PLAIN_CREATOR, READONLY_ADMIN_CREATOR]) {
+    currentUser = who;
+    const label = who.isAdmin ? 'view-only admin creator' : 'plain creator';
+    for (const p of ['/api/apps/demo-app/demo-mode', '/api/apps/demo-app/demo/propose', '/api/apps/demo-app/demo/vote', '/api/apps/demo-app/demo/reset']) {
+      const r = await post(p, { enabled: true, partnerName: 'x', branch: 'x', title: 'y' });
+      assert.equal(r.status, 403, `${label}: ${p}`);
+      assert.match(r.body.error, /full platform admin/);
+    }
+    const s = await get('/api/apps/demo-app/demo');
+    assert.equal(s.status, 403, `${label}: status`);
+  }
+  assert.equal(calls.createPR, undefined);
+  assert.equal(queriesLike('UPDATE apps SET demo_mode').length, 0, 'nothing was switched');
 });
 
 test('the platform app can never be put in demo mode', async () => {

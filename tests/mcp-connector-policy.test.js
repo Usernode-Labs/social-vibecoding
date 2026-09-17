@@ -439,7 +439,7 @@ test('the tip’s throttle state is readable by the browser, never by the connec
 
 // ── Demo mode: on the list only because every route is gated on demo mode and the creator ──
 
-test('the demo routes are on the list only because every one of them is gated on demo mode and the creator', () => {
+test('the demo routes are on the list only because every one of them is gated on demo mode, the creator, and full platform admin', () => {
   const DEMO_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/demo-mode.js'), 'utf8');
   // The gate, in one place: the platform app, anyone but the creator, and an
   // app not in demo mode are each refused before a handler does anything.
@@ -451,6 +451,12 @@ test('the demo routes are on the list only because every one of them is gated on
     'anyone but the creator is refused');
   assert.match(DEMO_SRC, /if \(requireDemoMode && !app\.demo_mode\) \{\s*res\.status\(403\)/,
     'an app not in demo mode is refused');
+  // …and the admin half is required on top of the creator half, never
+  // instead of it: the creator check comes first, this comes after it.
+  const creatorAt = DEMO_SRC.indexOf('app.created_by !== req.user.id');
+  const adminAt = DEMO_SRC.indexOf('if (!req.user.canAdminWrite) {');
+  assert.ok(creatorAt > 0 && adminAt > creatorAt, 'a creator who is not a full platform admin is refused, after the creator check');
+  assert.match(DEMO_SRC, /if \(!req\.user\.canAdminWrite\) \{\s*res\.status\(403\)/);
   // …and every route goes through it.
   const routes = [...DEMO_SRC.matchAll(/router\.(?:get|post)\('(\/api\/apps\/:slug\/demo[^']*)'/g)].map((m) => m[1]);
   assert.deepEqual(routes.sort(), [

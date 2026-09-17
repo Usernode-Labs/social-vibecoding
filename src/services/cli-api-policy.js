@@ -170,7 +170,8 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // this list does — demo/vote casts a vote and demo/reset moves an app's
   // main — and the reason they may is entirely the handler's gate, which the
   // policy tests pin: every one of these routes refuses unless the app is in
-  // demo mode AND the caller is its creator (not an admin), and the
+  // demo mode AND the caller is its creator AND a full platform admin (both
+  // fences — never an admin's override on somebody else's app), and the
   // platform's own app can never be in demo mode. Through them a connector
   // reaches only an app its user owns and has switched into a mode whose
   // settings say a synthetic partner is acting on it. The general vote

@@ -8183,8 +8183,8 @@ COMMENT ON TABLE account_email_verifications IS 'staging:private';
 -- discarded password, no OAuth, and refused by the session middleware and the
 -- login route even if a session row somehow named it) and that acts only
 -- through routes/demo-mode.js — every route of which checks the app is in
--- demo mode and the caller is its creator. It counts for nothing on an app
--- that is not in demo mode.
+-- demo mode and the caller is its creator and a full platform admin. It
+-- counts for nothing on an app that is not in demo mode.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
 -- The per-app switch, its partner, and where main stood when it was switched
 -- on — which is what a reset puts main back to.
