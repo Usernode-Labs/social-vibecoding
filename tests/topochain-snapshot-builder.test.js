@@ -95,8 +95,8 @@ function freshDb() {
       },
       {
         // A season-type event that DOES span an epoch range — Season 1's
-        // shape. Scoring it would count its sub-events' blocks a second
-        // time, so it stays refused however it is addressed.
+        // shape. Scoring it would count its season's regular events'
+        // blocks a second time, so it stays refused however addressed.
         id: 107, name: 'Season One Standings', season_id: 10, type: 'season', is_active: true, internal: false,
         starts_at: T(-10), ends_at: T(10), start_epoch: 1, end_epoch: 4, chain_id: 'chain-1',
         scoring_formula: { metrics: [], offchain_weight: 1 },
@@ -142,7 +142,8 @@ function freshDb() {
       // different event — must never count toward event 100
       { user_id: 3, season_event_id: 102, activity_type: 'bug_report', points: 999 },
       // The season-type event's own ledger: what a challenge scorer writes
-      // when the challenges hang off the season rather than off a sprint.
+      // when the challenges hang off the season-type event rather than a
+      // regular one.
       { user_id: 2, season_event_id: 103, activity_type: 'ONBOARDING', points: 500 },
       { user_id: 2, season_event_id: 103, activity_type: 'WEEKLY', points: 250 },
       { user_id: 4, season_event_id: 103, activity_type: 'ONBOARDING', points: 1000 },
@@ -521,7 +522,7 @@ test('builder: default sweep takes the events that can score — blocks or point
   assert.equal(byId.get(103).users, 3);
   // 101 (inactive) and 104 (inactive season) are still not candidates, and
   // 107 is a season-type event WITH an epoch range — left out of the sweep
-  // so its sub-events' blocks are never counted twice.
+  // so its season's regular events' blocks are never counted twice.
   assert.equal(byId.has(101), false);
   assert.equal(byId.has(104), false);
   assert.equal(byId.has(107), false);
@@ -575,8 +576,9 @@ test('builder: explicit target reports its guard; force bypasses activity guards
   // dave's top_3 ledger row is scoped to event 100.
   assert.equal(forced.events[0].users, 3);
 
-  // A season-type event that spans its own sub-events' epochs is still
-  // refused, forced or not: scoring it would count their blocks twice.
+  // A season-type event that spans the same epochs as its season's
+  // regular events is still refused, forced or not: scoring it would
+  // count those blocks twice.
   const seasonWithEpochs = await buildSnapshots(currentMockPool, { seasonEventId: 107, force: true, now: new Date() });
   assert.equal(seasonWithEpochs.events[0].skipped, 'not_regular');
 

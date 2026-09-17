@@ -37,7 +37,7 @@
 // twice over — `not_regular`, and then `missing_epoch_range` — so the
 // points existed in the ledger, showed on each challenge card, and never
 // reached a leaderboard. Season 1 never hit this because it hung its
-// challenges on the regular sprints, whose snapshots carried them.
+// challenges on its regular events, whose snapshots carried them.
 //
 // So an event WITHOUT an epoch range now takes a second, much shorter
 // path: sum its ledger, write those snapshots, leave every block column
@@ -45,9 +45,9 @@
 // deliberate:
 //
 //   - It applies to any event TYPE. `not_regular` still guards the
-//     block-scoring path, where a season-type event spanning its own
-//     sub-events' epochs would double-count their blocks. With no epoch
-//     range there is nothing to double-count.
+//     block-scoring path, where a season-type event spanning the same
+//     epochs as its season's regular events would count their blocks
+//     twice. With no epoch range there is nothing to double-count.
 //   - Ledger points enter at FACE VALUE, ignoring `offchain_weight`.
 //     That weight exists to balance ledger points against block points;
 //     with no block points there is nothing to balance, and any other
@@ -96,8 +96,8 @@ const MAX_EPOCH_RANGE = 100_000;
 // challenges into the automatic aggregate — without it the fix would
 // need an admin to press Run by hand, which is the state this whole
 // service exists to end. A season-type event WITH an epoch range is
-// still left out: it spans its own sub-events' epochs, so scoring it
-// would count their blocks twice.
+// still left out: it spans the same epochs as its season's regular
+// events, so scoring it would count their blocks twice.
 const EVENTS_SQL = `
   SELECT se.id, se.name, se.season_id, se.start_epoch, se.end_epoch, se.chain_id,
          se.scoring_formula, se.is_active, se.internal, se.type,
