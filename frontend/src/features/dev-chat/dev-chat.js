@@ -9357,7 +9357,7 @@ const DevChat = {
     // `#dc-sync-btn` and `#dc-new-change-btn` are the banners component's —
     // `startSyncWithMain()` and `startNewChange()` are what they call.
 
-    document.getElementById('dc-form').addEventListener('submit', (e) => {
+    DevChat._bindOnce(document.getElementById('dc-form'), 'submit', (e) => {
       e.preventDefault();
       // The one circle, routed. This is now the SAME three-way decision
       // `_onComposerShortcut` makes, which is what let #920's hint line go:
@@ -9483,6 +9483,23 @@ const DevChat = {
     imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
   },
 
+  // #2397: bind a composer listener once per ELEMENT. `renderChatView` runs
+  // again on the same session (a title arriving, a PR opening, a venue
+  // switch), and since the screen became a React mount the form, the textarea
+  // and the paperclip survive that re-render — the reconciler keeps the nodes
+  // an innerHTML write used to replace. Every re-render therefore stacked one
+  // more listener. Two submit listeners were the reported bug: the first sent
+  // the message and cleared the box, the second then saw a running turn with
+  // an empty box, took it as Stop, and `_stopCurrentTurn` restored the sent
+  // text into the input. A new element (another session) binds afresh.
+  _bindOnce(el, type, handler) {
+    if (!el) return;
+    const bound = el._dcBound || (el._dcBound = new Set());
+    if (bound.has(type)) return;
+    bound.add(type);
+    el.addEventListener(type, handler);
+  },
+
   _setupAttachments() {
     const btn = document.getElementById('dc-attach-btn');
     const fileInput = document.getElementById('dc-file-input');
@@ -9495,15 +9512,15 @@ const DevChat = {
     DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a.sessionId === sid);
     DevChat._renderAttachStrip();
 
-    btn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
+    DevChat._bindOnce(btn, 'click', () => document.getElementById('dc-file-input')?.click());
+    DevChat._bindOnce(fileInput, 'change', () => {
       if (fileInput.files?.length) DevChat._addFiles(fileInput.files);
       fileInput.value = '';
     });
 
     // Paste an image straight from the clipboard (screenshots).
     if (textarea) {
-      textarea.addEventListener('paste', (e) => {
+      DevChat._bindOnce(textarea, 'paste', (e) => {
         const items = e.clipboardData?.items || [];
         const files = [];
         for (const item of items) {
@@ -9531,8 +9548,8 @@ const DevChat = {
     // Drag-and-drop onto the message area or the composer.
     for (const el of [messagesEl, document.getElementById('dc-form')]) {
       if (!el) continue;
-      el.addEventListener('dragover', (e) => { e.preventDefault(); });
-      el.addEventListener('drop', (e) => {
+      DevChat._bindOnce(el, 'dragover', (e) => { e.preventDefault(); });
+      DevChat._bindOnce(el, 'drop', (e) => {
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           DevChat._addFiles(e.dataTransfer.files);
@@ -9712,7 +9729,7 @@ const DevChat = {
   _setupTextareaResize() {
     const textarea = document.getElementById('dc-input');
     if (!textarea) return;
-    textarea.addEventListener('input', () => {
+    DevChat._bindOnce(textarea, 'input', () => {
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
       // Persist the draft per-session so it survives both tab switches
@@ -10616,7 +10633,7 @@ const DevChat = {
     const textarea = document.getElementById('dc-input');
     if (!textarea) return;
 
-    textarea.addEventListener('keydown', (e) => {
+    DevChat._bindOnce(textarea, 'keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         // preventDefault is unconditional for the combination, including
         // the nothing-to-do case (#920) — the keystroke must never leave
