@@ -16,6 +16,11 @@
 // scored right now, and the last few runs. One request rather than four,
 // because every part of it is small and they are only ever read together.
 //
+// The one thing fetched apart is a rule's ANATOMY (what a run of it reads,
+// whether a model is called, what stops it paying twice): it depends on the
+// numbers in the form as they are being typed, and the rubric it prints is
+// the grader's own function called with them, which only the server can do.
+//
 // Reads are covered by the router-wide adminReadGate in ../admin.js; every
 // mutation below carries adminWriteGate like the rest of the admin surface.
 'use strict';
@@ -28,6 +33,7 @@ const { toIntId, toBool, toNumber } = require('./util');
 const { ok, fail, iso, num } = require('../helpers');
 const rules = require('../../../services/topochain/challenge-rules');
 const scorer = require('../../../services/topochain/challenge-scorer');
+const { anatomy } = require('../../../services/topochain/challenge-anatomy');
 
 const RULES_SQL = `
   SELECT r.*, ct.goal AS template_goal, ct.category AS template_category,
@@ -79,7 +85,13 @@ async function ruleStatus(pool, now = Date.now()) {
   return byRule;
 }
 
-function formatRule(row, covers) {
+// `defaultMinutes` is the deployment's interval, which a rule with none of
+// its own follows. Passed in rather than read here so the formatter stays a
+// function of its arguments; the write routes format a row they have just
+// stored and leave the derived fields to the next GET.
+function formatRule(row, covers, { defaultMinutes = null } = {}) {
+  const cadence = { intervalMinutes: row.interval_minutes, lastScoredAt: row.last_scored_at };
+  const next = rules.nextDueAt(cadence, { defaultMinutes });
   return {
     id: Number(row.id),
     name: row.name,
@@ -93,6 +105,14 @@ function formatRule(row, covers) {
     points: num(row.points),
     enabled: row.enabled === true,
     notes: row.notes || null,
+    // The rule's own interval (null follows the default), the one it really
+    // runs on (null when the schedule is off), and the two times the screen
+    // says back: when it last ran to its end, and when it is next due.
+    interval_minutes: row.interval_minutes == null ? null : Number(row.interval_minutes),
+    effective_interval_minutes: rules.effectiveInterval(cadence, defaultMinutes),
+    last_scored_at: iso(row.last_scored_at),
+    next_due_at: next == null ? null : iso(new Date(next)),
+    last_pass: row.last_pass || null,
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
     covers: covers || [],
@@ -170,6 +190,24 @@ function parseRuleFields(body, { required }) {
     }
   }
 
+  // One of the fixed choices, or blank to follow the default. Not "any
+  // number": every choice is a whole number of scheduler beats, so a rule
+  // cannot be saved saying one interval and then run on another.
+  if (body.interval_minutes !== undefined) {
+    if (body.interval_minutes === null || body.interval_minutes === '') {
+      fields.interval_minutes = null;
+    } else {
+      const n = toNumber(body.interval_minutes);
+      if (n === undefined || !rules.INTERVAL_CHOICES.includes(n)) {
+        details.interval_minutes = [
+          `The interval must be one of ${rules.INTERVAL_CHOICES.join(', ')} minutes, or blank to use the default.`,
+        ];
+      } else {
+        fields.interval_minutes = n;
+      }
+    }
+  }
+
   if (body.enabled !== undefined) {
     const b = toBool(body.enabled);
     if (b === undefined) details.enabled = ['The enabled field must be true or false.'];
@@ -228,10 +266,15 @@ function challengeScoringAdminRoutes(config) {
             graded: rules.MEASURES[key].graded === true,
             windowed: rules.MEASURES[key].windowed === true,
           })),
-          rules: ruleRows.map((r) => formatRule(r, status.get(Number(r.id)))),
+          rules: ruleRows.map((r) => formatRule(r, status.get(Number(r.id)), {
+            defaultMinutes: scorer.intervalMinutes(config),
+          })),
           runs: runRows.map(formatRun),
           schedule: {
+            // The interval a rule follows when it has none of its own; 0 is
+            // the whole schedule switched off, whatever a rule asks for.
             interval_minutes: scorer.intervalMinutes(config),
+            interval_choices: rules.INTERVAL_CHOICES,
             aggregate_hours: scorer.aggregateHours(config),
             grading_configured: !!(config && config.anthropicApiKey),
           },
@@ -251,13 +294,15 @@ function challengeScoringAdminRoutes(config) {
     try {
       const { rows } = await pool.query(
         `INSERT INTO challenge_scoring_rules
-           (name, measure, challenge_template_id, challenge_id, target, points, enabled, notes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE), $8, $9)
+           (name, measure, challenge_template_id, challenge_id, target, points, enabled, notes, created_by,
+            interval_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE), $8, $9, $10)
          RETURNING *`,
         [fields.name, fields.measure, fields.challenge_template_id, fields.challenge_id,
           fields.target ?? null, fields.points ?? null,
           fields.enabled === undefined ? null : fields.enabled,
-          fields.notes ?? null, req.user ? req.user.id : null]
+          fields.notes ?? null, req.user ? req.user.id : null,
+          fields.interval_minutes ?? null]
       );
       return res.status(201).json({ success: true, data: formatRule(rows[0], []) });
     } catch (err) {
@@ -313,6 +358,17 @@ function challengeScoringAdminRoutes(config) {
       log.error('topochain-admin', 'DELETE /admin/challenge-scoring/rules failed', { message: err.message });
       return fail(res, 500, 'Failed to delete the rule.');
     }
+  });
+
+  // How a rule scores, for the rule detail. Read-only and pure: a measure and
+  // the two numbers in, the steps out. The numbers are the form's own as they
+  // stand — typed, or inherited from the challenge — so the rubric shown is
+  // the rubric the grader would be sent for exactly that rule.
+  router.get('/api/v4/admin/challenge-scoring/anatomy', (req, res) => {
+    const measure = typeof req.query.measure === 'string' ? req.query.measure : '';
+    if (!rules.MEASURES[measure]) return fail(res, 404, 'No such measure.');
+    const number = (v) => { const n = toNumber(v); return n !== undefined && n > 0 ? n : null; };
+    return ok(res, { data: anatomy(measure, { points: number(req.query.points), target: number(req.query.target) }) });
   });
 
   // Run now, and its preview. A dry run does every read and every plan, skips

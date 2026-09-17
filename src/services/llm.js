@@ -1347,18 +1347,19 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
 // Deliberately dumb about its subject — the rubric, the ceiling and every
 // word of the prompt come from the caller, because that is what keeps the
 // thing that decides points in a reviewable module of its own rather than
-// spread across this file. All this adds is the model choice, the structured
-// output and the same defensive parse every other Haiku helper here carries.
+// spread across this file. All this adds is the structured output and the
+// same defensive parse every other Haiku helper here carries. The grader
+// names the model too (GRADE_MODEL), because the admin screen prints it; the
+// default below only serves a caller that does not.
 //
 // THROWS on anything that is not a usable score (no key, refusal, truncation,
 // unparseable text). The scorer treats a throw as "leave it for the next
 // tick" and never as a zero, so an outage costs a delay, never someone's
 // points.
-async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryContext }) {
+async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryContext, model = 'claude-haiku-4-5' }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   if (!system || !user) throw new Error('gradeChallengeUnit needs a rubric and an input');
-  const model = 'claude-haiku-4-5';
   const resp = await createMessageWithTelemetry({
     activeClient,
     params: {

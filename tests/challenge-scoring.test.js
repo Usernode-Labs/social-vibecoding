@@ -672,3 +672,397 @@ test('the schema carries the index that makes re-running the scorer free', () =>
   // Exactly one binding, enforced by the database and not only by the API.
   assert.match(schema, /CONSTRAINT challenge_scoring_rules_one_binding CHECK/);
 });
+
+// ─── Cadence: each rule on its own interval ────────────────────────────
+//
+// One timer beats once a minute; a rule runs on the beats where it is due.
+// What these pin is the contract that makes that safe to operate: a rule
+// nobody has touched runs exactly as often as the whole service used to, a
+// beat with nothing due leaves no trace, the cheap rules never wait behind
+// the model calls, and a rule the run's budget cut short is first in line a
+// minute later instead of a whole interval later.
+
+const MIN = 60 * 1000;
+const { anatomy, dedent, READS } = require('../src/services/topochain/challenge-anatomy');
+
+test('an interval is one of a fixed list, and blank follows the deployment default', () => {
+  assert.deepEqual(rules.INTERVAL_CHOICES, [1, 2, 5, 10, 15, 30, 60]);
+  // Every choice is a whole number of beats, so a rule can never say one
+  // interval and run on another.
+  for (const m of rules.INTERVAL_CHOICES) assert.equal(m % rules.FLOOR_MINUTES, 0);
+  assert.equal(rules.effectiveInterval({ intervalMinutes: 2 }, 10), 2);
+  assert.equal(rules.effectiveInterval({ intervalMinutes: null }, 10), 10);
+  assert.equal(rules.effectiveInterval({}, 10), 10);
+  // A value that is not on the list (a hand-written UPDATE) is not honoured.
+  assert.equal(rules.effectiveInterval({ intervalMinutes: 3 }, 10), 10);
+});
+
+test('a rule is due once its interval has passed, give or take a quarter of a beat', () => {
+  const at = (msAgo) => ({ intervalMinutes: 2, lastScoredAt: new Date(NOW - msAgo) });
+  assert.equal(rules.isDue({ intervalMinutes: 2 }, { now: NOW, defaultMinutes: 10 }), true, 'never scored is due now');
+  assert.equal(rules.isDue(at(1 * MIN), { now: NOW, defaultMinutes: 10 }), false);
+  // The beat is a timer and timers drift: 2 ms early must not cost a minute.
+  assert.equal(rules.isDue(at(2 * MIN - 2), { now: NOW, defaultMinutes: 10 }), true);
+  // A deploy kicks the scorer half a beat before its first real beat. That
+  // beat must be clearly NOT due for a one-minute rule, not a coin toss.
+  assert.equal(rules.isDue({ intervalMinutes: 1, lastScoredAt: new Date(NOW - MIN / 2) }, { now: NOW, defaultMinutes: 10 }), false);
+  assert.equal(rules.isDue(at(2 * MIN), { now: NOW, defaultMinutes: 10 }), true);
+  // Blank follows the default, with the same slack.
+  assert.equal(rules.isDue({ lastScoredAt: iso(NOW - 9 * MIN) }, { now: NOW, defaultMinutes: 10 }), false);
+  assert.equal(rules.isDue({ lastScoredAt: iso(NOW - 10 * MIN) }, { now: NOW, defaultMinutes: 10 }), true);
+  assert.equal(rules.nextDueAt(at(1 * MIN), { defaultMinutes: 10 }), NOW + 1 * MIN);
+  assert.equal(rules.nextDueAt({ intervalMinutes: 2 }, { defaultMinutes: 10 }), null, 'never run: due now, no time to print');
+});
+
+test('with the schedule switched off, no rule is ever due whatever it asks for', () => {
+  assert.equal(rules.effectiveInterval({ intervalMinutes: 1 }, 0), null);
+  assert.equal(rules.isDue({ intervalMinutes: 1 }, { now: NOW, defaultMinutes: 0 }), false);
+  assert.equal(rules.nextDueAt({ intervalMinutes: 1, lastScoredAt: iso(NOW) }, { defaultMinutes: 0 }), null);
+});
+
+test('a run takes the SQL-only rules before the graded ones, longest-waiting first', () => {
+  const order = [
+    { id: 1, measure: 'USEFUL_FEEDBACK', lastScoredAt: iso(NOW - 60 * MIN) },
+    { id: 2, measure: 'TRY_APPS', lastScoredAt: iso(NOW - 2 * MIN) },
+    { id: 3, measure: 'CONNECT_ACCOUNTS', lastScoredAt: iso(NOW - 9 * MIN) },
+    { id: 4, measure: 'PROPOSAL_ACCEPTED', lastScoredAt: null },
+    { id: 5, measure: 'PROPOSAL_SENT', lastScoredAt: null },
+  ].sort(rules.runOrder).map((r) => r.id);
+  // 5 has never run, then 3 has waited longer than 2; only then the two that
+  // call a model — so a connected account never waits on a stranger's report
+  // being marked, however low the feedback rule's id is.
+  assert.deepEqual(order, [5, 3, 2, 4, 1]);
+});
+
+// A pool for the cadence tests: several rules at once, the stamps recorded.
+function cadencePool({
+  ruleRows = [], dueRows = [], candidates = [], feedback = [], lastScheduledRun = null, locked = false,
+} = {}) {
+  const pool = {
+    inserted: [], runStarts: [], runEnds: [], stamps: [], cutShort: [], seen: [],
+  };
+  const handle = async (sql, params) => {
+    pool.seen.push(sql);
+    if (sql.includes('pg_try_advisory_lock')) return { rows: [{ acquired: !locked }] };
+    if (sql.includes('pg_advisory_unlock')) return { rows: [] };
+    if (sql.includes('SET last_scored_at')) { pool.stamps.push({ id: params[0], at: params[1], pass: JSON.parse(params[2]) }); return { rows: [] }; }
+    if (sql.includes('UPDATE challenge_scoring_rules SET last_pass')) { pool.cutShort.push({ id: params[0], pass: JSON.parse(params[1]) }); return { rows: [] }; }
+    if (sql.includes('JOIN challenges c')) return { rows: ruleRows };
+    if (sql.includes('FROM challenge_scoring_rules')) return { rows: dueRows };
+    if (sql.includes("trigger = 'schedule'")) return { rows: [{ at: lastScheduledRun }] };
+    if (sql.includes("metadata->>'source_key' AS source_key")) return { rows: [] };
+    if (sql.includes('FROM app_activity')) return { rows: candidates };
+    if (sql.includes('FROM feedback_reports')) return { rows: feedback };
+    if (sql.includes('INSERT INTO challenge_scorer_runs')) { pool.runStarts.push(params); return { rows: [{ id: pool.runStarts.length }] }; }
+    if (sql.includes('UPDATE challenge_scorer_runs')) { pool.runEnds.push(params); return { rows: [] }; }
+    if (sql.includes('INSERT INTO user_activities')) { pool.inserted.push(params); return { rows: [{ id: pool.inserted.length }] }; }
+    if (sql.includes('MAX(snapshot_at)')) return { rows: [{ at: new Date(NOW) }] };
+    return { rows: [] };
+  };
+  pool.query = handle;
+  pool.connect = async () => ({ query: handle, release() {} });
+  return pool;
+}
+
+const connectRow = (extra = {}) => challengeRow({
+  rule_id: 2, rule_name: 'Connect', measure: 'CONNECT_ACCOUNTS', challenge_id: 77,
+  metric_target: 2, t_metric_target: 2, t_goal: 'Connect X and GitHub', ...extra,
+});
+
+test('the schedule runs only the rules that are due, and stamps them with the time of the run', async () => {
+  const pool = cadencePool({ ruleRows: [challengeRow(), connectRow()], candidates: appActivityRows });
+  const summary = await scorer.score(pool, { now: NOW, only: new Set([1]) });
+
+  assert.deepEqual(summary.challenges.map((c) => c.rule_id), [1], 'rule 2 is not due, so it is not part of this run');
+  assert.equal(pool.inserted.length, 3);
+  assert.deepEqual(pool.stamps.map((s) => s.id), [1]);
+  // The run's own clock, not the wall clock at the end of the pass: that is
+  // what keeps "every 2 minutes" from sliding by the length of each pass.
+  assert.equal(pool.stamps[0].at, iso(NOW));
+  // What the pass cost is kept on the rule, measured.
+  assert.equal(pool.stamps[0].pass.candidates, 3);
+  assert.equal(pool.stamps[0].pass.credits, 3);
+  assert.equal(typeof pool.stamps[0].pass.ms, 'number');
+  assert.equal(summary.challenges[0].candidates, 3);
+  assert.equal(typeof summary.challenges[0].ms, 'number');
+});
+
+test('Run now covers every rule, whatever the intervals say', async () => {
+  const pool = cadencePool({ ruleRows: [challengeRow(), connectRow()], candidates: appActivityRows });
+  const summary = await scorer.score(pool, { now: NOW });
+  assert.deepEqual(summary.challenges.map((c) => c.rule_id).sort(), [1, 2]);
+  assert.deepEqual(pool.stamps.map((s) => s.id).sort(), [1, 2]);
+});
+
+test('a pass the run budget cut short is not stamped, so it is due again on the next beat', async () => {
+  // 200 people with three apps each is 600 credits; one run writes 500.
+  const many = [];
+  for (let u = 1; u <= 200; u += 1) {
+    for (let a = 1; a <= 3; a += 1) many.push({ user_id: u, app_id: a, app_name: `App ${a}`, last_date: '2026-09-15', seconds: 60 });
+  }
+  const pool = cadencePool({ ruleRows: [challengeRow(), connectRow()], candidates: many });
+  const summary = await scorer.score(pool, { now: NOW, only: new Set([1, 2]) });
+
+  assert.equal(summary.credits, scorer.MAX_CREDITS_PER_RUN);
+  // Rule 1 took the whole budget and still had a hundred credits to write;
+  // rule 2 was never reached. NEITHER is stamped, so both are due a minute
+  // from now rather than an interval from now — and the rule detail is told
+  // why the first one stopped.
+  assert.equal(pool.stamps.length, 0);
+  assert.deepEqual(pool.cutShort.map((c) => c.id), [1]);
+  assert.equal(pool.cutShort[0].pass.cut_short, true);
+  assert.deepEqual(summary.challenges.map((c) => c.rule_id), [1]);
+});
+
+test('a dry run stamps nothing', async () => {
+  const pool = cadencePool({ ruleRows: [challengeRow()], candidates: appActivityRows });
+  await scorer.score(pool, { now: NOW, dryRun: true });
+  assert.equal(pool.stamps.length + pool.cutShort.length, 0);
+});
+
+test('a due rule with no live challenge is stamped all the same', async () => {
+  // Otherwise it is due on every beat, and every beat becomes a recorded run.
+  const pool = cadencePool({ ruleRows: [challengeRow()], candidates: appActivityRows });
+  await scorer.score(pool, { now: NOW, only: new Set([1, 9]) });
+  assert.deepEqual(pool.stamps.map((s) => s.id).sort(), [1, 9]);
+  assert.equal(pool.stamps.find((s) => s.id === 9).pass.idle, 'no live challenge');
+});
+
+test('a grader that is down does not turn a graded rule into an every-beat retry', async () => {
+  const graded = challengeRow({
+    rule_id: 3, rule_name: 'Feedback', measure: 'USEFUL_FEEDBACK', challenge_id: 82,
+    metric_target: 4, t_metric_target: 4, reward: '1,000 pts', t_reward: '1,000 pts',
+  });
+  const pool = cadencePool({
+    ruleRows: [graded],
+    feedback: [{ id: 5, user_id: 7, created_at: new Date(NOW - HOUR), title: 'Save fails', description: realReport(1), app_name: 'Recipes' }],
+  });
+  const down = { isEnabled: () => true, gradeChallengeUnit: async () => { throw new Error('529'); } };
+  const summary = await scorer.score(pool, { now: NOW, only: new Set([3]), llm: down });
+  assert.equal(summary.grading, '529');
+  assert.equal(pool.inserted.length, 0, 'nothing is credited at a guess');
+  // Stamped: the rest waits on the MODEL, and retries on the rule's interval.
+  // Only this service's own budget leaves a rule unstamped.
+  assert.deepEqual(pool.stamps.map((s) => s.id), [3]);
+});
+
+test('a beat with nothing due is not a run, and records nothing', async () => {
+  const pool = cadencePool({
+    dueRows: [{ id: 1, measure: 'TRY_APPS', interval_minutes: 10, last_scored_at: new Date(NOW - 3 * MIN) }],
+    lastScheduledRun: new Date(NOW - 3 * MIN),
+  });
+  const result = await scorer.tick(pool, { challengeScorer: { intervalMinutes: 10 } }, { now: NOW });
+  assert.deepEqual(result, { idle: true });
+  assert.equal(pool.runStarts.length, 0);
+  assert.equal(pool.seen.some((sql) => sql.includes('JOIN challenges c')), false, 'it never even reads the challenges');
+});
+
+test('a beat runs exactly the due rules', async () => {
+  const pool = cadencePool({
+    ruleRows: [challengeRow(), connectRow()],
+    candidates: appActivityRows,
+    dueRows: [
+      { id: 1, measure: 'TRY_APPS', interval_minutes: 2, last_scored_at: new Date(NOW - 2 * MIN) },
+      { id: 2, measure: 'CONNECT_ACCOUNTS', interval_minutes: null, last_scored_at: new Date(NOW - 2 * MIN) },
+    ],
+    lastScheduledRun: new Date(NOW - 2 * MIN),
+  });
+  const result = await scorer.tick(pool, { challengeScorer: { intervalMinutes: 10 } }, { now: NOW });
+  assert.equal(result.credits, 3);
+  assert.equal(pool.runStarts.length, 1);
+  assert.deepEqual(pool.stamps.map((s) => s.id), [1], 'the ten-minute rule was scored two minutes ago and sits this one out');
+});
+
+test('a quiet stretch still gets one run per default interval', async () => {
+  // No rule is due — or there are no rules at all — and the service still has
+  // to be seen alive, and the standings still have to be rebuilt.
+  const pool = cadencePool({ dueRows: [], lastScheduledRun: new Date(NOW - 10 * MIN) });
+  const result = await scorer.tick(pool, { challengeScorer: { intervalMinutes: 10 } }, { now: NOW });
+  assert.equal(result.credits, 0);
+  assert.equal(pool.runStarts.length, 1);
+  assert.equal(pool.runStarts[0][0], 'schedule');
+});
+
+test('a beat that cannot take the lock does nothing at all', async () => {
+  const pool = cadencePool({ locked: true, dueRows: [{ id: 1, measure: 'TRY_APPS', interval_minutes: 1, last_scored_at: null }] });
+  assert.deepEqual(await scorer.tick(pool, { challengeScorer: { intervalMinutes: 10 } }, { now: NOW }), { busy: true });
+  assert.equal(pool.runStarts.length, 0);
+});
+
+test('only an interval on the list can be saved, and blank means the default', () => {
+  assert.equal(parseRuleFields({ interval_minutes: 5 }, { required: false }).fields.interval_minutes, 5);
+  assert.equal(parseRuleFields({ interval_minutes: '15' }, { required: false }).fields.interval_minutes, 15);
+  assert.equal(parseRuleFields({ interval_minutes: '' }, { required: false }).fields.interval_minutes, null);
+  assert.equal(parseRuleFields({ interval_minutes: null }, { required: false }).fields.interval_minutes, null);
+  for (const bad of [3, 0, -5, 'soon', 1440]) {
+    const { details } = parseRuleFields({ interval_minutes: bad }, { required: false });
+    assert.match(details.interval_minutes[0], /must be one of 1, 2, 5, 10, 15, 30, 60 minutes/, String(bad));
+  }
+});
+
+test('the screen is told each rule\'s interval, when it last ran and when it is next due', async () => {
+  currentMockPool = scriptedPool();
+  currentMockPool.query = async (sql) => {
+    if (sql.includes('LEFT JOIN challenge_templates ct ON ct.id = r.challenge_template_id')) {
+      return {
+        rows: [
+          { id: 1, name: 'Try apps', measure: 'TRY_APPS', challenge_template_id: 23, enabled: true,
+            interval_minutes: 2, last_scored_at: new Date(NOW), last_pass: { at: iso(NOW), ms: 12, candidates: 3, credits: 3 } },
+          { id: 2, name: 'Connect', measure: 'CONNECT_ACCOUNTS', challenge_template_id: 26, enabled: true,
+            interval_minutes: null, last_scored_at: null, last_pass: null },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 902, isAdmin: true, canAdminWrite: true }; next(); });
+  app.use(challengeScoringAdminRoutes({ challengeScorer: { intervalMinutes: 10 } }));
+  const { server, base } = await listen(app);
+  try {
+    const body = await (await fetch(`${base}/api/v4/admin/challenge-scoring`)).json();
+    const [own, inherited] = body.data.rules;
+    assert.equal(own.interval_minutes, 2);
+    assert.equal(own.effective_interval_minutes, 2);
+    assert.equal(Date.parse(own.next_due_at), NOW + 2 * MIN);
+    assert.equal(own.last_pass.ms, 12);
+    assert.equal(inherited.interval_minutes, null, 'blank stays blank…');
+    assert.equal(inherited.effective_interval_minutes, 10, '…and the screen is told what that means');
+    assert.equal(inherited.next_due_at, null);
+    // The choices come from the server, so the form cannot offer one the
+    // validator then refuses.
+    assert.deepEqual(body.data.schedule.interval_choices, rules.INTERVAL_CHOICES);
+    assert.equal(body.data.schedule.interval_minutes, 10);
+  } finally { server.close(); }
+});
+
+// ─── How it scores: the panel cannot drift from the scorer ─────────────
+//
+// The admin's rule detail prints the statement a rule executes, the rubric a
+// model is sent and the limits a run is held to. Each is taken from the code
+// that runs; these hold them there.
+
+test('the statement printed for a measure is the statement the scorer executes', async () => {
+  for (const measure of rules.MEASURE_KEYS) {
+    const seen = [];
+    const pool = { async query(sql) { seen.push(sql); return { rows: [] }; } };
+    await scorer.loadCandidates(pool, measure, { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+    assert.equal(seen.length, 1, measure);
+    assert.equal(seen[0], scorer.MEASURE_SQL[measure], `${measure}: MEASURE_SQL is what loadCandidates runs`);
+    const read = anatomy(measure, { points: 1000, target: 4 }).steps[0];
+    assert.equal(read.kind, 'read');
+    // Printed without the indentation the module gives it, and otherwise the
+    // same statement token for token.
+    assert.equal(read.sql, dedent(scorer.MEASURE_SQL[measure]));
+    assert.equal(read.sql.replace(/\s+/g, ' '), scorer.MEASURE_SQL[measure].trim().replace(/\s+/g, ' '));
+    assert.match(read.sql, /^SELECT /, 'the first line is flush left, like the rest');
+    // Every table it names is really in the statement.
+    for (const table of read.tables) assert.match(read.sql, new RegExp(`\\b${table}\\b`), `${measure} reads ${table}`);
+  }
+});
+
+test('the source key printed for a measure is the key its credits really carry', async () => {
+  const row = {
+    user_id: 7, app_id: 3, app_name: 'Notes', last_date: '2026-09-15', seconds: 900, session_id: 11,
+    promoted_at: new Date(NOW), event_id: 12, created_at: new Date(NOW), id: 13, provider: 'x',
+    linked_at: new Date(NOW), at: new Date(NOW),
+  };
+  for (const measure of rules.MEASURE_KEYS) {
+    const pool = { async query() { return { rows: [row] }; } };
+    const [candidate] = await scorer.loadCandidates(pool, measure, { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+    assert.ok(candidate.sourceKey.startsWith(READS[measure].key), `${measure}: ${candidate.sourceKey}`);
+    const paid = anatomy(measure, { points: 1000, target: 4 }).steps.find((s) => s.kind === 'paid');
+    assert.ok(paid.text.includes(READS[measure].keyLabel));
+    assert.equal(paid.sql, dedent(scorer.CREDITED_SQL));
+  }
+});
+
+test('the rubric, the model and the input limits printed are the ones the grader sends', async () => {
+  const shown = anatomy('USEFUL_FEEDBACK', { points: 1000, target: 4 });
+  const step = shown.steps.find((s) => s.kind === 'grade');
+  assert.equal(shown.lane, 'sql_model');
+  assert.equal(step.model, grader.GRADE_MODEL);
+  assert.equal(step.rubric, grader.RUBRICS.USEFUL_FEEDBACK.system(250), 'called with the rule\'s own per-unit ceiling');
+  assert.ok(step.text.includes('from 1 to 250'));
+  assert.ok(step.text.includes(`at most ${scorer.MAX_GRADES_PER_RUN} in a run`));
+
+  let sent = null;
+  const engine = { isEnabled: () => true, gradeChallengeUnit: async (args) => { sent = args; return { score: 100, reason: 'ok', model: args.model }; } };
+  await grader.grade({
+    measure: 'USEFUL_FEEDBACK', max: 250, llm: engine,
+    input: { title: 't'.repeat(999), text: 'x'.repeat(9999) },
+  });
+  assert.equal(sent.model, grader.GRADE_MODEL);
+  assert.equal(sent.system, step.rubric);
+  assert.ok(sent.user.includes('x'.repeat(grader.GRADE_TEXT_CHARS)) && !sent.user.includes('x'.repeat(grader.GRADE_TEXT_CHARS + 1)));
+  assert.ok(sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS)) && !sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS + 1)));
+  assert.ok(step.text.includes('first 200 characters') && step.text.includes('first 2,000'));
+
+  // The transport's fallback names the same model, for a caller that passes none.
+  const llmSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/services/llm.js'), 'utf8');
+  assert.match(llmSource, new RegExp(`gradeChallengeUnit\\(\\{[^)]*model = '${grader.GRADE_MODEL}'`));
+});
+
+test('a measure that calls no model says so, and only feedback has a junk filter', () => {
+  for (const measure of rules.MEASURE_KEYS) {
+    const shown = anatomy(measure, { points: 1000, target: 4 });
+    const kinds = shown.steps.map((s) => s.kind);
+    const graded = rules.MEASURES[measure].graded === true;
+    assert.equal(shown.lane, graded ? 'sql_model' : 'sql', measure);
+    assert.equal(kinds.includes('grade'), graded, measure);
+    assert.equal(kinds.includes('filter'), measure === 'USEFUL_FEEDBACK', measure);
+    assert.deepEqual([kinds[0], kinds[kinds.length - 1]], ['read', 'write'], measure);
+  }
+  const filter = anatomy('USEFUL_FEEDBACK', {}).steps.find((s) => s.kind === 'filter');
+  assert.ok(filter.text.includes(`under ${grader.MIN_FEEDBACK_CHARS} characters`));
+  // No numbers yet (a new rule, nothing picked): steps still render, and the
+  // rubric waits rather than being printed for a ceiling nobody chose.
+  const bare = anatomy('USEFUL_FEEDBACK', {}).steps.find((s) => s.kind === 'grade');
+  assert.equal(bare.rubric, null);
+  assert.equal(anatomy('NOPE', {}), null);
+});
+
+test('how a rule scores is readable by a view-only admin, and only for a real measure', async () => {
+  currentMockPool = scriptedPool();
+  const { server, base } = await listen(buildApp('readonly'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/challenge-scoring/anatomy?measure=PROPOSAL_ACCEPTED&points=1000&target=2`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.lane, 'sql_model');
+    assert.equal(body.data.steps.find((s) => s.kind === 'grade').rubric, grader.RUBRICS.PROPOSAL_ACCEPTED.system(500));
+    assert.equal((await fetch(`${base}/api/v4/admin/challenge-scoring/anatomy?measure=DROP_TABLE`)).status, 404);
+  } finally { server.close(); }
+});
+
+test('the rule panel shows how it scores in full, and the list only says how often', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/admin/topochain/challenge-scoring.tsx'), 'utf8');
+  const form = src.slice(src.indexOf('function RuleForm('), src.indexOf('function ChallengeScoringScreen('));
+  const screen = src.slice(src.indexOf('function ChallengeScoringScreen('));
+  // In the rule's own panel, rendered outright — not in the overview, and not
+  // behind a toggle (owner decision, 2026-09-17).
+  assert.equal((src.match(/<HowItScores /g) || []).length, 1);
+  assert.ok(form.includes('<HowItScores '));
+  assert.equal(screen.includes('HowItScores'), false);
+  const panel = src.slice(src.indexOf('function HowItScores('), src.indexOf('// The rule, read back as a sentence'));
+  assert.equal(/<details|useState|onClick/.test(panel), false, 'nothing in it opens or closes');
+  // The overview's part is the interval.
+  assert.match(screen, /label: 'Runs', cell: \(r\) => <RunsCell /);
+  // The choices are the server's, so the form cannot offer one the validator refuses.
+  assert.ok(form.includes('schedule?.interval_choices'));
+  assert.equal(/\[\s*1,\s*2,\s*5/.test(src), false, 'no second copy of the list in the client');
+  // A view-only admin reads the same panel with the fields switched off.
+  assert.ok(src.includes('<fieldset disabled={readOnly}'));
+  assert.ok(screen.includes('readOnly={!write}'));
+});
+
+test('the schema carries the cadence columns', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  assert.match(schema, /ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER/);
+  assert.match(schema, /ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS last_scored_at TIMESTAMPTZ/);
+  assert.match(schema, /ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS last_pass JSONB/);
+});

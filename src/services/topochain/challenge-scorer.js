@@ -7,12 +7,13 @@
 // production is computed by the snapshot builder. Everything else was scored
 // by hand.
 //
-// This is the thing that writes the rest. Once every few minutes it reads the
-// rules an admin configured (`challenge_scoring_rules`), takes the measure
-// each one names over the platform's OWN tables, and inserts the credits that
-// are missing.
+// This is the thing that writes the rest. It reads the rules an admin
+// configured (`challenge_scoring_rules`), takes the measure each one names
+// over the platform's OWN tables, and inserts the credits that are missing.
+// Each rule runs on its own interval; one timer beats once a minute and runs
+// whichever rules are due (./challenge-rules.js, "Cadence").
 //
-// ── Why it can run every ten minutes and never double-pay ──────────────
+// ── Why it can run this often and never double-pay ─────────────────────
 //
 // Every credit names the thing it was paid for in `metadata.source_key`
 // ("app:12", "merged:88104", "provider:github"), and
@@ -86,6 +87,7 @@ let inFlight = null;
 const RULE_CHALLENGES_SQL = `
   SELECT r.id AS rule_id, r.name AS rule_name, r.measure, r.target AS rule_target,
          r.points AS rule_points, r.enabled AS rule_enabled,
+         r.interval_minutes AS rule_interval_minutes, r.last_scored_at AS rule_last_scored_at,
          c.id AS challenge_id, c.season_event_id, c.enabled, c.completed,
          c.schedule_start, c.schedule_end, c.metric_target, c.reward,
          ct.id AS template_id, ct.category AS t_category, ct.goal AS t_goal,
@@ -217,6 +219,22 @@ const BLOCK_PRODUCTION_SQL = `
    ORDER BY u.id ASC
    LIMIT $1
 `;
+
+// The query each measure runs, by measure. loadCandidates below names the
+// constants directly — that is what keeps them statically checkable
+// (scripts/check-sql.js) — and this map is for the one reader that needs them
+// as DATA: the admin's "How it scores" panel (./challenge-anatomy.js), which
+// prints the statement a rule actually executes. A test runs every measure
+// against a recording pool and holds the two to the same text.
+const MEASURE_SQL = Object.freeze({
+  TRY_APPS: TRY_APPS_SQL,
+  USE_APPS_MINUTES: USE_APPS_MINUTES_SQL,
+  PROPOSAL_SENT: PROPOSAL_SENT_SQL,
+  PROPOSAL_ACCEPTED: PROPOSAL_ACCEPTED_SQL,
+  USEFUL_FEEDBACK: USEFUL_FEEDBACK_SQL,
+  CONNECT_ACCOUNTS: CONNECT_ACCOUNTS_SQL,
+  BLOCK_PRODUCTION_ON: BLOCK_PRODUCTION_SQL,
+});
 
 const isoOf = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
 // A `date` column has no time, and node-postgres hands it back as a Date at
@@ -389,115 +407,217 @@ async function writeCredits(pool, { challenge, activityType, credits }) {
 // DRY RUN shows the operator and what `challenge_scorer_runs.summary` stores.
 // A dry run does every read, every plan and no grading (grading costs money
 // and a preview should not), and writes nothing.
-async function score(pool, { dryRun = false, now = Date.now(), apiKey = null, llm = null } = {}) {
+//
+// `only` is the set of rule ids this run covers — what the schedule passes,
+// having worked out which rules are due. Left out, the run covers every rule:
+// that is Run now and Dry run, where an operator pressing the button means
+// all of it, whatever the intervals say.
+
+// One challenge under one rule. `run` is the state the whole run shares — the
+// two budgets, above all. Returns the summary entry, and whether the pass got
+// to the end of what it had to do: false only when one of the RUN's budgets
+// cut it short, which is the one case where the rest is waiting on this
+// service rather than on the world.
+async function scoreChallenge(pool, row, rule, run) {
+  const entry = {
+    rule_id: Number(rule.id),
+    rule: rule.name,
+    measure: rule.measure,
+    challenge_id: Number(row.challenge_id),
+    goal: row.t_goal,
+    credits: 0,
+    points: 0,
+  };
+
+  const skip = rules.skipReason(rule, row, { now: run.now });
+  if (skip) {
+    entry.skipped = skip;
+    run.summary.skipped += 1;
+    return { entry, complete: true };
+  }
+
+  const window = rules.resolveWindow(row, { now: run.now });
+  const target = rules.effectiveTarget(rule, row);
+  let candidates;
+  try {
+    candidates = await loadCandidates(pool, rule.measure, window, { target });
+  } catch (err) {
+    entry.error = err.message;
+    log.warn('challenge-scorer', 'Measure query failed', { measure: rule.measure, err: err.message });
+    // Complete, on purpose: a query that fails now will fail in a minute
+    // too, and a broken rule should retry on its interval, not on every beat.
+    return { entry, complete: true };
+  }
+  entry.candidates = candidates.length;
+
+  // The deterministic pre-filter runs BEFORE the plan, over everything the
+  // person sent in the window, in the order they sent it. Two things depend
+  // on that order, and the first end-to-end run caught both:
+  //
+  //   - Junk must never hold a weekly slot. Planning first handed the four
+  //     slots to somebody's four "test" reports, the filter then dropped
+  //     them, nothing was written — and the next tick planned the same four
+  //     again. Their real reports, queued behind, were never paid at all.
+  //   - A duplicate is a duplicate of what was already PAID, too. The bag
+  //     used to start empty each run and see only the uncredited batch, so
+  //     the same sentence sent again after the next tick earned a second
+  //     credit. Walking the credited units as well puts their text in the
+  //     bag first; the plan drops them afterwards by source key, as before.
+  if (MEASURES[rule.measure].graded) {
+    const seen = new Map();
+    candidates = candidates.filter((candidate) => {
+      const bag = seen.get(candidate.userId) || new Set();
+      seen.set(candidate.userId, bag);
+      if (!grader.preFilter(rule.measure, candidate.gradeInput, bag)) return true;
+      entry.rejected = (entry.rejected || 0) + 1;
+      return false;
+    });
+  }
+
+  const credited = await loadCredited(pool, row.challenge_id);
+  let planned = rules.planCredits(rule, row, { candidates, credited, now: run.now });
+  let complete = true;
+
+  if (planned.length > run.budget) {
+    planned = planned.slice(0, run.budget);
+    complete = false;
+  }
+
+  if (MEASURES[rule.measure].graded && !run.dryRun) {
+    if (planned.length > run.grades) complete = false;
+    const toGrade = planned.slice(0, run.grades)
+      .map((c) => ({ ...c, measure: rule.measure }));
+    // A grader that stops (no key, an outage) leaves `complete` alone: the
+    // rest is waiting on the model, and retrying it every beat instead of
+    // every interval would turn one outage into sixty failed calls an hour.
+    const gradedCredits = await grader.gradeAll(toGrade, {
+      apiKey: run.apiKey,
+      llm: run.llm,
+      onError: (err) => { run.summary.grading = err.message; },
+    });
+    run.grades -= gradedCredits.length;
+    run.summary.graded += gradedCredits.length;
+    entry.graded = gradedCredits.length;
+    planned = gradedCredits;
+  } else if (MEASURES[rule.measure].graded && run.dryRun) {
+    // A preview says what it WOULD grade; it does not spend the call.
+    entry.to_grade = planned.length;
+    planned = [];
+  }
+
+  entry.credits = planned.length;
+  entry.points = planned.reduce((sum, c) => sum + (Number(c.points) || 0), 0);
+
+  if (planned.length && !run.dryRun) {
+    const written = await writeCredits(pool, {
+      challenge: row,
+      activityType: rules.activityTypeFor(row),
+      credits: planned.map((c) => ({ ...c, ruleId: Number(rule.id), measure: rule.measure })),
+    });
+    entry.credits = written;
+    run.budget -= written;
+  } else if (planned.length) {
+    run.budget -= planned.length;
+  }
+
+  run.summary.credits += entry.credits;
+  return { entry, complete };
+}
+
+// What a rule's last pass cost, kept ON the rule. The run history holds the
+// newest ten runs, and on a deployment where one rule runs every minute those
+// ten are all that rule's — so an hourly rule's last pass would never be in
+// them. The admin's rule detail reads this instead, and the numbers it shows
+// for "how much does this rule cost" are measured rather than argued.
+const STAMP_SCORED_SQL = `
+  UPDATE challenge_scoring_rules SET last_scored_at = $2, last_pass = $3 WHERE id = $1
+`;
+const STAMP_CUT_SHORT_SQL = `
+  UPDATE challenge_scoring_rules SET last_pass = $2 WHERE id = $1
+`;
+
+async function score(pool, {
+  dryRun = false, now = Date.now(), apiKey = null, llm = null, only = null,
+} = {}) {
   const summary = { challenges: [], credits: 0, graded: 0, skipped: 0, grading: null };
   const { rows } = await pool.query(RULE_CHALLENGES_SQL);
-  let budget = MAX_CREDITS_PER_RUN;
-  let grades = MAX_GRADES_PER_RUN;
+  const run = {
+    summary, dryRun, now, apiKey, llm,
+    budget: MAX_CREDITS_PER_RUN,
+    grades: MAX_GRADES_PER_RUN,
+  };
 
+  // One group per rule, its challenges under it, in the order the run takes
+  // them (rules.runOrder: cheap before graded, longest-waiting first).
+  const groups = new Map();
   for (const row of rows) {
-    if (budget <= 0) break;
-    const rule = {
-      id: row.rule_id,
-      name: row.rule_name,
-      measure: row.measure,
-      target: row.rule_target,
-      points: row.rule_points,
-      enabled: row.rule_enabled,
-    };
-    const entry = {
-      rule_id: Number(rule.id),
-      rule: rule.name,
-      measure: rule.measure,
-      challenge_id: Number(row.challenge_id),
-      goal: row.t_goal,
-      credits: 0,
-      points: 0,
-    };
+    const id = Number(row.rule_id);
+    if (only && !only.has(id)) continue;
+    if (!groups.has(id)) {
+      groups.set(id, {
+        id,
+        measure: row.measure,
+        lastScoredAt: row.rule_last_scored_at,
+        rule: {
+          id: row.rule_id,
+          name: row.rule_name,
+          measure: row.measure,
+          target: row.rule_target,
+          points: row.rule_points,
+          enabled: row.rule_enabled,
+        },
+        rows: [],
+      });
+    }
+    groups.get(id).rows.push(row);
+  }
 
-    const skip = rules.skipReason(rule, row, { now });
-    if (skip) {
-      entry.skipped = skip;
-      summary.skipped += 1;
+  const passes = [];
+  for (const group of [...groups.values()].sort(rules.runOrder)) {
+    // A rule the budget never reached is left unstamped, so it is still due
+    // on the next beat — and, having waited longest, first in line for it.
+    if (run.budget <= 0) break;
+    const started = Date.now();
+    const pass = { id: group.id, complete: true, candidates: 0, credits: 0, points: 0, graded: 0, rejected: 0 };
+    for (const row of group.rows) {
+      if (run.budget <= 0) { pass.complete = false; break; }
+      const { entry, complete } = await scoreChallenge(pool, row, group.rule, run);
       summary.challenges.push(entry);
-      continue;
+      if (!complete) pass.complete = false;
+      pass.candidates += entry.candidates || 0;
+      pass.credits += entry.credits || 0;
+      pass.points += entry.points || 0;
+      pass.graded += entry.graded || 0;
+      pass.rejected += entry.rejected || 0;
+      if (entry.error) pass.error = entry.error;
     }
+    pass.ms = Date.now() - started;
+    // The run summary carries the cost per rule as well, on the rule's first
+    // entry: a dry run stamps nothing, and its preview is where an operator
+    // looks to see what a rule would cost before switching it on.
+    const first = summary.challenges.find((e) => e.rule_id === group.id);
+    if (first) first.ms = pass.ms;
+    passes.push(pass);
+  }
 
-    const window = rules.resolveWindow(row, { now });
-    const target = rules.effectiveTarget(rule, row);
-    let candidates;
-    try {
-      candidates = await loadCandidates(pool, rule.measure, window, { target });
-    } catch (err) {
-      entry.error = err.message;
-      summary.challenges.push(entry);
-      log.warn('challenge-scorer', 'Measure query failed', { measure: rule.measure, err: err.message });
-      continue;
+  if (!dryRun) {
+    const at = new Date(now).toISOString();
+    const reached = new Set(passes.map((p) => p.id));
+    for (const pass of passes) {
+      const { id, complete, ...facts } = pass;
+      const lastPass = JSON.stringify({ at, ...facts, ...(complete ? {} : { cut_short: true }) });
+      if (complete) await pool.query(STAMP_SCORED_SQL, [id, at, lastPass]);
+      else await pool.query(STAMP_CUT_SHORT_SQL, [id, lastPass]);
     }
-
-    // The deterministic pre-filter runs BEFORE the plan, over everything the
-    // person sent in the window, in the order they sent it. Two things depend
-    // on that order, and the first end-to-end run caught both:
-    //
-    //   - Junk must never hold a weekly slot. Planning first handed the four
-    //     slots to somebody's four "test" reports, the filter then dropped
-    //     them, nothing was written — and the next tick planned the same four
-    //     again. Their real reports, queued behind, were never paid at all.
-    //   - A duplicate is a duplicate of what was already PAID, too. The bag
-    //     used to start empty each run and see only the uncredited batch, so
-    //     the same sentence sent again after the next tick earned a second
-    //     credit. Walking the credited units as well puts their text in the
-    //     bag first; the plan drops them afterwards by source key, as before.
-    if (MEASURES[rule.measure].graded) {
-      const seen = new Map();
-      candidates = candidates.filter((candidate) => {
-        const bag = seen.get(candidate.userId) || new Set();
-        seen.set(candidate.userId, bag);
-        if (!grader.preFilter(rule.measure, candidate.gradeInput, bag)) return true;
-        entry.rejected = (entry.rejected || 0) + 1;
-        return false;
-      });
+    // A due rule with no live challenge at all has nothing to score, and has
+    // to be stamped all the same — or it is due again on every beat, and
+    // every beat becomes a run.
+    if (only) {
+      for (const id of only) {
+        if (reached.has(id) || groups.has(id)) continue;
+        await pool.query(STAMP_SCORED_SQL, [id, at, JSON.stringify({ at, ms: 0, candidates: 0, credits: 0, idle: 'no live challenge' })]);
+      }
     }
-
-    const credited = await loadCredited(pool, row.challenge_id);
-    let planned = rules.planCredits(rule, row, { candidates, credited, now });
-
-    if (planned.length > budget) planned = planned.slice(0, budget);
-
-    if (MEASURES[rule.measure].graded && !dryRun) {
-      const toGrade = planned.slice(0, grades)
-        .map((c) => ({ ...c, measure: rule.measure }));
-      const gradedCredits = await grader.gradeAll(toGrade, {
-        apiKey,
-        llm,
-        onError: (err) => { summary.grading = err.message; },
-      });
-      grades -= gradedCredits.length;
-      summary.graded += gradedCredits.length;
-      planned = gradedCredits;
-    } else if (MEASURES[rule.measure].graded && dryRun) {
-      // A preview says what it WOULD grade; it does not spend the call.
-      entry.to_grade = planned.length;
-      planned = [];
-    }
-
-    entry.credits = planned.length;
-    entry.points = planned.reduce((sum, c) => sum + (Number(c.points) || 0), 0);
-
-    if (planned.length && !dryRun) {
-      const written = await writeCredits(pool, {
-        challenge: row,
-        activityType: rules.activityTypeFor(row),
-        credits: planned.map((c) => ({ ...c, ruleId: Number(rule.id), measure: rule.measure })),
-      });
-      entry.credits = written;
-      budget -= written;
-    } else if (planned.length) {
-      budget -= planned.length;
-    }
-
-    summary.credits += entry.credits;
-    summary.challenges.push(entry);
   }
 
   return summary;
@@ -536,14 +656,19 @@ async function maybeAggregate(pool, { hours, now = Date.now() }) {
 }
 
 // One complete run, recorded. Exported so the admin's Run now and Dry run
-// buttons and the tests take exactly the path the schedule takes.
-async function runOnce(pool, { trigger = 'schedule', dryRun = false, config = null, now = Date.now() } = {}) {
+// buttons and the tests take exactly the path the schedule takes. The
+// schedule narrows it with `only` (the rules that are due) and decides
+// `aggregate` itself; an operator's run covers every rule and always checks
+// the standings.
+async function runOnce(pool, {
+  trigger = 'schedule', dryRun = false, config = null, now = Date.now(), only = null, aggregate = true,
+} = {}) {
   const { rows } = await pool.query(RUN_START_SQL, [trigger, dryRun]);
   const runId = rows[0] && rows[0].id;
   const apiKey = (config && config.anthropicApiKey) || null;
   try {
-    const summary = await score(pool, { dryRun, now, apiKey });
-    if (!dryRun) {
+    const summary = await score(pool, { dryRun, now, apiKey, only });
+    if (!dryRun && aggregate) {
       const hours = aggregateHours(config);
       try {
         const aggregated = await maybeAggregate(pool, { hours, now });
@@ -573,11 +698,49 @@ function aggregateHours(config) {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGGREGATE_HOURS;
 }
 
-// A scheduled tick. Advisory-locked and `pg_try_advisory_lock`, not the
-// waiting kind: every platform instance runs this interval, and a tick that
+// Which rules are due on this beat. Enabled rules only: one that is switched
+// off has nothing to run, and leaving it out keeps it from making a run out
+// of a beat that had no other reason to be one.
+const DUE_RULES_SQL = `
+  SELECT id, measure, interval_minutes, last_scored_at
+    FROM challenge_scoring_rules
+   WHERE enabled = TRUE
+`;
+const LAST_SCHEDULED_RUN_SQL = `
+  SELECT MAX(started_at) AS at FROM challenge_scorer_runs
+   WHERE trigger = 'schedule' AND dry_run = FALSE
+`;
+
+async function dueRuleIds(pool, { now = Date.now(), defaultMinutes } = {}) {
+  const { rows } = await pool.query(DUE_RULES_SQL);
+  const due = new Set();
+  for (const row of rows) {
+    const rule = { id: row.id, intervalMinutes: row.interval_minutes, lastScoredAt: row.last_scored_at };
+    if (rules.isDue(rule, { now, defaultMinutes })) due.add(Number(row.id));
+  }
+  return due;
+}
+
+// When this process last looked at the standings. In memory, and per process,
+// because all it guards is a rebuild that produces nothing: a deployment with
+// no event to score has no snapshot, `maybeAggregate` finds none and tries
+// again — once per run, which used to mean every ten minutes and would now
+// mean every beat.
+let lastAggregateCheckAt = 0;
+
+// One beat of the schedule. Advisory-locked and `pg_try_advisory_lock`, not
+// the waiting kind: every platform instance runs this timer, and a beat that
 // cannot take the lock has nothing useful to do — the instance holding it is
 // already writing the same credits.
-async function tick(pool, config) {
+//
+// A beat with nothing due is not a run and records nothing, with one
+// exception. The service has to be seen to be alive, and the standings have
+// to keep being rebuilt on a deployment with no rules at all — so a quiet
+// stretch still gets one run per default interval, which is exactly how often
+// every run happened before rules carried intervals of their own. That clock
+// is read from the run history rather than kept in memory, so two instances
+// share one heartbeat and a deploy does not start with an empty run.
+async function tick(pool, config, { now = Date.now() } = {}) {
   const client = await pool.connect();
   let locked = false;
   try {
@@ -586,7 +749,18 @@ async function tick(pool, config) {
     );
     if (lock.rows[0]?.acquired !== true) return { busy: true };
     locked = true;
-    return await runOnce(pool, { trigger: 'schedule', config });
+
+    const defaultMinutes = intervalMinutes(config);
+    const defaultMs = defaultMinutes * 60_000;
+    const due = await dueRuleIds(pool, { now, defaultMinutes });
+    if (!due.size) {
+      const { rows } = await pool.query(LAST_SCHEDULED_RUN_SQL);
+      const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
+      if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
+    }
+    const aggregate = now - lastAggregateCheckAt >= defaultMs - rules.DUE_SLACK_MS;
+    if (aggregate) lastAggregateCheckAt = now;
+    return await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
   } finally {
     if (locked) {
       await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
@@ -617,7 +791,9 @@ function start(config) {
       .finally(() => { inFlight = null; });
     return inFlight;
   };
-  timer = setInterval(run, minutes * 60_000);
+  // The beat, not the interval: `minutes` is now how often a rule runs when
+  // it does not say otherwise, and which rules a beat runs is tick()'s call.
+  timer = setInterval(run, rules.FLOOR_MINUTES * 60_000);
   if (typeof timer.unref === 'function') timer.unref();
   // Deploys frequently replace the leader before its first tick, so a season
   // could otherwise go a whole cadence unscored after every release.
@@ -639,10 +815,14 @@ module.exports = {
   maybeAggregate,
   loadCandidates,
   loadCredited,
+  dueRuleIds,
   intervalMinutes,
   aggregateHours,
   MAX_CREDITS_PER_RUN,
   MAX_GRADES_PER_RUN,
+  CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
+  CREDITED_SQL,
+  MEASURE_SQL,
   dateToIso,
 };

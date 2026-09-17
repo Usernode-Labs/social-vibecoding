@@ -345,6 +345,87 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
   return out;
 }
 
+// ── Cadence ────────────────────────────────────────────────────────────
+//
+// Each rule runs on its own interval. The scheduler is still ONE timer, at
+// FLOOR_MINUTES: on every beat it asks which rules are due and runs only
+// those. "Different intervals" never means different timers — those would be
+// overlapping runs, one contended lock and a separate budget per timer, for
+// the sake of something a comparison does.
+//
+// An interval is one of INTERVAL_CHOICES, or blank. A fixed list rather than
+// a free number because every choice is a whole number of beats, so a rule
+// can never say one interval and run on another. Blank follows the
+// deployment's default (CHALLENGE_SCORER_INTERVAL_MINUTES) — a rule nobody
+// has touched runs exactly as often as the whole service did before rules
+// had intervals of their own.
+const FLOOR_MINUTES = 1;
+const INTERVAL_CHOICES = [1, 2, 5, 10, 15, 30, 60];
+// How early counts as on time: a quarter of a beat. The beat is a timer and
+// timers drift by milliseconds, so a strict comparison would find 119.998 s
+// "not yet" and make a two-minute rule wait a third minute. A quarter rather
+// than a half for two reasons the first live run showed: the kick a deploy
+// gives the scorer lands exactly half a beat before the first real beat,
+// which put every rule on a knife-edge at every release; and with several
+// instances beating out of phase, the wider the slack the more often the
+// EARLIEST of them wins and the faster than asked a rule ends up running.
+const DUE_SLACK_MS = (FLOOR_MINUTES * 60000) / 4;
+
+const toMs = (v) => {
+  if (v == null || v === '') return null;
+  const ms = v instanceof Date ? v.getTime() : Date.parse(v);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// The interval a rule actually runs on, in minutes. null means the schedule
+// does not run it at all: the deployment's default is 0, which switches
+// automatic scoring off whatever a rule asks for.
+function effectiveInterval(rule, defaultMinutes) {
+  const fallback = Number(defaultMinutes);
+  if (!(Number.isFinite(fallback) && fallback > 0)) return null;
+  const own = Number(rule && rule.intervalMinutes);
+  return INTERVAL_CHOICES.includes(own) ? own : fallback;
+}
+
+// Due once a whole interval has passed since the last complete pass, less
+// DUE_SLACK_MS. A rule that has never been scored is due now.
+function isDue(rule, { now = Date.now(), defaultMinutes } = {}) {
+  const minutes = effectiveInterval(rule, defaultMinutes);
+  if (minutes == null) return false;
+  const last = toMs(rule && rule.lastScoredAt);
+  if (last == null) return true;
+  return now - last >= minutes * 60000 - DUE_SLACK_MS;
+}
+
+// When the rule is next looked at, for the screens that say so. null when
+// the schedule does not run it, or when it has never run (it is due now, and
+// "now" is not a time worth printing).
+function nextDueAt(rule, { defaultMinutes } = {}) {
+  const minutes = effectiveInterval(rule, defaultMinutes);
+  const last = toMs(rule && rule.lastScoredAt);
+  if (minutes == null || last == null) return null;
+  return last + minutes * 60000;
+}
+
+// The order one run takes its rules in. Two things ride on it:
+//
+//   Cheap before expensive. A graded rule can spend most of a minute on
+//   model calls, one after another; a rule that is a single SQL read should
+//   never sit behind that, or somebody's connected account waits on a
+//   stranger's bug report being marked.
+//
+//   Longest-waiting first, inside each lane. The run's budget is shared, and
+//   a rule cut short by it is not stamped as scored — so next beat it is the
+//   one that has waited longest and goes first. Starvation costs a beat, not
+//   a whole interval, and nothing needs a budget of its own.
+function runOrder(a, b) {
+  const lane = (r) => (MEASURES[r.measure] && MEASURES[r.measure].graded ? 1 : 0);
+  if (lane(a) !== lane(b)) return lane(a) - lane(b);
+  const at = (r) => { const ms = toMs(r.lastScoredAt); return ms == null ? -Infinity : ms; };
+  if (at(a) !== at(b)) return at(a) - at(b);
+  return Number(a.id) - Number(b.id);
+}
+
 module.exports = {
   MEASURES,
   MEASURE_KEYS,
@@ -358,4 +439,11 @@ module.exports = {
   activityTypeFor,
   unitPoints,
   planCredits,
+  FLOOR_MINUTES,
+  INTERVAL_CHOICES,
+  DUE_SLACK_MS,
+  effectiveInterval,
+  isDue,
+  nextDueAt,
+  runOrder,
 };

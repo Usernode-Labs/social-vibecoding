@@ -26,6 +26,16 @@ import type { Column } from './ui.tsx';
 // Dry run is the safety net worth having before a live season — it does every
 // read and every calculation, spends no grading calls, writes nothing, and
 // reports exactly what Run now would pay.
+//
+// ── How it scores, and how often ───────────────────────────────────────
+//
+// The list says how often each rule runs. The rule's own panel says what a
+// run of it DOES — the tables it reads, the statement it executes, whether a
+// model is called and with which rubric — shown in full rather than behind a
+// toggle, because it is the thing an operator needs in front of them at the
+// moment they choose the interval just below it. Both come from the server,
+// taken from the code that runs (services/topochain/challenge-anatomy.js), so
+// the panel cannot describe a scorer that no longer exists.
 
 type Measure = {
   key: string;
@@ -90,7 +100,42 @@ type Rule = {
   enabled: boolean;
   notes: string | null;
   covers: Cover[];
+  // The rule's own interval (null follows the default), the one it really
+  // runs on (null when the schedule is off), and when it last ran to its end
+  // and is next due.
+  interval_minutes: number | null;
+  effective_interval_minutes: number | null;
+  last_scored_at: string | null;
+  next_due_at: string | null;
+  last_pass: LastPass | null;
 };
+
+// What the rule's last pass cost, measured by the scorer and kept on the rule.
+type LastPass = {
+  at: string;
+  ms: number;
+  candidates: number;
+  credits: number;
+  points?: number;
+  graded?: number;
+  rejected?: number;
+  error?: string;
+  cut_short?: boolean;
+  idle?: string;
+};
+
+type AnatomyStep = {
+  kind: string;
+  title: string;
+  text: string;
+  tables?: string[];
+  sql?: string;
+  note?: string;
+  model?: string;
+  rubric?: string | null;
+};
+
+type Anatomy = { measure: string; lane: 'sql' | 'sql_model'; cost: string; steps: AnatomyStep[] };
 
 type Run = {
   id: number;
@@ -105,6 +150,7 @@ type Run = {
 
 type Schedule = {
   interval_minutes: number;
+  interval_choices: number[];
   aggregate_hours: number;
   grading_configured: boolean;
 };
@@ -133,9 +179,10 @@ function ScheduleCard({ schedule, write, busy, onRun }: {
     >
       <div className="min-w-0">
         <div className="font-semibold">
-          {off ? 'Scoring runs only when you press Run now' : `Scoring runs every ${schedule.interval_minutes} minutes`}
+          {off ? 'Scoring runs only when you press Run now' : 'Each rule runs on its own interval'}
         </div>
         <p className="mt-1 text-zinc-500 dark:text-zinc-400">
+          {off ? '' : `One that does not set its own runs ${everyLabel(schedule.interval_minutes).toLowerCase()}. `}
           {schedule.aggregate_hours
             ? `Standings are rebuilt at most every ${schedule.aggregate_hours} hours after a run. `
             : 'Standings are rebuilt only from the Aggregate button. '}
@@ -246,6 +293,146 @@ function RunDetail({ run }: { run: Run | null }) {
   );
 }
 
+// "Every 2 min", in the one place it is phrased. The two ends of the list
+// read better as words than as "every 1 min" and "every 60 min".
+function everyLabel(minutes: number): string {
+  if (minutes === 1) return 'Every minute';
+  if (minutes === 60) return 'Every hour';
+  return `Every ${minutes} min`;
+}
+
+// A clock for the relative times on this screen. Thirty seconds is as fine as
+// "in about 3 min" can be wrong by, and coarse enough to cost nothing.
+function useNow(everyMs = 30000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(id);
+  }, [everyMs]);
+  return now;
+}
+
+const aboutMinutes = (ms: number) => {
+  const mins = Math.max(1, Math.round(ms / 60000));
+  return `${mins} min`;
+};
+
+// The list's "Runs" cell: how often, and the one fact that says the schedule
+// is alive. Overdue is its own state and an amber one — a rule three beats
+// late is the scheduler being stuck, which is exactly what this column is the
+// first place to show.
+function RunsCell({ rule, now }: { rule: Rule; now: number }) {
+  if (!rule.enabled) return <span className="text-zinc-500 dark:text-zinc-400">—</span>;
+  if (rule.effective_interval_minutes == null) {
+    return <span className="text-xs text-zinc-500 dark:text-zinc-400">Only from Run now</span>;
+  }
+  const next = rule.next_due_at ? Date.parse(rule.next_due_at) : null;
+  let when = 'not run yet';
+  let late = false;
+  if (next != null) {
+    if (next > now) when = `next in about ${aboutMinutes(next - now)}`;
+    else if (now - next < 3 * 60000) when = 'due now';
+    else { when = `overdue since ${fmt(rule.next_due_at)}`; late = true; }
+  }
+  return (
+    <>
+      <span className="whitespace-nowrap">{everyLabel(rule.effective_interval_minutes)}</span>
+      <span className={`block mt-0.5 text-xs ${late ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+        {rule.interval_minutes == null ? 'default · ' : ''}
+        {when}
+      </span>
+    </>
+  );
+}
+
+// The anatomy's prose names tables and columns in backticks; draw those as
+// code rather than shipping markup from the server.
+function withCode(text: string) {
+  return text.split('`').map((part, i) => (i % 2
+    ? <code key={i} className="font-mono text-[0.92em] text-zinc-700 dark:text-zinc-200">{part}</code>
+    : <span key={i}>{part}</span>));
+}
+
+const CODE_BLOCK = 'mt-2 overflow-x-auto rounded-lg bg-zinc-50 dark:bg-zinc-950 p-3 font-mono text-xs '
+  + 'leading-relaxed text-zinc-700 dark:text-zinc-300';
+
+function passLine(pass: LastPass): string {
+  const took = pass.ms >= 1000 ? `${(pass.ms / 1000).toFixed(1)} s` : `${pass.ms} ms`;
+  if (pass.idle) return `Last pass ${fmt(pass.at)}: ${pass.idle}.`;
+  const parts = [`read ${pass.candidates.toLocaleString()}`];
+  if (pass.rejected) parts.push(`dropped ${pass.rejected} as junk`);
+  if (pass.graded) parts.push(`graded ${pass.graded}`);
+  parts.push(`wrote ${plural(pass.credits, 'credit')}`);
+  return `Last pass ${fmt(pass.at)} took ${took}: ${parts.join(', ')}.`;
+}
+
+// How a run of this rule works, in full. Fetched rather than carried on the
+// rule because it follows the form as it is being edited: change the measure
+// and the steps change, change the points and the rubric's bands change —
+// and the rubric is the grader's own function called with those numbers,
+// which only the server can do.
+function HowItScores({ anatomy, lastPass }: { anatomy: Anatomy | null; lastPass: LastPass | null }) {
+  if (!anatomy) return <Skeleton rows={3} />;
+  return (
+    <div id="admin-topo-cs-f-anatomy" className="text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge
+          label={anatomy.lane === 'sql_model' ? 'SQL + model' : 'SQL only'}
+          tone={anatomy.lane === 'sql_model' ? 'violet' : 'zinc'}
+        />
+        {lastPass ? (
+          <span id="admin-topo-cs-f-last-pass" className="text-xs text-zinc-500 dark:text-zinc-400">
+            {passLine(lastPass)}
+          </span>
+        ) : null}
+      </div>
+      {lastPass?.error ? (
+        <p className="mt-1 text-xs text-red-700 dark:text-red-400">{`The measure query failed: ${lastPass.error}`}</p>
+      ) : null}
+      {lastPass?.cut_short ? (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+          Cut short by the run's shared budget. It goes first on the next beat.
+        </p>
+      ) : null}
+      <ol className="mt-3 space-y-4">
+        {anatomy.steps.map((step, i) => (
+          <li key={step.kind} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
+            <span className="tabular-nums text-xs leading-5 text-zinc-500 dark:text-zinc-400">{i + 1}</span>
+            <div className="min-w-0">
+              <div className="font-medium leading-5">
+                {step.title}
+                {step.tables?.length ? (
+                  <span className="ml-2 font-mono text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                    {step.tables.join(' · ')}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                {withCode(step.text)}
+                {step.note ? ` ${step.note}` : ''}
+              </p>
+              {step.sql ? <pre className={`${CODE_BLOCK} whitespace-pre`}>{step.sql}</pre> : null}
+              {step.rubric ? (
+                <>
+                  <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    {`The rubric ${step.model || 'the model'} is sent with every one:`}
+                  </p>
+                  <pre className={`${CODE_BLOCK} whitespace-pre-wrap`}>{step.rubric}</pre>
+                </>
+              ) : null}
+              {step.kind === 'grade' && !step.rubric ? (
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  The rubric appears once the rule has points and a target: its bands are worked out from them.
+                </p>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 // The rule, read back as a sentence while it is being written.
 //
 // This is the part that makes the form composable rather than fillable: seven
@@ -309,12 +496,19 @@ function ruleSentence({ measure, points, target, challenge }: {
     : `${capitalise(clause)} Pick the challenge it pays into.`;
 }
 
+// The rule's panel: what it is, how a run of it works, how often it runs, and
+// — for somebody who can write — the fields that change any of that. A
+// view-only admin gets the same panel with the fields switched off, because
+// "how does this rule score" is a question every reader of this screen has,
+// not only the ones allowed to edit it.
 function RuleForm({
-  existing, measures, templates, onClose, onSaved,
+  existing, measures, templates, schedule, readOnly, onClose, onSaved,
 }: {
   existing: Rule | null;
   measures: Measure[];
   templates: Template[];
+  schedule: Schedule | null;
+  readOnly: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -342,6 +536,10 @@ function RuleForm({
   const [points, setPoints] = useState(existing?.points != null ? String(existing.points) : '');
   const [notes, setNotes] = useState(existing?.notes || '');
   const [enabled, setEnabled] = useState(existing ? existing.enabled : true);
+  // '' follows the default. A string because it is a <select>'s value.
+  const [interval, setIntervalChoice] = useState(
+    existing?.interval_minutes != null ? String(existing.interval_minutes) : ''
+  );
   const [error, setError] = useState<string | null>(null);
 
   const spec = measures.find((m) => m.key === measure) || null;
@@ -355,6 +553,29 @@ function RuleForm({
   const inheritedPoints = template ? parseReward(template.reward) : null;
   const effTarget = target.trim() !== '' ? Number(target) : inheritedTarget;
   const effPoints = points.trim() !== '' ? Number(points) : inheritedPoints;
+
+  // A rule bound to one challenge has no template to inherit from here, so
+  // its numbers come from the challenge it is covering right now.
+  const cover = existing?.covers?.[0] || null;
+  const shownTarget = effTarget ?? (scope === 'challenge' ? cover?.target ?? null : null);
+  const shownPoints = effPoints ?? (scope === 'challenge' ? cover?.points ?? null : null);
+
+  // How a run of this rule works, for the numbers as they stand. Debounced:
+  // Points and Target are typed a digit at a time, and each digit is a
+  // different rubric.
+  const [anatomy, setAnatomy] = useState<Anatomy | null>(null);
+  useEffect(() => {
+    if (!measure) { setAnatomy(null); return undefined; }
+    let live = true;
+    const timer = setTimeout(async () => {
+      const query = new URLSearchParams({ measure });
+      if (shownPoints != null && shownPoints > 0) query.set('points', String(shownPoints));
+      if (shownTarget != null && shownTarget > 0) query.set('target', String(shownTarget));
+      const { ok, data } = await fetchJson(`/api/v4/admin/challenge-scoring/anatomy?${query}`);
+      if (live) setAnatomy(ok && data?.success ? data.data : null);
+    }, 200);
+    return () => { live = false; clearTimeout(timer); };
+  }, [measure, shownPoints, shownTarget]);
 
   const pickTemplate = useCallback((value: string) => {
     setTemplateId(value);
@@ -387,6 +608,7 @@ function RuleForm({
       points: points.trim() === '' ? null : Number(points),
       notes: notes.trim() === '' ? null : notes.trim(),
       enabled,
+      interval_minutes: interval === '' ? null : Number(interval),
     };
     const url = isNew
       ? '/api/v4/admin/challenge-scoring/rules'
@@ -398,7 +620,7 @@ function RuleForm({
       return;
     }
     onSaved();
-  }, [name, measure, scope, templateId, challengeId, target, points, notes, enabled, isNew, existing, onSaved]);
+  }, [name, measure, scope, templateId, challengeId, target, points, notes, enabled, interval, isNew, existing, onSaved]);
 
   const sentence = ruleSentence({
     measure: spec,
@@ -407,14 +629,30 @@ function RuleForm({
     challenge: scope === 'template' ? (template?.goal || null) : (challengeId ? `challenge #${challengeId}` : null),
   });
 
+  const defaultMinutes = schedule?.interval_minutes || 0;
+  const choices = schedule?.interval_choices || [];
+  // The rule's pass is only this rule's while the measure is still the one it
+  // ran with; pick another and the numbers describe something else.
+  const lastPass = existing && existing.measure === measure ? existing.last_pass : null;
+
   return (
     <Panel
-      title={isNew ? 'New scoring rule' : `Edit ${existing.name}`}
-      subtitle="Pick what to measure and which challenge it pays into."
+      title={isNew ? 'New scoring rule' : readOnly ? existing.name : `Edit ${existing.name}`}
+      subtitle={readOnly
+        ? 'What it measures, how a run of it works, and how often it runs.'
+        : 'Pick what to measure and which challenge it pays into.'}
       onClose={onClose}
       closeLabel="Close the rule form"
-      footer={<FormActions onSave={save} onCancel={onClose} saveLabel="Save rule" />}
+      footer={readOnly
+        ? <button type="button" className={BTN.secondary} onClick={onClose}>Close</button>
+        : <FormActions onSave={save} onCancel={onClose} saveLabel="Save rule" />}
     >
+      {/* One switch for every field below: a view-only admin reads the same
+          panel, and a disabled fieldset is the browser's own way of saying
+          these are not theirs to change. `min-w-0` undoes the fieldset's
+          min-content width, which would otherwise let the SQL block push the
+          panel wider than the screen. */}
+      <fieldset disabled={readOnly} className="min-w-0">
       {/* The rule in one sentence, kept live. It is the first thing in the
           panel because it is the only part that says what will happen. */}
       <div
@@ -485,6 +723,29 @@ function RuleForm({
         )}
       </FormGrid>
 
+      <FormSection label="How it scores" />
+      <HowItScores anatomy={anatomy} lastPass={lastPass} />
+
+      <FormSection label="How often" />
+      <FormGrid>
+        <Field
+          label="Run this rule"
+          htmlFor="admin-topo-cs-f-interval"
+          help={defaultMinutes ? anatomy?.cost : 'The schedule is switched off for this deployment, so rules run only from Run now.'}
+        >
+          <Select
+            id="admin-topo-cs-f-interval"
+            value={interval}
+            onChange={(e) => setIntervalChoice(e.target.value)}
+          >
+            <Options
+              options={choices.map((m) => ({ value: m, label: everyLabel(m) }))}
+              blank={defaultMinutes ? `Default (${everyLabel(defaultMinutes).toLowerCase()})` : 'Default'}
+            />
+          </Select>
+        </Field>
+      </FormGrid>
+
       <FormSection label="Numbers" />
       <p className="-mt-1 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         {template
@@ -546,6 +807,7 @@ function RuleForm({
         checked={enabled}
         onChange={setEnabled}
       />
+      </fieldset>
       <FormError message={error} />
     </Panel>
   );
@@ -571,6 +833,23 @@ function ChallengeScoringScreen() {
     setError({ status, message: (data && data.error) || null });
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // The Runs column counts down to a time the scorer then acts on, so what it
+  // says goes stale at exactly the moment somebody is watching it. One reload
+  // shortly after the soonest rule falls due keeps it honest; nothing is
+  // polled while nothing is due, and nothing at all in a hidden tab.
+  const now = useNow();
+  const soonest = (payload?.rules || []).reduce((min: number | null, r) => {
+    const at = r.enabled && r.next_due_at ? Date.parse(r.next_due_at) : null;
+    return at != null && (min == null || at < min) ? at : min;
+  }, null);
+  useEffect(() => {
+    if (soonest == null) return undefined;
+    const wait = Math.max(soonest - Date.now(), 0) + 8000;
+    if (wait > 3600000) return undefined;
+    const id = setTimeout(() => { if (!document.hidden) load(); }, wait);
+    return () => clearTimeout(id);
+  }, [soonest, load]);
 
   useEffect(() => {
     (async () => {
@@ -655,6 +934,9 @@ function ChallengeScoringScreen() {
       },
       tdClass: 'text-xs',
     },
+    // How often the rule runs. What a run of it DOES is in the rule's own
+    // panel, not here: the list is for scanning seven rules at once.
+    { label: 'Runs', cell: (r) => <RunsCell rule={r} now={now} />, tdClass: 'text-xs' },
     {
       label: 'Status',
       cell: (r) => {
@@ -722,12 +1004,14 @@ function ChallengeScoringScreen() {
       ) : null}
 
       <div id="admin-topo-cs-form">
-        {editing != null && write ? (
+        {editing != null && (write || editingRule) ? (
           <RuleForm
             key={editing}
             existing={editingRule}
             measures={payload?.measures || []}
             templates={templates}
+            schedule={payload?.schedule || null}
+            readOnly={!write}
             onClose={() => setEditing(null)}
             onSaved={() => { setEditing(null); load(); }}
           />
@@ -763,7 +1047,7 @@ function ChallengeScoringScreen() {
             columns={columns}
             rowKey={(r) => r.id}
             extra={extra}
-            actions={write ? (r) => (
+            actions={(r) => (write ? (
               <>
                 <button type="button" className={BTN.row} onClick={() => setEditing(String(r.id))}>
                   Edit
@@ -772,7 +1056,13 @@ function ChallengeScoringScreen() {
                   Delete
                 </button>
               </>
-            ) : undefined}
+            ) : (
+              // The same panel, fields switched off: how a rule scores is
+              // worth reading whether or not it is yours to change.
+              <button type="button" className={BTN.row} onClick={() => setEditing(String(r.id))}>
+                View
+              </button>
+            ))}
           />
         ) : null}
       </div>
