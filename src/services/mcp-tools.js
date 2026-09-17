@@ -2953,6 +2953,7 @@ function registerTools(server, ctx) {
         })),
       nextStep: staleCheckoutWarning(checkout)
         + duplicateWarning(result)
+        + 'First verify that the active agent context is rooted in the app repository or its fork and has loaded that repository\'s own instructions. Some coding agents retain instructions from the project where a task started. If unrelated repository instructions are still active, use guidance to open a fresh task rooted in the app repository even if code-editing tools are available here. '
         + (result.proposalId
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '

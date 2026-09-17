@@ -266,6 +266,13 @@ test('the work order says the appendix is partial and names the lookup', () => {
   assert.match(order, /connector traffic does not go through your container/i);
 });
 
+test('the work order keeps agent instructions with their repository', () => {
+  const order = instructions(fullOrder());
+  assert.match(order, /has loaded this repository's own instructions/);
+  assert.match(order, /changing directory from an unrelated project may not\s+replace them/);
+  assert.match(order, /start a\s+fresh task rooted in this repository/);
+});
+
 test('the work order separates manual testing routes from interaction evidence', () => {
   const order = instructions(fullOrder());
   assert.match(order, /testingPaths/);

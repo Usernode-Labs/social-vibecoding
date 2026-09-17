@@ -30,6 +30,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const TOOLS_SRC = fs.readFileSync(path.join(ROOT, 'src', 'services', 'mcp-tools.js'), 'utf8');
+const AGENT_GUIDANCE = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
 
 // Rebuild the warning from the shipped source so the wording under test is
 // the wording that ships. It closes over nothing, which is what makes this
@@ -174,4 +175,18 @@ test('the same comparison backs both tools, rather than a second copy of it', ()
   // get_checkout_status resolves the app the same way, so a divergence
   // between the two answers is not possible.
   assert.match(block, /repoUrl: app\.repo_url \|\| null/);
+});
+
+test('the platform repository guidance excludes separately cloned repositories', () => {
+  assert.match(AGENT_GUIDANCE, /govern only files inside the\s+`Usernode-Labs\/social-vibecoding` Git worktree/);
+  assert.match(AGENT_GUIDANCE, /same-named path in a separate repository does\s+not inherit the rule/);
+  assert.match(AGENT_GUIDANCE, /do not carry these instructions across that boundary/);
+  assert.match(AGENT_GUIDANCE, /start a fresh task rooted there/);
+});
+
+test('prepare_work makes the repository boundary an exception to in-place work', () => {
+  const block = prepareWorkBlock();
+  assert.match(block, /active agent context is rooted in the app repository or its fork/);
+  assert.match(block, /Some coding agents retain instructions from the project where a task started/);
+  assert.match(block, /use guidance to open a fresh task rooted in the app repository even if code-editing tools are available here/);
 });
