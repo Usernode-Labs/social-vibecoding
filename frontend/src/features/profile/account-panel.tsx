@@ -15,14 +15,20 @@
  * (#switcher-byok-dot) following Settings and the same isAdmin publisher
  * behind Admin — the writers are unchanged, only the parent is.
  *
- * ── Why the native rows did NOT follow them ───────────────────────────
+ * ── Why the native rows STAYED, and what #2382 added beside them ──────
  *
  * The node and the wallet are not destinations. They are status readouts —
  * "your node is producing", "this is your balance" — with no page behind
- * them, and the menu's rule is that everything in it goes somewhere. A row
- * that reports rather than navigates is exactly what turns a menu back into
- * the catch-all hamburger, so they stay on the screen that is already about
- * the viewer.
+ * them, and the menu's rule is that everything in it goes somewhere. That is
+ * why #1443 left them on the screen that is already about the viewer, and
+ * they are still here, readouts and all.
+ *
+ * #2382 reversed the other half of that call: an admin asked for Wallet and
+ * the validator under the app chip too, so the menu now ALSO carries
+ * #switcher-row-wallet (the same WalletSheet.openFromRow() this row calls)
+ * and #switcher-row-validator (Settings › Homeroom app, where block
+ * production lives), gated on the same two stores. They are extra entrances
+ * without the readouts, not a move — see the sheet's header for the bargain.
  *
  * The native rows ship hidden until the bridge reports the capability.
  * Logout is available on every surface through the shared Settings flow.
