@@ -768,7 +768,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the same 683 to 688, with the five chat-proposal-event checks above.
   // Neither set overlaps the other, so the merged manifest holds every one
   // of them: 683 + 1 + 5 = 689.
-  assert.equal(DAPP.tests.length, 689);
+  //
+  // 689 → 690: the Improve button follows the open app's own redeploy (task
+  // 446). The landed state, the reload row and the arrow, gets a check on the
+  // staging fork fixture; the building state is the note and spinner the
+  // platform-updating check already photographs, and the manifest is one
+  // slot from its ceiling (tests/improve-session-spinner.test.js).
+  assert.equal(DAPP.tests.length, 690);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -243,7 +243,7 @@
 // bundle and omitted the cache retirement required by v10. Existing clients
 // therefore kept drawing the pre-fix Anthropic default even though production
 // was running the merged commit. Retire that stale shell now.
-const SW_VERSION = 'v30';
+const SW_VERSION = 'v31';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

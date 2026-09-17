@@ -116,6 +116,7 @@ export function boardHref(slug, boardView) {
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
  * @property {'idle'|'deploying'|'stale'} versionState
+ * @property {boolean} appUpdateReady
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {'workshop'|'kanban'} boardView
  * @property {number|null} previewSessionId
@@ -229,6 +230,14 @@ const INITIAL = {
    * past the SHA this tab loaded against.
    */
   versionState: 'idle',
+  /**
+   * A build of THIS app landed while the app was on screen (its
+   * app_redeploy_status broadcast ended without failing) and the frame is
+   * still showing the build before it. Drives the button's arrow glyph and
+   * the panel's reload row; cleared by the reload, by a new build starting,
+   * and by a change of target.
+   */
+  appUpdateReady: false,
   /**
    * Which dev sub-view is on screen ('forum' | 'chat' | 'sessions' | 'topic'),
    * or null off the Dev half. Republished with `tab` from App.switchTab —

@@ -263,6 +263,7 @@ const Improve = {
         iconEmoji: null,
         version: null,
         deploying: false,
+        appUpdateReady: false,
         readOnly: false,
         showTerminal: false,
         canShare: false,
@@ -291,6 +292,8 @@ const Improve = {
       iconEmoji: target.iconEmoji || null,
       version: target.version || null,
       deploying: !!target.deploying,
+      // A build that landed for the PREVIOUS app is not this one's news.
+      appUpdateReady: slugChanged ? false : !!prev.appUpdateReady,
       readOnly: !!target.readOnly,
       canShare: !!target.canShare,
       // The terminal is only meaningful while an iframe is on screen, and
@@ -546,7 +549,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);
@@ -981,6 +984,23 @@ const Improve = {
   openTerminal() {
     Promise.resolve(Improve.close()).then(() => {
       window.DevConsole?.show?.();
+    });
+  },
+
+  /**
+   * Load the build that just landed. The panel's reload row and the button's
+   * arrow glyph both mean this. The offer is withdrawn as it is taken up, so
+   * a reload that is slow to show the new build does not re-offer itself
+   * midway: a second tap is a second reload, not a repeat of the first.
+   *
+   * The frame, not the tab: what is stale is the app's document, and
+   * AppView.reloadAppFrame knows the two loads it takes to get past an app's
+   * own shell cache.
+   */
+  reloadApp() {
+    improveStore.set({ appUpdateReady: false });
+    Promise.resolve(Improve.close()).then(() => {
+      window.AppView?.reloadAppFrame?.();
     });
   },
 

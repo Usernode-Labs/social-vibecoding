@@ -203,6 +203,9 @@ function QuickAction({ id, label, onClick }: {
  *     reload will land on it. `failed` gets the same button with a warier
  *     line, because a reload that might need two tries still beats a tab with
  *     no way forward.
+ *     This app's OWN build landing is the same kind of thing with its own
+ *     row: the frame is still showing the build before it, and what the row
+ *     offers is a reload of the frame, not of the tab (Improve.reloadApp).
  *   - IDLE. Nothing. A row saying "up to date" is a row that is right almost
  *     always and therefore never read.
  *
@@ -213,7 +216,7 @@ function QuickAction({ id, label, onClick }: {
  * the wording.
  */
 function UpdateStatus(): ReactNode {
-  const { versionState, deploying } = useStoreState(improveStore);
+  const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   const platformBusy = versionState === 'deploying' || versionState === 'downloading';
   const ready = versionState === 'ready' || versionState === 'failed';
 
@@ -230,6 +233,24 @@ function UpdateStatus(): ReactNode {
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           There is a new version available. Click here to get the new version.
+        </span>
+      </button>
+    );
+  }
+
+  if (appUpdateReady) {
+    return (
+      <button
+        id="improve-app-update-ready"
+        type="button"
+        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
+          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
+        onClick={() => Improve.reloadApp()}
+      >
+        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1">
+          This app has a new version. Click here to reload it.
         </span>
       </button>
     );

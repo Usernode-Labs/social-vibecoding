@@ -2582,6 +2582,12 @@
       "expectText": "new version available"
     },
     {
+      "name": "Once the open app's build has landed, the Improve panel offers to reload the app and the button shows the arrow",
+      "path": "/?shot=app-update-ready#app/staging-demo-fork",
+      "expectSelector": "body:has(#improve-btn-glyph[data-state=ready]) #improve-footer button#improve-app-update-ready",
+      "expectText": "reload"
+    },
+    {
       "name": "The image-built document carries its own platform build identity",
       "path": "/",
       "expectSelector": "head > meta[name=\"platform-build\"][content]"
