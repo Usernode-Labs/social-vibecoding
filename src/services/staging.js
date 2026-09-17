@@ -1089,12 +1089,20 @@ async function rebuildProductionInner(config, app) {
       // why rebuild progress never touches apps.status. Best-effort.
       const deployFailure = require('./deploy-failure');
       let failureRecord = null;
+      // The record this one replaces, read in the same statement that
+      // writes the new one so the comparison below is against what was
+      // actually there. Left undefined when the write fails: "unknown" must
+      // read as a new incident, not a repeat.
+      let previousFailure;
       try {
         failureRecord = deployFailure.record(err, { sha: mainSha || null });
-        await getPool(config).query(
-          'UPDATE apps SET last_failure = $1 WHERE id = $2',
+        const { rows } = await getPool(config).query(
+          `WITH before AS (SELECT last_failure FROM apps WHERE id = $2)
+           UPDATE apps SET last_failure = $1 WHERE id = $2
+           RETURNING (SELECT last_failure FROM before) AS previous_failure`,
           [JSON.stringify(failureRecord), app.id]
         );
+        previousFailure = rows[0] ? rows[0].previous_failure : null;
       } catch (e) {
         log.warn('staging', 'Failed to persist last_failure', { app: app.slug, err: e.message });
       }
@@ -1105,21 +1113,35 @@ async function rebuildProductionInner(config, app) {
       // noticed. Addressed to the creator and the app's admins, gated on
       // the adminOnly `app_health` category.
       //
+      // Once per incident, not per attempt. The drift poller retries a
+      // failed rebuild every tick, and a failure that is deterministic (a
+      // Dockerfile the build sandbox cannot build) fails the same way each
+      // time; the notification is about the commit that is broken, which
+      // has not changed. The row above still records every attempt, so
+      // "View build log" stays current. See deployFailure.sameIncident for
+      // what counts as the same incident.
+      //
       // Best-effort, and deliberately after the row is persisted: the
       // failure record is the durable part and must not depend on this.
-      try {
-        const notifications = require('./notifications');
-        const pool = getPool(config);
-        const created = await notifications.createAppHealthNotification(pool, {
-          appId: app.id,
-          // A short token, not the reason: notifications.detail is
-          // VARCHAR(32) and the full reason is on apps.last_failure, which
-          // the UPDATE above just wrote.
-          detail: 'deploy_failed',
+      if (deployFailure.sameIncident(previousFailure, failureRecord)) {
+        log.info('staging', 'Production rebuild failed again for the same commit; already notified', {
+          app: app.slug, sha: failureRecord.sha, stage: failureRecord.stage,
         });
-        await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)));
-      } catch (e) {
-        log.warn('staging', 'App-health notification failed', { app: app.slug, err: e.message });
+      } else {
+        try {
+          const notifications = require('./notifications');
+          const pool = getPool(config);
+          const created = await notifications.createAppHealthNotification(pool, {
+            appId: app.id,
+            // A short token, not the reason: notifications.detail is
+            // VARCHAR(32) and the full reason is on apps.last_failure, which
+            // the UPDATE above just wrote.
+            detail: 'deploy_failed',
+          });
+          await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (e) {
+          log.warn('staging', 'App-health notification failed', { app: app.slug, err: e.message });
+        }
       }
     }
     throw err;

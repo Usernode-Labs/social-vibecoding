@@ -49,6 +49,43 @@ const FIRST_POLL_DELAY_MS = 30_000;
 
 const inFlight = new Set();
 
+// Back off a rebuild that keeps failing for the same commit.
+//
+// A drift rebuild that fails is retried on the next tick, forever, at full
+// cadence. That is right when the fault is transient (GitHub hiccup, the
+// build host busy). It is wrong when the fault is in the commit itself: a
+// Dockerfile the build sandbox cannot build, a syntax error on main. That
+// fails identically every time, and every attempt costs a full image build
+// plus, until staging.js learned to suppress repeats, a "Deploy failed"
+// notification to everyone who could fix it. Twenty-five in a night for
+// one falling-sands commit.
+//
+// So: while the sha a rebuild is ATTEMPTING stays the same, each failure
+// doubles the wait before the next attempt, from one tick up to a cap. A
+// new commit on main is a new attempt and starts over; so does a rebuild
+// that succeeds, and the admin's "Check for updates" button ignores the
+// wait entirely (an admin asking now has usually just fixed something).
+//
+// In memory on purpose: the poller runs on the leader, and a restart
+// merely costs one extra attempt.
+const BACKOFF_MAX_MS = parseInt(process.env.MAIN_DRIFT_BACKOFF_MAX_MS, 10) || 60 * 60 * 1000;
+const failedAttempts = new Map(); // app.id -> { sha, failures, notBefore }
+let now = () => Date.now();
+
+function backoffRemaining(appId, sha) {
+  const entry = failedAttempts.get(appId);
+  if (!entry || entry.sha !== sha) return 0;
+  return Math.max(0, entry.notBefore - now());
+}
+
+function noteFailure(appId, sha) {
+  const prev = failedAttempts.get(appId);
+  const failures = prev && prev.sha === sha ? prev.failures + 1 : 1;
+  const delayMs = Math.min(POLL_INTERVAL_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+  failedAttempts.set(appId, { sha, failures, notBefore: now() + delayMs });
+  return { failures, delayMs };
+}
+
 async function fetchRemoteHeadSha(owner, repo) {
   const octokit = await github.getOctokit(owner);
   // `repos.getBranch` returns the tip commit; cheaper than listing
@@ -73,8 +110,12 @@ async function fetchRemoteHeadSha(owner, repo) {
 //   invalid_repo     — `apps.repo_url` couldn't be parsed (shouldn't happen for healthy rows)
 //   fetch_failed     — GitHub API call rejected (bot lost access, rate limit, …)
 //   rebuild_failed   — rebuildProduction threw (clone/build/healthcheck etc.)
+//   backing_off      — drift detected, but the same commit failed to rebuild
+//                      recently; not retried until `retryInMs` has passed
 //   first_seen       — main_sha was NULL; backfilled, no redeploy
-async function checkAndRedeployOne(config, pool, app) {
+//
+// `manual: true` (the admin's "Check for updates") skips the backoff wait.
+async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   if (inFlight.has(app.id)) {
     return { status: 'in_flight', slug: app.slug };
   }
@@ -109,7 +150,19 @@ async function checkAndRedeployOne(config, pool, app) {
   }
 
   if (remoteSha === app.main_sha) {
+    // Converged, by us or by some other path (a merge, a manual redeploy);
+    // whatever was failing is no longer what main points at.
+    failedAttempts.delete(app.id);
     return { status: 'no_drift', slug: app.slug, sha: remoteSha };
+  }
+
+  const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
+  if (retryInMs > 0) {
+    const { failures } = failedAttempts.get(app.id);
+    log.debug('drift-poller', 'Drift rebuild backing off after repeated failure', {
+      slug: app.slug, attempted: remoteSha.slice(0, 7), failures, retryInMs,
+    });
+    return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha, failures, retryInMs };
   }
 
   // Drift detected. Claim the in-memory slot before doing any work
@@ -144,6 +197,7 @@ async function checkAndRedeployOne(config, pool, app) {
         prNumber: null,
       });
     } catch (_) { /* ws failures are non-fatal */ }
+    failedAttempts.delete(app.id);
     log.info('drift-poller', 'Drift redeploy succeeded', { slug: app.slug, sha: (sha || '').slice(0, 7) });
     // main moved out-of-band (direct push / bot commit). Any promoted PR
     // on this app may now conflict — sweep them through the worker-based
@@ -154,12 +208,18 @@ async function checkAndRedeployOne(config, pool, app) {
     });
     return { status: 'redeployed', slug: app.slug, from: app.main_sha, to: sha || remoteSha };
   } catch (err) {
-    log.error('drift-poller', 'Drift redeploy failed', { slug: app.slug, err: err.message });
-    // Don't update main_sha on failure — the next poll will see the
-    // same drift and retry. Eventually the upstream fault (e.g. bot
-    // lost access, syntax error in the new commit) gets fixed and
-    // we converge. No status flip needed.
-    return { status: 'rebuild_failed', slug: app.slug, from: app.main_sha, attempted: remoteSha, error: err.message };
+    // Don't update main_sha on failure — a later poll sees the same drift
+    // and retries, after the backoff above. Eventually the upstream fault
+    // (bot lost access, syntax error in the new commit) gets fixed and we
+    // converge. No status flip needed.
+    const { failures, delayMs } = noteFailure(app.id, remoteSha);
+    log.error('drift-poller', 'Drift redeploy failed', {
+      slug: app.slug, attempted: remoteSha.slice(0, 7), failures, retryInMs: delayMs, err: err.message,
+    });
+    return {
+      status: 'rebuild_failed', slug: app.slug, from: app.main_sha, attempted: remoteSha,
+      failures, retryInMs: delayMs, error: err.message,
+    };
   } finally {
     inFlight.delete(app.id);
   }
@@ -211,4 +271,10 @@ module.exports = {
   // Exposed so the admin "Check for updates" button can run the same
   // single-app code path on demand without waiting for the next tick.
   checkAndRedeployOne,
+  _forTest: {
+    resetBackoff: () => failedAttempts.clear(),
+    setClock: (fn) => { now = fn || (() => Date.now()); },
+    POLL_INTERVAL_MS,
+    BACKOFF_MAX_MS,
+  },
 };
