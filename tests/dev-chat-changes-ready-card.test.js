@@ -288,8 +288,11 @@ test('live session refresh watches managed proposal readiness (#1650)', () => {
 
 test('ordinary active sessions preserve their build-on-propose action (#1650)', () => {
   const h = makeDevChat();
+  // Pushed, no PR and no preview yet — every push pends its checks first, so
+  // the state is 'pending'. (All three blank is a branch nothing has reached,
+  // which #2379 blocks.)
   h.render([{ role: 'system', content: 'Changes ready.', changesReady: true }],
-    activeSession({ proposal_state: undefined, check_state: null, staging_url: null }));
+    activeSession({ proposal_state: undefined, check_state: 'pending', staging_url: null }));
   assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
 });
 
