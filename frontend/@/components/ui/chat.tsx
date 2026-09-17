@@ -63,8 +63,9 @@ export function MessageBubble({ className, from, ...props }: MessageBubbleProps)
  * `from` is the row's side. `them` is the named row as the deck draws it:
  * avatar on the left, name then time on the header line, the body under
  * them. `me` mirrors it for the viewer's own message — the row runs right to
- * left, so the header's name sits at the right edge with the time inside it
- * and the controls at the far left, and the body column stacks its children
+ * left, but the header still reads name then time (#2392): it is pushed
+ * against the right edge rather than reversed, with the controls at the far
+ * left, and the body column stacks its children
  * against the right edge, where a bubble hugs the side that says who is
  * speaking. The caller drops the avatar for `me`; a group chat does not
  * draw your own face beside your own words.
@@ -89,13 +90,13 @@ export function ChatMessageRow({
     <div className={cn('flex gap-3 px-4 py-2', me && 'flex-row-reverse', className)} {...props}>
       {avatar}
       <div className="min-w-0 flex-1">
-        <div className={cn('flex items-baseline gap-2', me && 'flex-row-reverse')}>
+        <div className={cn('flex items-baseline gap-2', me && 'justify-end')}>
           <span className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
           {timestamp ? (
             <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
           {actions ? (
-            <span className={cn('flex shrink-0 items-center gap-1', me ? 'mr-auto' : 'ml-auto')}>{actions}</span>
+            <span className={cn('flex shrink-0 items-center gap-1', me ? 'order-first mr-auto' : 'ml-auto')}>{actions}</span>
           ) : null}
         </div>
         <div
