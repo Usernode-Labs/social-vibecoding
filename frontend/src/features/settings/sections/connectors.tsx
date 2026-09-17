@@ -135,40 +135,22 @@ export function ConnectorsSection() {
         </div>
         {/*
             #2370: the lead used to carry all of this as a 76-word paragraph
-            everyone read before they could act. The scope facts are not
-            deleted — they move HERE, one tap from the rows they describe, so
-            they arrive at the moment the authorization is decided rather than
-            before the reader knows what it is for.
+            ahead of the rows. It is three short sentences under them now —
+            after the thing you came for, before the decision to authorize.
 
-            Three of these sentences are load-bearing and pinned by
-            tests/github-link.test.js: "no access to your repositories",
-            "stores no provider token", and "not proof of unique humanity".
-            The last is the honest limit of the check — resolving a provider
-            account id establishes control of that account and nothing more —
-            and it must survive any future trim of this block.
+            NOT a <details>. dapp.json asserts these three phrases with no
+            interaction step, which is the product stating they must be
+            readable without a tap, and a scope disclosure you have to go
+            looking for is worth little. "not proof of unique humanity" is the
+            honest limit of the check: resolving a provider account id
+            establishes control of that account and nothing more.
         */}
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed">
+        <p id="github-link-scope" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed">
           Either one is enough. Connecting both does not add more.
+          Homeroom asks for
+          <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{' no access to your repositories '}</strong>
+          and stores no provider token. It confirms you control the account: an account-control proof, not proof of unique humanity.
         </p>
-        <details id="github-link-scope" className="group mt-1">
-          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-400">
-            <ChevronRightIcon aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
-            What Homeroom can see
-          </summary>
-          <div className="pl-5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-            <p>
-              Homeroom reads your profile name and handle. For GitHub it asks for
-              <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{' no access to your repositories '}</strong>
-              and stores no provider token.
-            </p>
-            <p className="mt-2">
-              Connecting confirms you control that account. It is an account-control proof, not proof of unique humanity.
-            </p>
-            <p className="mt-2">
-              GitHub can also attribute proposals built by your own coding agent to the account you connected.
-            </p>
-          </div>
-        </details>
         <StatusLine id="github-link-status" size="xs" />
       </div>
       <div id="connectors-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
@@ -492,7 +474,7 @@ export function ConnectorsSection() {
             cannot classify — and a page whose script has not run yet — shows
             everything rather than nothing.
         */}
-        <details id="connector-prompt-help" className="group mb-4 rounded-md border border-zinc-200 dark:border-zinc-800">
+        <details open id="connector-prompt-help" className="group mb-4 rounded-md border border-zinc-200 dark:border-zinc-800">
           <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 px-3 py-2">
             <span className="min-w-0">
               <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">Stop the permission prompts</span>

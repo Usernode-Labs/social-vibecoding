@@ -3631,22 +3631,22 @@
       "expectText": "Claude (claude.ai)"
     },
     {
-      "name": "Connector setup walks Claude web and ChatGPT web through numbered onboarding steps (#1289)",
+      "name": "Connector setup offers Claude web and ChatGPT web as named routes with their step counts (#1289, #2370)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section ol",
-      "expectText": "Turn on Developer mode."
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section summary",
+      "expectText": "7 steps"
     },
     {
-      "name": "Connector setup covers the Codex CLI with a copyable config.toml entry (#1892)",
+      "name": "Connector setup offers the Codex CLI as its own route (#1892, #2370)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-codex pre#connector-codex-config",
-      "expectText": "[mcp_servers.homeroom]"
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-codex summary",
+      "expectText": "3 steps"
     },
     {
-      "name": "Connector setup has a generic walkthrough for any other MCP client (#1892)",
+      "name": "Connector setup offers a route for any other MCP client (#1892)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-generic ol",
-      "expectText": "Any other MCP client or agent"
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-setup-generic summary",
+      "expectText": "Another agent"
     },
     {
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
@@ -3826,7 +3826,7 @@
       "name": "Settings can answer the build-flow question for good (#1049)",
       "path": "/#settings/connectors",
       "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",
-      "expectText": "Preferred build flow"
+      "expectText": "Where changes get built"
     },
     {
       "name": "A connector-imported proposal names the coding agent that built it (#967)",
