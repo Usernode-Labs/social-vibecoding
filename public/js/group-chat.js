@@ -421,7 +421,9 @@ const GroupChat = {
           GroupChat._handleThreadIncoming(msg);
           break;
         }
-        const shouldStick = GroupChat._lockedToBottom;
+        // #2389: your own message always brings you to the bottom, even when
+        // you had scrolled up — you just sent it, so you expect to see it.
+        const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
         GroupChat.messages.push(msg);
         GroupChat.appendMessage(msg);
         if (shouldStick) GroupChat.scrollToBottom();
@@ -474,7 +476,8 @@ const GroupChat = {
         // near the bottom — otherwise a live message would yank someone who
         // has scrolled up to read the topic body or older replies.
         const nearBottom =
-          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80
+          || GroupChat._isOwnMessage(msg);
         // Appended to the MODEL. #gc-thread-messages is the same React
         // transcript #gc-messages is (mounted with the 'thread' key a few
         // methods down), so the insertAdjacentHTML this replaces was legacy
@@ -588,6 +591,12 @@ const GroupChat = {
   // `bodyHtml` stays markup: renderMessageBody runs the content through
   // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
   // in React is exactly how the two drift apart.
+  // The same "is this mine" rule `_messageView` stamps on each row.
+  _isOwnMessage(msg) {
+    const me = App.user?.id;
+    return me != null && (msg.userId === me || msg.user_id === me);
+  },
+
   _messageView(msg) {
     const kindRaw = msg.msgType || msg.msg_type || 'message';
     const meta = msg.metadata || msg.meta || {};
