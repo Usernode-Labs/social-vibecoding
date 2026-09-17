@@ -74,11 +74,18 @@ function forkSourceReadinessError(sourceApp) {
 // to the literal "<deleted>" with an inert link. One batched query
 // covers the whole list (no per-row round trip). Replaces each app's
 // `forked_from` with { appId, slug, name, linkable } — or null for
-// non-forks / malformed refs.
+// non-forks / malformed refs, and for an app in demo mode, whose lineage is
+// masked here rather than resolved (see below).
 async function attachForkLineage(pool, apps) {
   const list = Array.isArray(apps) ? apps : [apps];
+  // Demo mode (routes/demo-mode.js): the app stands in for the one it was
+  // forked from, on camera, and the badge is the one tell. The lineage stays
+  // on the row untouched and is back the moment demo mode goes off; only the
+  // payload is quiet about it.
+  const masked = (a) => !!(a && a.demo_mode);
   const ids = [];
   for (const a of list) {
+    if (masked(a)) continue;
     const ref = a && a.forked_from;
     if (ref && typeof ref === 'object' && Number.isInteger(ref.appId)) {
       ids.push(ref.appId);
@@ -93,6 +100,10 @@ async function attachForkLineage(pool, apps) {
     for (const r of rows) nameById.set(r.id, r.name);
   }
   for (const a of list) {
+    if (masked(a)) {
+      a.forked_from = null;
+      continue;
+    }
     const ref = a && a.forked_from;
     if (!ref || typeof ref !== 'object') {
       if (a) a.forked_from = null;
@@ -3125,5 +3136,8 @@ function appRoutes(config) {
 }
 
 module.exports = {
+  // For tests/demo-mode-lineage.test.js: the masking is a property of this
+  // one resolver, so it is pinned there rather than through a route.
+  attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, deleteBlockReason, isCoreApp,
 };

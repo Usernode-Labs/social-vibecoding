@@ -2583,7 +2583,7 @@
     },
     {
       "name": "Once the open app's build has landed, the Improve panel offers to reload the app and the button shows the arrow",
-      "path": "/?shot=app-update-ready#app/staging-demo-fork",
+      "path": "/?shot=app-update-ready#app/staging-demo-forkable",
       "expectSelector": "body:has(#improve-btn-glyph[data-state=ready]) #improve-footer button#improve-app-update-ready",
       "expectText": "reload"
     },
@@ -3119,7 +3119,7 @@
     },
     {
       "name": "App settings: an app in demo mode says so, and names the synthetic partner its proposals and votes come from",
-      "path": "/?shot=app-settings#app/staging-demo-fork",
+      "path": "/?shot=app-settings#app/staging-demo-forkable",
       "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-demo-mode-notice",
       "expectText": "demo mode"
     },

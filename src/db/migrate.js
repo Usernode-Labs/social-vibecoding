@@ -5111,8 +5111,10 @@ async function seedStagingForkLineage(pool, config) {
 
 // Demo mode on the fork fixture, so the App settings dialog's demo-mode
 // notice (frontend/src/features/dialogs/app-settings.tsx) has something to
-// render in a preview: `staging-demo-fork` gets a synthetic partner and the
-// switch on. The partner is a real users row with the same no-login posture
+// render in a preview: `staging-demo-forkable` gets a synthetic partner and
+// the switch on. The SOURCE fixture, not the fork: demo mode masks an app's
+// fork lineage (routes/apps.js attachForkLineage), and the Browse check on
+// `staging-demo-fork` pins that fork's "Forked from" line. The partner is a real users row with the same no-login posture
 // as every fixture identity, with is_synthetic on top so the session
 // middleware refuses it before the password ever would. No base sha and no
 // GitHub in staging, so the demo endpoints themselves answer 409 here; only
@@ -5129,7 +5131,7 @@ async function seedStagingDemoMode(pool) {
       `UPDATE apps
           SET demo_mode = TRUE,
               demo_partner_id = (SELECT id FROM users WHERE username = 'staging_demo_partner')
-        WHERE slug = 'staging-demo-fork'`
+        WHERE slug = 'staging-demo-forkable'`
     );
   } catch (err) {
     log.warn('db', 'Staging demo-mode fixture skipped', { err: err.message });
