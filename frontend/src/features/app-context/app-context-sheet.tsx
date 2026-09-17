@@ -114,19 +114,15 @@ import {
   PlusWideIcon,
   SearchIcon,
   ShieldCheckIcon,
-  SquaresPlusIcon,
   TrophyIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { improveStore } from '../improve/improve-store.js';
-import { detectMobileOs } from '../mobile-install/detect';
-import { isNativeApp, isStandalone } from '../mobile-install/environment';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse, sortByRecency } from './app-recency';
@@ -164,7 +160,7 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * it natively.
  */
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden, target,
+  id, href, icon, label, trailing, onClick, elRef, shipsHidden,
 }: {
   id: string;
   href: string;
@@ -177,19 +173,12 @@ function MenuRow({
   // The className stays a constant either way — which is what keeps the
   // outside `hidden` toggle a sanctioned seam rather than a second owner.
   shipsHidden?: boolean;
-  // A new window, for the one row whose page has to leave a standalone
-  // shell (see AddToHomeScreenRow). Unset on every other row — a same-origin
-  // path never needs it, and NavLink's rule against target="_blank" on
-  // in-place navigation (public/js/nav-link.js) is about exactly those.
-  target?: '_blank';
 }): ReactNode {
   return (
     <a
       ref={elRef}
       id={id}
       href={href}
-      target={target}
-      rel={target ? 'noopener' : undefined}
       className={shipsHidden ? `hidden ${ROW}` : ROW}
       onClick={(e) => {
         if (onClick) { onClick(e); return; }
@@ -203,86 +192,6 @@ function MenuRow({
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
     </a>
-  );
-}
-
-/**
- * "Add to Home Screen" for the CURRENT app (#1508).
- *
- * A destination like the rest of the list: `/app/<slug>/install` is a page
- * of its own, server-rendered by src/routes/app-install.js with the app's own
- * manifest and icon, because the browser's install flow reads the manifest
- * of the document it is looking at and the shell's document is the platform
- * PWA. That is also why this is a row and not a button: the shell cannot add
- * the app itself, it can only take the person to the page that can.
- *
- * Rendered only while an app is current. The prerender has none, so the
- * first client render matches it, and there is nothing to offer from Home.
- * Even then it ships `hidden` with a CONSTANT className: whether this
- * visitor can put anything on a home screen is a fact about the device,
- * read in an effect after mount, and the reveal goes through the classList
- * seam (lib/legacy-dom.ts) rather than a rendered class. It is a phone
- * thing, a laptop has no home screen, and the native app counts as a phone.
- *
- * How the page opens depends on where the shell is running, decided at
- * click time:
- *
- *   native app   the webview cannot leave for the system browser on its own
- *                (target="_blank" and window.open both do nothing there, see
- *                public/js/nav-link.js), and it is the system browser that
- *                has the share sheet, so the bridge's openExternal is the
- *                only road. window.open is the fallback for an app build
- *                without the handler.
- *   standalone   the shell installed as the platform PWA has no share sheet
- *                either, so the row carries target="_blank" and the page
- *                opens in a browser window that does.
- *   otherwise    an ordinary same-tab navigation; the anchor does it.
- */
-type InstallHost = 'none' | 'native' | 'standalone' | 'browser';
-
-function detectInstallHost(): InstallHost {
-  if (isNativeApp()) return 'native';
-  if (!detectMobileOs(navigator.userAgent, navigator.maxTouchPoints || 0)) return 'none';
-  return isStandalone() ? 'standalone' : 'browser';
-}
-
-function AddToHomeScreenRow({ slug }: { slug: string }): ReactNode {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [host, setHost] = useState<InstallHost>('none');
-  useEffect(() => {
-    setHost(detectInstallHost());
-  }, []);
-  useHiddenClass(wrapRef, host === 'none');
-
-  const href = `/app/${encodeURIComponent(slug)}/install`;
-  return (
-    <div ref={wrapRef} className="hidden">
-      <div className={SECTION}>This app</div>
-      <MenuRow
-        id="app-context-add-to-home"
-        href={href}
-        target={host === 'standalone' ? '_blank' : undefined}
-        icon={<SquaresPlusIcon />}
-        label="Add to Home Screen"
-        onClick={(e) => {
-          if ((window as any).NavLink?.isNativeClick?.(e)) return;
-          void AppContext.dismissForNav();
-          // Standalone rides the anchor's target; a browser rides the anchor.
-          if (host !== 'native') return;
-          e.preventDefault();
-          const url = new URL(href, window.location.origin).href;
-          const bridge = (window as {
-            usernode?: { openExternal?: (target: string) => Promise<unknown> };
-          }).usernode;
-          const viaBridge = typeof bridge?.openExternal === 'function'
-            ? Promise.resolve().then(() => bridge.openExternal!(url))
-            : Promise.reject(new Error('openExternal is unavailable'));
-          viaBridge.catch(() => {
-            window.open(url, '_blank', 'noopener');
-          });
-        }}
-      />
-    </div>
   );
 }
 
@@ -520,11 +429,6 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {/* The current app's own group, only while there is one (#1508).
-              It leads the list because it is about the app the chip names;
-              the platform's places follow. Absent from the prerender, and
-              hidden on anything without a home screen — see the component. */}
-          {slug ? <AddToHomeScreenRow slug={slug} /> : null}
           {/* The one group that had no label. Apps and the viewer's own rows
               each announced themselves; Home, Discover and Messages opened
               straight off the hairline, which read as rows left over above

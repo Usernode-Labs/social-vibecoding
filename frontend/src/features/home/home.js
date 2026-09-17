@@ -23,6 +23,7 @@
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
+import { detectInstallHost } from '../mobile-install/environment';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -3176,8 +3177,9 @@ const Home = {
     const shortcutSupport = Home._shortcutSupport;
     // "Your apps" only: the homescreen widget is for the apps you keep,
     // not something to offer on every card in the directory.
-    if (isRunning && Home.isYours(app)
-        && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
+    const offersPin = !!(isRunning && Home.isYours(app)
+      && shortcutSupport && shortcutSupport.mechanism !== 'unsupported');
+    if (offersPin) {
       // iOS shortcuts land in the shared widget grid, so the item names
       // that destination; Android pins straight to the launcher.
       const isWidget = shortcutSupport.mechanism === 'widget';
@@ -3201,6 +3203,47 @@ const Home = {
           run: () => Home._menuAddShortcut(app),
         });
       }
+    }
+    // #2320: "Add to Home Screen", the per-app install page (#1508). It was a
+    // row in the app chip's sheet, which only knows the app you are already
+    // IN; here it is on the app itself, from its tile and its details page.
+    //
+    // A phone thing (see detectInstallHost in ../mobile-install/environment):
+    // a laptop has no home screen. Skipped for the inert ?demo=1 tiles, which
+    // have no install page, and wherever the native pin above is offered, so
+    // the menu never carries two look-alike ways onto the home screen.
+    //
+    // How the page opens follows the host, read at open time: the native
+    // webview cannot leave for the system browser on its own, so the bridge's
+    // openExternal (window.open as the fallback for a build without it); an
+    // installed platform PWA has no share sheet, so a browser window of its
+    // own; anywhere else, an ordinary same-tab navigation.
+    const installHost = !app.demo && app.slug && !offersPin ? detectInstallHost() : 'none';
+    if (installHost !== 'none') {
+      items.push({
+        key: 'install',
+        label: 'Add to Home Screen',
+        title: 'Put this app on your phone’s home screen with its own icon',
+        run: () => {
+          const href = `/app/${encodeURIComponent(app.slug)}/install`;
+          if (installHost === 'standalone') {
+            window.open(href, '_blank', 'noopener');
+            return;
+          }
+          if (installHost !== 'native') {
+            location.assign(href);
+            return;
+          }
+          const url = new URL(href, window.location.origin).href;
+          const bridge = window.usernode;
+          const viaBridge = typeof bridge?.openExternal === 'function'
+            ? Promise.resolve().then(() => bridge.openExternal(url))
+            : Promise.reject(new Error('openExternal is unavailable'));
+          viaBridge.catch(() => {
+            window.open(url, '_blank', 'noopener');
+          });
+        },
+      });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
       items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });

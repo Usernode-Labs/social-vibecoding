@@ -104,6 +104,11 @@ function makeHomeEnv(user) {
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
+    // home.js imports detectInstallHost (../mobile-install/environment); the
+    // stripped import binds nothing, so declare a laptop here. Off a phone the
+    // "Add to Home Screen" item never renders, which keeps every exact key
+    // list below as it was. tests/app-install-sheet-row.test.js pins the item.
+    detectInstallHost: () => 'none',
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
