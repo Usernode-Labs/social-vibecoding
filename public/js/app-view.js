@@ -3711,6 +3711,21 @@ const AppView = {
     if (handoff && item.check_state !== 'passing') {
       return blocked('This managed session needs its checks to pass before it can be submitted.');
     }
+    // #2379 — a change with nothing on its branch is not a change yet. The
+    // server already refuses it (promote 409s "no committed code on its
+    // branch yet"), so an enabled button only promised a failure. Two ways to
+    // know: the checks ran and found the branch level with main, or nothing
+    // has ever reached the branch at all — no pull request, no preview, no
+    // checks ever started. A check run in flight is NOT that second case: it
+    // starts on a push, so it keeps #2074's "not a verdict yet" rule above.
+    if (!handoff && item.source !== 'imported') {
+      const levelWithMain = item.check_state === 'skipped'
+        && /no commits beyond main/.test(item.check_error_detail || '');
+      const nothingPushed = !item.pr_number && !item.staging_url && !item.check_state;
+      if (levelWithMain || nothingPushed) {
+        return blocked('There are no committed changes to submit yet. Ask the agent to make a change first.');
+      }
+    }
     if (item.check_state === 'failing') {
       return blocked('The checks on this revision are failing. Push a fix, then submit it.');
     }

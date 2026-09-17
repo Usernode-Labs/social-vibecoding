@@ -130,6 +130,34 @@ test('an ordinary session submits while its checks are still running (#2074)', (
   assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'error' }).kind, 'blocked');
 });
 
+test('a change with nothing committed cannot be submitted yet (#2379)', () => {
+  const av = context();
+  const blank = { ...failing, source: null, proposal_state: undefined,
+    pr_number: null, staging_url: null, check_state: null, test_results: [] };
+  const state = (patch) => av.changeSubmissionState({ ...blank, ...patch });
+  const noChanges = /no committed changes to submit yet/;
+
+  // A brand-new session: no pull request, no preview, no check ever started.
+  assert.equal(state({}).kind, 'blocked');
+  assert.match(state({}).reason, noChanges);
+  assert.equal(av._topicViewFor('session', blank).card.actions
+    .find((a) => a.key === 'propose-change').disabled, true, 'the button is disabled');
+  // The checks ran and found the branch level with main.
+  const level = state({ check_state: 'skipped', check_error_detail: 'branch has no commits beyond main, so there is nothing to test' });
+  assert.equal(level.kind, 'blocked');
+  assert.match(level.reason, noChanges);
+
+  // Any sign that something reached the branch keeps #2074's rule.
+  assert.equal(state({ check_state: 'pending' }).kind, 'ready', 'a push pends its checks');
+  assert.equal(state({ pr_number: 12 }).kind, 'ready');
+  assert.equal(state({ staging_url: 'https://preview.example' }).kind, 'ready');
+  assert.equal(state({ check_state: 'skipped', check_error_detail: 'GitHub is not configured' }).kind, 'ready',
+    'a skip for another reason says nothing about the branch');
+  // Managed handoffs and imported PRs have their own contracts.
+  assert.match(state({ source: 'cli_handoff' }).reason, /tested commit uploaded/);
+  assert.equal(state({ source: 'imported' }).kind, 'ready');
+});
+
 test('readers cannot promote, sync, or open the private workspace', () => {
   const av = context({ id: 99 });
   const v = av._topicViewFor('session', { ...failing, shared_at: '2026-09-11' });
