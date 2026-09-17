@@ -4113,6 +4113,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS challenge_scoring_rules_template_unique
   ON challenge_scoring_rules (challenge_template_id) WHERE challenge_template_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS challenge_scoring_rules_challenge_unique
   ON challenge_scoring_rules (challenge_id) WHERE challenge_id IS NOT NULL;
+-- Each rule runs on its own interval. The scheduler is one timer beating once
+-- a minute; on each beat a rule is due when `interval_minutes` have passed
+-- since `last_scored_at`. NULL interval follows the deployment's default
+-- (CHALLENGE_SCORER_INTERVAL_MINUTES), so a rule nobody has touched runs as
+-- often as the whole service did before this column existed. The allowed
+-- values are a fixed list in code (challenge-rules.js INTERVAL_CHOICES); the
+-- CHECK here is only the belt that keeps a hand-written UPDATE sane.
+--
+-- `last_scored_at` moves only when a pass ran to its end. A pass cut short by
+-- the run's shared budget leaves it alone, so the rule is still due on the
+-- next beat and — having waited longest — first in line for it.
+--
+-- `last_pass` is what that pass cost: milliseconds, candidates read, credits
+-- written, units graded. It lives on the rule because the run history keeps
+-- ten runs, and with one rule on a one-minute interval those ten are all
+-- that rule's.
+ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER
+  CHECK (interval_minutes IS NULL OR (interval_minutes >= 1 AND interval_minutes <= 1440));
+ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS last_scored_at TIMESTAMPTZ;
+ALTER TABLE challenge_scoring_rules ADD COLUMN IF NOT EXISTS last_pass JSONB;
 
 -- What the automatic scorer did, each time it ran.
 --
