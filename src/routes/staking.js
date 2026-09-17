@@ -2,10 +2,10 @@
 
 const { Router } = require('express');
 const { rateLimit } = require('express-rate-limit');
-const { createStakingObservability } = require('../services/staking-observability');
+const { createStakingContext } = require('../services/staking-context');
 const preview = require('../services/staking-preview');
 
-function stakingRoutes(config, { service = createStakingObservability(config) } = {}) {
+function stakingRoutes(config, { service = createStakingContext(config) } = {}) {
   const router = Router();
   const isPreview = (req) => process.env.USERNODE_ENV === 'staging' && req.query.demo === 'staking';
   router.use('/api/me/staking', (req, res, next) => {
@@ -31,8 +31,8 @@ function stakingRoutes(config, { service = createStakingObservability(config) } 
       const data = preview.previewEpoch(req.query.epoch);
       return data ? res.json(data) : res.status(400).json({ error: 'Invalid epoch' });
     }
-    try { res.json(await service.epochs(req.query)); }
-    catch (error) { res.status(error.status || 502).json({ error: error.message }); }
+    // Old cached shells must reload; never fall back to server-side reads.
+    res.status(410).json({ error: 'Reload Homeroom to load staking data directly on this device.' });
   });
   return router;
 }

@@ -17,14 +17,18 @@ function memoryCache() {
 }
 function backend({ chain = () => 'chain-a', failEpoch } = {}) {
   const calls = [];
-  return { calls, async read(path) {
-    if (path.endsWith('/context')) return { chainId: chain() };
-    const p = new URL(path, 'https://example.test').searchParams;
-    const epoch = p.get('epoch') === 'current' ? 10 : Number(p.get('epoch'));
-    calls.push(p.get('epoch'));
-    if (epoch === failEpoch) throw Error('Temporary failure');
-    return response(p.get('chainId'), p.get('wallet'), epoch);
-  } };
+  return { calls,
+    async read(path) {
+      assert.equal(path, '/api/me/staking/context', 'only configuration comes from Homeroom');
+      return { chainId: chain(), observabilityUrl: 'https://receiver.example' };
+    },
+    async readEpoch({ epoch: requested, chainId, wallet }) {
+      const epoch = requested === 'current' ? 10 : Number(requested);
+      calls.push(requested);
+      if (epoch === failEpoch) throw Error('Temporary failure');
+      return response(chainId, wallet, epoch);
+    },
+  };
 }
 
 test('delegated sheet content is exactly one Undelegate action with no epoch/status content', () => {
@@ -55,7 +59,7 @@ test('epoch card exposes distinct counters and their requested colors', () => {
 test('current paints before previous prefetch; full completed response survives reopening with no expiry', async () => {
   const cache = memoryCache();
   const server = backend();
-  const history = api.createStakingHistory('wallet-a', { cache, read: server.read });
+  const history = api.createStakingHistory('wallet-a', { cache, read: server.read, readEpoch: server.readEpoch });
   const seen = [];
   history.store.subscribe(() => { const s = history.store.get(); if (s.currentEpoch !== null) seen.push(!!s.records[9]); });
   await history.refresh();
@@ -65,7 +69,7 @@ test('current paints before previous prefetch; full completed response survives 
   assert.equal(cache.records.has(api.epochCacheKey('chain-a', 'wallet-a', 10)), false);
   history.dispose();
   const server2 = backend();
-  const reopened = api.createStakingHistory('wallet-a', { cache, read: server2.read });
+  const reopened = api.createStakingHistory('wallet-a', { cache, read: server2.read, readEpoch: server2.readEpoch });
   await reopened.refresh();
   assert.deepEqual(server2.calls, ['current'], 'previous epoch restored from device cache');
   await reopened.select(9);
@@ -77,7 +81,7 @@ test('cache partitions identical epoch numbers by wallet and chain', async () =>
   const cache = memoryCache();
   for (const [chain, wallet] of [['a', 'one'], ['b', 'one'], ['a', 'two']]) {
     const server = backend({ chain: () => chain });
-    const history = api.createStakingHistory(wallet, { cache, read: server.read });
+    const history = api.createStakingHistory(wallet, { cache, read: server.read, readEpoch: server.readEpoch });
     await history.refresh();
     assert.deepEqual(server.calls, ['current', '9']);
     history.dispose();
@@ -88,8 +92,7 @@ test('cache partitions identical epoch numbers by wallet and chain', async () =>
 test('disposing on delegation cancels requests and fences late epoch data and prefetch', async () => {
   let resolve;
   let calls = 0;
-  const history = api.createStakingHistory('wallet-a', { cache: memoryCache(), read: async (path, signal) => {
-    if (path.endsWith('/context')) return { chainId: 'chain-a' };
+  const history = api.createStakingHistory('wallet-a', { cache: memoryCache(), read: backend().read, readEpoch: async (_args, signal) => {
     calls += 1;
     return new Promise((r) => { resolve = () => { assert.equal(signal.aborted, true); r(response('chain-a', 'wallet-a', 10)); }; });
   } });
@@ -104,7 +107,7 @@ test('network changes replace visible records while keeping each chain cache sep
   let chain = 'a';
   const cache = memoryCache();
   const server = backend({ chain: () => chain });
-  const history = api.createStakingHistory('wallet', { cache, read: server.read });
+  const history = api.createStakingHistory('wallet', { cache, read: server.read, readEpoch: server.readEpoch });
   await history.refresh(); chain = 'b'; await history.refresh();
   assert.equal(history.store.get().chainId, 'b');
   assert.equal(history.store.get().records[9].chainId, 'b');
@@ -114,7 +117,7 @@ test('network changes replace visible records while keeping each chain cache sep
 
 test('prefetch failure keeps current data and becomes retryable on the older card', async () => {
   const server = backend({ failEpoch: 9 });
-  const history = api.createStakingHistory('wallet', { cache: memoryCache(), read: server.read });
+  const history = api.createStakingHistory('wallet', { cache: memoryCache(), read: server.read, readEpoch: server.readEpoch });
   await history.refresh();
   assert.equal(history.store.get().currentEpoch, 10);
   assert.equal(history.store.get().error, null);
@@ -127,8 +130,8 @@ test('prefetch failure keeps current data and becomes retryable on the older car
 
 test('a partial response is never persisted and is fetched again', async () => {
   const cache = memoryCache(), server = backend();
-  const history = api.createStakingHistory('wallet', { cache, read: async (path) => {
-    const data = await server.read(path);
+  const history = api.createStakingHistory('wallet', { cache, read: server.read, readEpoch: async (args) => {
+    const data = await server.readEpoch(args);
     return data.epoch === 9 ? { ...data, complete: false, counts: null } : data;
   } });
   await history.refresh(); await history.select(9);
@@ -141,4 +144,22 @@ test('IndexedDB absence leaves live reads usable', async () => {
   const cache = api.createEpochCache(null);
   assert.equal(await cache.get('a', 'b', 1), null);
   assert.equal(await cache.put(response('a', 'b', 1)), false);
+});
+
+test('concurrent refreshes coalesce and receiver changes keep completed data partitioned by chain and wallet', async () => {
+  const server = backend(), cache = memoryCache();
+  let observabilityUrl = 'https://first.example';
+  const origins = [];
+  const history = api.createStakingHistory('wallet', { cache,
+    read: async () => ({ chainId: 'chain-a', observabilityUrl }),
+    readEpoch: async (args) => { origins.push(args.observabilityUrl); return server.readEpoch(args); },
+  });
+  await Promise.all([history.refresh(), history.refresh()]);
+  assert.deepEqual(server.calls, ['current', '9']);
+  observabilityUrl = 'https://second.example';
+  await history.refresh();
+  assert.deepEqual(origins, ['https://first.example', 'https://first.example', 'https://second.example']);
+  assert.equal(history.store.get().observabilityUrl, observabilityUrl);
+  assert.equal(history.store.get().records[9].complete, true);
+  history.dispose();
 });

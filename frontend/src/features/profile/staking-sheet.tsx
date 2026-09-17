@@ -117,12 +117,18 @@ export function StakingContent({ wallet, demo = false }: { wallet: WalletSheetSt
   </>;
 }
 
+async function readPreview(path: string, signal: AbortSignal) {
+  const response = await fetch(path + (path.includes('?') ? '&' : '?') + 'demo=staking', { credentials: 'same-origin', signal });
+  if (!response.ok) throw new Error('Could not load the preview.');
+  return response.json();
+}
+
 function ActiveEpochs({ wallet, demo }: { wallet: string; demo: boolean }) {
-  const [history] = useState(() => createStakingHistory(wallet, demo ? { read: async (path, signal) => {
-    const response = await fetch(path + (path.includes('?') ? '&' : '?') + 'demo=staking', { credentials: 'same-origin', signal });
-    if (!response.ok) throw new Error('Could not load the preview.');
-    return response.json();
-  } } : {}));
+  const [history] = useState(() => createStakingHistory(wallet, demo ? {
+    read: readPreview,
+    readEpoch: ({ epoch }: { epoch: string }, signal: AbortSignal) =>
+      readPreview('/api/me/staking/epochs?epoch=' + encodeURIComponent(epoch), signal),
+  } : {}));
   const state = useStoreState(history.store);
   useEffect(() => {
     void history.refresh();
