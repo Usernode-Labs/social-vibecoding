@@ -14,6 +14,7 @@ const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
+const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
@@ -2484,6 +2485,33 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       await topicAttrs.selfAssignProposal(pool, app.id, rows[0].id, req.user);
 
       log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
+
+      // #2364: "Start work" on an issue card lands here, and starting work
+      // on an issue is taking it — so claim it for the starter (claim row +
+      // assignee vote, exactly what the Claim button does). The number is
+      // client input, so it is claimed only once GitHub confirms it names an
+      // OPEN issue on this app's repo; with GitHub disabled nothing can
+      // confirm it and nothing is claimed. Awaited rather than fired off so
+      // the board the client returns to already shows the claim:
+      // fetchPublicIssue is cache-first (the board that offered the button
+      // just filled that cache) and never throws. Best-effort — a failed
+      // claim never fails the session it rides on.
+      if (issueNumber) {
+        const [, repoOwner, repoName] = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (github.isEnabled() && repoOwner && repoName) {
+          try {
+            const { issue } = await github.fetchPublicIssue(repoOwner, repoName.replace(/\.git$/, ''), issueNumber);
+            if (issue && issue.state !== 'closed') {
+              await claimIssueForUser(pool, { app, issueNumber, user: req.user });
+            }
+          } catch (err) {
+            log.warn('sessions', 'Issue claim on session start failed', {
+              sessionId: rows[0].id, issueNumber, err: err.message,
+            });
+          }
+        }
+      }
+
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -2673,6 +2701,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessionId: session.id,
         metadata: { headless: true, issueNumber },
       });
+
+      // #2364: generating a proposal for an issue is taking it, so claim it
+      // for the clicking user (claim row + assignee vote, as the Claim
+      // button does). Only an issue the fetch above positively returned as
+      // open — a degraded, number-only fetch confirms nothing. Best-effort:
+      // the run starts either way.
+      if (issue && issue.state !== 'closed') {
+        await claimIssueForUser(pool, {
+          app, issueNumber, user: { id: req.user.id, username: req.user.username },
+        }).catch((err) => log.warn('sessions', 'Issue claim on headless start failed', {
+          sessionId: session.id, issueNumber, err: err.message,
+        }));
+      }
 
       // #1038: the row is now 'generating', which is what puts the spinner
       // on this issue's kanban card for every viewer of the app. Nothing in
