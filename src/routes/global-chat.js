@@ -116,16 +116,28 @@ function requestErrorStatus(error) {
 function globalChatRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const orchestrator = createGlobalChatOrchestrator({
-    pool,
-    config,
-    registry: CAPABILITY_REGISTRY,
-  });
-  const actionExecutor = createActionExecutor({
-    pool,
-    config,
-    registry: CAPABILITY_REGISTRY,
-  });
+  // Several offline/server-source tests intentionally replace the DB pool
+  // with no-op stubs and never call Global Chat. Construct the stateful
+  // services only on their first endpoint request so merely mounting the
+  // platform server keeps that established test/boot contract.
+  let orchestrator = null;
+  let actionExecutor = null;
+  function getOrchestrator() {
+    orchestrator ||= createGlobalChatOrchestrator({
+      pool,
+      config,
+      registry: CAPABILITY_REGISTRY,
+    });
+    return orchestrator;
+  }
+  function getActionExecutor() {
+    actionExecutor ||= createActionExecutor({
+      pool,
+      config,
+      registry: CAPABILITY_REGISTRY,
+    });
+    return actionExecutor;
+  }
 
   async function credentialForUser(userId) {
     const metadata = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
@@ -295,7 +307,7 @@ function globalChatRoutes(config) {
       clearInterval(heartbeat);
     });
     try {
-      await orchestrator.runTurn({
+      await getOrchestrator().runTurn({
         threadId: req.params.id,
         text: input.text,
         kind,
@@ -426,7 +438,7 @@ function globalChatRoutes(config) {
       return res.status(400).json({ error: error.message });
     }
     try {
-      const completed = await actionExecutor.executeConfirmedAction({
+      const completed = await getActionExecutor().executeConfirmedAction({
         userId: req.user.id,
         threadId: input.threadId,
         token: req.params.token,
