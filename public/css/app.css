@@ -11867,6 +11867,27 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview:hover { background: var(--accent-tint); border-color: var(--accent-light); }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn { margin-left: 0; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview svg { width: 16px; height: 16px; }
+/* ── The kudos slot gives way; Open card, Preview and ⋯ never do ──
+   The slot is the band's one pill that cannot fold like the others: a
+   legacy-filled host with no box of its own. useFoldedActions measures the
+   pill through it and, with the room left after the fixed controls, keeps
+   the widest of its faces that fits — the whole line; the name alone
+   (`data-thanks="short"` on the band); the clap alone (`"clap"`, a square
+   of the pill's own height, like the ⋯ button) — and with no room for even
+   that marks the host `data-folded`, which sends the pill to the clipped
+   row like any folded pill and lists it in ⋯ (_kudosMenuItem). The band's
+   measurement writes these three; nothing else does. */
+.gc-card-actions[data-thanks="short"] .dev-thanks-tail { display: none; }
+.gc-card-actions[data-thanks="clap"] .kudos-wrap .dev-thanks-label,
+.gc-card-actions[data-thanks="clap"] .kudos-wrap [data-kudos-count] { display: none; }
+.gc-card-actions[data-thanks="clap"] .kudos-wrap > .gc-vote-btn {
+  aspect-ratio: 1 / 1;
+  width: auto;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+.gc-card-actions > [data-kudos-host][data-folded] > .kudos-wrap { order: 1; }
 /* The two badge states of the preview, in the band at the same height. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-checks-running-badge,
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-conflict-badge {

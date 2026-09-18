@@ -1331,6 +1331,34 @@ export function edgeFor(m: DevCardModel): string {
   return 'ok';
 }
 
+/** One face of the kudos slot and the width the band spends on it. */
+export type SlotFace = { stage: 'full' | 'short' | 'clap'; width: number };
+
+/**
+ * The kudos slot's faces, widest first, read off the pill at its full face:
+ * the whole line; the name alone (the line's tail hidden), when the pill is
+ * the thanks face; and the clap alone, a square of the pill's own height
+ * (app.css `[data-thanks="clap"]`).
+ */
+export function slotFaces(pill: HTMLElement): SlotFace[] {
+  const full = pill.offsetWidth;
+  const faces: SlotFace[] = [{ stage: 'full', width: full }];
+  const tail = pill.querySelector('.dev-thanks-tail') as HTMLElement | null;
+  if (tail && tail.offsetWidth) faces.push({ stage: 'short', width: full - tail.offsetWidth });
+  faces.push({ stage: 'clap', width: pill.offsetHeight });
+  return faces;
+}
+
+/**
+ * The widest face that fits the room the fixed controls leave, or null when
+ * not even the clap does — the slot then folds into ⋯. The pure half of the
+ * measurement, so the ladder is pinned at a few widths without a layout.
+ */
+export function slotFace(room: number, faces: SlotFace[]): SlotFace | null {
+  for (const f of faces) if (f.width <= room) return f;
+  return null;
+}
+
 /**
  * One line of actions, folding into ⋯.
  *
@@ -1348,12 +1376,23 @@ export function edgeFor(m: DevCardModel): string {
  * "Claim this issue" is one of those texts. Measured in a layout effect,
  * before paint, re-measured on resize, and mirrored into React state so a
  * re-render draws what the measurement decided.
+ *
+ * The kudos slot is the one pill that cannot fold like the others: a host
+ * app-view.js fills after the fact (`_fillKudosHosts`), with no box of its
+ * own. It is measured through that host and yields LAST, in stages — the
+ * whole line, the name alone, the clap alone (`data-thanks` on the band) —
+ * and with no room for even the clap it folds into ⋯ like any pill
+ * (`data-folded` on the host, `_kudosMenuItem` for the row). "Open card",
+ * Preview and the hamburger are the fixed controls it yields to: they never
+ * leave the row, whatever the column's width.
  */
 function useFoldedActions(
   primary: ActionSpec[], menuKey: string, hasPreview: boolean,
 ): { ref: (el: HTMLDivElement | null) => void; n: number; measured: boolean } {
   const bandRef = useRef<HTMLDivElement | null>(null);
   const [n, setN] = useState(0);
+  // True when the kudos slot did not fit at any face and folded into ⋯.
+  const [kudosFolded, setKudosFolded] = useState(false);
   // Until this is true the band renders every foldable pill on the clipped
   // row (app.css `:not([data-band-measured])`). The alternative — draw them
   // all and fold after — is what made an opening board card show the wrong
@@ -1363,22 +1402,48 @@ function useFoldedActions(
   // children ("Open card", the hamburger, Preview) sit at the band's right
   // and a narrow column may leave no room before them.
   const foldable = primary.filter((a) => a.kudos == null).length;
+  // A band whose one pill is the kudos slot still measures: the slot's
+  // stages are decided here too.
+  const hasKudos = primary.some((a) => a.kudos != null);
   useIsoLayoutEffect(() => {
     const band = bandRef.current;
-    if (!band || !foldable) { if (n) setN(0); return undefined; }
+    if (!band || (!foldable && !hasKudos)) {
+      if (n) setN(0);
+      if (kudosFolded) setKudosFolded(false);
+      return undefined;
+    }
     const measure = () => {
       const kids = Array.from(band.children) as HTMLElement[];
       const folds = kids.filter((k) => k.dataset.fold);
       folds.forEach((k) => { k.removeAttribute('data-folded'); });
+      // The kudos slot, measured through its host (no box of its own) at
+      // its widest face, so every read below starts from the same place.
+      const host = kids.find((k) => k.dataset.kudosHost != null) || null;
+      const pill = host ? (host.firstElementChild as HTMLElement | null) : null;
+      band.removeAttribute('data-thanks');
+      if (host) host.removeAttribute('data-folded');
       const gap = 6;
       const avail = band.clientWidth;
       let used = 0;
       let count = 0;
       for (const k of kids) {
-        if (k.dataset.fold) continue;
+        if (k.dataset.fold || k === host) continue;
         used += k.offsetWidth + (count ? gap : 0);
         count += 1;
       }
+      // The slot yields last and in stages: the widest of its faces that
+      // fits beside the fixed controls, or none — then it folds into ⋯.
+      const faces = pill && pill.offsetWidth ? slotFaces(pill) : null;
+      let face = faces ? slotFace(avail - used - (count ? gap : 0), faces) : null;
+      const setFace = () => {
+        band.removeAttribute('data-thanks');
+        if (!host) return;
+        host.removeAttribute('data-folded');
+        if (faces && !face) host.setAttribute('data-folded', '1');
+        else if (face && face.stage !== 'full') band.setAttribute('data-thanks', face.stage);
+      };
+      setFace();
+      if (face) { used += face.width + (count ? gap : 0); count += 1; }
       let shown = 0;
       for (const k of folds) {
         const w = k.offsetWidth + (count ? gap : 0);
@@ -1386,12 +1451,23 @@ function useFoldedActions(
       }
       folds.forEach((k, i) => { if (i >= shown) k.setAttribute('data-folded', '1'); });
       // The arithmetic mirrors the flex line-break; if a rounding edge still
-      // let one wrap, fold it too so the menu and the row agree.
-      const row = kids.length ? kids[0].offsetTop : 0;
+      // let one wrap, fold it too so the menu and the row agree — and step
+      // the slot down a face while a fixed control is still off the row.
+      // Off the row: at or below the band's clipped height, the same
+      // offsetParent as the band's own.
+      const top = band.offsetTop;
+      const offRow = (k: HTMLElement) => k.offsetTop - top >= band.clientHeight;
       folds.forEach((k, i) => {
-        if (i < shown && k.offsetTop > row) { k.setAttribute('data-folded', '1'); shown = i; }
+        if (i < shown && offRow(k)) { k.setAttribute('data-folded', '1'); shown = i; }
       });
+      const fixed = kids.filter((k) => !k.dataset.fold && k !== host);
+      while (faces && face && fixed.some(offRow)) {
+        const next = faces.indexOf(face) + 1;
+        face = next < faces.length ? faces[next] : null;
+        setFace();
+      }
       setN(folds.length - shown);
+      setKudosFolded(!!faces && !face);
       setMeasured(true);
     };
     measure();
@@ -1415,16 +1491,19 @@ function useFoldedActions(
     }
     return () => { off.forEach((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [foldable, hasPreview, primary.map((a) => a.key + a.label).join('|')]);
+  }, [foldable, hasKudos, hasPreview, primary.map((a) => a.key + a.label).join('|')]);
   // Tell the ⋯ menu which specs it now carries.
   useEffect(() => {
     if (!menuKey) return undefined;
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     if (!av || typeof av._setFoldedCardActions !== 'function') return undefined;
     const hidden = n > 0 ? primary.filter((a) => a.kudos == null).slice(-n) : [];
-    av._setFoldedCardActions(menuKey, hidden);
+    // The kudos slot, when not even its clap fit, goes last: app-view.js
+    // draws its row (`_kudosMenuItem`) through the slot's own button.
+    const slot = kudosFolded ? primary.filter((a) => a.kudos != null) : [];
+    av._setFoldedCardActions(menuKey, hidden.concat(slot));
     return () => { av._setFoldedCardActions(menuKey, []); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [menuKey, n, primary.map((a) => a.key + a.label).join('|')]);
+  }, [menuKey, n, kudosFolded, primary.map((a) => a.key + a.label).join('|')]);
   return { ref: (el) => { bandRef.current = el; }, n, measured };
 }
