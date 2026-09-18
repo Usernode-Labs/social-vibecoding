@@ -1454,6 +1454,11 @@ body.global-chat-mode > :is(
   font-weight: 700;
   line-height: 1.2;
 }
+.global-chat-suggestion-hint {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .global-chat-unavailable p {
   max-width: 34rem;
   margin-top: 5px;
@@ -1468,6 +1473,17 @@ body.global-chat-mode > :is(
   gap: 7px;
 }
 .global-chat-suggestions { margin-top: 10px; }
+.global-chat-related-suggestions {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 1px;
+}
+.global-chat-related-suggestions button {
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+}
 .global-chat-suggestions button,
 .global-chat-inline-actions button,
 .global-chat-expand,

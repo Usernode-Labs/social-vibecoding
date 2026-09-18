@@ -1,5 +1,6 @@
 import type {
   GlobalChatBootstrap,
+  GlobalChatMessage,
   GlobalChatMessagePage,
   GlobalChatModelCatalog,
   GlobalChatPresentation,
@@ -41,6 +42,53 @@ export async function createThread(): Promise<{
 }> {
   return json(await fetch('/api/global-chat/threads', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
+  }));
+}
+
+export async function turnStatus(threadId: string, signal?: AbortSignal): Promise<{
+  active: boolean;
+  turnId: string | null;
+  startedAt: string | null;
+}> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}/turn-status`, {
+    credentials: 'same-origin', cache: 'no-store', signal,
+  }));
+}
+
+export async function cancelTurn(threadId: string): Promise<{ ok: true; cancelled: boolean }> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}/cancel`, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+  }));
+}
+
+export async function executeDirectAction(
+  threadId: string,
+  action: {
+    suggestionId?: string;
+    actionId?: string;
+    parameters?: Record<string, string>;
+    shownSuggestionIds?: string[];
+  },
+  signal?: AbortSignal,
+): Promise<{
+  ok: true;
+  userMessage: GlobalChatMessage;
+  message: GlobalChatMessage;
+  presentation: GlobalChatPresentation;
+  results: GlobalChatResult[];
+  modelInvocations: 0;
+}> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}/direct-actions`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...action,
+      client: clientMetadata(),
+      context: runtimeContext(),
+    }),
+    signal,
   }));
 }
 
@@ -155,6 +203,7 @@ export async function streamTurn({
   text,
   more = false,
   topic,
+  shownSuggestionIds,
   signal,
   onEvent,
 }: {
@@ -162,6 +211,7 @@ export async function streamTurn({
   text?: string;
   more?: boolean;
   topic?: string;
+  shownSuggestionIds?: string[];
   signal?: AbortSignal;
   onEvent: (event: GlobalChatTurnEvent) => void;
 }): Promise<void> {
@@ -174,7 +224,12 @@ export async function streamTurn({
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify(more
-      ? { topic: topic || undefined, client: clientMetadata(), context: runtimeContext() }
+      ? {
+        topic: topic || undefined,
+        shownSuggestionIds,
+        client: clientMetadata(),
+        context: runtimeContext(),
+      }
       : { text, client: clientMetadata(), context: runtimeContext() }),
     signal,
   });

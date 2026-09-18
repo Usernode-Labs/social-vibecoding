@@ -2,9 +2,9 @@
 
 Issue: [#2377 — Make chats global and use MCP for interface](https://github.com/Usernode-Labs/social-vibecoding/issues/2377)
 
-Base commit: `043ab7a8887c085a547c732295fa82c0adefc5a1`
+Follow-up base commit: `6f6f89d7ad9139397018e0c413469d96983f527b`
 
-Working branch: `codex/issue-2377-global-chat-experimental`
+Working branch: `codex/global-chat-followup-fixes`
 
 ## 1. Outcome
 
@@ -23,9 +23,16 @@ The global chat is deliberately small and quiet:
 
 - Results are rendered as compact native components, not large prose answers.
 - Suggestions are short button-like labels with no descriptions.
-- Show two suggestions at a time plus `More suggestions`.
-- `More suggestions` appends two new, non-repeating options to the transcript.
+- Show five compact suggestions at a time plus `More suggestions`.
+- `More suggestions` appends five new, non-repeating options to the transcript.
+  It uses unshown server-curated options first, then asks the inexpensive model
+  for a new contextual batch after the curated pool has fewer than five items.
   Earlier options remain visible and usable; nothing is collapsed.
+- A normal suggestion click executes it. Holding, right-clicking, or using the
+  keyboard context-menu gesture reveals five narrower options for that item.
+- Server-curated reads and navigation bypass the model entirely and record zero
+  model invocations; free-form, ambiguous, semantic, and multi-step requests
+  continue through the Global Chat model.
 - Every rendered object or settings group offers `Open in Classic`.
 - Desktop, mobile web, and the native mobile app expose the same capabilities.
   Only layout and density change.
@@ -101,9 +108,21 @@ removes one model round trip for ordinary requests. The model can still call
 needs another operation. The server, not the model, decides which definitions
 may be exposed for the authenticated user.
 
-`more_suggestions` is a request kind, not another model tool. It makes one
-forced `present_response` call. This prevents weak models from recursively
-requesting more suggestions instead of returning them.
+`more_suggestions` is a request kind, not another model tool. The server first
+persists the next complete five-item curated batch without a model call. When
+that pool is exhausted it makes one forced `present_response` call. This
+prevents weak models from recursively requesting more suggestions instead of
+returning them while keeping the control available indefinitely.
+
+A successful single read/list/search can finish with a server-built compact
+presentation after its first model call. Multi-step work, writes, failures, and
+ambiguous requests remain in the full model loop. This removes the redundant
+second model round trip without letting the server infer a requested mutation.
+
+Turns are durable across a dropped browser, proxy, or mobile stream. The
+server continues bounded work and persists the answer; the client polls the
+owned turn lease and transcript to recover it. Only the explicit Stop control
+cancels server work.
 
 The loop has hard bounds:
 
@@ -235,7 +254,7 @@ in model context.
 
 ## 5. Default system prompt
 
-The canonical deployed string is version `global-chat-system-v4` in
+The canonical deployed string is version `global-chat-system-v5` in
 `src/services/global-chat/prompt.js`; every assistant message stores that
 version. It is intentionally written as an explicit state machine so a small,
 low-reasoning model does not need to infer the platform workflow.
@@ -269,7 +288,7 @@ The prompt gives the model these instructions in order:
    with the complete user task. Never let the Global Chat model write code or
    replace the separately configured Development AI model and effort.
 10. Finish with one `present_response`: at most two short sentences, current
-    turn result references left empty for server attachment, and exactly two
+    turn result references left empty for server attachment, and exactly five
     unique short button suggestions containing complete next prompts.
 11. Never add More/Fewer, Back, Cancel, or Open in Classic suggestions; the
     client owns those controls. A `more_suggestions` turn directly produces two
@@ -347,7 +366,7 @@ Default provider invocation:
 reasoning effort   low
 tool choice        required until a platform capability succeeds; forced present_response for More; otherwise auto
 temperature        0.1 when supported
-max output tokens  800 (200 for More suggestions)
+max output tokens  800
 stream             true
 parallel tools     read-only tools only
 strict tools       required for present_response
@@ -365,7 +384,7 @@ than sent optimistically.
 ```text
 message       optional plain text, maximum 600 characters
 resultRefs    zero to five authoritative tool-result IDs
-suggestions   exactly two { id, label, prompt, capabilityHint } objects
+suggestions   exactly five { id, label, prompt, capabilityHint } objects
 ```
 
 The browser receives a stream of typed events:
@@ -461,6 +480,9 @@ POST   /api/global-chat/threads
 GET    /api/global-chat/threads/:id/messages?before=
 POST   /api/global-chat/threads/:id/turns              SSE response
 POST   /api/global-chat/threads/:id/more-suggestions   SSE response
+POST   /api/global-chat/threads/:id/direct-actions      zero-model fixed action
+GET    /api/global-chat/threads/:id/turn-status         resumable lease state
+POST   /api/global-chat/threads/:id/cancel              explicit Stop action
 POST   /api/global-chat/actions/:token/confirm
 DELETE /api/global-chat/threads/:id
 GET    /api/me/global-chat
@@ -469,14 +491,17 @@ GET    /api/me/global-chat/models
 GET    /api/me/global-chat/usage
 ```
 
-`bootstrap` returns the current thread summary, two first-use suggestions,
+`bootstrap` returns the current thread summary, five first-use suggestions,
 global/development profile labels, budget summary, and availability. It does
 not make a model call merely because the user opened Chat.
 
 First-use suggestions are deterministic so the empty state is instant and
-cheap, for example `Show my work` and `Explore apps`. Once the user interacts,
-the model generates context-aware suggestions. Every response also carries
-the standalone `More suggestions` control.
+cheap: current work, apps, issues, proposals, and messages. Fixed suggestions
+carry only a server-owned action id and execute through the same authorized
+capability registry as model-selected tools. Press-and-hold exposes a compact
+curated contextual branch. The model generates suggestions only after the
+curated pool is exhausted or when the next step is genuinely open-ended. Every
+response also carries the standalone `More suggestions` control.
 
 ## 11. Cost accounting and limits
 
@@ -573,7 +598,12 @@ product releases.
 - Model output cannot introduce unknown renderer/component types.
 - Tool-result references must exist and belong to the current user/thread.
 - Suggestion labels are short, description-free, non-repeating, and exactly
-  two per response; `More suggestions` is always separately present.
+  five per response; `More suggestions` is always separately present.
+- Model output cannot provide direct-action ids. Only exact server-curated
+  suggestions receive an allowlisted action and contextual hold menu.
+- Direct suggestion and inline-result reads use zero model invocations and
+  retain the same authorization, result persistence, renderer, and Classic
+  destination as their underlying capabilities.
 - Confirmation tokens are one-use, expire, bind exact normalized arguments,
   and reject object revision changes.
 - Global and development profile writes cannot overwrite each other.
@@ -593,7 +623,8 @@ product releases.
 ### Deterministic UI paths
 
 1. **First use, desktop:** sign in → Classic is visible → switch to Chat
-   (experimental) → two compact suggestions + More → list current work → open
+   (experimental) → five compact suggestions + More → hold one for contextual
+   options → list current work → open
    an inline item → Open in Classic → exact Classic item opens.
 2. **Mutation and development:** ask to edit/close/vote/merge → exact
    confirmation → authoritative result updates → ask for code work → development
@@ -664,7 +695,7 @@ read-only mode, and transcript deletion.
   provider retry, authoritative result references, and mandatory
   `present_response` completion.
 - [x] Streaming turn and More suggestions APIs plus confirmed-action execution;
-  suggestions remain two compact description-free buttons and old suggestions
+  suggestions remain five compact description-free buttons and old suggestions
   are never hidden or repeated.
 - [x] Focused Global Chat suite: 89 tests passed, 0 failed, including the
   signed-out/member/collaborator/creator/read-only-admin/full-admin/native
@@ -699,5 +730,12 @@ read-only mode, and transcript deletion.
 - [x] Reliability verification: production shell build succeeded; 50 focused
   Global Chat tests passed; the repository changed-test gate passed 3,991
   tests with 1 existing environment-dependent skip and 0 failures.
-- [ ] Reliability fixes remain local until a follow-up PR/import is explicitly
-  requested and reviewed.
+- [x] Follow-up deterministic interaction pass: five first-use choices and
+  complete curated More batches bypass GLM; holding a choice opens five
+  contextual options; exact read actions on rendered apps, issues, proposals,
+  sessions, conversations, and settings use the same zero-model path. Once a
+  curated pool is exhausted, More falls through to GLM and remains available.
+- [x] Follow-up validation: production shell build succeeded; 67 focused
+  Global Chat tests and 3,231 changed-scope tests passed with 0 failures.
+- [x] Follow-up implementation validated and explicitly requested for a GitHub
+  PR. Usernode import remains a separate, confirmation-gated action.

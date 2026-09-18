@@ -60,6 +60,20 @@ test('aliased and array route declarations cannot disappear from the parity audi
   }
 });
 
+test('exact governance and proposal routes keep their distinct Classic destinations', () => {
+  const route = (routePath) => inventory.routes.find((item) => (
+    item.method === 'GET' && item.path === routePath
+  ));
+  assert.equal(
+    route('/api/apps/:slug/governance/:id')?.classicPath,
+    '#app/:slug/dev/governance/:id',
+  );
+  assert.equal(
+    route('/api/apps/:slug/proposals/:id')?.classicPath,
+    '#app/:slug/dev/proposals/:id',
+  );
+});
+
 test('credentials and protocol endpoints are reviewed exemptions, not model tools', () => {
   function route(method, routePath) {
     return inventory.routes.find((item) => item.method === method && item.path === routePath);

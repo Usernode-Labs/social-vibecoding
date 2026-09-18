@@ -339,6 +339,20 @@ async function streamChat({
     const orderedToolCalls = [...toolCalls.entries()]
       .sort(([left], [right]) => left - right)
       .map(([, call]) => call);
+    // A provider/proxy can close an otherwise valid HTTP stream without the
+    // terminal choice. Returning the partial tool arguments makes the next
+    // layer report a misleading schema error and skips its transient retry.
+    // Surface this as a stream failure instead. A length cutoff is equally
+    // incomplete for a tool-only protocol and is safe to retry once.
+    if (!finishReason || finishReason === 'length') {
+      throw new GlobalChatProviderError(
+        'stream_error',
+        finishReason === 'length'
+          ? 'Global Chat model response reached its output limit'
+          : 'Global Chat model stream ended before completion',
+        { dispatched: true },
+      );
+    }
     return {
       generationId,
       requestedModel: body.model,
