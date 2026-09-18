@@ -3,9 +3,9 @@
   "inventoryReviewed": true,
   "parityReady": false,
   "summary": {
-    "totalRoutes": 623,
+    "totalRoutes": 628,
     "mappedRoutes": 500,
-    "exemptRoutes": 123,
+    "exemptRoutes": 128,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 337,
     "unmatchedClientApiReferences": 0,
@@ -5272,7 +5272,52 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 69,
+      "line": 90,
+      "method": "GET",
+      "path": "/api/global-chat/bootstrap",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 123,
+      "method": "GET",
+      "path": "/api/global-chat/threads/current",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 134,
+      "method": "POST",
+      "path": "/api/global-chat/threads",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 146,
+      "method": "GET",
+      "path": "/api/global-chat/threads/:id/messages",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 167,
+      "method": "DELETE",
+      "path": "/api/global-chat/threads/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 183,
       "method": "GET",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5281,7 +5326,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 90,
+      "line": 204,
       "method": "PATCH",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5290,7 +5335,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 145,
+      "line": 259,
       "method": "GET",
       "path": "/api/me/global-chat/models",
       "expression": null,
@@ -5299,7 +5344,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 167,
+      "line": 281,
       "method": "GET",
       "path": "/api/me/global-chat/usage",
       "expression": null,

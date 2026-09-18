@@ -11,9 +11,14 @@ const credentialStore = require('../services/credential-store');
 const openrouterClient = require('../services/openrouter-client');
 const agentModels = require('../services/agent-models');
 const profileService = require('../services/global-chat/profile');
+const globalChatStore = require('../services/global-chat/store');
+const { firstUsePresentation } = require('../services/global-chat/presentation');
+const { CapabilityRegistry } = require('../services/global-chat/capability-registry');
+const { classicCapabilityDefinitions } = require('../services/global-chat/classic-capabilities');
 
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
 const PATCH_FIELDS = new Set(['model', 'reasoningEffort', 'spendCapUsd']);
+const CAPABILITY_REGISTRY = new CapabilityRegistry(classicCapabilityDefinitions());
 
 function noStore(res) {
   res.setHeader('Cache-Control', 'private, no-store');
@@ -65,6 +70,115 @@ function globalChatRoutes(config) {
       catalog: profileService.globalChatCatalog(catalog, config, effort),
     };
   }
+
+  async function developmentProfile(userId) {
+    const { rows } = await pool.query(
+      `SELECT backend, model_id, reasoning_effort
+         FROM user_agent_preferences
+        WHERE user_id = $1 AND is_default = TRUE
+        LIMIT 1`,
+      [userId],
+    );
+    const row = rows[0] || {};
+    return {
+      backend: row.backend || 'claude_code',
+      model: row.model_id || null,
+      reasoningEffort: row.reasoning_effort || null,
+    };
+  }
+
+  router.get('/api/global-chat/bootstrap', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      const [profile, thread, development, credential] = await Promise.all([
+        profileService.readProfile(pool, req.user.id, config),
+        globalChatStore.ensureThread(pool, req.user.id),
+        developmentProfile(req.user.id),
+        credentialForUser(req.user.id),
+      ]);
+      const usage = await profileService.readMonthlyUsage(pool, req.user.id, {
+        spendCapUsd: profile.spendCapUsd,
+      });
+      return res.json({
+        experimental: true,
+        label: 'Chat (experimental)',
+        startupMode: 'classic',
+        parityReady: false,
+        available: credential.configured,
+        unavailableReason: credential.configured ? null : 'openrouter_key_required',
+        capabilityRegistryVersion: CAPABILITY_REGISTRY.version,
+        capabilityCount: CAPABILITY_REGISTRY.size,
+        thread,
+        firstUse: firstUsePresentation(),
+        profiles: { globalChat: profile, development },
+        usage,
+      });
+    } catch (err) {
+      log.error('global-chat', 'bootstrap failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to open Global Chat.' });
+    }
+  });
+
+  router.get('/api/global-chat/threads/current', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      return res.json({ thread: await globalChatStore.currentThread(pool, req.user.id) });
+    } catch (err) {
+      log.warn('global-chat', 'current thread read failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to load the current Global Chat thread.' });
+    }
+  });
+
+  router.post('/api/global-chat/threads', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      const thread = await globalChatStore.createThread(pool, req.user.id, { replace: true });
+      return res.status(201).json({ thread, firstUse: firstUsePresentation() });
+    } catch (err) {
+      log.warn('global-chat', 'thread create failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to start a new Global Chat thread.' });
+    }
+  });
+
+  router.get('/api/global-chat/threads/:id/messages', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      const page = await globalChatStore.listMessages(pool, {
+        userId: req.user.id,
+        threadId: req.params.id,
+        before: req.query.before,
+        limit: req.query.limit,
+      });
+      return res.json(page);
+    } catch (err) {
+      if (err instanceof globalChatStore.GlobalChatStoreError
+          && ['invalid_id', 'invalid_cursor'].includes(err.code)) {
+        return res.status(400).json({ error: err.message, code: err.code });
+      }
+      log.warn('global-chat', 'message page failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to load Global Chat messages.' });
+    }
+  });
+
+  router.delete('/api/global-chat/threads/:id', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      const deleted = await globalChatStore.deleteThread(pool, req.user.id, req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Global Chat thread not found.' });
+      return res.json({ ok: true });
+    } catch (err) {
+      if (err instanceof globalChatStore.GlobalChatStoreError && err.code === 'invalid_id') {
+        return res.status(400).json({ error: err.message, code: err.code });
+      }
+      log.warn('global-chat', 'thread delete failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to clear Global Chat.' });
+    }
+  });
 
   router.get('/api/me/global-chat', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

@@ -8283,10 +8283,14 @@ CREATE TABLE IF NOT EXISTS global_chat_threads (
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   summary         TEXT,
   summary_cursor  BIGINT,
+  active_turn_id  UUID,
+  active_turn_started_at TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   archived_at     TIMESTAMPTZ
 );
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_id UUID;
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_started_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS global_chat_threads_one_active_user
   ON global_chat_threads (user_id) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS global_chat_threads_user_updated
