@@ -723,6 +723,22 @@ async function getCommitParents(owner, repo, sha) {
     .filter(Boolean);
 }
 
+// The tree one commit points at — the CONTENT, with no history attached.
+// Two commits with the same tree sha are byte-for-byte the same source, which
+// is what lets a merge reuse an image built from the commit it squashed (see
+// services/staging.js reuseImage). Same fixed-size endpoint getCommitParents
+// uses, deliberately not repos.getCommit: that carries the commit's whole
+// file list, which on a merge runs to hundreds of entries.
+async function getCommitTree(owner, repo, sha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+    { owner, repo, commit_sha: sha }
+  );
+  const tree = data?.tree?.sha;
+  return typeof tree === 'string' ? tree.toLowerCase() : null;
+}
+
 async function getBranchSha(owner, repo, branchName) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -2278,6 +2294,7 @@ module.exports = {
   ensureBranchAtSha,
   compareCommitAncestry,
   getCommitParents,
+  getCommitTree,
   getBranchSha,
   getRepoHead,
   advanceBranchToSha,

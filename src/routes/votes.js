@@ -4491,6 +4491,49 @@ function creditsSentence(credits, { withAuthor = true } = {}) {
   return `${parts.join(', ')}.`;
 }
 
+// On an app in DEMO MODE, the preview the checks ran against is an image of
+// the very tree the merge just squashed onto main, so production can deploy
+// it instead of building the same source again — which is the ~9s of an ~18s
+// merge-to-live that a recording sits through with nothing on screen.
+//
+// Demo mode only, on purpose. The image's baked GIT_SHA names the commit it
+// was built from, so a reused image reports the proposal's head where
+// apps.main_sha reports the merge commit. On a demo app nothing reads it and
+// the whole app is rewound between takes; making this the fleet's merge path
+// means resolving that difference rather than tolerating it.
+//
+// Fails open at every step: no preview image, no tree to compare, a GitHub
+// that will not answer — all of them mean "build it", which is what the
+// platform did before. staging.rebuildProduction re-verifies the tree itself
+// against the clone; this only offers.
+async function demoPreviewImage(pool, app, session) {
+  if (!app?.demo_mode) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT staging_image_ref, staging_build_ref, staging_commit_sha
+         FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    const row = rows[0];
+    if (!row?.staging_image_ref || !row.staging_commit_sha) return null;
+    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    if (!owner || !repo || !github.isEnabled()) return null;
+    const treeSha = await github.getCommitTree(owner, repo, row.staging_commit_sha);
+    if (!treeSha) return null;
+    return {
+      imageRef: row.staging_image_ref,
+      buildRef: row.staging_build_ref || null,
+      treeSha,
+      fromSha: row.staging_commit_sha,
+    };
+  } catch (err) {
+    log.warn('votes', 'Could not offer the preview image to the rebuild; it will build', {
+      sessionId: session.id, err: err.message,
+    });
+    return null;
+  }
+}
+
 async function finalizeMerge({ config, pool, session, mergeCommitSha, required, activeCount, yesCount, majority, force, forceBy, dstep, dend, gateTrace, gateSave }) {
     // Rebuild production
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
@@ -4562,9 +4605,14 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       // clients pick up via /api/version.
       if (!app.self_hosted) {
         dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
-        const result = await staging.rebuildProduction(config, app);
+        const reuseImage = await demoPreviewImage(pool, app, session);
+        const result = await staging.rebuildProduction(config, app, reuseImage ? { reuseImage } : {});
         sha = result.sha;
-        dstep({ phase: 'prod_rebuild', message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}.`, detail: { sha: sha || null } });
+        dstep({
+          phase: 'prod_rebuild',
+          message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}${result.imageReused ? ', on the image the checks ran against' : ''}.`,
+          detail: { sha: sha || null, imageReused: !!result.imageReused },
+        });
         // Also record the SHA + originating PR so the main app view can
         // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
         // session we just merged; sha is what `rebuildProduction` cloned.
@@ -6543,6 +6591,8 @@ module.exports = {
   resolveIssueBounty,
   createRevertPR,
   finalizeMerge,
+  // #demo: the preview image a demo-mode merge offers its rebuild.
+  demoPreviewImage,
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
