@@ -230,7 +230,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // draws it, and that menu ships in the cold document.)
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
-    'M12 19V5M5 12l7-7 7 7',
+    // (ArrowUpIcon left this list with #2377: the hidden Global Chat sibling
+    // prerenders its composer so hydration and Classic-first startup share the
+    // same document tree.)
     'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M17 21v-8H7v8',

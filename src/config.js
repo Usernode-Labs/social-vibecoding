@@ -6,6 +6,11 @@ const {
   DEFAULT_MARKETING_BASE_URL,
   normalizeBaseUrl,
 } = require('./services/marketing-links');
+const {
+  DEFAULT_MODEL: DEFAULT_GLOBAL_CHAT_MODEL,
+  DEFAULT_REASONING_EFFORT: DEFAULT_GLOBAL_CHAT_REASONING_EFFORT,
+  REASONING_EFFORTS: GLOBAL_CHAT_REASONING_EFFORTS,
+} = require('./services/global-chat/prompt');
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -253,6 +258,13 @@ function load() {
   }
   const openrouterManagedRequireVerifiedIdentity =
     openrouterManagedRequireVerifiedIdentityValue === 'true';
+  const globalChatDefaultReasoningEffort =
+    process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING
+      || DEFAULT_GLOBAL_CHAT_REASONING_EFFORT;
+  if (!GLOBAL_CHAT_REASONING_EFFORTS.has(globalChatDefaultReasoningEffort)) {
+    console.error('[config] OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING must be minimal, low, medium, high, or xhigh.');
+    process.exit(1);
+  }
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -320,6 +332,14 @@ function load() {
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // Global Chat is a separate profile from repository development. Its
+    // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
+    openrouterDefaultGlobalChatModel:
+      process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL || DEFAULT_GLOBAL_CHAT_MODEL,
+    openrouterDefaultGlobalChatReasoning: globalChatDefaultReasoningEffort,
+    openrouterGlobalChatFallbackModels:
+      (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'deepseek/deepseek-v4-flash-0731')
+        .split(',').map((s) => s.trim()).filter(Boolean),
     // Curated badges in the model picker. Exact ids keep the recommendation
     // deliberate: adding a provider prefix here would label dozens of old,
     // batch, and specialist variants and make the badge meaningless.
@@ -806,6 +826,9 @@ function load() {
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
+  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL=${config.openrouterDefaultGlobalChatModel}`);
+  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING=${config.openrouterDefaultGlobalChatReasoning}`);
+  console.log(`  OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS=${config.openrouterGlobalChatFallbackModels.join(',') || '(none)'}`);
   console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);

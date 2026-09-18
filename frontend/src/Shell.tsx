@@ -81,6 +81,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
@@ -267,6 +268,14 @@ export function Shell() {
           which is how every messaging product on earth models it.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
+      {/*
+          Global Chat (#2377) is a React-owned sibling surface, but its MODE
+          deliberately is not a route. It ships hidden, Classic remains in
+          place beneath it, and a full reload always starts in Classic. The
+          persistent header control reveals it only after the server's parity
+          contract is ready for every signed-in viewer.
+      */}
+      <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

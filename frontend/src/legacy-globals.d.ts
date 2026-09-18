@@ -235,6 +235,13 @@ declare global {
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
+      globalChat?: {
+        open(): Promise<void> | void;
+        close(classicPath?: string | null): void;
+        toggle(): Promise<void> | void;
+        isOpen(): boolean;
+        send(text: string): Promise<void> | void;
+      };
       [key: string]: unknown;
     };
     /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */

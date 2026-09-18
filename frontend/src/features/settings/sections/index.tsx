@@ -45,6 +45,7 @@ import { CliSection } from './cli';
 import { ConnectorsSection } from './connectors';
 import { DevConsoleSection } from './dev-console';
 import { ExperimentalSection } from './experimental';
+import { GlobalChatSettingsSection } from './global-chat';
 import { LanguageSection } from './language';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
@@ -73,6 +74,7 @@ export function SettingsSections() {
       <ThemeSection />
       <ApiKeySection />
       <ConnectorsSection />
+      <GlobalChatSettingsSection />
       <OpenRouterSection />
       <AppAiSection />
       <AppPermissionsSection />
