@@ -728,7 +728,7 @@ function UsersSection() {
         </div>
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
-          {!denied && users == null ? <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null}
+          {!denied && users == null ? <p className={`${AdminUI.loading} p-4`}>Loading…</p> : null}
           {!denied && users != null && !shown.length && (query || requestsOnly) ? (
             <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
               {requestsOnly ? 'No pending app slot requests match this filter.' : `No user matches “${filter.trim()}”.`}
