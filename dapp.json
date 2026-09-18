@@ -754,15 +754,21 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page, round three: the topic card (with its bar), the ledger (checks, votes) and About are sheets on the strip",
+      "name": "Proposal page, round three: the topic card (with its bar), About and the ledger (checks, votes) are sheets on the strip, in that order",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]) + .dev-topic-about"
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-about + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"])"
     },
     {
-      "name": "About this change is two labelled halves, with the technical one collapsed",
+      "name": "About this change sits under the card with What changes for you folded to a line (Show more); Technical details and Testing instructions are collapsed accordion rows after the ledger, and Re-run checks is the Checks row's accent pill",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic-about > .dev-topic-sub + .dev-topic-about-body ~ details.dev-topic-details:not([open]) > .dev-topic-details-summary",
+      "expectSelector": "#gc-thread-head .dev-topic:has(.dev-topic-card + .dev-topic-about > .dev-topic-h + .dev-topic-part[data-topic-part=\"summary\"] > .dev-topic-part-h + .dev-topic-fold[data-folded] + .dev-topic-fold-more[aria-expanded=\"false\"]):has(.dev-topic-ledger .dev-ledger-row[data-note=\"checks\"] .dev-ledger-ops > .gc-vote-btn.gc-vote-btn-accent[data-act=\"castRecheck\"]) .dev-topic-ledger + .dev-topic-more > .dev-topic-h + .dev-topic-acc > details.dev-topic-details:not([open]) > .dev-topic-details-summary",
       "expectText": "Technical details"
+    },
+    {
+      "name": "Addresses issue is the About sheet's second part, its rows in the Discussion's event-box language: the number where the glyph goes, the title, the chevron",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
+      "expectSelector": "#gc-thread-head .dev-topic-about > .dev-topic-part[data-topic-part=\"summary\"] + .dev-change-issues:has(.dev-topic-part-h) a.gc-event-box.dev-issue-ref[href*=\"/dev/issues/900017\"] > svg:last-child",
+      "expectText": "Addresses issue"
     },
     {
       "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
@@ -1407,15 +1413,15 @@
       "expectText": "Chat shared. Stop sharing"
     },
     {
-      "name": "A published chat opens in the workspace tab on the shared session’s page",
+      "name": "A published chat opens in the Build sheet on the shared session’s page",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-change-conversation]:has([data-conversation-tab=\"workspace\"][aria-selected=\"true\"]) [role=\"tabpanel\"]:not([hidden]) [data-transcript-body]",
+      "expectSelector": "[data-change-conversation] + [data-change-build][data-build-kind=\"published\"]:not([hidden]) [data-transcript-body]",
       "expectText": "read-only"
     },
     {
-      "name": "Shared workspace keeps the published author attribution and group discussion tab",
+      "name": "Shared workspace keeps the published author attribution, in the Build sheet under the Discussion",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-change-conversation]:has([data-conversation-tab=\"discussion\"]) [data-transcript-section]",
+      "expectSelector": "[data-change-conversation][aria-label=\"Discussion\"] + [data-change-build][data-build-kind=\"published\"] [data-transcript-section]",
       "expectText": "Dev chat by staging-demo-user"
     },
     {
@@ -1905,14 +1911,9 @@
       "expectText": "You have no work going on."
     },
     {
-      "name": "Proposal view shows the How-voting-works help button",
+      "name": "Foreign proposal: Explore in dev chat is a pill on the card's band, which the ⋯ menu closes (#827); the Review row keeps its tally under the label, who approved on the line, and How voting works with its ? at the line's right end",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": ".voting-help-btn"
-    },
-    {
-      "name": "Foreign proposal offers Explore in dev chat in More (#827)",
-      "path": "/?demo=1&shot=card-menu&card=proposal:9000001#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": ".dev-card-menu [data-menu-row=\"explore\"]",
+      "expectSelector": "#dev-topic-thread .dev-topic:has(.dev-topic-card .gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ .dev-card-menu-btn[data-card-menu]:last-child) .dev-ledger-row[data-note=\"votes\"]:has(.dev-ledger-k > small) .dev-ledger-v > .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-link[data-voting-help] + .voting-help-btn[data-voting-help]",
       "expectText": "Explore in dev chat"
     },
     {
@@ -3260,16 +3261,16 @@
       "expectText": "Sync with main"
     },
     {
-      "name": "The path caption counts what is still outstanding, not just how many steps there are",
+      "name": "Where it stands has no caption: the heading is followed by the numbered rows; a step the platform does itself names nobody under its label, and its sentence leads with the state in the row's tone",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-topic-ledger .dev-ledger-path-note",
-      "expectText": "Three steps to a merge. Two still to clear."
+      "expectSelector": ".dev-topic-ledger > .dev-topic-h + .dev-ledger > .dev-ledger-row[data-note=\"mergeability\"][data-step=\"1\"]:not(:has(.dev-ledger-k small)):has(.dev-ledger-text > .dev-ledger-lead.dev-ledger-lead-warn:first-child) ~ .dev-ledger-row[data-note=\"votes\"][data-step=\"3\"]",
+      "expectText": "Syncing."
     },
     {
-      "name": "Each step of the path names who acts and when, under its label",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-ledger-row[data-note=\"checks\"] .dev-ledger-k small",
-      "expectText": "automatic, after 1"
+      "name": "A failing check is one line with a Why it failed door, on a Checks row washed in the blocked tint that says when it last ran and who has to act",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000093",
+      "expectSelector": ".dev-topic-ledger .dev-ledger-row.dev-ledger-bad[data-note=\"checks\"]:has(.dev-ledger-k > small):has(.dev-ledger-text > .dev-ledger-lead-bad) .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
+      "expectText": "Why it failed"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so in a tag, and still shows its vote",
@@ -4259,7 +4260,7 @@
     },
     {
       "name": "#2327: an author can edit an underway proposal title",
-      "path": "/?demo=1&conversation=activity#app/usernode-2d5619/dev/proposals/990101",
+      "path": "/?demo=1&conversation=discussion#app/usernode-2d5619/dev/proposals/990101",
       "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
       "expectText": "Your in-progress session"
     },
@@ -4270,21 +4271,21 @@
       "expectText": "Staging demo: pills fall back after a build"
     },
     {
-      "name": "A full underway change card has Discussion, Build and Activity tabs",
+      "name": "A full change page has the Discussion sheet, and the Build sheet behind the card's Open build pill",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tablist\"]:has([data-conversation-tab=\"discussion\"][aria-selected=\"true\"]):has([data-conversation-tab=\"workspace\"]):has([data-conversation-tab=\"activity\"])",
-      "expectText": "Build"
+      "expectSelector": "[data-change-conversation=\"900801\"][aria-label=\"Discussion\"] + [data-change-build=\"900801\"][data-build-kind=\"owner\"]",
+      "expectText": "Open build"
     },
     {
-      "name": "The owner workspace tab mounts the real dev session inside its change card",
+      "name": "The Build sheet mounts the real dev session under the Discussion when the link asks for it",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tabpanel\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies):not(:has(#dc-mode-switch)):not(:has(.dc-pr-card-actions))",
+      "expectSelector": "[data-change-build=\"900801\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies):not(:has(#dc-mode-switch)):not(:has(.dc-pr-card-actions))",
       "expectText": "Build"
     },
     {
-      "name": "A change in review has its group discussion inside the same tabbed card",
+      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message in a bubble under their name, a platform notice as a message from the app with one box",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "[data-change-conversation] [role=\"tabpanel\"]:not([hidden]) [data-change-discussion] #gc-thread-input",
+      "expectSelector": "[data-change-conversation][aria-label=\"Discussion\"] > .dev-topic-h + .dev-conversation-audience + [data-change-discussion]:has(#gc-thread-messages[data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-bubble > .gc-msg-content):has(#gc-thread-messages > .gc-event[data-event=\"notice\"][data-here] > [aria-hidden=\"true\"] + .min-w-0 .gc-event-box > .dev-card-icon + .gc-event-text) #gc-thread-input",
       "expectText": "Visible to the group"
     },
     {

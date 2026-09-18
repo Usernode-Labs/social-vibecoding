@@ -62,6 +62,16 @@ export function eventText(msg: TranscriptMessage): string {
   const pr = `PR #${ev.prNumber}`;
   const title = ev.title ? `: ${ev.title}` : '';
   const votes = ev.votes ? ` with ${ev.votes} votes` : '';
+  // On the proposal's own page the row names the act, not the proposal:
+  // the number and title are the page's heading.
+  if (ev.type === 'vote') return `Voted ${ev.vote || 'yes'}${ev.reason ? `: “${ev.reason}”` : ''}`;
+  if (ev.type === 'notice') return ev.text || '';
+  if (ev.here && ev.type === 'submitted') return 'Proposed this change for a vote';
+  if (ev.here && ev.type === 'merged') {
+    if (ev.force) return `Force-merged this change${votes}`;
+    if (ev.credits) return `This change is live. ${creditsSentence(ev.credits)}`;
+    return `This change went live${votes}`;
+  }
   if (ev.type === 'submitted') return `Proposed ${pr} for a vote${title}`;
   if (ev.type === 'weekly') return `This week on ${ev.weekly?.app || 'the app'}`;
   if (ev.force) return `Force-merged ${pr}${votes}${title}`;
@@ -195,6 +205,8 @@ export function EventRow({ msg }: { msg: TranscriptMessage }) {
       data-session-id={ev.sessionId}
       data-pr-number={ev.prNumber}
       {...(open ? { 'data-open': '1' } : {})}
+      {...(ev.here ? { 'data-here': '1' } : {})}
+      {...(ev.type === 'vote' && ev.vote ? { 'data-vote': ev.vote } : {})}
       avatar={me ? undefined : (
         <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
           {ev.sender.charAt(0).toUpperCase()}

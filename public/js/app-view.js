@@ -3734,7 +3734,7 @@ const AppView = {
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
       'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
-      'Retry preview', 'Before/after screenshots'];
+      'Retry preview', 'Before/after screenshots', 'Visual evidence'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
         a.label === label || a.label.startsWith(`${label} (`)));
@@ -3743,12 +3743,53 @@ const AppView = {
     }
     card.actions = (card.actions || []).filter((a) => a.key !== 'vis');
     if (body.changeId) {
-      const secondary = kind === 'proposal' ? AppView._proposalMenuItems(item, {
-        mine: !!(App.user && Number(item.user_id) === Number(App.user.id)),
-        imported: item.source === 'imported', noNav: true,
-      }).filter((a) => ['kudos', 'explore'].includes(a.icon)) : [];
-      for (const action of secondary) if (!menu.some((a) => a.icon === action.icon)) menu.push(action);
-      card.actions = card.actions.filter((a) => a.explore == null && a.kudos == null);
+      // A change page's band carries what a reader most often does next,
+      // left to right — Explore in dev chat, kudos, the Build door, Share —
+      // with Preview and the menu at its right end. What the line cannot
+      // fit folds into the menu (card/dev-card.tsx, useFoldedActions), so
+      // the menu keeps only the rest: the attribute pickers, Withdraw,
+      // Admin merge, GitHub.
+      const onBand = [];
+      const proposal = kind === 'proposal';
+      if (proposal && AppView._showExplorePill(item) && !AppView.readOnly) {
+        // `explore` is what the band draws (the gc-explore-chat-btn pill);
+        // `act` is what the pill becomes when the band folds it into ⋯.
+        onBand.push({
+          key: 'explore', label: 'Explore in dev chat', title: AppView.EXPLORE_CHAT_TITLE, explore: item.id,
+          act: { fn: 'exploreProposalInDevChat', args: [item.id, null] },
+        });
+      }
+      if (proposal && window.Kudos && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
+      if (body.build) {
+        onBand.push({
+          key: 'build', cls: 'gc-vote-btn', label: body.build.label,
+          title: body.build.kind === 'owner'
+            ? 'Open the dev session behind this change'
+            : 'Read the dev chat that built this change',
+          act: { fn: 'openChangeWorkspace', args: [item.id] },
+        });
+      }
+      if (proposal && !AppView.readOnly) {
+        onBand.push({
+          key: 'share', cls: 'gc-vote-btn', label: 'Share',
+          title: 'Share this proposal in a private conversation',
+          act: { fn: '_shareCardToMessages', args: [{ type: 'proposal', sessionId: item.id }] },
+        });
+      }
+      // The rows the band now carries leave the menu — with one guard. The
+      // ⋯ is where the band's pills fold on a narrow screen, and a trigger
+      // over no rows is a dead button, so it never opens empty: when nothing
+      // of the menu's own would be left (no GitHub link, no admin or owner
+      // row), Share stays a ⋯ row rather than becoming the band's last pill.
+      const shareRow = menu.find((a) => a.icon === 'share') || null;
+      for (let i = menu.length - 1; i >= 0; i -= 1) if (['explore', 'kudos'].includes(menu[i].icon)) menu.splice(i, 1);
+      const ownRows = menu.some((a) => a !== shareRow) || !!gh;
+      if (shareRow && ownRows) menu.splice(menu.indexOf(shareRow), 1);
+      const band = shareRow && !ownRows ? onBand.filter((a) => a.key !== 'share') : onBand;
+      card.actions = [
+        ...(card.actions || []).filter((a) => a.explore == null && a.kudos == null),
+        ...band,
+      ];
     }
     if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
       menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
@@ -3760,10 +3801,13 @@ const AppView = {
       || p.key === 'claim' || (p.key === 'promote' && !body.changeId));
     const have = new Set((card.actions || []).map((a) => (a.act && a.act.fn) || (a.kudos != null ? 'kudos' : null)));
     card.actionPreview = null;
+    // Preview goes LAST among the actions: the band pushes it to its right
+    // end (app.css `.gc-card-actions > .gc-vote-btn-preview`), and a pill
+    // after it in the DOM would land to its right, between it and the menu.
     card.actions = [
-      ...keep.filter((p) => p.preview),
       ...(card.actions || []),
       ...keep.filter((p) => !p.preview && !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
+      ...keep.filter((p) => p.preview),
     ];
     card.rail.preview = null;
     if (body.changeId && item.status === 'merged') {
@@ -3882,35 +3926,28 @@ const AppView = {
       : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
-    body.activity = [
-      { label: 'Created', at: item.created_at },
-      { label: 'Checks last completed', at: item.checks_checked_at },
-      { label: 'Main last checked', at: item.freshness_checked_at },
-    ].filter((e) => e.at);
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a public discussion. The agent workspace stays private unless you share it separately.' : null;
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
-    if (!rows.some((r) => r.key === 'preview')) {
-      const previewFailed = item.preview_state === 'failed'
-        || (!item.staging_url && !!item.staging_error);
-      const previewBuilding = item.preview_state === 'building' || !!item.staging_building;
-      const previewReady = item.preview_state === 'ready'
-        || (!item.preview_state && !!item.staging_url);
+    // The Preview pill on the card says whether there is one to open, and
+    // the checks row says what ran on it, so a "Preview: available" row was
+    // the same fact a third time. The row stays for a preview that FAILED,
+    // where it is the reason and the retry.
+    const previewFailed = item.preview_state === 'failed'
+      || (!item.staging_url && !!item.staging_error);
+    if (previewFailed && !rows.some((r) => r.key === 'preview')) {
       rows.unshift({
-        key: 'preview', label: 'Preview',
-        tone: previewFailed ? 'error' : previewReady ? 'ok' : 'mute',
-        text: [previewFailed
-          ? `The submitted preview did not start${item.staging_error ? `: ${String(item.staging_error).slice(0, 280)}` : '.'}`
-          : previewBuilding ? 'The submitted preview is building.'
-            : previewReady ? 'Available for the submitted build.'
-              : 'No staging preview is available yet.'],
+        key: 'preview', label: 'Preview', tone: 'bad',
+        text: [{ b: 'Failed.', tone: 'bad' }, ` The submitted preview did not start${item.staging_error ? `: ${String(item.staging_error).slice(0, 280)}` : '.'}`],
       });
     }
     if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
     if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
       const preview = rows.find((r) => r.key === 'preview');
-      preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
-        act: { fn: 'swapToStagingForSession', args: [item.id, ''] } }];
+      if (preview) {
+        preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+          act: { fn: 'swapToStagingForSession', args: [item.id, ''] } }];
+      }
     }
     // Keep the established conflict explanations, and put the manual action
     // next to them. Forks cannot be updated by the platform worker.
@@ -3932,9 +3969,18 @@ const AppView = {
     }
     const votes = rows.find((r) => r.key === 'votes');
     if (votes) votes.label = 'Review';
+    // The Build door (topic/conversation.tsx): the owner's workspace, or the
+    // dev chat the owner published, opened by a pill on the card. Nothing
+    // for a private change somebody else is reading, or an imported one,
+    // which has no session behind it.
+    body.build = body.workspace
+      ? { kind: 'owner', label: underway ? 'Continue building' : 'Open build' }
+      : (body.transcript ? { kind: 'published', label: 'Read the build' } : null);
+    // The evidence claims and state, for "What changes for you".
+    body.evidence = AppView._evidenceView(item.visualEvidence);
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
-      if (item.check_state === 'failing' && checks) checks.text = ['Required checks need attention before this change can be proposed.'];
+      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can be proposed.'];
       if (main.key === 'behind') {
         const behind = AppView._freshnessOf(item).behindBy ?? main.count;
         main.label = 'Main';
@@ -4289,6 +4335,8 @@ const AppView = {
     const icon = fn === 'markIssueInProgress' ? 'progress'
       : fn === 'clearIssueClaim' ? 'clear'
         : fn === 'exploreProposalInDevChat' ? 'explore'
+          : fn === '_shareCardToMessages' ? 'share'
+          : fn === 'openChangeWorkspace' ? 'session'
           : fn === '_setSessionShared' ? (a.act.args && a.act.args[1] ? 'visible' : 'hide')
             : fn === 'promoteImportedSession' ? 'merge'
               : fn === 'createPrForIssue' || fn === 'startFromAutoSession' || fn === 'goToAutoSessionClone' ? 'generate'
@@ -11058,24 +11106,31 @@ const AppView = {
     };
     const fromVerdict = (v) => {
       const total = v.failures.length + v.passes.length;
+      const nFail = v.failures.length;
+      const checks = (n) => `${n} check${n === 1 ? '' : 's'}`;
+      // Who has to act on a red run: the author, named — or "You", when
+      // the author is the reader.
+      const mine = !!(typeof App !== 'undefined' && App.user && pr && pr.user_id === App.user.id);
+      const author = mine ? 'You' : ((pr && pr.username) || 'The author');
+      const checkedAt = pr && pr.checks_checked_at ? relTime(pr.checks_checked_at) : null;
       const row = {
         key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
-        // The count, then — while the row still carries it (#2170) — how
-        // long the preview and the checks took, on the sub line the run
-        // narrated itself through while it was live ("build: cloning the
-        // database", "12 of 523 run · 11 passed"), so the cost stays where
-        // a reviewer watched it accrue.
-        sub: [
-          v.failing ? `${v.failures.length} of ${total} failing` : `${total} passed`,
-          v.timings,
-        ].filter(Boolean).join(' · '),
-        text: [strip(v.heading)],
-        foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
-        // Kept apart as well as flattened: when this row is demoted to a
-        // later step (_topicLedgerPath) the fix note has to go, because
-        // "pushing a fix re-runs the checks" is an instruction, and the
-        // step above it is the one with something to do.
-        notes: { advisory: v.advisoryNote, checked: v.checkedNote, base: v.baseNote },
+        // Under the label: when the run happened. The counts moved into the
+        // sentence, and the run's timings (#2170) went with the caption they
+        // narrated: a reviewer reads the verdict here, not the cost.
+        sub: checkedAt ? `Last run ${checkedAt}` : null,
+        // The sentence leads with its state, in the row's tone, so the
+        // page scans: Failing / Passing, then what that means and who acts.
+        text: v.failing
+          ? [{ b: 'Failing.', tone: 'bad' }, ` ${nFail} of ${checks(total)} failed on this build. ${author} must fix ${nFail === 1 ? 'it' : 'them'} before this proposal can land.`]
+          : (nFail
+            ? [{ b: 'Passing.', tone: 'ok' }, ` Every merge-blocking check passed on this build. ${checks(nFail)} that only advise did not.`]
+            : [{ b: 'Passing.', tone: 'ok' }, total === 1 ? ' The one check passed on this build.' : ` All ${checks(total)} passed on this build.`]),
+        // The advisory and superseded-base notes carry facts the sentence
+        // cannot. "Last checked" is the sub now, and "pushing a fix re-runs
+        // the checks" is what the sentence already says.
+        foot: [v.advisoryNote, v.baseNote].filter(Boolean).map((n) => [n]),
+        notes: { advisory: v.advisoryNote, checked: null, base: v.baseNote },
         fails: v.failures, passes: v.passes,
         actions: v.action ? [v.action] : [],
       };
@@ -11095,6 +11150,11 @@ const AppView = {
     for (const r of AppView.blockReasons(pr)) {
       const by = saidByBox[r.key];
       if (by && covered.has(by)) continue;
+      // Visual evidence lives under "What changes for you" now: the claims
+      // as bullets, and one status strip. It is a ledger row only while it
+      // is an ENFORCED merge gate; a soft reason here said the same thing
+      // twice, once as a step that is not one.
+      if (r.key === 'visual_evidence' && r.soft) continue;
       const [label, count] = String(r.label || '').split(' · ');
       const n = count ? parseInt(count, 10) : NaN;
       rows.push({
@@ -11114,13 +11174,18 @@ const AppView = {
         ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
       const snap = parseInt(pr.votes_required);
       const req = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
-      // No count under the label: the roster line says what it needs, in
-      // the wording the approval policy chooses, and a second count from a
-      // different field beside it would only ever be a contradiction.
+      // Under the label, the count against the threshold; on the line, who:
+      // "Approved by @maya ✓" once it has what it needs, the tally while it
+      // has not (topic-head.tsx's Roster reads `approved`). Both numbers
+      // come from the same fields the pill uses, so they cannot disagree.
       rows.push({
         key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: 'Votes',
-        text: [], roster: d.roster, foot: [],
+        sub: `${yes} of ${req} needed`,
+        text: [], roster: { ...d.roster, approved: yes >= req }, foot: [],
         warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
+        // "How voting works" rides at the right end of this row's line — the
+        // one row it explains — instead of a caption under the whole ledger.
+        help: !!d.helpHint,
       });
     }
 
@@ -11209,15 +11274,23 @@ const AppView = {
       : 'the two changes touch the same lines';
     sync.label = 'Sync with main';
     sync.tone = manual ? 'bad' : 'warn';
-    sync.sub = manual ? `${creator}, now`
-      : (remedy && !laneWorking && served.includes('awaiting_approval') ? 'automatic, after the vote' : 'automatic, now');
+    // Who acts sits under the label only when it is a PERSON. An automatic
+    // step has nobody to name, and "automatic, now" under every one of them
+    // was the noise this ledger lost; when the sync waits on the vote, the
+    // sentence says so instead.
+    sync.sub = manual ? `${creator}, now` : null;
+    const afterVote = !!remedy && !laneWorking && served.includes('awaiting_approval');
+    // Each sentence leads with its state, in the row's tone — the one word
+    // a reader scanning the ledger is looking for.
     sync.text = manual
-      ? [`${moved}, and ${bothSides}, so the automatic sync cannot finish this one.`]
+      ? [{ b: 'Blocked.', tone: 'bad' }, ` ${moved}, and ${bothSides}, so the automatic sync cannot finish this one.`]
       : remedy
-        ? [laneWorking
-          ? `${moved}, and ${bothSides}. The platform is resolving it now, then it retries the merge.`
-          : `${moved}, and ${bothSides}. The platform resolves it automatically, then retries the merge.`]
-        : [`${moved}. The platform is syncing this proposal onto it, then it retries the merge.`];
+        ? [{ b: 'Syncing.', tone: 'warn' }, laneWorking
+          ? ` ${moved}, and ${bothSides}. Homeroom is resolving it now, then it tries the merge again.`
+          : (afterVote
+            ? ` ${moved}, and ${bothSides}. Homeroom resolves it once the group approves, then tries the merge again.`
+            : ` ${moved}, and ${bothSides}. Homeroom resolves it automatically, then tries the merge again.`)]
+        : [{ b: 'Syncing.', tone: 'warn' }, ' Homeroom is bringing this proposal up to date with main automatically.'];
     // The remedy sentence is the only foot line worth keeping from the box:
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own
@@ -11239,8 +11312,8 @@ const AppView = {
     // ── Step 2: checks, which are not the blocker while step 1 stands ───
     const checks = rows[at('checks')];
     if (checks) {
-      checks.label = 'Re-run checks';
-      checks.sub = 'automatic, after 1';
+      // The row keeps its name and its "Last run" line; the number in its
+      // box already says it is the second step.
       // A verdict measured against a base main has left behind describes
       // code that would no longer merge. Saying "Merge is blocked until
       // they pass" in the present tense made a five-day-old run read as
@@ -11257,15 +11330,15 @@ const AppView = {
       const stale = iConflict >= 0 || !!(checks.attrs && checks.attrs['data-checks-base']);
       if (stale && checks.tone === 'bad') {
         checks.tone = 'mute';
-        checks.text = ['They start themselves once the branch is up to date. Nothing to do here.'];
+        checks.text = [{ b: 'Waiting.', tone: 'mute' }, ' They run again by themselves once the branch is up to date. Nothing to do here.'];
         const n = checks.notes || {};
         checks.foot = [n.advisory, n.base, n.checked].filter(Boolean).map((x) => [x]);
       }
     }
 
     // ── Step 3: the vote, which cannot finish before the checks do ──────
+    // Its "N of M needed" line stays; the step's number says when.
     const votes = rows[at('votes')];
-    if (votes) votes.sub = `the group, after ${checks ? 2 : 1}`;
 
     // The path rows are numbered in PATH order, not in the order the
     // builders happened to append them: `d.blocks` puts the checks box
@@ -11866,10 +11939,12 @@ const AppView = {
     // #607: a WS/poll-driven re-render mid-request must not resurrect an
     // enabled button — keep it disabled while the request is in flight.
     if (AppView._recheckInFlight.has(pr.id)) {
-      return { key: 'recheck', cls: 'gc-vote-btn mt-1', label: 'Re-running…', disabled: true };
+      return { key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: 'Re-running…', disabled: true };
     }
+    // The accent pill, as the card's own actions are: this is the one
+    // thing to press on a red row.
     return {
-      key: 'recheck', cls: 'gc-vote-btn mt-1', label: 'Re-run checks',
+      key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: 'Re-run checks',
       title: 'Rebuild the staging preview if needed and re-run the automated tests',
       act: { fn: 'castRecheck', args: [pr.id] }, passNode: true,
     };
@@ -11911,8 +11986,8 @@ const AppView = {
   // The build half, step by step: fetch the branch, build the image, clone
   // the database, start the preview. Live while "Preview building…" (the
   // current step is named, the finished ones carry their time), kept
-  // through the testing half as one line saying what the build cost, and
-  // — as its total alone — past the verdict (_checksTimingsLine, #2170).
+  // through the testing half as one line saying what the build cost. Past
+  // the verdict the ledger row says when it last ran, not what it cost.
   BUILD_STEP_COPY: {
     source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
     image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
@@ -12001,25 +12076,6 @@ const AppView = {
       sub = `build: ${doing}`;
     }
     return { steps, sentence, sub, done, current, image };
-  },
-
-  // #2170: what the run cost, kept on the row past the verdict. storeChecks
-  // reduces the live snapshot to `{ build, checksMs }` — the finished build
-  // block and the testing half's wall clock — instead of dropping it, so a
-  // reviewer can still see how long the preview and the checks took once
-  // the verdict is in. One compact line in the sub line's own idiom,
-  // "built in 20s · checked in 9m 40s"; either half alone when that is all
-  // the row has (a re-check against a live preview builds nothing), and
-  // null when it has neither — a verdict older than this change, or a row
-  // whose next run has since cleared it — so those rows read as they did.
-  _checksTimingsLine(pr) {
-    const p = pr && pr.checks_progress;
-    if (!p || typeof p !== 'object') return null;
-    const bits = [];
-    const build = AppView._buildProgressView(p.build);
-    if (build && build.done) bits.push(build.sub);
-    if (Number.isFinite(p.checksMs)) bits.push(`checked in ${AppView._fmtMs(p.checksMs)}`);
-    return bits.length ? bits.join(' · ') : null;
   },
 
   // Inside the "build image" step. On the cluster the image is a buildpack
@@ -12373,8 +12429,6 @@ const AppView = {
         ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
-      // #2170 — what the run cost, when the row still carries it.
-      timings: AppView._checksTimingsLine(pr),
       // #1442 — WHICH main the verdict is a statement about. `stale` above
       // answers the other axis (has the proposal's own head moved since);
       // this one answers "green against what?", and green against a main
@@ -16541,6 +16595,48 @@ const AppView = {
   // returns one sanitized view model to every proposal surface; this is the
   // shared HTML adapter for the remaining legacy/React boundaries. It never
   // accepts an absolute URL and never reaches the public /visuals route.
+  // The words for each evidence state — a label and a sentence — shared by
+  // the verified/pending card below and the change page's strip.
+  _evidenceStateCopy(evidence) {
+    const e = evidence || {};
+    return {
+      planned: ['Evidence planned', 'The interaction flow is waiting to start.'],
+      provisioning: ['Preparing evidence', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
+      exploring: ['Finding the relevant UI state', 'The evidence agent is working through the declared user flow on both revisions.'],
+      replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
+      reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
+      failed: ['Visual evidence failed', e.failureReason || 'The declared UI state could not be reached or verified.'],
+      stale: ['Visual evidence is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
+      cancelled: ['Visual evidence cancelled', e.failureReason || 'This run was superseded before it finished.'],
+      not_required: ['No visual evidence required', e.rationale || 'The author declared that this change has no user-visible effect.'],
+      overridden: ['Evidence requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without verified evidence.'],
+    };
+  },
+
+  // The change page's reading of a proposal's visual evidence, under "What
+  // changes for you" (topic/topic-head.tsx): the claims, which are the
+  // plainest statement of the change there is, as bullets, and the run's
+  // state as one strip. A VERIFIED run keeps the before/after card
+  // (visualEvidenceHtml), which already leads with the claims.
+  _evidenceView(evidence) {
+    if (!evidence || typeof evidence !== 'object') return null;
+    const state = String(evidence.state || 'planned');
+    const copy = AppView._evidenceStateCopy(evidence)[state] || ['Evidence pending', 'Visual evidence has not finished yet.'];
+    const detail = String(copy[1] || '').replace(/\.\s*$/, '');
+    const claims = (Array.isArray(evidence.claims) ? evidence.claims : [])
+      .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
+    const settled = state === 'not_required' || state === 'overridden';
+    return {
+      state,
+      verified: state === 'verified',
+      label: state === 'verified' ? 'Verified' : copy[0],
+      sentence: settled
+        ? `${detail}.`
+        : `Visual evidence: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
+      claims,
+    };
+  },
+
   visualEvidenceHtml(evidence, opts = {}) {
     if (!evidence || typeof evidence !== 'object') return '';
     const sessionId = Number(opts.sessionId);
@@ -16557,18 +16653,7 @@ const AppView = {
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
-    const stateCopy = {
-      planned: ['Evidence planned', 'The interaction flow is waiting to start.'],
-      provisioning: ['Preparing evidence', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
-      exploring: ['Finding the relevant UI state', 'The evidence agent is working through the declared user flow on both revisions.'],
-      replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
-      reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
-      failed: ['Visual evidence failed', evidence.failureReason || 'The declared UI state could not be reached or verified.'],
-      stale: ['Visual evidence is stale', evidence.failureReason || 'A newer proposal revision superseded these artifacts.'],
-      cancelled: ['Visual evidence cancelled', evidence.failureReason || 'This run was superseded before it finished.'],
-      not_required: ['No visual evidence required', evidence.rationale || 'The author declared that this change has no user-visible effect.'],
-      overridden: ['Evidence requirement overridden', evidence.overrideReason || 'An app administrator allowed review to continue without verified evidence.'],
-    };
+    const stateCopy = AppView._evidenceStateCopy(evidence);
     const badge = state === 'verified'
       ? '<span class="dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Verified</span>'
       : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Evidence pending'])[0])}</span>`;

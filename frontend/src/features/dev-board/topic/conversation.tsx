@@ -1,14 +1,34 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { unmountLegacyPortal } from '../../../lib/legacy-portals';
-import { messageStamp } from '../../../lib/timestamp';
-import type { TopicBody, TranscriptSection } from './model';
+/**
+ * The conversation under a change's card: ONE sheet, the Discussion, and the
+ * Build sheet behind the card's pill.
+ *
+ * ── The tabs are gone ────────────────────────────────────────────────
+ *
+ * The sheet used to be three tabs, Discussion / Build / Activity. Activity
+ * was three timestamps, and the card's meta line carries the one a reader
+ * wants. Build is a place the AUTHOR works and a reader rarely looks; it is
+ * the "Continue building" / "Open build" / "Read the build" pill on the
+ * card now (`_topicCard`), which opens the sheet below the Discussion and
+ * scrolls to it — the same `change-workspace-open` event `openChangeWorkspace`
+ * always dispatched. It opens WITH the page in three cases: the author's own
+ * change still under way (the workspace is what they came to do, as the
+ * Build tab's default said), `?conversation=workspace` (and the old `build`
+ * spelling), and a shared session's page whose owner published the chat.
+ *
+ * ── The Discussion speaks the general chat's language ─────────────────
+ *
+ * `mountChangeDiscussion` mounts the thread with `language: 'chat'`
+ * (public/js/group-chat.js): a person's message sits in a bubble, the
+ * viewer's own on the right, and every notice the platform posted about the
+ * change — proposed, voted, merged, a check verdict — is a message from
+ * whoever did it, with one box under the header. The quiet card ends the
+ * list while nobody has commented. Only a change's Discussion: an issue's
+ * thread keeps its flat rows and centred lines.
+ */
 
-const TABS = [
-  { key: 'discussion', label: 'Discussion' },
-  { key: 'workspace', label: 'Build' },
-  { key: 'activity', label: 'Activity' },
-] as const;
-type Tab = typeof TABS[number]['key'];
+import { useEffect, useRef, useState } from 'react';
+import { unmountLegacyPortal } from '../../../lib/legacy-portals';
+import type { TopicBody, TranscriptSection } from './model';
 
 /** Only an explicitly published transcript can stand in for another person's workspace. */
 export function workspaceKind(item: any, body: TopicBody) {
@@ -17,16 +37,35 @@ export function workspaceKind(item: any, body: TopicBody) {
   return body.transcript ? 'published' : 'private';
 }
 
-export function initialConversationTab(item: any, body: TopicBody, requested: string | null, sharedBookmark = false): Tab {
-  if (requested === 'discussion' || requested === 'workspace' || requested === 'activity') return requested;
-  if (sharedBookmark && body.transcript) return 'workspace';
-  return workspaceKind(item, body) === 'owner' && ['active', 'paused'].includes(item?.status)
-    ? 'workspace' : 'discussion';
+/**
+ * Whether the Build sheet opens WITH the page. An explicit link decides
+ * first: `?conversation=workspace` (and the old `build` spelling) opens it,
+ * any other named panel keeps it shut. Without one, the author's own change
+ * still under way opens on its workspace, and a shared session's page whose
+ * owner published the chat opens on that chat — the reason a reader followed
+ * the link. Everything else opens on the card and the Discussion, with the
+ * Build door on the card.
+ */
+export function initialBuildOpen(item: any, body: TopicBody, requested: string | null, sharedBookmark = false): boolean {
+  const kind = workspaceKind(item, body);
+  if (kind === 'private' || kind === 'imported') return false;
+  if (requested === 'workspace' || requested === 'build') return true;
+  if (requested) return false;
+  if (kind === 'owner' && ['active', 'paused'].includes(item?.status)) return true;
+  return sharedBookmark && !!body.transcript;
+}
+
+/**
+ * Kept for the callers that read the old tab model: the panel a link would
+ * have opened on. 'workspace' is the Build sheet, 'discussion' the page.
+ */
+export function initialConversationTab(item: any, body: TopicBody, requested: string | null, sharedBookmark = false): 'discussion' | 'workspace' {
+  return initialBuildOpen(item, body, requested, sharedBookmark) ? 'workspace' : 'discussion';
 }
 
 export function mountChangeDiscussion(host: HTMLElement, id: number, readOnly: boolean) {
   (window as any).GroupChat?.mountThread({ type: 'session', ref: id, container: host,
-    fullHeight: true, withHeader: false, readOnly,
+    fullHeight: true, withHeader: false, readOnly, language: 'chat',
     notice: readOnly ? "You're viewing this app's dev space read-only. Only collaborators can post." : undefined });
 }
 
@@ -122,71 +161,58 @@ function PublishedWorkspace({ transcript }: { transcript: TranscriptSection }) {
   </div>;
 }
 
-/** One conversation area for the whole lifecycle. Hidden, visited panels stay
- * mounted so switching tabs preserves drafts, uploads, quotes and chat state. */
+/**
+ * The Discussion sheet, and the Build sheet under it. The Build sheet stays
+ * mounted once opened, so closing and reopening it keeps the workspace's
+ * drafts, uploads and scroll; until first opened it renders nothing, so a
+ * reader who never asks never pays for the dev session behind it.
+ */
 export function ChangeConversation({ item, body }: { item: any; body: TopicBody }) {
   const id = Number(body.changeId);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  // Explicit links win; unfinished native work opens Build for its author.
-  // State is initialized once so refreshes preserve the selected tab.
   const requested = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversation') : null;
-  const initial = initialConversationTab(item, body, requested, av?._devTopic?.kind === 'session');
-  const [tab, setTab] = useState<Tab>(initial);
-  const [visited, setVisited] = useState(() => new Set<Tab>([initial]));
-  const root = useRef<HTMLElement>(null);
-  const select = (next: Tab) => {
-    setTab(next);
-    setVisited((old) => old.has(next) ? old : new Set([...old, next]));
-  };
+  const kind = workspaceKind(item, body);
+  const hasBuild = kind === 'owner' || kind === 'published';
+  // Initialized once so refreshes preserve what the reader opened.
+  const [buildOpen, setBuildOpen] = useState(() => initialBuildOpen(item, body, requested, av?._devTopic?.kind === 'session'));
+  const [buildVisited, setBuildVisited] = useState(buildOpen);
+  const build = useRef<HTMLElement>(null);
   useEffect(() => {
     const open = (event: Event) => {
       if (Number((event as CustomEvent).detail) !== id) return;
-      select('workspace');
-      root.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      root.current?.querySelector<HTMLButtonElement>('[data-conversation-tab="workspace"]')?.focus({ preventScroll: true });
+      setBuildOpen(true);
+      setBuildVisited(true);
+      setTimeout(() => {
+        build.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }, 0);
     };
     window.addEventListener('change-workspace-open', open);
     return () => window.removeEventListener('change-workspace-open', open);
   }, [id]);
-  const keys = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1
-      : event.key === 'ArrowRight' ? (index + 1) % TABS.length
-        : event.key === 'ArrowLeft' ? (index + TABS.length - 1) % TABS.length : null;
-    if (next === null) return;
-    event.preventDefault();
-    select(TABS[next].key);
-    root.current?.querySelector<HTMLButtonElement>(`[data-conversation-tab="${TABS[next].key}"]`)?.focus();
-  };
-  const kind = workspaceKind(item, body);
-  return <section ref={root} className="dev-topic-sheet dev-conversation" data-change-conversation={id} aria-label="Change conversation">
-    <div role="tablist" aria-label="Conversation" className="dev-conversation-tabs">
-      {TABS.map(({ key, label }, index) => <button key={key} type="button" role="tab"
-        id={`change-${id}-tab-${key}`} aria-controls={`change-${id}-panel-${key}`}
-        aria-selected={tab === key} tabIndex={tab === key ? 0 : -1}
-        data-conversation-tab={key} onKeyDown={(event) => keys(event, index)} onClick={() => select(key)}>{label}</button>)}
-    </div>
-    {TABS.map(({ key }) => <div key={key} role="tabpanel" id={`change-${id}-panel-${key}`}
-      aria-labelledby={`change-${id}-tab-${key}`} tabIndex={0} hidden={tab !== key} className="dev-conversation-panel">
-      {visited.has(key) && key === 'discussion' ? body.discussion
+  return <>
+    <section className="dev-topic-sheet dev-conversation" data-change-conversation={id} aria-label="Discussion">
+      <h4 className="dev-topic-h">Discussion</h4>
+      {body.discussion
         ? <p className="dev-topic-note">{body.discussion}</p>
-        : <><p className="dev-topic-note dev-conversation-audience">Visible to the group</p><Discussion id={id} readOnly={!!av?.readOnly} /></> : null}
-      {visited.has(key) && key === 'workspace' ? kind === 'owner'
-        ? <Workspace id={id} active={tab === key} />
-        : kind === 'published' ? <PublishedWorkspace transcript={body.transcript!} />
-          : <p className="dev-topic-note">{kind === 'imported'
-            ? 'This change was imported from a pull request. Work continues on its source branch; there is no agent session attached to it.'
-            : 'The author has not shared the agent workspace. The group discussion is available in the Discussion tab.'}</p> : null}
-      {key === 'activity' ? body.activity?.length ? <ol className="dev-conversation-activity">
-        {body.activity.map((event) => {
-          // #1808: the one stamp rule, from the shared helper — the same one
-          // the Discussion tab beside this one shows. This row used to print
-          // the browser's raw default spelling ("6/16/2025, 2:41:00 PM"),
-          // which is another spelling of the same instant, carrying seconds
-          // nobody reads.
-          const stamp = messageStamp(event.at);
-          return <li key={event.label}><span>{event.label}</span><time dateTime={event.at} title={stamp.title}>{stamp.text}</time></li>;
-        })}
-      </ol> : <p className="dev-topic-note">No activity has been recorded yet.</p> : null}
-    </div>)}
-  </section>;
+        : <><p className="dev-topic-note dev-conversation-audience">Visible to the group</p><Discussion id={id} readOnly={!!av?.readOnly} /></>}
+    </section>
+    {hasBuild ? (
+      <section
+        ref={build}
+        className="dev-topic-sheet dev-conversation-build"
+        data-change-build={id}
+        data-build-kind={kind}
+        hidden={!buildOpen}
+        aria-label="Build"
+      >
+        <div className="dev-conversation-build-head">
+          <h4 className="dev-topic-h">Build</h4>
+          <button type="button" className="dev-topic-fold-more" onClick={() => setBuildOpen(false)}>Hide</button>
+        </div>
+        {buildVisited ? (kind === 'owner'
+          ? <Workspace id={id} active={buildOpen} />
+          : <PublishedWorkspace transcript={body.transcript!} />) : null}
+      </section>
+    ) : null}
+  </>;
 }

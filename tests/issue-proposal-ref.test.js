@@ -285,7 +285,8 @@ test('the issue topic page renders the reference as a navigable row', () => {
   // box, row and chip — no second styling vocabulary for one reference.
   assert.match(closed, /class="dev-change-issues"/);
   assert.match(closed, /rounded-full bg-violet-500\/10/);
-  assert.match(closed, /rounded-xl bg-zinc-100\/80/);
+  assert.match(closed, /class="gc-event-box dev-issue-ref"/,
+    'the row is the Discussion’s event box, the number where the glyph goes');
 
   const underway = render({
     state: 'open', closedAt: null,

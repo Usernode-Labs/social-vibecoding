@@ -666,7 +666,7 @@ test('#2170: the verdict keeps the finished build and the checking time on the r
   assert.match(calls[1].sql, /checks_progress = NULL,/);
 });
 
-test('#2170: a passed or failed ledger row keeps "built in · checked in" under its count; a building one is unchanged', () => {
+test('a verdict row says when it last ran under its label; a building one keeps its live step', () => {
   const AppView = makeAppView();
   const plain = (o) => JSON.parse(JSON.stringify(o));
   const four = [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 5000 }, { key: 'clone', ms: 2000, via: 'template' }, { key: 'health', ms: 9000 }];
@@ -679,30 +679,28 @@ test('#2170: a passed or failed ledger row keeps "built in · checked in" under 
     freshness: { mergeability: 'clean', behindBy: 0, checkedAt: '2026-09-07T09:00:00Z' },
   };
   const rowOf = (pr) => plain(AppView._proposalDetailsView(pr).ledger).find((r) => r.key === 'checks');
-  // The line itself, in the sub line's own idiom.
-  assert.equal(AppView._checksTimingsLine({ checks_progress: kept }), 'built in 18s · checked in 9m 40s');
-  // Passed: the count first, then the cost, one `sub` string — the markup
-  // is untouched, so dapp.json's `.dev-ledger-k small` still finds one node.
+  // A verdict row's sub is WHEN the run happened. The counts moved into the
+  // row's sentence, and the run's cost (#2170's "built in · checked in")
+  // went with the caption it narrated: a reviewer reads the verdict here,
+  // not the timings. One `sub` string still, so dapp.json's
+  // `.dev-ledger-k small` finds one node.
   const passed = rowOf({ ...base, check_state: 'passing', checks_progress: kept });
-  assert.equal(passed.sub, '1 passed · built in 18s · checked in 9m 40s');
+  assert.equal(passed.sub, 'Last run just now');
   assert.equal(passed.tone, 'ok');
   assert.equal(passed.progress, undefined, 'no live bar under a verdict');
-  // Failed: the same line under the failing count.
+  assert.deepEqual(passed.text, [{ b: 'Passing.', tone: 'ok' }, ' The one check passed on this build.']);
+  // Failed: the count is the sentence, and it names who has to act.
   const failed = rowOf({ ...base, check_state: 'failing', checks_progress: kept,
     test_results: [{ name: 'Home loads', path: '/', status: 'fail' }, { name: 'Board renders', path: '/b', status: 'pass' }] });
-  assert.equal(failed.sub, '1 of 2 failing · built in 18s · checked in 9m 40s');
-  // A row with no timings — a verdict older than this change, or one whose
-  // next run has since cleared them — reads exactly as it did.
-  assert.equal(rowOf({ ...base, check_state: 'passing' }).sub, '1 passed');
-  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: null }).sub, '1 passed');
-  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: {} }).sub, '1 passed');
-  // Either half alone: a re-check against a live preview builds nothing, and
-  // a legacy stamp-less row has no checking time.
-  assert.equal(AppView._checksTimingsLine({ checks_progress: { checksMs: 61000 } }), 'checked in 1m 1s');
-  assert.equal(AppView._checksTimingsLine({ checks_progress: { build: kept.build } }), 'built in 18s');
-  // A build that is not finished is never costed: the live shape draws the
-  // pipeline, not a total.
-  assert.equal(AppView._checksTimingsLine({ checks_progress: { build: { step: 'clone', startedAt: 'x', steps: [{ key: 'image_build', ms: 5000 }] } } }), null);
+  assert.equal(failed.sub, 'Last run just now');
+  assert.deepEqual(failed.text, [{ b: 'Failing.', tone: 'bad' },
+    ' 1 of 2 checks failed on this build. maya must fix it before this proposal can land.']);
+  // With or without a kept shape the row reads the same; with no stamp at
+  // all there is nothing under the label.
+  assert.equal(rowOf({ ...base, check_state: 'passing' }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: null }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: {} }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_checked_at: null }).sub, null);
   // A building card is unchanged: its sub line is the live step, and the
   // ledger row still carries the bar.
   const building = rowOf({ ...base, check_state: 'pending', check_phase: 'building', test_results: [],
@@ -739,7 +737,6 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
       assert.equal(row.checks_progress.build.step, 'done', `${row.id}: the build is finished`);
       assert.equal(row.checks_progress.build.totalMs, 19964, `${row.id}: and costed`);
       assert.equal(row.checks_progress.checksMs, 252000, `${row.id}: so are the checks`);
-      assert.equal(AppView._checksTimingsLine(row), 'built in 20s · checked in 4m 12s');
     } else if (row.id === 9000028) {
       assert.equal(row.checks_progress.build.step, 'prepare_checks', 'the live fifth-step row is left alone');
       assert.equal('checksMs' in row.checks_progress, false);
