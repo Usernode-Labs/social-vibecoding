@@ -62,7 +62,7 @@ export function MembersDialog() {
         <h2 id="members-modal-title" className="text-lg font-bold mb-4">
           Members &amp; approvals
         </h2>
-        <div id="members-load-error" className="hidden text-sm text-red-400 mb-4">
+        <div id="members-load-error" className="hidden text-sm text-red-700 dark:text-red-400 mb-4">
         </div>
         <div id="members-invite-section" className="hidden mb-4">
           <label
@@ -231,7 +231,7 @@ export function MembersDialog() {
               </button>
             </div>
           </div>
-          <div id="members-governance-error" className="text-red-400 text-sm hidden">
+          <div id="members-governance-error" className="text-red-700 dark:text-red-400 text-sm hidden">
           </div>
         </div>
         {/*

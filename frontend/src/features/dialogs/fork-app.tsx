@@ -266,7 +266,7 @@ export function ForkAppDialog() {
               data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
             </p>
           </div>
-          <div id="fork-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="fork-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

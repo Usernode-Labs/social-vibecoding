@@ -233,7 +233,7 @@ export function AppSettingsDialog() {
         synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.
       </p> : null}
       {loading ? <p role="status">Loading app settings…</p> : null}
-      {error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p> : null}
+      {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mb-4">{error}</p> : null}
       {!loading && !app && error ? <Button onClick={() => void load(slug.current)}>Retry</Button> : null}
       <section
         id="app-access-section"
@@ -278,7 +278,7 @@ export function AppSettingsDialog() {
         <p
           id="app-access-status"
           role={accessMessageIsError ? 'alert' : 'status'}
-          className={`${accessMessage ? '' : 'hidden'} mt-3 text-sm ${accessMessageIsError ? 'text-red-600 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300'}`}
+          className={`${accessMessage ? '' : 'hidden'} mt-3 text-sm ${accessMessageIsError ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300'}`}
         >{accessMessage}</p>
         <Button
           id="app-access-propose"
