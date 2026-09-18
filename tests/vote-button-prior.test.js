@@ -102,3 +102,20 @@ test('a counted vote, or none at all, draws what it always drew', () => {
   const priorNo = proposalCardHtml(AppView, proposal({ my_vote: null, my_prior_vote: 'no' }));
   assert.match(priorNo, /class="dev-vote-btn" data-vote-btn="open"/, 'an earlier No is not asked back: it stopped nothing');
 });
+
+test('the live card\'s band carries the kudos slot the thanks pill lands in; not for a read-only viewer', () => {
+  const AppView = makeAppView(ME);
+  const model = AppView._proposalCardModel(proposal({ my_vote: null, my_prior_vote: 'yes' }));
+  const kudos = (model.actions || []).filter((a) => a.kudos != null);
+  assert.equal(kudos.length, 1, 'one slot');
+  assert.equal(kudos[0].kudos, 7, 'keyed by the proposal, for _fillKudosHosts');
+  const html = proposalCardHtml(AppView, proposal({ my_vote: null, my_prior_vote: 'yes' }));
+  assert.match(html, /<div class="gc-card-actions"[^>]*><span class="contents" data-kudos-host="7"><\/span>/);
+
+  AppView.appData = { slug: 'x', can_collaborate: false };
+  const ro = AppView._proposalCardModel(proposal({ my_vote: null }));
+  assert.equal((ro.actions || []).length, 0, 'a read-only viewer gets neither the vote nor the slot');
+  delete AppView.appData;
+  const head = AppView._proposalCardModel(proposal({ my_vote: null }), { noNav: true });
+  assert.equal((head.actions || []).filter((a) => a.kudos != null).length, 0, 'the detail head lists its own');
+});

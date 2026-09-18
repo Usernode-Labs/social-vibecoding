@@ -10390,9 +10390,25 @@ const AppView = {
     // Telling it the face carries none is the whole change, and the detail
     // head is untouched — it has room, spells the pill out in full, and has
     // no ⋯ for a menu row to live in.
-    const actions = (isMerged || AppView.readOnly) ? [] : [...AppView._cardVoteButtonSpecs(pr)];
+    // #1688: the kudos slot joins the live card's band — the one pill there,
+    // since the vote moved up beside the bar. On a fresh proposal it reads
+    // "Thank <author> for putting this up" and on one the viewer has voted
+    // on or thanked it is the count (Kudos.thanksVariant decides;
+    // _fillKudosHosts writes it in). The detail head lists the slot in its
+    // own action list below the header (_detailActionsView), so its card
+    // carries none, and a merged card has always had one (_mergedRowModel).
+    const bandKudos = !isMerged && !AppView.readOnly && !noNav && window.Kudos
+      ? [{ key: 'kudos', label: '', kudos: pr.id }]
+      : [];
+    const actions = (isMerged || AppView.readOnly)
+      ? []
+      : [...AppView._cardVoteButtonSpecs(pr), ...bandKudos];
+    // With the slot on the face, ⋯ drops its "Give kudos" row — the same
+    // rule the merged card has always applied (two ways to give one kudos
+    // on one card is one too many).
     const menu = AppView._proposalMenuItems(pr, {
       mine, imported, isMerged, isMerging, noNav, exploreOnFace: false,
+      kudosOnFace: bandKudos.length > 0,
     });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
