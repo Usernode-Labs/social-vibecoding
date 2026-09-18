@@ -93,14 +93,30 @@ test('the home tile still gets its pill, on its own visibility', () => {
   assert.deepEqual(calls[1], ['improve', { deploying: true, appUpdateReady: false }]);
 });
 
+// Two microtask turns: the close, then the navigation the reload waits on.
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
 // ── 2. The offer's lifetime, in the controller ────────────────────────
 
-function controllerHarness() {
+function controllerHarness(opts) {
   const calls = [];
+  let released = null;
   const store = makeStoreStub({ slug: 'demo', target: 'app', open: false, deploying: false, appUpdateReady: false, showTerminal: false });
   const sandbox = {
     console, Promise, setTimeout,
-    App: { currentApp: 'demo' },
+    App: {
+      currentApp: 'demo',
+      currentTab: (opts && opts.tab) || 'app',
+      switchTab: (opts && opts.noSwitchTab) ? undefined : function switchTab(tab) {
+        calls.push(['switch-tab', tab]);
+        // Async, as the real one is: it awaits the destination's render.
+        // `opts.hold` hands the test the resolver, so it can keep the
+        // destination un-rendered and watch what the reload does meanwhile.
+        const done = Promise.resolve().then(() => { sandbox.App.currentTab = tab; });
+        if (!(opts && opts.hold)) return done;
+        return new Promise((resolve) => { released = () => resolve(done); });
+      },
+    },
     AppView: { reloadAppFrame: () => { calls.push(['reload-frame']); return true; } },
   };
   sandbox.window = sandbox;
@@ -116,7 +132,7 @@ function controllerHarness() {
     tail: 'window.Improve = Improve;',
   });
   sandbox.Improve.close = () => { calls.push(['close']); };
-  return { calls, store, Improve: sandbox.Improve };
+  return { calls, store, Improve: sandbox.Improve, release: () => released && released() };
 }
 
 test('update() carries the offer, and reloadApp() withdraws it before it reloads the frame', async () => {
@@ -128,8 +144,48 @@ test('update() carries the offer, and reloadApp() withdraws it before it reloads
 
   Improve.reloadApp();
   assert.equal(store.get().appUpdateReady, false, 'withdrawn synchronously, as it is taken up');
-  await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(calls, [['close'], ['reload-frame']], 'the panel closes, then the frame reloads');
+  await settle();
+  assert.deepEqual(calls, [['close'], ['reload-frame']],
+    'on the app already: the panel closes, then the frame reloads, and no navigation');
+});
+
+test('taken from a Dev screen, it shows the app before it reloads it', async () => {
+  // The offer is made wherever the panel opens, the Workshop included. There
+  // the frame is behind another surface or not mounted at all, so reloading
+  // it reloads nothing the viewer can see — the click looked like it did
+  // nothing. Taking the offer means "show me the new version".
+  const { calls, Improve } = controllerHarness({ tab: 'dev' });
+  Improve.update({ appUpdateReady: true });
+  Improve.reloadApp();
+  await settle();
+  assert.deepEqual(calls, [['close'], ['switch-tab', 'app'], ['reload-frame']],
+    'the panel closes, the app comes to the front, and THEN it reloads');
+});
+
+test('the reload waits for the destination, rather than racing it', async () => {
+  // renderAppTab mounts the frame and sets its src synchronously, so the
+  // reload has a frame to work on only once switchTab has run. Reloading
+  // before that would find no frame and quietly do nothing — the same bug
+  // one level down. Held open here, so "waits" is observable rather than
+  // inferred from the order two settled calls happen to land in.
+  const { calls, Improve, release } = controllerHarness({ tab: 'dev', hold: true });
+  Improve.reloadApp();
+  await settle();
+  assert.deepEqual(calls, [['close'], ['switch-tab', 'app']],
+    'the navigation is under way and the reload has not fired');
+  release();
+  await settle();
+  assert.deepEqual(calls, [['close'], ['switch-tab', 'app'], ['reload-frame']]);
+});
+
+test('a shell with no tabs to switch reloads anyway', async () => {
+  // The panel is mounted in harnesses and embeddings whose App has no
+  // switchTab. Losing the reload there would be a worse bug than the one
+  // this fixes, so a shell that cannot navigate still reloads.
+  const { calls, Improve } = controllerHarness({ tab: 'dev', noSwitchTab: true });
+  Improve.reloadApp();
+  await settle();
+  assert.deepEqual(calls, [['close'], ['reload-frame']], 'no navigation, but still a reload');
 });
 
 test('the offer does not survive a change of target, and is kept across a same-app republish', () => {
