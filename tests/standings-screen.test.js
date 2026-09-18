@@ -57,6 +57,25 @@ const barTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboar
 const barStore = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar-store.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+
+/**
+ * A class-table constant out of @/components/ui/tabs.tsx, with its
+ * concatenated string pieces joined back up.
+ *
+ * The strip assertions below read the treatment from the primitive rather
+ * than transcribing it, so a palette change moves both surfaces or neither.
+ */
+function tabsConstant(name) {
+  const src = fs.readFileSync(path.join(root, 'frontend/@/components/ui/tabs.tsx'), 'utf8');
+  const start = src.indexOf(`export const ${name} =`);
+  assert.notEqual(start, -1, `${name} is exported from @/components/ui/tabs.tsx`);
+  const decl = src.slice(start, src.indexOf(';', start));
+  const parts = Array.from(decl.matchAll(/'([^']*)'/g), (m) => m[1]);
+  assert.ok(parts.length > 0, `${name} is a literal class string`);
+  return parts.join('');
+}
+
 // ─── Shell ───────────────────────────────────────────────────────────────
 
 test('the Leaderboard screen hosts a tab strip, an event bar and all three panes', () => {
@@ -134,6 +153,97 @@ test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
   // button's own listener did.
   assert.match(island, /window\.Leaderboard\?\._setSection\?\.\(key\)/,
     'a trigger reports back through _setSection, which owns the hash and the panes');
+});
+
+// ─── The Kudos sub-tab strip (#2441) ─────────────────────────────────────
+//
+// It sat DIRECTLY under the section strip on this same screen and was still
+// an underline row: `border-b-2` with `border-violet-500 text-violet-700`
+// under the active label, in a `border-b` track. @/components/ui/tabs.tsx's
+// header calls that "the shape the widget language replaces everywhere: it
+// separates by RULE, and the language separates by figure/ground" — two
+// inches below a strip that had already stopped doing it.
+//
+// It is a `<TabsTrigger>` now, on the same track and with the same near-black
+// selected fill as the strip above. The pane's own header explains why this
+// strip may adopt the primitive where the window pills beside it may not.
+//
+// Rendered, not grepped: the class attribute a caller actually gets out of
+// TabsTrigger is a `cn()` of three arguments, and only a render says what
+// that comes to.
+test('the Kudos sub-tabs are the same segmented control as the strip above (#2441)', () => {
+  const state = {
+    mounted: true,
+    chrome: {
+      kind: 'tabs',
+      subtitle: 'Kudos earned on merged PRs.',
+      subTabs: [
+        { key: 'prs', active: true, label: 'Top PRs' },
+        { key: 'users', active: false, label: 'Top users' },
+        { key: 'history', active: false, label: 'History' },
+      ],
+      winTabs: [
+        { key: 'all', active: true, label: 'All time' },
+        { key: '30d', active: false, label: '30 days' },
+      ],
+    },
+    body: null,
+  };
+  const mod = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+    stubs: {
+      './kudos-pane-store.js': {
+        kudosPaneStore: { get: () => state, subscribe: () => () => {} },
+      },
+    },
+  });
+  const out = renderToHtml(createElement(mod.KudosPane, {}));
+  // The strip, anchored by its own first button rather than by the pane.
+  const strip = out.slice(out.lastIndexOf('<div', out.indexOf('data-lb-sub="prs"')),
+    out.indexOf('</div>', out.indexOf('data-lb-sub="history"')));
+
+  assert.ok(strip.startsWith(`<div class="${tabsConstant('SECTION_TABS_LIST_BASE')}">`),
+    'the sub-tabs sit on the primitive\'s track — the margin-free spelling, '
+    + 'because the strip shares an items-center row with the window pills');
+
+  const button = (key) => {
+    const m = strip.match(new RegExp(`<button[^>]*data-lb-sub="${key}"[^>]*>`));
+    assert.ok(m, `the ${key} sub-tab is located`);
+    return m[0];
+  };
+  const base = tabsConstant('SECTION_TAB_BASE');
+  assert.ok(button('prs').includes(`${base} ${tabsConstant('SECTION_TAB_ACTIVE')}`),
+    'the selected sub-tab is the language\'s inversion');
+  for (const key of ['users', 'history']) {
+    assert.ok(button(key).includes(`${base} ${tabsConstant('SECTION_TAB_INACTIVE')}`),
+      `the ${key} sub-tab is the unselected treatment`);
+  }
+  // The retired shape, and the rule the strip hung from.
+  assert.ok(!/border-b|border-violet-500|border-transparent/.test(strip),
+    'no underline, and no rule under the row');
+  assert.ok(!/violet/.test(strip), 'and no violet ink on a sub-tab');
+
+  // What the strip still reports with. `data-lb-sub` is leaderboard.js's key
+  // (_setSub validates it) and survives the conversion; `aria-current` is what
+  // adopting the primitive ADDS, and is the reason the pane's header note had
+  // to be rewritten rather than deleted.
+  assert.equal((strip.match(/data-lb-sub="/g) || []).length, 3);
+  assert.match(button('prs'), /aria-current="page"/);
+  assert.match(button('users'), /aria-current="false"/);
+  // The window pills in the same row are NOT tabs and keep their own shape.
+  assert.match(out, /data-lb-win="all" class="px-3 py-1 text-xs font-medium rounded-full bg-violet-600 text-white"/,
+    'the window pills are untouched — a separate control, not a second tab strip');
+});
+
+test('the sub-tab click still goes back through Leaderboard._setSub', () => {
+  const pane = fs.readFileSync(
+    path.join(root, 'frontend/src/features/leaderboard/kudos-pane.tsx'), 'utf8');
+  const chrome = pane.slice(pane.indexOf('function TabChrome('), pane.indexOf('// ── Body'));
+  assert.ok(chrome.length > 0, 'TabChrome located');
+  assert.match(chrome, /onValueChange=\{\(key\) => controller\(\)\?\._setSub\(key\)\}/,
+    'the strip reports a key to the module, exactly as the old onClick did');
+  assert.match(chrome, /value=\{view\.subTabs\.find\(\(t\) => t\.active\)\?\.key \?\? ''\}/,
+    'and it is CONTROLLED by the descriptor leaderboard.js publishes — the '
+    + 'primitive holds no state of its own');
 });
 
 test('_renderSectionTabs publishes instead of writing #standings-tabs', () => {
