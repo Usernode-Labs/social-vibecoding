@@ -9223,6 +9223,30 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   }
 }
 
+/* #2509: the page-owned status-bar reservation is an INSTALLED-WEB-APP
+   behavior, not a browser-tab one. Chrome on Android reports a nonzero
+   env(safe-area-inset-top) inside a normal tab, where the strip already
+   belongs to the browser chrome and the page never owns it — so the
+   header sat on top of a doubled reservation and the controls floated
+   one status bar's worth of blank page below the true top edge. The
+   head's inline guard tags <html class="web-browser-chrome"> for every
+   non-standalone, non-WebView load (see frontend/src/head.html), and
+   this is the CSS half: zero the token the whole shell's top-inset
+   arithmetic reads, and clamp the two platform bars to their ordinary
+   8px pad. Standalone display modes and the native WebView (which the
+   same guard excludes) keep the real reservation and behave exactly as
+   before — installed PWA, fullscreen and minimal-ui never get the
+   class, so nothing here can reach them. */
+html.web-browser-chrome {
+  --platform-safe-top: 0px;
+}
+@supports (padding: env(safe-area-inset-top)) {
+  html.web-browser-chrome #platform-header.un-safe-top-extend,
+  html.web-browser-chrome #landing-header.un-safe-top-extend {
+    padding-top: 0.5rem !important;
+  }
+}
+
 /* ── Header title centering ───────────────────────────────
    `#header-title` is in flex flow by default (left-aligned, truncating
    from the right when the right group eats its width). When there's
