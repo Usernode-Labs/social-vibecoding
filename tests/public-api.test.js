@@ -4,6 +4,8 @@
 //   - GET /api/public/apps/:slug/contributors — one app's contributors.
 //   - the include_wallets opt-out.
 //   - 404 (non-disclosure) for view-private / self-hosted / unknown slugs.
+//   - GET /api/public/waitlist/options — the survey definitions plus the
+//     configured marketing waitlist URL.
 //
 // Same harness style as tests/leaderboard-users-fields.test.js: the router
 // is mounted on a throwaway Express app with NO auth middleware (the real
@@ -114,12 +116,12 @@ function makeMockPool() {
   return { query, calls };
 }
 
-async function startTestServer(pool) {
+async function startTestServer(pool, config = {}) {
   return withMockPool(pool, async () => {
     const { publicApiRoutes } = require('../src/routes/public-api');
     const app = express();
     app.use(express.json());
-    app.use(publicApiRoutes({}));
+    app.use(publicApiRoutes(config));
     return new Promise((resolve) => {
       const server = app.listen(0, () => {
         resolve({
@@ -310,4 +312,76 @@ test('the /api/public/ prefix is in the auth middleware allowlist', () => {
     require.resolve('../src/middleware/auth'), 'utf8'
   );
   assert.match(src, /'\/api\/public\/'/);
+});
+
+// ─── GET /api/public/waitlist/options ────────────────────────────
+//
+// There was no route-level test for this endpoint at all: the CORS suite
+// mounts a stand-in handler and asserts headers only, and the questions
+// suite tests the service beneath it. So the composition the route does —
+// the static option maps PLUS a `waitlist_url` built from config — was
+// unpinned in both directions. It needs no rows; the pool mock goes unused.
+
+test('waitlist options: the marketing waitlist URL comes from config', async () => {
+  const srv = await startTestServer(makeMockPool(), { marketingBaseUrl: 'https://example.test' });
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/waitlist/options');
+    assert.equal(status, 200);
+    // Absolute, this deployment's configured origin, no query, no trailing
+    // slash. The landing's primary pill is this string, so a client never
+    // hardcodes the host.
+    assert.equal(body.waitlist_url, 'https://example.test/waitlist');
+    // The site's front door rides along, for the landing's "Learn more".
+    assert.equal(body.marketing_url, 'https://example.test');
+  } finally { await srv.close(); }
+});
+
+test('waitlist options: an unconfigured origin still serves a usable URL', async () => {
+  // waitlistUrl() is never null — normalizeBaseUrl falls back — so the field
+  // is always present and always absolute. A client may rely on that.
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/waitlist/options');
+    assert.equal(body.waitlist_url, 'https://onhomeroom.com/waitlist');
+    assert.equal(body.marketing_url, 'https://onhomeroom.com');
+  } finally { await srv.close(); }
+});
+
+test('waitlist options: the seven question maps are served untouched beside it', async () => {
+  // The route spreads publicOptions() into a fresh object, so the added field
+  // must not disturb — or mutate — the service's constants.
+  const questions = require('../src/services/waitlist-questions');
+  // By VALUE, before the request: publicOptions() builds a fresh outer object
+  // around the same seven constant maps every call, so holding its return
+  // value would be holding the very objects a mutation would change — the
+  // comparison below would pass however badly the route misbehaved. The maps
+  // are plain string records, so a deep clone is a faithful snapshot.
+  const expected = structuredClone(questions.publicOptions());
+  const srv = await startTestServer(makeMockPool(), { marketingBaseUrl: 'https://example.test' });
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/waitlist/options');
+    for (const key of Object.keys(expected)) {
+      assert.deepEqual(body[key], expected[key], `${key} no longer matches the service`);
+    }
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      [...Object.keys(expected), 'marketing_url', 'waitlist_url'].sort(),
+      'the public payload grew or lost a field'
+    );
+    // And the service's own constants are unmutated by the spread: the live
+    // maps still equal the pre-request snapshot.
+    assert.deepEqual(questions.publicOptions(), expected);
+  } finally { await srv.close(); }
+});
+
+test('waitlist options: the never-public fields are still absent', async () => {
+  // Mirrors tests/waitlist-questions.test.js's two absence assertions, one
+  // level up: `max_invites` is server-side policy and `discovery_detail_labels`
+  // belongs to a retired question. Neither may reappear through the route.
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/waitlist/options');
+    assert.equal('max_invites' in body, false);
+    assert.equal('discovery_detail_labels' in body, false);
+  } finally { await srv.close(); }
 });

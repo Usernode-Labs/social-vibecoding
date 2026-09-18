@@ -33,6 +33,15 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const ICONS = read('frontend/@/components/ui/icons.tsx');
+// The ONE non-glyph the shell prerenders path data for: the Homeroom logotype,
+// in its own primitive. It is not in icons.tsx on purpose — a logotype is not
+// an outline on the 24 grid, and its own header explains the split — so the
+// strays test below reads it as a second legal home. Only that test does: the
+// expected-absent inventory further down stays derived from icons.tsx alone,
+// or these eight paths would have to be added to an exact list in the proposal
+// that ADDS the primitive and removed again in the one that first draws it.
+// Two homes, and a third is not allowed.
+const WORDMARK = read('frontend/@/components/ui/wordmark.tsx');
 // Document plus the interiors that mount on first reveal: a glyph in the
 // settings panes or the anonymous shell is still one the shell ships.
 const HTML = shellMarkup();
@@ -41,6 +50,11 @@ const PKG = JSON.parse(read('frontend/package.json'));
 /** Every single-quoted string in the module that looks like SVG path data. */
 function modulePaths() {
   return new Set(ICONS.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+}
+
+/** The same read, over the wordmark primitive — see the note beside WORDMARK. */
+function wordmarkPaths() {
+  return new Set(WORDMARK.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** Every `<svg>` opening tag in a source file, brace- and quote-aware. */
@@ -136,12 +150,17 @@ test('the glyphs live in the module, not inline beside it', () => {
 
 test('every path the shell prerenders is one the module exports', () => {
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
-  const exported = modulePaths();
+  // The glyph set, plus the logotype primitive. Both sources are read as their
+  // quoted literals, so this stays what it has always been: the shipped markup
+  // compared against the source of truth rather than against a fixture of
+  // itself. What it is NOT is a licence for a third home — see WORDMARK above.
+  const exported = new Set([...modulePaths(), ...wordmarkPaths()]);
   const strays = [...shipped].filter((d) => !exported.has(d));
   assert.deepEqual(strays, [],
-    `${strays.length} path(s) in public/index.html are not in icons.tsx. Either a glyph `
-    + 'was re-inlined, or a transcription drifted by a character — which is a silent '
-    + 'visual change, since the wrong path still draws something.');
+    `${strays.length} path(s) in public/index.html are in neither icons.tsx nor `
+    + 'wordmark.tsx. Either a glyph was re-inlined, or a transcription drifted by a '
+    + 'character — which is a silent visual change, since the wrong path still '
+    + 'draws something.');
   // Was 24 before THE UI OVERHAUL. Five glyphs stopped prerendering when the
   // surfaces that drew them were retired — see the expected-absent list in the
   // next test, which names each one — and two were added with the Improve

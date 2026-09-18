@@ -274,6 +274,21 @@ const RETIRED_IDS = {
   // held nobody back and let nobody in. The invite link beside it, and
   // the copy saying we try to admit people together, are untouched.
   'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
+  // ── The signed-out landing stops being a website ──────────────────
+  // Measured on production at 375x812: 3328px of scroll, four screens,
+  // three of them a grid of app tiles 36 of which were locked and
+  // captioned "Account required". The screen now carries the logotype,
+  // the illustration, one heading, one sentence and two pills. What the
+  // retired ids held either moved into the body or was the grid itself.
+  // #landing-back-to-waiting, #landing-header, #landing-header-title,
+  // #landing-back-btn, #landing-waitlist-link and #landing-status-link
+  // all SURVIVE — see the design spec's slice B.
+  'landing-header-ctas': 'The bar\'s CTA wrapper. Both ways in are full-width pills in the body now, under the sentence that says what the product is, so the wrapper had nothing left to hold. The bar carries the wordmark and the back disc only.',
+  'landing-signin-cta': 'The header\'s 28px "Sign in" chip. Its job moved to the body\'s secondary pill, href="#login" unchanged, drawn as the same white pill the sign-in screen already uses.',
+  'landing-waitlist-cta': 'The header\'s 28px "Join waitlist" chip. Its job moved to #landing-waitlist-link, which carries the MARKETING waitlist URL with target="_blank" now instead of the in-app #waitlist route, so the join happens where the form already lives.',
+  'landing-waitlist': 'The pitch card <section>: 67 words of explanation in a tinted box above the grid. Replaced by the eyebrow, one heading and one sentence, with no box around them — the card was the largest single block on a screen whose problem was that it read as a website.',
+  'landing-cta-queued': 'The "You\'re already on the waitlist" line inside that card. A waiting-room session\'s whole action area is one pill to #waiting now (#landing-back-to-waiting, which is deliberately NOT retired), which says the same thing and gives them somewhere to go.',
+  'landing-apps': 'The directory grid. 41 tiles, 36 locked, three of the four screens a visitor scrolled through, and none of them usable signed out. The directory is still FETCHED — ?shot=anon-back picks its target from it, pull-to-refresh re-runs it, and _loadLandingApps stays a router seam — it simply renders nothing.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -397,7 +412,7 @@ const ADDED_IDS = {
   'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
-  'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
+  'app-switcher-name': 'The chip\'s label, a named slot so a declared check can assert WHAT the chip says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match.',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',

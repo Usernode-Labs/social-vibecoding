@@ -1,18 +1,27 @@
-// Source pins for the landing page's persistent header + full app directory:
-//   - the header CTA row offers exactly Sign in + Join waitlist (Create
-//     account is deferred to the waitlist journey / gated-app taps), and
-//     survives an app being open alongside Back + the app name,
-//   - the landing CTA area is a compact pitch + ONE link into the
-//     dedicated #waitlist screen, and the survey itself lives on that
-//     screen (reachable to shots via ?shot=anon),
+// Source pins for the landing page's persistent header + its two ways in:
+//   - the bar is the wordmark over the back disc and carries no CTA; the
+//     wordmark gives way to the open app's name, which is why #app-viewer
+//     needs no bar of its own,
+//   - the ways in are two pills in the body: "Join the waitlist" to the
+//     MARKETING site (target="_blank", so the native shell hands it to the
+//     bridge) and "Sign in" to #login, with one text line for somebody who
+//     already joined,
+//   - the marketing URL comes from the server and no host is written into
+//     the frontend; until it arrives the pill is inert rather than pointed
+//     at the in-app #waitlist form this screen stopped sending people to,
+//   - a signed-in but not-yet-admitted visitor sees neither pill: their
+//     action area is one pill back to the waiting room,
 //   - #app-viewer is an in-flow flex sibling of the scroller and opens /
 //     closes with the kit zoom transition (with the outEl the flex-sibling
 //     measurement pitfall requires),
-//   - the directory grid matches the authed homescreen's launcher shape,
-//   - gated tiles dim, badge a lock, and route taps to #signup with the
-//     app deep link remembered,
+//   - ?shot=anon-back drives the viewer through the opener, not through a
+//     rendered tile, because there is no longer a directory grid,
+//   - the directory is still FETCHED (the shot picks its target from it and
+//     pull-to-refresh re-runs it) but renders nothing,
+//   - LandingTile survives as the gated-launch contract: gated apps dim,
+//     badge a lock, and route taps to #signup with the deep link remembered,
 //   - the shell probe is wired at boot and its columns exist in schema,
-//   - staging seeds one open + one gated tile so both branches render.
+//   - staging seeds one open + one gated app so both branches exist.
 //
 // These are content pins (same style as tests/chromeless-share-links
 // .test.js): they hold the contract in place so a refactor that silently
@@ -37,14 +46,27 @@ const WAITLIST_TSX = 'frontend/src/features/auth/waitlist.tsx';
 
 // ─── index.html: persistent header ────────────────────────────────
 
-test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
+test('the landing offers exactly two ways in, and neither is in the bar', () => {
   const html = shellMarkup();
-  const ctas = html.match(/id="landing-header-ctas"[\s\S]*?<\/div>/);
-  assert.ok(ctas, 'landing-header-ctas block exists');
-  assert.match(ctas[0], /href="#login"/);
-  assert.match(ctas[0], /id="landing-waitlist-cta"/);
-  assert.doesNotMatch(ctas[0], /Create account/);
-  assert.doesNotMatch(ctas[0], /href="#signup"/);
+  const header = html.match(/<header id="landing-header"[\s\S]*?<\/header>/);
+  assert.ok(header, 'landing-header exists');
+  // The bar used to hold them, at 28px, in the top-right corner — read at
+  // the moment a stranger knows least about the product. Both moved into the
+  // body, under the sentence that says what this place is.
+  assert.doesNotMatch(header[0], /<a[\s>]/, 'no CTA in the landing bar');
+
+  const interior = interiorHtmlFor('auth-landing-screen');
+  // One pill to the waitlist, one to sign-in, and nothing else. Account
+  // creation is still deferred: it happens at the end of the waitlist
+  // journey, or when a gated app routes to #signup.
+  assert.match(interior, /id="landing-waitlist-link"/);
+  assert.match(interior, /<a href="#login"/);
+  assert.doesNotMatch(interior, /Create account/);
+  assert.doesNotMatch(interior, /href="#signup"/);
+  // The in-app survey is not one of them any more. #landing-status-link is
+  // the exception and keeps its own href — see the check-my-status test.
+  const pills = interior.slice(interior.indexOf('id="landing-waitlist-link"'));
+  assert.doesNotMatch(pills, /href="#waitlist"/, 'the join pill leaves the app entirely');
 });
 
 test('the landing header is a persistent, non-scrolling sibling of the scroller', () => {
@@ -68,54 +90,189 @@ test('the landing header is a persistent, non-scrolling sibling of the scroller'
   assert.doesNotMatch(html, /id="app-viewer-title"/);
 });
 
-test('the header keeps Sign in / Join waitlist while an app is open', () => {
+test('the bar swaps the wordmark for the open app\'s name, and nothing else', () => {
   const tsx = read(LANDING_TSX);
-  // Only Back and the title react to an app being open — the CTA row is
-  // toggled by session state (signed-in → queue status), never by the viewer.
+  // Back and the label are the only two things an open app touches. The
+  // label is what makes #app-viewer need no bar of its own: the header stays
+  // put and owns Back + the app's name for as long as the viewer runs.
   const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
   assert.match(back.slice(0, 400), /hiddenLast\(\s*\n?\s*!openApp/,
     'the back button is what the open app toggles');
   assert.match(tsx, /const headerTitle = openApp \?/);
-  assert.match(tsx, /id="landing-header-ctas" className=\{hiddenLast\(session,/,
-    'the CTA row is toggled by session state, not by the viewer');
-  assert.match(tsx, /id="landing-back-to-waiting" className=\{session \?/);
+  assert.match(tsx, /\{openApp \? headerTitle : <Wordmark/,
+    'the mark gives way to the app name — it never draws over it');
+  // The element's class string does NOT move with that swap: it is the same
+  // box either way, and a conditional className would rewrite the attribute
+  // on every open and close.
+  const title = tsx.slice(tsx.indexOf('id="landing-header-title"'));
+  assert.match(title.slice(0, 300), /className="[^"]*"/,
+    '#landing-header-title keeps a constant className across the swap');
+  // The action area is toggled by SESSION state, never by the viewer: a
+  // visitor can join or sign in without backing out of an open app.
+  assert.match(tsx, /className=\{hiddenLast\(session, 'flex flex-col gap-2\.5'\)\}/,
+    'the anonymous pills are toggled by session state');
+  assert.match(tsx, /id="landing-back-to-waiting"[\s\S]{0,200}hiddenLast\(!session/,
+    'and the waiting-room pill by its inverse');
   // AppBar mirroring for the Flutter WebView.
   assert.match(tsx, /document\.title = headerTitle/);
 });
 
 // ─── the landing CTA area vs the #waitlist screen ─────────────────
 
-test('the landing CTA area is a compact CTA + link, and carries no form', () => {
-  const html = shellMarkup();
-  const section = html.match(/id="landing-waitlist"[\s\S]*?<\/section>/);
-  assert.ok(section, 'landing-waitlist section exists');
-  const classes = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
-  // Visible on first paint — it's the pitch, not something behind a toggle.
-  assert.doesNotMatch(classes[1], /\bhidden\b/);
-  // One link into the dedicated screen…
-  assert.match(section[0], /id="landing-waitlist-link"[^>]*href="#waitlist"/);
-  // …and none of the survey: a four-question form flat on the homepage
-  // buried the app directory under it.
-  assert.doesNotMatch(section[0], /<form/);
-  assert.doesNotMatch(section[0], /id="waitlist-email"/);
-  // The queued line still swaps in for a waiting-room session.
-  assert.match(section[0], /id="landing-cta-queued"/);
+test('the landing body is eyebrow + heading + sentence + two pills, no card', () => {
+  const interior = interiorHtmlFor('auth-landing-screen');
+  // The pitch card is gone: 67 words of explanation in a tinted box above a
+  // grid of mostly-locked tiles. What is left is one heading and one line.
+  assert.doesNotMatch(interior, /id="landing-waitlist"[^-]/, 'the pitch card is retired');
+  assert.match(interior, /Opening gradually/, 'the eyebrow');
+  assert.match(interior, /Come build the next version with us\./, 'the heading');
+  // No survey on this screen — it never was, and it is not coming back by
+  // way of the pill, which now leaves the app entirely.
+  assert.doesNotMatch(interior, /<form/);
+  assert.doesNotMatch(interior, /id="waitlist-email"/);
+  // The stacked pills are 10px apart and full width; the primary is the
+  // shell's own 48px accent pill and the secondary its white 44px one.
+  const pill = interior.slice(interior.indexOf('id="landing-waitlist-link"'));
+  assert.match(pill.slice(0, 400), /\bbg-violet-600\b/, 'the primary is the accent pill');
+  assert.match(pill.slice(0, 400), /\bw-full\b/);
+  assert.match(pill, /<a href="#login"[^>]*class="[^"]*\bh-11\b[^"]*\bbg-white\b/,
+    'the secondary is the white 44px pill the sign-in screen draws');
+  assert.match(interior, /class="flex flex-col gap-2\.5"/, '10px between stacked pills');
 });
 
-test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
-  const html = shellMarkup();
-  const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
-  assert.ok(cta, 'landing-waitlist-cta is an anchor');
-  assert.match(cta[0], /href="#waitlist"/);
+test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
+  const interior = interiorHtmlFor('auth-landing-screen');
+  // It moved out of the retired card and kept everything about itself: same
+  // id, same href into the code-entry step, same words, same offline gate.
+  const link = interior.slice(interior.indexOf('id="landing-status-link"'));
+  assert.match(link.slice(0, 300), /href="#waitlist\?confirm=1"/);
+  assert.match(link.slice(0, 300), /data-offline-disabled/);
+  assert.match(link.slice(0, 400), /Check your status/);
+  assert.match(interior, /Already joined\? /);
+  // dapp.json's declared check selects on exactly this.
+  const manifest = JSON.parse(read('dapp.json'));
+  assert.ok(
+    manifest.tests.some((t) => /#landing-status-link\[href="#waitlist\?confirm=1"\]/.test(t.expectSelector || '')),
+    'the declared check for the status link is untouched',
+  );
+});
+
+// A local named after one of this file's own imports shadows it for the whole
+// component, and the call site that still wants the IMPORT then gets the local.
+// That is not hypothetical: `const waitlistOptions = useWaitlistOptions()` once
+// shadowed the memoised `waitlistOptions` fetch this file imports, so
+// landingOnShow's `void waitlistOptions()` called an object. It threw inside
+// AuthScreens.show(), which aborted before revealing the screen, and every
+// declared check on #landing failed against a root that stayed hidden. No unit
+// test caught it, because none of them runs the on-show hook in a browser, and
+// tsc did not either.
+test('no local in the landing shadows one of its own imports', () => {
   const tsx = read(LANDING_TSX);
-  // Every CTA that leaves the landing screen tears the viewer down first —
-  // nothing scrolls or focuses on the landing page any more.
-  for (const id of ['landing-signin-cta', 'landing-waitlist-cta', 'landing-waitlist-link']) {
-    const tag = tsx.slice(tsx.indexOf(`id="${id}"`));
-    assert.match(tag.slice(0, 600), /onClick=\{onLeaveCta\}/, `${id} leaves via onLeaveCta`);
+  const imported = new Set();
+  for (const m of tsx.matchAll(/^import\s*\{([^}]*)\}\s*from\s*'[^']+';/gm)) {
+    for (const part of m[1].split(',')) {
+      const name = part.replace(/\btype\b/, '').split(/\s+as\s+/).pop().trim();
+      if (name) imported.add(name);
+    }
+  }
+  assert.ok(imported.size > 5, 'the import scan found nothing, so it is not checking anything');
+  const shadowed = [...imported].filter((name) =>
+    new RegExp(`\\b(?:const|let|var|function)\\s+${name}\\b`).test(tsx));
+  assert.deepEqual(shadowed, [],
+    'a declaration reuses an imported name; every call to that name inside the '
+    + 'component then resolves to the local, which is how the landing stopped '
+    + 'being revealed at all');
+});
+
+test('the join pill is the marketing URL, from the server, opened externally', () => {
+  const tsx = read(LANDING_TSX);
+  // NO HOST IN THE FRONTEND. The URL is platform configuration
+  // (MARKETING_BASE_URL), so a literal here would be a second copy of it,
+  // silently wrong on every deployment that is not production.
+  assert.doesNotMatch(tsx, /https?:\/\/[a-z0-9.-]*homeroom/i,
+    'the marketing host is never written into this file');
+  assert.match(tsx, /waitlist_url/, 'it is read off the public options payload');
+  // ONE hook call, two readers. The property this pins is not the spelling but
+  // the SOURCE: both marketing links come from useWaitlistOptions(), which
+  // fetches in an effect, so neither is computed during render — a value read
+  // at render time would differ between the prerender and the client and
+  // console.error, and a console error on any route fails the proposal checks.
+  assert.match(tsx, /const waitlistPayload = useWaitlistOptions\(\)/,
+    '…through the hook, i.e. in an effect — never during render (hydration)');
+  assert.match(tsx, /const waitlistUrl = marketingWaitlistUrl\(waitlistPayload\)/,
+    'the join pill derives from that one call');
+  assert.match(tsx, /const siteUrl = marketingSiteUrl\(waitlistPayload\)/,
+    'and so does the Learn more line — same hook, same effect, same tick');
+
+  // href, target and rel arrive TOGETHER or not at all. An anchor with no
+  // href is inert, which is the right thing to be for the tick before the
+  // options land; an href pointing at the in-app #waitlist form meanwhile
+  // would undo the one change this screen makes.
+  const pill = tsx.slice(tsx.indexOf('id="landing-waitlist-link"'));
+  assert.match(pill.slice(0, 400), /href=\{waitlistUrl \|\| undefined\}/);
+  assert.match(pill.slice(0, 400), /target=\{waitlistUrl \? '_blank' : undefined\}/);
+  assert.match(pill.slice(0, 400), /rel=\{waitlistUrl \? 'noopener' : undefined\}/);
+  // target="_blank" on a cross-origin URL is the whole of decision 6: the
+  // shell's delegated capture listener hands it to the bridge's openExternal
+  // and the system browser opens it, rather than the webview navigating off
+  // the domain it is bound to.
+  assert.match(read('public/js/nav-link.js'), /closest\('a\[target="_blank"\]'\)/);
+  assert.match(read('public/js/nav-link.js'), /bridge\.openExternal\(url\.href\)/);
+
+  // THE WAY OUT TO THE LONG VERSION. One sentence is all this screen carries,
+  // so somebody still deciding is sent to the marketing site rather than given
+  // a second paragraph. Same three rules as the pill above: no host in this
+  // file, href/target/rel together or not at all, and hidden until the server
+  // has named the host rather than rendered inert.
+  assert.match(tsx, /marketing_url/, 'the site link is read off the same payload');
+  const learn = tsx.slice(tsx.indexOf('Learn more about Homeroom') - 900);
+  assert.match(learn.slice(0, 900), /href=\{siteUrl \|\| undefined\}/);
+  assert.match(learn.slice(0, 900), /target=\{siteUrl \? '_blank' : undefined\}/);
+  assert.match(learn.slice(0, 900), /rel=\{siteUrl \? 'noopener noreferrer' : undefined\}/);
+  assert.match(learn.slice(0, 900), /hiddenLast\(!siteUrl,/,
+    'no enabled-looking link with nowhere to go while the fetch is in flight');
+  // It names its destination: link text is what a screen reader reads out of
+  // context, and "here" names nothing.
+  assert.doesNotMatch(tsx, /> *Learn more here *</, 'the link text names where it goes');
+  // The server side of the same field.
+  assert.match(read('src/routes/public-api.js'), /waitlist_url: waitlistUrl\(config\)/);
+});
+
+test('every anchor that leaves the landing tears the viewer down first', () => {
+  const tsx = read(LANDING_TSX);
+  // The viewer lives INSIDE this z-40 overlay, so a next screen would paint
+  // over a still-running iframe. Nothing scrolls or focuses here any more.
+  for (const anchor of ['id="landing-waitlist-link"', 'href="#login"',
+    'id="landing-status-link"', 'id="landing-back-to-waiting"']) {
+    const tag = tsx.slice(tsx.indexOf(anchor));
+    assert.match(tag.slice(0, 600), /onClick=\{onLeaveCta\}/, `${anchor} leaves via onLeaveCta`);
   }
   assert.match(tsx, /const onLeaveCta[\s\S]{0,200}resetViewer\(\)/);
   assert.doesNotMatch(tsx, /scrollIntoView/);
+});
+
+test('a waiting-room session gets one pill back to the room, and no other', () => {
+  const tsx = read(LANDING_TSX);
+  const interior = interiorHtmlFor('auth-landing-screen');
+  // A signed-in, not-yet-admitted visitor still reaches #landing (app.js
+  // routes #waiting here when the session has no platform access). Both
+  // anonymous pills are wrong for them — they have already joined the
+  // waitlist and they are already signed in — so the action area swaps
+  // wholesale rather than dimming one of them.
+  assert.match(tsx, /id="landing-back-to-waiting"[\s\S]{0,300}href="#waiting"/,
+    'the id the retired wrapper carried is on the anchor itself now');
+  assert.match(tsx, /id="landing-back-to-waiting"[\s\S]{0,300}PRIMARY_PILL/,
+    'and it is the same primary pill, so the screen has one action either way');
+  // BOTH branches are rendered and toggled with `hidden`, never mounted
+  // conditionally: the id inventory resolves these against this interior, and
+  // an id that renders in only one session state reads to it as lost.
+  assert.match(interior, /id="landing-back-to-waiting"[^>]*class="[^"]*\bhidden\b"/,
+    'the waiting pill ships hidden for an anonymous visitor, not absent');
+  assert.match(interior, /id="landing-waitlist-link"/,
+    'and the anonymous pills ship for a session, hidden by their wrapper');
+  // Nothing is left of the old pair it replaces.
+  assert.doesNotMatch(interior, /id="landing-cta-queued"/);
+  assert.doesNotMatch(interior, /id="landing-header-ctas"/);
 });
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
@@ -317,9 +474,14 @@ test('landing app open/close use the kit zoom with the flex-sibling outEl', () =
   const tsx = read(LANDING_TSX);
   assert.match(tsx, /type: 'zoom-in'/);
   assert.match(tsx, /type: 'zoom-out'/);
-  // fromEl is the tapped tile, scoped to the landing grid.
-  assert.match(tsx, /landingTileFor/);
-  assert.match(tsx, /#landing-apps \.app-card\[data-slug=/);
+  // `fromEl` used to resolve the tapped tile. There is no tile now, and it is
+  // a THUNK precisely so it can say so: both call sites answer null and the
+  // kit takes the `fallback` each of them already declared for the case where
+  // the tile had scrolled out of view.
+  assert.equal((tsx.match(/fromEl: \(\) => null/g) || []).length, 2,
+    'both zooms degrade to their declared fallback rather than a missing tile');
+  assert.doesNotMatch(tsx, /#landing-apps \.app-card\[data-slug=/,
+    'nothing resolves a landing tile any more — the grid is retired');
   // #764: two visible flex:1 siblings split the height 50/50, so the kit's
   // synchronous pre-paint measurement needs the outgoing element handed to
   // it explicitly.
@@ -376,11 +538,25 @@ test('?shot=anon-back scripts two guest open/back cycles', () => {
   assert.match(tsx, /runAnonBackShot/);
   // Two cycles: the bug only appears from the second open onward.
   assert.match(tsx, /cycle < 2/);
-  // Every step of the script waits on DOM state, INCLUDING the first one:
-  // `appsReady` settles when the fetch resolves, a tick before React commits
-  // the tiles, so reading the grid straight after it found nothing to open
-  // and the shot returned having stamped nothing at all.
-  assert.match(tsx, /if \(!\(await until\(\(\) => !!landingTileFor\(target\.slug\), \d+\)\)\) \{ bail\('no-tile'\); return; \}/);
+  // IT OPENS THROUGH THE OPENER, NOT THROUGH A TILE. The script used to poll
+  // `#landing-apps .app-card[data-slug=…]` and click it — twice, because
+  // `appsReady` settles when the FETCH lands and the tiles appeared one React
+  // commit later. With the grid retired those polls could only ever spend
+  // their budget and stamp `no-tile` on a perfectly healthy page, failing
+  // this declared check on every submission (it sits inside the run window).
+  // `openLandingApp` is what the tile click called, so driving it directly
+  // exercises exactly what the check is for — two guest open/back cycles
+  // through the real viewer, token path and history marker — and drops a
+  // prerequisite the screen no longer has.
+  assert.match(tsx, /await openLandingApp\(target\);/,
+    'the shot opens through the live opener');
+  assert.doesNotMatch(tsx, /bail\('no-tile'\)/, 'the tile-presence bails are gone with the tiles');
+  assert.doesNotMatch(tsx, /bail\(`no-tile-/);
+  assert.doesNotMatch(tsx, /landingTileFor\(target\.slug\)/);
+  // It still picks its target from the FETCHED directory, which is the whole
+  // reason that fetch survives the grid: an app the viewer would really open,
+  // not gated and with a URL.
+  assert.match(tsx, /st\.appsList\.find\(\(a\) => a && a\.requires_login === false && a\.url\)/);
   // The completion stamp the dapp.json test asserts on.
   assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
   const manifest = JSON.parse(read('dapp.json'));
@@ -415,7 +591,9 @@ test('#1755: every bail stamps WHY, so a failure names its step instead of timin
   // Each step is named, and both cycles are distinguishable: a cycle-2
   // failure means the first open/back round trip worked, which is the single
   // most useful fact about this check when it fails.
-  for (const reason of ['no-target', 'no-tile', 'no-tile-${c}', 'open-timeout-${c}', 'close-timeout-${c}']) {
+  // (The two `no-tile` reasons went with the directory grid: the shot drives
+  // the opener directly now, so there is no element to wait for before it.)
+  for (const reason of ['no-target', 'open-timeout-${c}', 'close-timeout-${c}']) {
     assert.ok(body.includes(`bail(\`${reason}\`)`) || body.includes(`bail('${reason}')`),
       `the ${reason} bail is stamped`);
   }
@@ -480,15 +658,30 @@ test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', ()
   assert.match(scroller[1], /min-h-0/);
 });
 
-// ─── index.html: directory grid ───────────────────────────────────
+// ─── the directory is fetched, and renders nothing ────────────────
 
-test('landing directory uses the homescreen launcher-grid shape', () => {
-  const html = shellMarkup();
-  const grid = html.match(/id="landing-apps"[^>]*class="([^"]*)"/);
-  assert.ok(grid, 'landing-apps grid exists');
-  // Same column progression as the authed #app-list grid.
-  assert.match(grid[1], /grid-cols-2/);
-  assert.match(grid[1], /md:grid-cols-3/);
+test('the landing renders no app grid, but still loads the directory', () => {
+  const interior = interiorHtmlFor('auth-landing-screen');
+  // 41 tiles, 36 of them locked and captioned "Account required", three of
+  // the four screens a visitor scrolled through. A stranger's first screen
+  // is not a launcher for apps they cannot open.
+  assert.doesNotMatch(interior, /id="landing-apps"/);
+  assert.doesNotMatch(interior, /class="app-card/);
+  assert.doesNotMatch(interior, /Apps built here/);
+
+  // The FETCH stays, and these are the three things that depend on it — none
+  // of them a deep link. There is no path from a signed-out /app/<slug> to
+  // this viewer: app.js remembers the link and routes to #login instead.
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /'\/api\/public\/apps\?include_wallets=0'/);
+  assert.match(tsx, /st\.appsList = list;/, 'the shot picks its target from the list');
+  assert.match(tsx, /loadLandingApps\(\)\)/, 'pull-to-refresh re-runs it');
+  assert.match(tsx, /_loadLandingApps: \(\) => live\.current\.loadLandingApps\(\)/,
+    'and it is a published router seam');
+  // Nothing renders it, so nothing may hold render state for it either — a
+  // write-only useState is a tile grid waiting to grow back.
+  assert.doesNotMatch(tsx, /setApps\(/);
+  assert.doesNotMatch(tsx, /TileSkeleton/);
 });
 
 // ─── landing.tsx: tile renderer ────────────────────────────────────

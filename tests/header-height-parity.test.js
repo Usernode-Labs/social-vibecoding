@@ -196,28 +196,43 @@ test('CEILING: the Improve button is exactly the 28px row', () => {
     'the glyph and the label are spaced like the header group they sit in');
 });
 
-test('CEILING: the landing CTAs stay 28px at every width', () => {
-  const landing = BARS.find((b) => b.id === 'landing-header').slice;
-  const ctaBlock = landing.slice(landing.indexOf('id="landing-header-ctas"'));
-  const anchors = ctaBlock.match(/<a [^>]*>/g) || [];
-  // Sign in, Join waitlist, and the "Your queue status" variant.
-  assert.equal(anchors.length, 3, 'three landing CTAs (incl. the waiting-room variant)');
-  for (const a of anchors) {
-    // Pinned, not padding-sized. Padding-sizing broke this bar twice: the
-    // `sm:py-2 sm:text-sm` bump made them 36px (a 61px bar on desktop), and
-    // even at py-1.5 the BORDERED "Join waitlist" was 30px to its
-    // borderless siblings' 28px — the 1px border is part of the box.
-    assert.match(a, /\bh-7\b/, 'landing CTA is pinned to the 28px content row');
-    assert.match(a, /\binline-flex\b/, 'landing CTA is a flex box so its label can centre');
-    assert.match(a, /\bitems-center\b/, 'landing CTA centres its label in those 28px');
-    assert.doesNotMatch(a, /\b(?:sm:)?py-\d/,
-      'no vertical padding on a landing CTA — the h-7 box owns the height');
-    assert.doesNotMatch(a, /\bsm:text-(?:sm|base|lg|xl)\b/,
-      'no responsive font-size bump on a landing CTA — a taller line box grows the bar');
-    assert.match(a, /\btext-xs\b/, 'landing CTA keeps its 16px line box');
-    // Desktop presence is bought horizontally, which costs no height.
-    assert.match(a, /\bsm:px-5\b/, 'landing CTA still widens on desktop');
-  }
+test('CEILING: the landing bar is the wordmark at 28px, and carries no CTA', () => {
+  const bar = withoutComments(BARS.find((b) => b.id === 'landing-header').slice);
+
+  // THE CTA ROW IS GONE, and with it the only thing that ever broke this
+  // ceiling on this bar. It held three anchors — Sign in, Join waitlist and
+  // the waiting-room variant — and it broke the 28px row twice over:
+  // `sm:py-2 sm:text-sm` made them 36px at `sm` and up (a 61px bar on
+  // desktop), and even at `py-1.5` the BORDERED one was 30px to its
+  // borderless siblings' 28px, because the 1px border top and bottom is part
+  // of the box. Pinning them to `h-7` fixed the height and left the real
+  // problem: a stranger's two ways into the product were 28px chips in the
+  // top-right corner, read at the moment they knew least about it. Both are
+  // full-width pills in the body now, under the sentence that says what this
+  // place is — so the ceiling here is kept by there being nothing to size.
+  //
+  // Asserted as "no anchor" rather than "no #landing-header-ctas": the row
+  // could come back under any id, and what must not come back is a control
+  // in this bar that carries its own padding.
+  assert.deepEqual(bar.match(/<a[\s>]/g) || [], [],
+    'the landing bar carries no anchor — both ways in are pills in the body');
+
+  // What took over the row's other job, saying which product this is: the
+  // logotype, drawn at the content row's own height. `h-7` is this bar's
+  // ceiling AND the mark's only size, and `w-auto` leaves the width to the
+  // drawing's own ratio — so there is no dimension of it that can grow the
+  // bar. (The mark swaps to the open app's NAME while the viewer is running;
+  // that branch is plain text in an element already pinned to `text-lg`.)
+  const title = bar.slice(bar.indexOf('id="landing-header-title"'));
+  const mark = title.match(/<svg[^>]*\bclass="([^"]*)"/);
+  assert.ok(mark, '#landing-header-title draws the wordmark');
+  assert.match(mark[1], /\bh-7\b/, 'the wordmark is exactly the 28px content row');
+  assert.match(mark[1], /\bw-auto\b/, 'and takes its width from its own aspect ratio');
+
+  // The bar still answers "Homeroom" to a screen reader. The heading used to
+  // spell the word out; a drawing has to be told to.
+  assert.match(title.slice(0, 400), /aria-label="Homeroom"/,
+    'the mark carries the name the heading used to spell out');
 });
 
 test('CEILING: nothing in either bar is taller than the 28px row', () => {

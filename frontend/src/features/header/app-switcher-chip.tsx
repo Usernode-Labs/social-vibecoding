@@ -100,11 +100,42 @@
  * The pill rides in whole rather than as plain text: it carries the tone
  * colour, the check glyph, the in-vote tally and the mid-turn spinner, and a
  * flattened `life.label` would have dropped all four.
+ *
+ * ── The chip draws the LOGOTYPE when it names the platform ─────────────
+ *
+ * On Home the chip says "Homeroom" — the product's own name, and the one name
+ * on this bar the product has a drawing for. So it draws the logotype there
+ * and an app's NAME everywhere else: the same sentence the control has always
+ * spoken, in the right alphabet for each half of it.
+ *
+ * The switch is on the TITLE STRING rather than on a route, a slug or a flag,
+ * because the string is the only fact this component has at FIRST render. The
+ * comment at `showsWordmark` below carries the full argument — why every
+ * richer signal arrives too late, and what reaching for one would cost.
+ *
+ * The mark takes `currentColor`, so it inherits `--brand-ink` exactly as the
+ * word did: ONE drawing across light, dark and both app tones, which app.css
+ * re-tokenises on #platform-header for all four combinations. There is no
+ * `dark:` variant on it and there must not be one — a hand-written pair would
+ * be right in two of those four and wrong in the other two, and a `dark:` twin
+ * being present is exactly what stops the theme-ink guard noticing.
+ *
+ * It is 20px tall: `h-5`, plus the logotype's own 3.875:1 width written out as
+ * a complete literal, because Tailwind's extractor is a regex over source text
+ * and a computed class name is a class name that never compiles. `text-xl` is
+ * the same 20px and is banned BY NAME in the header's ceiling test
+ * (tests/header-height-parity.test.js), which is the other reason to size the
+ * graphic as a box rather than as type. The explicit width earns its keep in
+ * ./use-header-layout.ts, which measures this heading with a Range to decide
+ * whether the title can centre on desktop: a replaced child with a resolved
+ * width is one fewer browser dependency in that measurement. The CHIP is
+ * still `h-7` — nothing about the 28px row moved.
  */
 
 import type { RefObject } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
@@ -112,6 +143,12 @@ import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from '../app-context/app-context-store.js';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { MergeStatusPill } from '../dev-chat/session-header';
+
+// The one string that means "the chip is naming the platform, not an app".
+// It is header-title-store.js's INITIAL, which is why the prerendered document
+// and the first client render agree about it without this component learning
+// anything from anywhere.
+const PLATFORM_NAME = 'Homeroom';
 
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
@@ -131,6 +168,48 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
   // The accessible name says the lifecycle in words either way — the pill's
   // tone and glyph are decoration, and `life.label` is the text under them.
   const spokenSubtitle = onSession ? (life?.label || '') : subtitle;
+  // Draw the logotype instead of the word when the chip is naming the
+  // platform. The test is on `text` because that is the ONLY fact available at
+  // first render: improveStore.target — the obvious "am I on the platform"
+  // signal — is `null` in the store's INITIAL and is published by
+  // Home.publishImproveTarget() only after Home loads, so gating on it would
+  // prerender the WORD and swap it for the graphic after hydration. Not a
+  // mismatch, but a visible flicker on every cold load, and on the
+  // service-worker-cached document that window is seconds, not frames.
+  //
+  // `&& !showSubtitle` is deliberate, and the reason is a coincidence worth
+  // naming: the self-hosted platform app is ITSELF named "Homeroom", so
+  // `text === PLATFORM_NAME` is true inside that app too — on its Dev screen,
+  // whose subtitle is "Workshop", and on a session, whose subtitle is the
+  // lifecycle pill. Both share the `items-baseline` line below, and an SVG has
+  // no text baseline: a replaced element's baseline is its bottom margin edge,
+  // so the subtitle would sit against the mark's bottom rather than on its
+  // optical baseline. So the guard covers the SUBTITLED coincidences, and that
+  // is the whole of what it covers.
+  //
+  // The UNSUBTITLED one it does not cover, and the honest reading is that the
+  // mark draws on a third kind of screen: an app literally NAMED "Homeroom"
+  // publishes a BARE title, and the string test cannot tell that name from the
+  // platform's. Every bare set is such a screen — public/js/app.js's app-open
+  // (`App.setHeaderTitle(AppView.appData.name)`), the App tab and a session
+  // deep link (public/js/app-view.js `renderAppTab` and its
+  // `subTab === 'sessions'` branch, where a session with no lifecycle pill yet
+  // has no subtitle either), and Browse's detail page (../apps/browse.js,
+  // `app?.name || Browse._slug`). The self-hosted row is one of those apps, at
+  // #app/usernode-2d5619; so is any child app somebody names that. NO BOARD
+  // COVERS THOSE SCREENS — the design board for the logotype is the HOME
+  // header only.
+  //
+  // It ships that way on a judgement rather than by oversight: on those
+  // screens the mark IS that app's name, drawn in the one alphabet the product
+  // has for the word, so the chip is still naming where you are. Unreviewed,
+  // not wrong. And the condition that would narrow it is the worse defect: no
+  // route, slug or flag is available at FIRST render — the paragraph above is
+  // why — so gating on one would prerender the WORD and swap it for the
+  // graphic after hydration, flickering on every cold load of every route to
+  // correct a screen where the drawing already says the right name. Widening
+  // or narrowing this is a design decision, not a code one — bring a board.
+  const showsWordmark = text === PLATFORM_NAME && !showSubtitle;
 
   return (
     <h1
@@ -157,7 +236,21 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             id="app-switcher-name"
             className="min-w-0 truncate"
           >
-            {text}
+            {/* No `title` on the mark, and `aria-hidden` on it, exactly as the
+                caret below: the button's `aria-label` above is the ONLY
+                producer of this control's accessible name, and it interpolates
+                `text` whatever this span happens to draw. So the gate
+                sentence — "the accessible name stays Homeroom" — is satisfied
+                by that template UNCHANGED, and has been all along: because
+                aria-label on a button overrides its contents, the literal name
+                here has always been the longer "Homeroom: open the menu". Do
+                NOT add a role="img", a nested title element or an sr-only span
+                to make the word appear a second time — it would be read
+                twice, and the enclosing h1 already takes its own name from
+                this button's label by name-from-content traversal. */}
+            {showsWordmark
+              ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
+              : text}
           </span>
           {showSubtitle ? (
             <span

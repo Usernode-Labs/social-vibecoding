@@ -11,9 +11,9 @@
  *
  * ── What is React-owned and what is not ────────────────────────────────
  *
- * The header, the pitch, and the app grid are ordinary state: React renders
- * the back button's `hidden`, the title text, the CTA-vs-queued swap and the
- * tiles.
+ * The header and the body are ordinary state: React renders the back
+ * button's `hidden`, the title-vs-wordmark swap, and the anonymous-vs-waiting
+ * -room swap of the action area.
  *
  * Three elements deliberately keep a CONSTANT `className` and are toggled
  * through `classList` instead:
@@ -36,7 +36,9 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 
 import { alertVariants } from '@/components/ui/alert';
+import { buttonVariants } from '@/components/ui/button';
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -51,8 +53,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { TileSkeleton } from '../apps/tile-skeleton';
-import { waitlistOptions } from './waitlist-shared';
+import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
 
@@ -65,27 +66,70 @@ const LANDING_TITLE = 'Homeroom';
  * its variants. Spelled as a module constant for the same reason login.tsx
  * does; see the longer note there.
  */
-const OFFLINE_NOTICE = `offline-only mb-10 ${alertVariants({ variant: 'notice', density: 'roomy' })}`;
-
-/** Directory-load outcome. `loading` is what the prerendered markup ships. */
-type AppsState =
-  | { kind: 'loading' }
-  | { kind: 'error' }
-  | { kind: 'list'; apps: PublicApp[] };
+// `mx-4` is this screen's gutter, which the block needs now that it sits
+// inside the scroller's own unpadded wrapper rather than a padded column.
+const OFFLINE_NOTICE = `offline-only mx-4 mb-8 ${alertVariants({ variant: 'notice', density: 'roomy' })}`;
 
 /**
- * The landing tile for `slug`, or null. Scoped to `#landing-apps`: the authed
- * home grid renders `.app-card[data-slug]` too, and both live in this one
- * document after a reload-free login.
+ * The landing tile for `slug` — always null now, and kept for two reasons.
+ *
+ * The signed-out landing used to end in a grid of every public app, and this
+ * resolved the tile a launch zoomed out of. The grid is gone: a stranger's
+ * first screen is one message and two pills, and 36 of the 41 tiles were
+ * locked and captioned "Account required" anyway.
+ *
+ * What remains true is that `_landingTileFor` is one of the nine names the
+ * legacy router patches over (public/js/auth-screens.js), so the seam has to
+ * keep answering; and the kit's zoom takes `fromEl` as a THUNK that is allowed
+ * to answer null, falling back to the transition each call site declares
+ * ('push' on open, 'none' on close). Both callers pass `() => null` outright
+ * rather than routing through here, so this says the same thing in one place
+ * for the router.
  */
-function landingTileFor(slug: string | undefined): HTMLElement | null {
-  try {
-    return document.querySelector<HTMLElement>(
-      `#landing-apps .app-card[data-slug="${CSS.escape(String(slug || ''))}"]`,
-    );
-  } catch {
-    return null;
-  }
+function landingTileFor(_slug: string | undefined): HTMLElement | null {
+  return null;
+}
+
+/**
+ * The marketing site's waitlist page, as `GET /api/public/waitlist/options`
+ * reports it (`waitlist_url`, src/routes/public-api.js).
+ *
+ * NO HOST IS WRITTEN DOWN HERE. The URL is the platform's own configuration
+ * (MARKETING_BASE_URL, src/services/marketing-links.js), so a literal in this
+ * file would be a second copy of it that is silently wrong on every
+ * deployment that is not production.
+ *
+ * Until the options land — the first paint, and forever if the request fails
+ * — this answers null, and the pill is HIDDEN for as long as that lasts (see
+ * `#landing-waitlist-link` below). The two alternatives are both worse: a
+ * visible pill with no `href` is an enabled-looking control that silently does
+ * nothing, and a fallback href would have to be either the marketing host —
+ * which this file must not write down — or the in-app `#waitlist` form, the
+ * one destination this screen deliberately stops sending people to.
+ *
+ * The field is read off the typed payload rather than re-narrowed here, so
+ * `waitlist_url` is spelled once on each side of the wire; the `typeof` guard
+ * is about the RUNTIME value (unvalidated JSON from the server), not the type.
+ */
+function marketingWaitlistUrl(options: WaitlistOptions | null): string | null {
+  const url = options?.waitlist_url;
+  return typeof url === 'string' && url ? url : null;
+}
+
+/**
+ * The marketing site's front door, read the same way and for the same
+ * reasons: `marketing_url` off the typed payload, a runtime `typeof` guard
+ * because the JSON is unvalidated, and null until the fetch lands rather than
+ * a host written down in this file.
+ *
+ * This screen says what Homeroom is in one sentence. Somebody deciding
+ * whether to hand over an email address wants more than that, and everything
+ * written to answer them already exists on the marketing site — so the answer
+ * is a way OUT to it, not a second paragraph here.
+ */
+function marketingSiteUrl(options: WaitlistOptions | null): string | null {
+  const url = options?.marketing_url;
+  return typeof url === 'string' && url ? url : null;
 }
 
 /**
@@ -262,9 +306,162 @@ export function LandingTile({
 // bar's back button (BACK_BTN_CLASS in header/platform-header.tsx). The
 // landing sits on the same wallpaper now, so its one glyph control is drawn
 // the same way.
+//
+// `un-touch-target` is the last token for the same reason it is on the
+// signed-in bar: the disc is DRAWN at 28px so the header's content row stays
+// 28px, and the kit's ::after (public/usernode-native/v1/native.css) grows
+// only the HIT BOX to max(100%, 44px). Without it this control was 28px to
+// the finger as well as to the eye — the one live control on this screen that
+// missed the 44px floor, and the landing bar's copy of the class had simply
+// been dropped when it was transcribed from platform-header.tsx.
 const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
-  + ' text-[color:var(--brand-ink)]';
+  + ' text-[color:var(--brand-ink)] un-touch-target';
+
+/**
+ * The screen's primary pill, as the shell already spells it: the 48px filled
+ * accent pill every auth screen's main action uses (`SOLID` in login.tsx is
+ * the same four variants). It is `buttonVariants(...)` rather than `<Button>`
+ * because both pills here are ANCHORS — `<Button>` renders a `<button>`, and
+ * the marketing pill needs a real `href` for the shell's delegated
+ * `a[target="_blank"]` handler (public/js/nav-link.js) to hand it to the
+ * bridge at all. Same recipe-on-an-anchor shape profile-view.tsx uses.
+ *
+ * `flex items-center justify-center` is what an anchor needs and a button
+ * gets from the browser; `w-full` comes from `layout: 'full'`.
+ */
+const PRIMARY_PILL = `${buttonVariants({
+  layout: 'full',
+  variant: 'pillAccent',
+  size: 'pillLg',
+  ink: 'solidLate',
+})} flex items-center justify-center`;
+
+/**
+ * The secondary pill, transcribed from `PILL_LINK` in login.tsx — the white
+ * 44px pill that screen already draws under its primary button. Copied rather
+ * than imported: that constant is private to the sign-in screen and the two
+ * screens are free to diverge, but on the shared wallpaper they must read as
+ * one language, so the string is the same one.
+ *
+ * White, not the `pillNeutral` recipe's zinc-100: on this ground a fill is
+ * how a control says it is a surface, and zinc-100 (#eaeaea) against the
+ * cream wallpaper is almost no step at all.
+ */
+const SECONDARY_PILL = 'flex h-11 w-full items-center justify-center rounded-full bg-white'
+  + ' text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900'
+  + ' dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+
+/**
+ * One chip in the rail below the illustration, transcribed from the brand
+ * frame (Figma 1246:281, board 1's chip row) rather than derived from
+ * anything in the shell.
+ *
+ * A `<span>`, not `@/components/ui/chip`'s `Chip`: that component is a
+ * `<button aria-pressed>` — a filter toggle — and four permanently unpressed
+ * toggles on a screen where nothing is filterable is a defect, not a
+ * shortcut. Its own header makes the argument: sharing the LOOK is not a
+ * reason to share the SEMANTICS. The RAIL is a plain div, so that one IS
+ * imported.
+ *
+ * It used to be NEAR that primitive's resting look — a white pill, `rounded-
+ * full`, centred 15px label, `shadow-sm`. The frame draws something else and
+ * this is now that: a SQUARE card (no radius at all — the corners are the
+ * chip's whole character on this page of round pills), a 1px near-black
+ * hairline, a hard 2px/2px offset shadow, and a 34px gradient block flush
+ * into its left edge, which is why the padding is `0 12px 0 0` and there is
+ * no vertical padding to speak of: at `h-9` (36px) minus the two hairlines
+ * the content box is exactly the block's 34px.
+ *
+ * Board values, literally: height 36, gap 8, padding-right 12, border
+ * `1px solid #0b0b0c`, background `#ffffff`, shadow
+ * `2px 2px 4px rgba(161,152,152,0.25)`, label 15px at `rgba(0,0,0,0.8)` and
+ * no weight of its own (the old `font-medium` went with the pill). The
+ * border spells `border-zinc-950` rather than `border-[#0b0b0c]` because
+ * that token IS #0b0b0c in tailwind.config.js — an arbitrary value is for a
+ * colour the palette cannot name, and this one it can.
+ *
+ * Still NO `hover:` and no `transition-colors`: these are static spans, and
+ * a hover state on something that does nothing is a lie about what it is.
+ *
+ * ── DARK ─────────────────────────────────────────────────────────────
+ *
+ * The frame is a light-mode drawing and does not answer this, so the dark
+ * twin is derived the same way the wallpaper's is (app.css, "DARK MODE IS
+ * THE SAME WALLPAPER ON THE INVERTED GROUND"): keep the GRAPHIC character,
+ * move the values onto the inverted ground.
+ *
+ * Shipping the frame's chip as drawn would put four white cards with black
+ * hairlines on #0b0d1b — the loudest thing on the screen by a wide margin,
+ * louder than the heading, and this rail is a caption. So the card takes the
+ * surface every other dark card on this wallpaper takes (`zinc-900`,
+ * #1c1c1e, which app.css measures as the step above the #0b0d1b ground), the
+ * hairline inverts to a mid neutral that still reads as a DRAWN edge rather
+ * than a fade, and the label takes the ordinary dark primary ink. The shadow
+ * keeps its exact offset and blur and turns black: a warm grey cast on a
+ * near-black page is a glow, not a shadow, and black still separates the
+ * card where the rail crosses the wallpaper's lavender and rose washes.
+ * The gradient block is untouched in both themes — it is the one thing here
+ * that carries the brand, and it reads on either ground.
+ *
+ * Complete literals throughout — the extractor is a regex over source text.
+ */
+const CHIP = 'mr-2 inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap border'
+  + ' border-zinc-950 bg-white pl-0 pr-3 shadow-[2px_2px_4px_rgba(161,152,152,0.25)]'
+  + ' dark:border-zinc-600 dark:bg-zinc-900 dark:shadow-[2px_2px_4px_rgba(0,0,0,0.55)]';
+
+/**
+ * The gradient block, and the label beside it — the board's own two children.
+ *
+ * The block is a plain 34px square; the GRADIENT is the one value on this
+ * screen that cannot be a sane class literal (seven colour stops at named
+ * percentages, one per chip), so it rides in an inline `style` instead of
+ * four `bg-[…]` arbitraries that would each be an unreadable 120-character
+ * class with every space and comma escaped. That is the same call the
+ * sign-in screen's back disc makes for its safe-area `top` (login.tsx): an
+ * inline style is right for a value no complete class literal can carry,
+ * and wrong for anything one could.
+ */
+const CHIP_DOT = 'h-[34px] w-[34px] shrink-0';
+const CHIP_LABEL = 'text-[15px] text-[rgba(0,0,0,0.8)] dark:text-zinc-100';
+
+/**
+ * The rail's four lines: how this place works, in its own words — each with
+ * the gradient of the chip it belongs to, so the copy and the colour cannot
+ * drift apart the way two arrays indexed by position eventually do. The four
+ * gradients are the frame's, in the frame's order: blue/violet, green,
+ * pink/orange, yellow.
+ *
+ * The LINES are deliberately NOT four named people ("+Andrea just joined"),
+ * which is how the brand frame writes them. Those read as a live feed of
+ * things that just happened, and decision 4 settled that these are static
+ * copy for now — so on a shipped screen they would be four invented events
+ * attributed to four invented members, indistinguishable from the real
+ * thing. A live feed is a later proposal with its own privacy decision;
+ * until then the rail says what is true of the platform whoever is reading
+ * it. Only the LOOK is transcribed.
+ */
+const CHIPS: readonly { line: string; dot: string }[] = [
+  {
+    line: 'Describe an app in chat',
+    dot: 'radial-gradient(circle closest-side, #6717fb 0%, #5a32fb 12.5%, #4e4dfc 25%,'
+      + ' #3484fc 50%, #1bbafd 75%, #0fd5fd 87.5%, #02f0fd 100%)',
+  },
+  {
+    line: 'An AI builds it',
+    dot: 'radial-gradient(circle closest-side, #41b24a 0%, #66c459 25%, #8bd669 50%,'
+      + ' #b0e878 75%, #d6fa87 100%)',
+  },
+  {
+    line: 'The community votes it in',
+    dot: 'radial-gradient(circle closest-side, #fb179d 0%, #fc3776 25%, #fc5750 50%,'
+      + ' #fd7629 75%, #fd8615 87.5%, #fd9602 100%)',
+  },
+  {
+    line: 'Contributors own a share',
+    dot: 'radial-gradient(circle closest-side, #ffae2b 0%, #ffce4d 50%, #ffee6f 100%)',
+  },
+];
 
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -281,7 +478,15 @@ export function LandingScreen() {
   // show, i.e. after hydration.
   const [session, setSession] = useState(false);
   const [openApp, setOpenApp] = useState<{ slug: string; name: string } | null>(null);
-  const [apps, setApps] = useState<AppsState>({ kind: 'loading' });
+
+  // The memoised options fetch, read for its `waitlist_url`. Null until it
+  // resolves — an EFFECT, never the initial render, which is what keeps the
+  // interior's first commit identical to the empty root the prerender ships
+  // (a hydration mismatch is a console error, and a console error on any
+  // route fails the proposal checks).
+  const waitlistPayload = useWaitlistOptions();
+  const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
+  const siteUrl = marketingSiteUrl(waitlistPayload);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -300,13 +505,18 @@ export function LandingScreen() {
   }).current;
 
   /**
-   * Single writer for the persistent landing header + the CTA block's
-   * link-vs-queued line. Three states:
-   *   anonymous, directory  → no back button, platform title, both CTAs
-   *   anonymous, app open   → back button, app name, both CTAs (a visitor can
-   *                           sign up without backing out)
-   *   waiting-room session  → "Your queue status" instead of the CTAs, and the
-   *                           CTA block says they're on the list
+   * Single writer for `session`, which swaps the action area between the two
+   * states this screen has left:
+   *   anonymous            → the "Join the waitlist" / "Sign in" pills and the
+   *                          "Already joined?" line
+   *   waiting-room session → one "Your queue status" pill instead, back to the
+   *                          room that can tell them where they stand
+   *
+   * It does NOT decide the header label: that is `openApp`'s (the app's name
+   * while the viewer runs, the wordmark otherwise), and a session change must
+   * not disturb it. The NAME is the legacy router's (`_renderLandingHeader`),
+   * which is why the viewer's open and close paths still call it — all it does
+   * for them is re-read the session.
    */
   const refreshHeader = useCallback(() => {
     setSession(hasSession());
@@ -433,7 +643,11 @@ export function LandingScreen() {
         {
           type: 'zoom-in',
           el: viewer,
-          fromEl: () => landingTileFor(slug),
+          // There is no tile to grow out of any more, and `fromEl` is a thunk
+          // precisely so it can say so: the kit then takes the `fallback`
+          // below, which is the transition this call already declared for the
+          // case where the tile had scrolled out of view.
+          fromEl: () => null,
           outEl: scroller,
           fallback: 'push',
           after: () => scroller.classList.add('hidden'),
@@ -448,7 +662,6 @@ export function LandingScreen() {
     const viewer = byId('app-viewer');
     const scroller = byId('auth-landing-scroll');
     if (!viewer || !scroller || viewer.classList.contains('hidden')) return;
-    const slug = st.openSlug;
     st.openSlug = null;
     setOpenApp(null);
     // #931: retire the launch generation and drop the cover before the
@@ -468,7 +681,8 @@ export function LandingScreen() {
       {
         type: 'zoom-out',
         el: viewer,
-        fromEl: () => (slug ? landingTileFor(slug) : null),
+        // Nothing to shrink back into — see the open path above.
+        fromEl: () => null,
         fallback: 'none',
         after: () => {
           viewer.classList.add('hidden');
@@ -503,14 +717,24 @@ export function LandingScreen() {
       if (!res.ok) throw new Error('http ' + res.status);
       const data = await res.json();
       const list: PublicApp[] = (data && data.apps) || [];
-      // Kept for `?shot=anon-back`, which needs the first app the directory
-      // would actually open (not gated, has a URL) without re-deriving it from
-      // the rendered tiles.
+      // NOTHING RENDERS THIS LIST any more — the directory grid is gone. It
+      // is still fetched, and this is the whole of why:
+      //
+      //   * `?shot=anon-back` needs an app the viewer would actually open
+      //     (not gated, has a URL) to script its two guest open/back cycles,
+      //     and takes it from here (see runAnonBackShot);
+      //   * the scroller's pull-to-refresh runs this callback, so a pull
+      //     still re-checks whether the platform redeployed
+      //     (App._refreshOrReload);
+      //   * `_loadLandingApps` is one of the nine names the legacy router
+      //     patches over.
+      //
+      // Not, despite the obvious guess, because a `/app/<slug>` deep link
+      // opens here while signed out: app.js:3470 remembers that link and
+      // routes to #login instead, and App._bootScreenFor agrees.
       st.appsList = list;
-      setApps({ kind: 'list', apps: list });
     } catch {
       st.appsList = [];
-      setApps({ kind: 'error' });
     }
   }, [st]);
 
@@ -544,9 +768,11 @@ export function LandingScreen() {
     if (!viewer) return;
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     // ONE OVERALL DEADLINE, because the per-step caps MULTIPLY and nobody had
-    // added them up. Two cycles of 5000 + 5000 + 8000 plus the 2000 the tile
-    // gets before the loop is 38.4 SECONDS of worst case, against a check
-    // runner that abandons a check at 25 (TEST_TIMEOUT_MS, capture/capture.js).
+    // added them up. It was two cycles of 5000 (tile) + 5000 (open) + 8000
+    // (close) plus a 2000 the tile got before the loop — 38.4 SECONDS of
+    // worst case, against a check runner that abandons a check at 25
+    // (TEST_TIMEOUT_MS, capture/capture.js). The three tile polls are gone
+    // with the grid and the worst case is 26 now, which is still over.
     // So on any preview slow enough to spend those budgets — which is what a
     // pool of eight hammering one container produces — this check could not
     // report at all, and it failed as "did not finish within 25s" rather than
@@ -594,22 +820,27 @@ export function LandingScreen() {
     } catch {
       /* ignore */
     }
-    // First app the directory would actually open: not gated, has a URL.
+    // First app the viewer would actually open: not gated, has a URL.
     const target = st.appsList.find((a) => a && a.requires_login === false && a.url);
     if (!target) { bail('no-target'); return; }
-    // `st.appsReady` settles when the FETCH does; the tiles appear when React
-    // commits the state it set, which is a tick or more later. So wait for
-    // the element, like every other step here waits on DOM state — reading
-    // "not committed yet" as "no directory" and returning is how this shot
-    // finished without ever stamping the marker below.
-    if (!(await until(() => !!landingTileFor(target.slug), 2000))) { bail('no-tile'); return; }
     for (let cycle = 0; cycle < 2; cycle++) {
       const c = `c${cycle + 1}`;
-      // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
-      // tiles appear one React commit later, so a synchronous lookup here found
-      // nothing and bailed — the reason this shot had never once stamped.
-      if (!(await until(() => !!landingTileFor(target.slug), 5000))) { bail(`no-tile-${c}`); return; }
-      landingTileFor(target.slug)?.click();
+      // OPEN THROUGH THE OPENER, not through a tile.
+      //
+      // This used to poll for the target's tile inside the directory grid and
+      // click it, twice — once before the loop and once inside it — because
+      // the tiles appeared one React commit after `st.appsReady` settled. The
+      // directory grid is gone, so there is no tile to wait for and those two
+      // polls would now spend their budget and stamp `no-tile` on a perfectly
+      // healthy page, failing the declared check on every submission.
+      //
+      // `openLandingApp` is what the tile click called. Driving it directly
+      // exercises the same thing the check is FOR — two full guest open/back
+      // cycles through the real viewer, the real token path and the real
+      // history marker — and removes a prerequisite the screen no longer has.
+      // It is awaited because the account gate in front of it is async; this
+      // target is ungated, so it resolves without a round trip.
+      await openLandingApp(target);
       if (!(await until(isOpen, 5000))) { bail(`open-timeout-${c}`); return; }
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
@@ -624,7 +855,7 @@ export function LandingScreen() {
       await wait(80);
     }
     viewer.setAttribute('data-anon-back', 'done');
-  }, [st]);
+  }, [openLandingApp, st]);
 
   const landingOnShow = useCallback(() => {
     refreshHeader();
@@ -729,23 +960,17 @@ export function LandingScreen() {
   }, [headerTitle]);
 
   /**
-   * Gated tiles remember the app deep link and route to #signup; public ones
-   * open in the viewer.
-   */
-  const onTileClick = useCallback(
-    (app: PublicApp) => {
-      live.current.openLandingApp(app);
-    },
-    [],
-  );
-
-  /**
-   * "Join waitlist" and "Sign in" are both plain anchors to another route, so
-   * they leave the landing screen entirely; close the viewer first so the next
-   * screen never paints over a still-running iframe (the viewer lives INSIDE
-   * this z-40 overlay now, not above it). show() also resets it on the route
-   * change — this keeps the teardown ahead of the transition, same as it has
-   * always been for Sign in.
+   * Every anchor on this screen tears the viewer down first: they all leave
+   * the landing screen, and the viewer lives INSIDE this z-40 overlay now, so
+   * the next screen would otherwise paint over a still-running iframe. show()
+   * also resets it on the route change — this keeps the teardown ahead of the
+   * transition, same as it has always been for Sign in.
+   *
+   * The marketing pill is the one that does not leave: `target="_blank"` on a
+   * cross-origin URL is handed to the native bridge (public/js/nav-link.js)
+   * and the app stays where it is. It calls this anyway, because resetViewer
+   * returns immediately on a hidden viewer and because the rule "an anchor
+   * here closes the viewer" is easier to keep than its exceptions.
    */
   const onLeaveCta = useCallback(() => {
     live.current.resetViewer();
@@ -761,15 +986,20 @@ export function LandingScreen() {
         <>
       {/*
           Mirrors #platform-header's shape (height, padding, safe-area) so
-          both shells read identically — same HEADER HEIGHT
-          INVARIANT: `py-3` around a 28px content row, i.e.
-          52px + safe-area, with `h-7` on the back-button wrapper as the
-          floor and nothing inside allowed to exceed 28px. The CTAs below
-          used to break that twice over — `sm:py-2 sm:text-sm` made them
-          36px at `sm` and up (a 61px bar), and the bordered one was still
-          30px at `py-1.5` — so they now declare `h-7` outright. The
-          20px back-button wrapper is fixed-WIDTH on purpose too: toggling
-          the button's `hidden` must not shift the title.
+          both shells read identically — same HEADER HEIGHT INVARIANT:
+          `pt-2 pb-4` around a 28px content row, i.e. 52px + safe-area, with
+          `h-7` on the lead group as the floor and nothing inside allowed to
+          exceed 28px.
+
+          The bar used to carry two CTAs, and they broke that invariant twice
+          over: `sm:py-2 sm:text-sm` made them 36px at `sm` and up (a 61px
+          bar), and the bordered one was still 30px at `py-1.5`. It carries no
+          anchors at all now. The two ways in are pills in the body, where
+          somebody who has just read what this place is can reach them; a
+          stranger's first tap should not be a 28px chip in the corner.
+
+          The 28px lead box is fixed-WIDTH on purpose: toggling the back
+          button's `hidden` must not shift what is beside it.
       */}
       <header
         id="landing-header"
@@ -786,58 +1016,38 @@ export function LandingScreen() {
             <ChevronLeftIcon className="w-5 h-5" />
           </button>
         </div>
+        {/*
+            The bar's one label, saying two different things.
+
+            With an app open it is that app's NAME: the header is what stays
+            put while the viewer runs — which is why #app-viewer has no bar of
+            its own — and `document.title` follows it into the Flutter
+            WebView's AppBar. With nothing open it is the logotype rather than
+            the word "Homeroom" set in the UI font.
+
+            The className is CONSTANT across that swap deliberately: it is the
+            same box either way, and a class string that moved with the state
+            would rewrite this element's attribute on every open and close.
+            The mark is `h-7` — the content row exactly — takes its width from
+            its own aspect ratio and its ink from this element, which is why
+            it needs no dark variant; `title` gives it the accessible name the
+            text branch has for free, so the bar still answers "Homeroom".
+        */}
         <h1
           id="landing-header-title"
-          className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-left"
+          className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-center"
         >
-          {headerTitle}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle" title={LANDING_TITLE} />}
         </h1>
-        <div className="ml-auto shrink-0 flex items-center">
-          {/*
-              Two entry points only (issue: landing simplification). Account
-              creation is deferred: it happens at the end of the waitlist
-              journey, or when a gated app below routes to #signup.
-          */}
-          {/*
-              `h-7 inline-flex items-center` — pinned to the header's 28px
-              content row, exactly like #app-mode-switch, rather than sized by
-              padding. Padding-sizing is what broke this bar twice over: the
-              `sm:py-2 sm:text-sm` bump these used to carry made them 36px (a
-              61px bar on desktop), and even at `py-1.5` the BORDERED "Join
-              waitlist" was 30px against its borderless siblings' 28px,
-              because the 1px border top and bottom is part of the box. An
-              explicit height is immune to both. `sm:px-5` still gives them
-              desktop presence horizontally, which costs no height.
-          */}
-          <div id="landing-header-ctas" className={hiddenLast(session, 'flex items-center gap-2')}>
-            <a
-              href="#login"
-              id="landing-signin-cta"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
-              onClick={onLeaveCta}
-            >
-              Sign in
-            </a>
-            <a
-              href="#waitlist"
-              id="landing-waitlist-cta"
-              data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] px-3 text-xs sm:px-5 font-medium text-[color:var(--brand-ink)] transition-colors"
-              onClick={onLeaveCta}
-            >
-              Join waitlist
-            </a>
-          </div>
-          {/* Shown instead of the CTAs when a (waiting-room) session exists. */}
-          <div id="landing-back-to-waiting" className={session ? '' : 'hidden'}>
-            <a
-              href="#waiting"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
-            >
-              Your queue status
-            </a>
-          </div>
-        </div>
+        {/*
+            The trailing 28px, mirroring the lead box so the label sits on the
+            bar's true centre rather than 40px right of it. It is what makes
+            tests/header-height-parity.test.js's stated reason for the w-7 lead
+            box ("its title IS centred") true of the markup as well as of the
+            prose. No h-7 on it: the floor matcher there takes the FIRST div
+            carrying h-7, and the lead group must stay that div.
+        */}
+        <div className="w-7 shrink-0" aria-hidden="true" />
       </header>
       {/*
           Inner scroller: the kit pull-to-refresh rubber-band translates the
@@ -849,28 +1059,76 @@ export function LandingScreen() {
           the header now, and h-full would overflow by the header's height.
       */}
       <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
-        <div className="max-w-3xl mx-auto px-6 py-12">
-          <div className="text-center mb-10">
-            <h1 className="text-3xl font-bold mb-2">
-              Homeroom
-            </h1>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
-              A place where users own and build apps together
-            </p>
-          </div>
+        {/*
+            The side gutter is `px-4`, and it is stated per BLOCK rather than
+            on this wrapper, because the chip rail is the one thing that must
+            run past it. 16px is the shell's gutter everywhere — including
+            #landing-header above, whose px-4 is part of the parity contract
+            with #platform-header — so the bar's mark and the body's text
+            share one left edge.
+
+            `pb-[34px]` is the clearance above the home indicator. The
+            scroller's own bottom padding is the safe-area inset
+            (.platform-safe-scroll REPLACES it), which is zero on a desktop
+            or an Android without one, so the last thing on the screen needs
+            air of its own either way.
+
+            `flex min-h-full flex-col` is the BOTTOM PIN — board 1 is a flex
+            column whose action block sits at the foot of the screen with that
+            34px as its only clearance. It is on THIS wrapper and not on
+            #auth-landing-scroll because the scroller's class attribute is
+            written from outside React (see the file header); a rendered class
+            string there would wipe the kit's `hidden`.
+
+            THE COLUMN'S WIDTH grows in two steps and then stops: 384px on a
+            phone, 512 from md, 672 from xl (max-w-sm / lg / 2xl — the shell's
+            own scale rather than three arbitrary pixel counts). One column of
+            words and two pills held at 384 in a maximized window reads as a
+            phone screenshot pasted into the middle of a desktop, which is what
+            a reviewer said of the build before this one.
+
+            NOTHING WIDER THAN 672, because the chip rail below loops by
+            walking half a track one lap long, and a lap is 859px: a container
+            wider than that would show ground between the last chip and the
+            first.
+
+            THE WIDEST STEP IS xl, NOT lg, and the reason is height. The
+            illustration and the heading grow with the column, and at lg the
+            two together are ~90px taller — which on the 768px-tall window a
+            1024-wide one usually is (and on a 1280x800 laptop) pushed "Join
+            the waitlist" under the fold. Tailwind's variants ask about width
+            only, so the step that costs height is taken at the width where a
+            window is tall enough to pay for it. Measured after: every shape
+            from 768x1024 up ends with the status line 37px clear of the
+            bottom edge, and nothing below that scrolls any further than it
+            did before.
+
+            min-h-full, not h-full, is what keeps the scroller a scroller. The
+            wrapper is AT LEAST the height visible inside the scroller, so when
+            the content is shorter than the viewport there is free space for
+            the two spacers to share. When the content is taller
+            — a 560px window, or a long translation — the wrapper's height is
+            its content's, the free space is zero, and nothing grows or
+            shrinks: the illustration and the heading keep their natural
+            boxes and the scroller scrolls exactly as it did before. The
+            percentage resolves because the scroller has a definite height
+            (flex-1/min-h-0 under a fixed inset-0 column), and it resolves
+            against the height INSIDE it — .platform-safe-scroll puts the
+            safe-area inset in the scroller's own padding — so the pin cannot
+            introduce an overflow of its own.
+        */}
+        <div className="max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col pb-[34px]">
           {/*
-              Offline explanation (#1021). The landing page's app grid is
-              fetched, so offline it renders empty or stale with no reason
-              given — and both header CTAs lead to screens that cannot
-              complete. Say so once, here.
+              Offline explanation (#1021). Both ways in from this screen —
+              the marketing waitlist page and Sign in — need a connection, so
+              say so once, here, rather than letting two taps fail silently.
           */}
           <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Anything below is the last version this device loaded, and signing in or joining the
-          waitlist both need a connection.
+              Signing in and joining the waitlist both need a connection.
             </p>
             <button
               type="button"
@@ -881,134 +1139,338 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              The CTA block sits where the Sign in / Join waitlist buttons used
-              to be: a compact pitch plus ONE link into the dedicated waitlist
-              screen (#waitlist). The survey itself lives on that screen — a
-              four-question form flat on the homepage buried the app directory
-              under it. Both this link and the header's "Join waitlist" button
-              are plain anchors to the same route.
+              DECORATIVE, so `alt` is empty: everything it says is said again
+              in the words below it, and a screen reader announcing a
+              description of an illustration before the heading would be one
+              more thing between a stranger and what this is.
+
+              `width`/`height` are the file's own pixels (public/brand/
+              people.png, 2x), which reserve the box before it decodes so the
+              heading under it does not jump. It sits straight on the
+              wallpaper with no plate behind it, in both themes.
+
+              `mt-6` is board 1's `padding-top: 24px` on this block, measured
+              from the bottom of the bar above. The board draws that bar as
+              60px of root padding around a 44px row and #landing-header is a
+              52px bar whose shape is pinned by
+              tests/header-height-parity.test.js, so what transfers is the GAP
+              below the bar, not the two numbers that produce the board's.
+
+              `xl:w-[320px]` is the desktop size, and 320 rather than the 400
+              the 672px column could hold: the art is a sticker on the
+              wallpaper, not the subject, and every pixel of its height comes
+              off the room the two pills have on a 800px-tall laptop.
           */}
-          <section
-            id="landing-waitlist"
-            // No border: this page's ground is WHITE, so the card is a step DOWN
-            // (zinc-50) rather than the step up a card takes on the authed
-            // shell's grey ground. Either way the language separates by
-            // figure/ground, and the outline was doing the separating here.
-            className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
-          >
-            <h2 className="text-lg font-semibold mb-1">
-              Build apps together, own them together
-            </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-              Homeroom is a place where users describe the app
-          they want in chat, an AI builds it, and the community votes the
-          changes in. Every app below was built here by the people who use
-          it. They run on the Homeroom chain, and contributors own a share
-          of what they build.
+          {/*
+              THE TOP HALF OF THE CENTRING PAIR. Its twin is the `grow`
+              spacer below the sentence, and the two together are what put
+              the free space EITHER SIDE of this group rather than all of it
+              underneath: two flex children with the same growth factor split
+              what is left equally, so the illustration, the rail and the
+              words sit centred in the band above the two pills while the
+              pills stay pinned to the foot.
+
+              Measured before this existed, the gap under the sentence was
+              155px on a 390x844 phone and 391px at 1920x1080, with the
+              illustration hard against the bar in both — the screen read as
+              two things stuck to opposite edges. Splitting it is the whole
+              change; the pin below is untouched.
+
+              When the content is taller than the scroller there is no free
+              space to split, so this is zero high and the layout is exactly
+              the one a short viewport had before.
+          */}
+          <div className="grow" />
+          <img
+            src="/brand/people.png"
+            alt=""
+            width={816}
+            height={612}
+            draggable={false}
+            className="mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full"
+          />
+          {/*
+              The rail deliberately overflows AND loops: its four chips are
+              wider than a phone, and rather than sit cut off they travel.
+              The animation is app.css's `.landing-rail-track` — the house
+              keeps keyframes there, with the prefers-reduced-motion guard
+              beside them, rather than in tailwind.config.js.
+
+              The chips are rendered TWICE and the track walks exactly half
+              its width, which is what makes the loop seamless. That halving
+              is only exact because each chip carries its 8px as `mr-2`
+              rather than the row carrying `gap-2`: eight chips and seven
+              gaps do not halve cleanly, and the seam stutters once a cycle.
+
+              This is a plain div, not `ChipRail`: that primitive exists to
+              make a row finger-scrollable and hide its scrollbar, and a
+              track that moves on its own is not a control. `pl-4` sets the
+              first chip on the gutter; nothing pads the right, because
+              running off that edge is the whole idea.
+
+              Board 1 draws the row as `padding: 20px 0 4px`: `mt-3` plus
+              `pt-2` is the 20 above, `pb-1` the 4 below.
+          */}
+          <div className="mt-3 overflow-hidden pt-2 pb-1 pl-4">
+            <div className="landing-rail-track">
+              {[0, 1].map((copy) => CHIPS.map(({ line, dot }) => (
+                <span
+                  key={`${copy}-${line}`}
+                  className={CHIP}
+                  // The second lap is the same four lines over again, so it
+                  // is the loop's mechanism rather than content: hidden from
+                  // assistive tech, which hears the row once.
+                  aria-hidden={copy === 1 ? true : undefined}
+                >
+                  {/*
+                      Decoration, and nothing but: the block says the same
+                      thing four times in four colours, so it is hidden from
+                      assistive tech and the chip announces only its line.
+                      `style` carries the gradient for the reason CHIP_DOT
+                      gives — it is a value no class literal can hold well.
+                  */}
+                  <span className={CHIP_DOT} style={{ background: dot }} aria-hidden="true" />
+                  <span className={CHIP_LABEL}>{line}</span>
+                </span>
+              )))}
+            </div>
+          </div>
+          {/*
+              The copy block, and the half of the pin that lives down here.
+              `flex grow flex-col` is what makes this column take the
+              wrapper's free space; the spacer below it is what spends that
+              space, pushing the action block to the foot of the screen the
+              way board 1's own `flex-grow: 1` does. The words and the
+              actions share this column, so the spacer has to be inside it.
+
+              Board 1 opens the block 20px under the rail's 4px tail —
+              `pb-1` up there plus `mt-5` here — and sets eyebrow, heading
+              and sentence 10px apart (`mt-2.5`).
+
+              `text-balance` on the heading and `text-pretty` on the sentence
+              are what centring made necessary: ragged-left, a short last line
+              is invisible; centred, "us." alone under a full line is the
+              first thing the eye lands on. Both are hints — a browser without
+              them wraps exactly as before — so neither is load-bearing.
+          */}
+          {/*
+              CENTRED, not ragged-left. The illustration above is centred on
+              the column and the pair of pills below is a symmetric block, so
+              left-aligned words between them put the composition's weight on
+              one edge and left the other empty — which is what a reviewer
+              called "stuck" when the screen was tall enough to show it. One
+              `text-center` here carries the eyebrow, the heading, the
+              sentence and the way out to the marketing site; the status line
+              under the pills was already centred for the same reason.
+
+              It is on the BLOCK rather than on each line because the
+              alignment is a property of the composition, not of any one
+              string, and a later line added here should inherit it.
+          */}
+          <div className="px-4 flex grow flex-col text-center">
+            <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
+              Opening gradually
             </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              {session
-                ? 'You can use the apps below while you wait. Building and social features unlock when your spot opens.'
-                : 'Platform access opens in batches. Many of the apps below are open to everyone right now.'}
+            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance">
+              Come build the next version with us.
+            </h1>
+            <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
+              Access opens in batches, and we'll email you when your spot is ready.
             </p>
-            <a
-              id="landing-waitlist-link"
-              href="#waitlist"
-              data-offline-disabled=""
-              className={hiddenLast(
-                session,
-                'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors',
-              )}
-              onClick={onLeaveCta}
-            >
-              Join the waitlist
-            </a>
             {/*
-                The way back for somebody who already joined, on a device that
-                knows nothing about it (#1538). It goes to the same code-entry
-                step the waitlist screen's own "Already joined?" link opens,
-                which is where an emailed code is typed and where the status
-                comes back. Hidden alongside the CTA for a session: they are
-                already in the queue and can read their own state from the
-                waiting room.
+                THE WAY OUT TO THE LONG VERSION. One sentence is the right
+                length for a first screen and far too short for somebody
+                weighing up whether to join, and the marketing site already
+                carries everything written to answer them.
+
+                Hidden until the server has named the host, exactly like the
+                primary pill above: this file must not write the marketing
+                origin down, and an enabled-looking link with no destination
+                is worse than one that is not there yet. `target="_blank"` on
+                a cross-origin href is what public/js/nav-link.js hands to the
+                bridge's openExternal, so on the phone it opens the system
+                browser rather than stranding the reader outside the app's
+                bound domain.
+
+                It names its destination rather than saying "here", because a
+                link's text is what a screen reader reads out of context.
             */}
-            <p
-              className={hiddenLast(
-                session,
-                'mt-3 text-sm text-zinc-500 dark:text-zinc-400',
-              )}
-            >
-              {'Already joined? '}
+            <p className={hiddenLast(!siteUrl, 'mt-3 text-[15px]')}>
               <a
-                id="landing-status-link"
-                href="#waitlist?confirm=1"
+                href={siteUrl || undefined}
+                target={siteUrl ? '_blank' : undefined}
+                rel={siteUrl ? 'noopener noreferrer' : undefined}
                 data-offline-disabled=""
                 className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-                onClick={onLeaveCta}
               >
-                Check your status
+                Learn more about Homeroom
               </a>
             </p>
             {/*
-                Swapped in for the link when a (waiting-room) session exists —
-                they're already on the list, so pointing them at the join form
-                again is noise.
+                THE PIN ITSELF — board 1's `<div style="flex-grow: 1">`, in the
+                same place: between the sentence and the two pills. Measured in
+                the build before it, at 411x998, the status line ended 310px
+                above the bottom edge and a tall phone read as top-weighted,
+                with the two ways in floating in the middle of a dead area.
+
+                It has a twin above the illustration now, and the pair is what
+                centres the group between the bar and the pills. Both grow by
+                the same factor, so each takes half of whatever is left; this
+                one alone would put all of it here, which is the gap the twin's
+                note measures.
+
+                A spacer rather than `mt-auto` on the block below, because the
+                32px there is a MINIMUM and an auto margin would replace it
+                rather than add to it. This way the short-viewport case needs
+                no special handling at all: with no free space to distribute
+                the spacer is simply zero high, and `mt-8` is the gap.
             */}
-            <p
-              id="landing-cta-queued"
-              className={
-                session
-                  ? 'text-sm text-zinc-500 dark:text-zinc-400'
-                  : 'hidden text-sm text-zinc-500 dark:text-zinc-400'
-              }
-            >
-              You're already on the waitlist. We'll email you when your spot opens.
-            </p>
-          </section>
-          <section>
-            <h2 className="text-lg font-semibold mb-1">
-              Apps built here
-            </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              {session
-                ? 'Community-built apps on the Homeroom chain. Your signed-in account can use them while you wait.'
-                : 'Community-built apps on the Homeroom chain. Many are open to everyone. The grayed-out ones need an account.'}
-            </p>
-            {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
-            <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-              {apps.kind === 'loading' ? (
-                /* The directory's LOADING state, at the tile geometry rather
-                   than as the word "Loading…".
-                   This is the shipped document's own first paint — the landing
-                   screen is what a signed-out visitor lands on, served from
-                   cache — so eleven characters of grey text in the top-left of
-                   an empty grid was the platform's first impression, and it is
-                   the same "content loads without you realising it's loading"
-                   the board's skeleton was built for. Six tiles: three rows at
-                   the 2-column phone width, two at `md`, and never so many
-                   that a directory of four watches placeholders evaporate. */
-                <TileSkeleton
-                  n={6}
-                  label="Loading apps"
-                  className={'col-span-full grid grid-cols-2 md:grid-cols-3 '
-                    + 'lg:grid-cols-4 xl:grid-cols-5 gap-2'}
-                />
-              ) : apps.kind === 'error' ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">Could not load apps right now.</p>
-              ) : apps.apps.length === 0 ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">No public apps yet.</p>
-              ) : (
-                apps.apps.map((app, i) => (
-                  <LandingTile
-                    key={app.slug || i}
-                    app={app}
-                    onOpen={onTileClick}
-                    signedIn={session}
-                  />
-                ))
-              )}
+            <div className="grow" />
+            {/*
+                The two pills keep the PHONE's width whatever the column does.
+                They are the one part of this screen that is a control rather
+                than a picture or a paragraph: a 672px-wide "Join the waitlist"
+                stops reading as a button, which is exactly what the previous
+                max-w-3xl column drew at 1280 (a 736px pill beside a 272px
+                illustration). So the column above grows and this block does
+                not — same 384px cap as the sign-in screen's own column, on
+                the heading's left edge.
+            */}
+            <div className="mt-8 w-full max-w-sm md:max-w-md mx-auto">
+              {/*
+                  THE ANONYMOUS WAY IN: the marketing waitlist page, then Sign
+                  in, then one line for somebody who already joined. Both
+                  branches of this block are always RENDERED and toggled with
+                  `hidden` rather than mounted conditionally — the id
+                  inventory resolves #landing-waitlist-link,
+                  #landing-status-link and #landing-back-to-waiting against
+                  this interior's markup, and an id that renders only in one
+                  session state is an id that inventory reads as lost.
+              */}
+              <div className={hiddenLast(session, 'flex flex-col gap-2.5')}>
+                {/*
+                    THE PAIR. Stacked on a phone, side by side from md, where
+                    the column is wide enough that two full-width pills read
+                    as a stack of bars rather than a choice. The primary
+                    keeps its prominence from its fill, not from its width,
+                    which is the same way the shell's own dialogs pair a
+                    confirm with a cancel.
+
+                    A two-column GRID, not `flex-row` with `flex-1` on each:
+                    a flex item's `basis-0` is a content-box zero that its own
+                    padding still adds to, and these two pills are padded
+                    differently — measured, that drew 239px beside 199px. Grid
+                    tracks are sized by the track, so the halves are equal
+                    whatever each pill carries inside it.
+
+                    The row is a wrapper INSIDE the block rather than the
+                    block itself, because the "Already joined?" line below is
+                    a footnote to both pills and stays under them at every
+                    width.
+                */}
+                <div className="flex flex-col gap-2.5 md:grid md:grid-cols-2">
+                  {/*
+                      The waitlist form lives on the MARKETING SITE, and this
+                      pill is the only thing that points at it. Three
+                      consequences worth stating where they are made:
+
+                      `target="_blank"` on a cross-origin URL is what the
+                      shell's delegated capture listener (public/js/nav-link.js)
+                      hands to the native bridge's openExternal, so the system
+                      browser opens it instead of the webview navigating off the
+                      bound domain. Same-origin would not fire that listener at
+                      all.
+
+                      `href`, `target` and `rel` arrive TOGETHER or not at all,
+                      and the pill is HIDDEN until they do — the URL comes from
+                      the options fetch, so that is the first paint, and forever
+                      if the request fails. A fully-styled, hover-reactive pill
+                      that swallows the tap is worse than no pill: the visitor
+                      still has "Sign in" and the status line, both of which
+                      work. It is hidden rather than given a fallback href
+                      because there are only two candidates and this design
+                      rules out both — the marketing host is configuration and
+                      is never written into this file, and the in-app #waitlist
+                      form is the one destination the redesign removes, so
+                      pointing there even for a tick would undo the change.
+
+                      HIDDEN, not unmounted: the id inventory reads this
+                      interior's static markup, where no effect has run, so the
+                      anchor must be present and carrying `hidden` there — the
+                      same rule the two branches of this block follow.
+
+                      `data-offline-disabled` because joining is a POST on the
+                      other end and cannot work offline either.
+                  */}
+                  <a
+                    id="landing-waitlist-link"
+                    href={waitlistUrl || undefined}
+                    target={waitlistUrl ? '_blank' : undefined}
+                    rel={waitlistUrl ? 'noopener' : undefined}
+                    data-offline-disabled=""
+                    className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
+                    onClick={onLeaveCta}
+                  >
+                    Join the waitlist
+                  </a>
+                  <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
+                    Sign in
+                  </a>
+                </div>
+                {/*
+                    The way back for somebody who already joined, on a device
+                    that knows nothing about it (#1538). It opens the same
+                    code-entry step the waitlist screen's own "Already
+                    joined?" link does, which is where an emailed code is
+                    typed and where the status comes back — so this one stays
+                    INSIDE the app while the pill above leaves it.
+                */}
+                {/*
+                    Centred, as board 1 draws it: a footnote to the two
+                    full-width pills above, not a third left-aligned line.
+                */}
+                <p
+                  className={hiddenLast(
+                    session,
+                    'mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400',
+                  )}
+                >
+                  {'Already joined? '}
+                  <a
+                    id="landing-status-link"
+                    href="#waitlist?confirm=1"
+                    data-offline-disabled=""
+                    className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                    onClick={onLeaveCta}
+                  >
+                    Check your status
+                  </a>
+                </p>
+              </div>
+              {/*
+                  THE WAITING-ROOM WAY IN. A signed-in visitor who has not
+                  been admitted still reaches this screen (app.js routes
+                  `#waiting` here when the session has no platform access),
+                  and for them both pills above are wrong: they have already
+                  joined the waitlist and they are already signed in. So the
+                  action area becomes one pill back to the room that can
+                  actually tell them where they stand, and the "already
+                  joined?" line goes with the rest — they are past it.
+
+                  The id is the one the retired wrapper div carried, on the
+                  anchor itself now; nothing but this test-visible inventory
+                  ever looked it up.
+              */}
+              <a
+                id="landing-back-to-waiting"
+                href="#waiting"
+                className={hiddenLast(!session, PRIMARY_PILL)}
+                onClick={onLeaveCta}
+              >
+                Your queue status
+              </a>
             </div>
-          </section>
+          </div>
         </div>
       </div>
       <ViewerRegion />

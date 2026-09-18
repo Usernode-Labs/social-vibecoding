@@ -9,8 +9,8 @@ This document is written for an integrator implementing against the API
 with no access to the source: an agency running its own signup form, a
 partner landing page, a status dashboard. Everything below reflects the
 behaviour of `src/routes/public-api.js`, `src/routes/waitlist-connect.js`,
-`src/middleware/rate-limits.js` and `src/services/waitlist-integrator.js`
-as shipped.
+`src/middleware/public-cors.js`, `src/middleware/rate-limits.js` and
+`src/services/waitlist-integrator.js` as shipped.
 
 - [Base URL and transport](#base-url-and-transport)
 - [Concepts](#concepts)
@@ -43,10 +43,21 @@ A self-hosted deployment serves the same paths on its own
 
 Three transport facts an integrator has to plan around:
 
-1. **There is no CORS.** The API sends no `Access-Control-Allow-Origin`
-   header, so a browser on your own origin cannot call it. The
-   integration is server to server. Post from your backend, and keep any
-   integrator secret there too.
+1. **`/api/public/*` answers cross-origin.** Every response under that
+   prefix carries `Access-Control-Allow-Origin: *`, and the `OPTIONS`
+   preflight a JSON `POST` triggers is answered with a `204` carrying
+   the allowed methods (`GET, POST, OPTIONS`) and request headers
+   (`Content-Type, Accept`). A browser on your own origin — a marketing
+   page, a status widget — can therefore call these endpoints directly.
+   The wildcard is never an echoed `Origin`, and
+   `Access-Control-Allow-Credentials` is never sent, so no cookie can
+   ride the call. Two things to plan around: `x-waitlist-client-key` is
+   deliberately **not** in the allowed request headers, so the
+   integrator secret stays on your backend and a browser signup is
+   always on the ordinary per-IP budget; and that prefix is the whole
+   scope, so the three `/waitlist/connect/*` endpoints below carry no
+   CORS headers — they are browser navigations plus one call the
+   platform's own callback page makes to its own origin.
 2. **Request bodies are JSON.** Send `Content-Type: application/json` on
    every POST. Responses are JSON except for the two redirect endpoints,
    which answer `302` with a `Location` header.
@@ -166,7 +177,9 @@ No headers, no body, no rate limit.
     "UY": "Uruguay",
     "ZM": "Zambia",
     "ZW": "Zimbabwe"
-  }
+  },
+  "waitlist_url": "https://onhomeroom.com/waitlist",
+  "marketing_url": "https://onhomeroom.com"
 }
 ```
 
@@ -193,6 +206,17 @@ can be reworded without notice; keys are what gets stored.
 > If your form hardcoded the old buckets, replace them with this
 > endpoint's flat map. Nothing you send needs to change for the ISO
 > codes you were already sending.
+
+`marketing_url` is this deployment's public marketing site, and
+`waitlist_url` is its waitlist page,
+absolute and without a query string. It is built from the
+`MARKETING_BASE_URL` platform variable (default
+`https://onhomeroom.com`), which is why it is served rather than
+documented as a constant: a self-hosted deployment has its own
+marketing site, and a client that hardcoded the hosted one would send
+its readers to a page about somebody else's product. It is always
+present. Append `?ref=<code>` to it and you have the same shareable
+invite link `GET /api/public/waitlist/more/:token` returns.
 
 ### POST /api/public/waitlist
 

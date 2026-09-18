@@ -55,6 +55,7 @@ import { Button } from '@/components/ui/button';
 import { KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -87,12 +88,43 @@ type RecoveryPath = 'wallet' | 'email';
 // runtime build that used the same constants), so the compiled Tailwind
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
+// The email and code steps' body copy at the boards' reading size, 16/22,
+// rather than the 14px `text-sm` the pre-reskin sub-views were written in.
+// `mb-5` is boards 3 and 4's `margin-top: 20px` on the card, stated once from
+// the paragraph's side: both steps are a copy block, then the card, and the
+// step columns below carry no gap of their own precisely so each seam in that
+// run can take the board's own figure.
+const STEP_P = 'mb-5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
 const QUIET_BUTTON = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 // The secondary routes under the primary button — forgot password, the
 // email code, register — as the language's neutral pills rather than text
 // links: on the wallpaper a link is a line of grey in a screen of pills.
 const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+// ...with ONE exception, at the bottom of the stack: the activation-code
+// route. Three white pills say three equal choices, and this is the rarest
+// of them by a wide margin, so it is a line of text. `py-3` keeps the tap
+// target past 44px while the line still reads as a line.
+const REGISTER_LINE = 'block py-3 text-center text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
+// The screen's one <h1>. `#recovery-view` and `#reset-password-view` bring
+// their own <h2> and are out of this change's scope, so on those two views
+// the <h1> is hidden rather than saying "Sign in" above a different title.
+// Both arms are complete literals — Tailwind's extractor is a regex over
+// source text, and a test on this screen bans a computed className outright.
+//
+// LEFT, under a CENTRED mark, which is the hierarchy boards 2, 3 and 4 draw:
+// their <h1> carries no `text-align` at all, while the wordmark above it sits
+// in a space-between row with a spacer opposite the back disc. The heading was
+// centred here, so the two competed for the same axis and the column below —
+// card rows, labels, body copy, every one of them left — started at a
+// different edge from the thing announcing it.
+//
+// `mb-2.5` is the 10px the boards put between the heading and the line under
+// it (their copy block's `gap`). Where the next thing is the card instead of a
+// sentence — board 2's password step — the form adds the other 10 of that
+// board's `margin-top: 20px`.
+const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100';
+const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -126,8 +158,27 @@ const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
 const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
 const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
+/**
+ * Board 4's code field — the one row on the three sign-in screens whose value
+ * is not prose. Monospace at 26px with 8px between the characters, so six
+ * digits read as six separate things and a transcription slip is visible
+ * without counting. The 28px line box on top of the `card` box's own `py-1`
+ * is the board's 36px field.
+ *
+ * A whole literal, like every class string in this file, and it rides in
+ * through `className` rather than a variant: `cn` is tailwind-merge, so
+ * `text-[26px]` displaces the `card` box's own `text-[17px]` instead of
+ * racing it for stylesheet order.
+ */
+const CODE_FIELD = 'font-mono text-[26px] leading-[28px] tracking-[8px]';
 const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
+// The code and email steps' status line at the same 16/22 reading size as
+// their body copy — `#otp-status` is where CODE_SENT_MSG lands, so the
+// expiry sentence must not be a size smaller than the echo above it. Its own
+// literal rather than a reuse of STEP_P: this is a status, not a paragraph,
+// and the set-password step keeps STATUS because that step is out of scope.
+const STEP_STATUS = 'text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
 
 /**
  * The offline explanation's box (#2443). The SPELLING is the Alert primitive's
@@ -1094,6 +1145,35 @@ export function LoginScreen() {
 
   const base = view === 'base';
 
+  /*
+      One heading for the screen, its words derived from the view and the step
+      rather than four headings switched by `hidden`. It covers `#login` and
+      the three otp steps only: the recovery and reset views bring their own
+      <h2> and are out of this change's scope, so the <h1> is hidden there
+      rather than stacking "Sign in" above "Reset your password". The
+      set-password step keeps the words its retired <h2> gave it, because that
+      step's look is out of scope too.
+  */
+  const heading =
+    view === 'otp'
+      ? otpStep === 'code'
+        ? 'Check your email'
+        : 'Sign in with email'
+      : 'Sign in';
+
+  /*
+      #btn-otp-back is ONE control under all three otp steps, so its words are
+      the step's: from the email step the way back is the password form, from
+      the code step it is a mistyped address. The set-password step keeps what
+      it shipped.
+  */
+  const backLabel =
+    otpStep === 'email'
+      ? 'Sign in with a password'
+      : otpStep === 'code'
+        ? 'Wrong address? Go back'
+        : 'Back to login';
+
   return (
     <main
       ref={rootRef}
@@ -1111,14 +1191,73 @@ export function LoginScreen() {
           same thing, and this one outlives it.
       */}
       <AuthBackButton href="#" position="fixed" onClick={backToLanding} />
-      <div className="min-h-full flex items-center justify-center">
-        <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
-            Homeroom
+      {/*
+          FOUR BANDS, TOP TO BOTTOM: the mark, the heading, the content, and
+          the one tertiary line each step ends on, pinned to the foot.
+
+          This was `items-center justify-center`, which centred the whole
+          stack as a single cluster: at 390x844 every step rendered as a tight
+          bob in the middle with roughly 250px of dead air above it and 250px
+          below. A flex COLUMN top-anchors instead (justify-content starts at
+          flex-start), and one `grow` spacer per step spends the leftover
+          height on the foot rather than splitting it above and below.
+
+          min-h-full, not h-full: the root is `overflow-y-auto`, so a short
+          viewport has to scroll rather than clip. The percentage resolves
+          because the root is `fixed inset-0`, and it resolves against the
+          height INSIDE it (.platform-safe-scroll puts the safe-area inset in
+          the root's own padding), so the pin adds no overflow of its own.
+      */}
+      <div className="min-h-full flex flex-col">
+        {/*
+            `px-4`, not the boards' 20px: the landing's header carries a
+            mandatory px-4 parity class, so aligning this column to it beats
+            matching the board by 4px, and the four logged-out screens
+            disagreeing with each other would be the worse outcome. One
+            recorded deviation for all of them.
+
+            THE TOP PADDING IS THE MARK BAND. The floating back disc is
+            `top: calc(env(safe-area-inset-top, 0px) + 0.75rem)` and h-11, so
+            its centre sits 34px below the safe-area top; seating a 24px
+            wordmark on that same band puts its top at 34 - 12 = 22px, which
+            is the 1.375rem below. It rides in an inline style for the reason
+            the disc's own `top` does: the value is an env() expression, and
+            this is that expression re-stated rather than a second rule.
+
+            `pb-[34px]` is the clearance above the home indicator, the figure
+            board 1's landing ends on. The inset itself is already the root's
+            padding, and it is zero on a desktop or an Android without one, so
+            the foot needs air of its own either way.
+        */}
+        <div
+          className="w-full max-w-sm mx-auto flex grow flex-col px-4 pb-[34px]"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.375rem)' }}
+        >
+          {/*
+              The mark carries the name, so it is a named figure and not
+              decoration: the <h1> under it says which step this is, not which
+              product, and nothing else on the screen says "Homeroom" (see
+              wordmark.tsx's note on the two accessible paths).
+
+              It STAYS 24px. The complaint that the name reads small is not
+              answered by growing it into the 28px heading it already sits a
+              hair under, which is what made the two compete and left neither
+              leading; it is answered by giving it a band of its own, where a
+              small mark reads as a logo instead of as undersized text.
+
+              `self-center` states the centring in the flex column's own
+              terms. `mx-auto` alone already does it, and does one more thing
+              worth keeping deliberate: auto cross-axis margins are what
+              suppress `align-items: stretch`, without which an svg at
+              `w-auto` would be stretched to the column's full width.
+          */}
+          <Wordmark
+            title="Homeroom"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+          />
+          <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
+            {heading}
           </h1>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
-            A place where users own and build apps together
-          </p>
           {/*
               Offline explanation (#1021). Signing in REQUIRES the network —
               the credential check happens on the server — so an offline
@@ -1181,7 +1320,30 @@ export function LoginScreen() {
               an optional fast path when the native app carries a linked
               wallet)
           */}
-          <form id="login-form" className={hiddenLast(!base, 'space-y-4')} onSubmit={onLoginSubmit}>
+          {/*
+              `flex flex-col gap-4`, not `space-y-4`. Same 16px, but a gap is
+              only drawn between items that are actually laid out, and
+              `space-y` is a margin on every child after the first whether or
+              not the one before it rendered. #login-reset-success is the
+              first child and is hidden on all but one state, so `space-y`
+              put a phantom 16px at the top of the form. Under the old block
+              column it collapsed out through the form's edge and nobody saw
+              it; a flex item establishes its own formatting context, so it
+              would now show as 16px of dead air under the heading on the
+              password step and on that step only, while #otp-view starts
+              flush. The gap keeps all three steps opening at the same y.
+
+              `mt-2.5` is the second half of board 2's `margin-top: 20px` on
+              the card; the <h1>'s own `mb-2.5` is the first. Split that way
+              because the heading's margin is shared with the two steps whose
+              next line is a sentence at 10 (boards 3 and 4), and this is the
+              one step where the card follows the heading directly.
+          */}
+          <form
+            id="login-form"
+            className={hiddenLast(!base, 'mt-2.5 flex flex-col gap-4')}
+            onSubmit={onLoginSubmit}
+          >
             <div
               id="login-reset-success"
               role="status"
@@ -1192,6 +1354,16 @@ export function LoginScreen() {
               <strong className="block font-semibold">{RESET_COMPLETE_TITLE}</strong>
               <span className="mt-1 block">{RESET_COMPLETE_MSG}</span>
             </div>
+            {/*
+                NO PLACEHOLDER ON THESE TWO ROWS. The label above each field is
+                persistent, not a floating one that vanishes on focus, so a
+                placeholder repeating it says the same words twice in the same
+                box — "Username or email" over "username or email". The boards
+                draw it that way and it is still lazy; the rows that keep a
+                placeholder are the ones where it does different work (an
+                example address, an example code, a length rule), never an echo
+                of the label.
+            */}
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
               <label
@@ -1208,7 +1380,6 @@ export function LoginScreen() {
                 required={true}
                 autoComplete="username"
                 {...AUTHFIELD}
-                placeholder="username or email"
               />
             </div>
             <div className={AUTH_ROW}>
@@ -1225,7 +1396,6 @@ export function LoginScreen() {
                 required={true}
                 autoComplete="current-password"
                 {...AUTHFIELD}
-                placeholder="password"
               />
             </div>
             </div>
@@ -1233,10 +1403,17 @@ export function LoginScreen() {
               {loginError}
             </div>
             <Button type="submit" data-offline-disabled="" {...SOLID}>
-              Log in
+              Sign in
             </Button>
           </form>
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-3')}>
+          {/*
+              The rest of board 2's action group: `gap: 10px` under the 16 the
+              form's own `gap-4` already draws between the card and the primary
+              button. Three separately-hidden wrappers rather than one flex
+              column, because #forgot-link-wrap and #otp-link-wrap are ids the
+              inventory resolves and each carries its own `hidden`.
+          */}
+          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a
               id="forgot-password-link"
               href="#"
@@ -1249,18 +1426,35 @@ export function LoginScreen() {
               Forgot password?
             </a>
           </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2')}>
+          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a id="otp-link" href="#signup" className={PILL_LINK}>
               Sign in with an email code
             </a>
           </p>
+          {/*
+              THE FOOT PIN for the password step. #register-link is the one
+              tertiary line this step ends on, and the spacer above it takes
+              whatever height is left over.
+
+              Base ONLY, and that is not a preference: #otp-view,
+              #recovery-view and #reset-password-view all come AFTER this line
+              in source order, so a spacer that grew on those views would push
+              the view itself to the bottom of the screen instead of its foot.
+              With the spacer hidden they simply sit at flex-start, which is
+              the top anchoring they want anyway.
+
+              A spacer rather than `mt-auto` on the line below: the `mt-2`
+              there is a minimum, and an auto margin would replace it rather
+              than add to it.
+          */}
+          <div className={base ? 'grow' : 'hidden'} />
           <p
             id="register-link"
             className={hiddenLast(!base, 'mt-2')}
           >
-            <a href="#register" className={PILL_LINK}>
+            <a href="#register" className={REGISTER_LINE}>
               {'Have an activation code? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Register</span>
+              <span className="text-violet-700 dark:text-violet-400">Register</span>
             </a>
           </p>
           {/*
@@ -1269,33 +1463,64 @@ export function LoginScreen() {
               first-time sign-ups (otp/verify creates the account — this is
               the #signup route) and migrated password-less participants.
           */}
-          <div id="otp-view" className={hiddenFirst(view !== 'otp', 'space-y-4')}>
-            <h2 className="text-lg font-bold text-center">
-              Sign in with email
-            </h2>
-            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                We'll email you a 6-digit code to sign in. New here? This also
-                creates your account.
+          {/*
+              `flex grow flex-col gap-4` where this was `space-y-4`. `grow` is
+              what lets the email and code steps reach the foot of the screen:
+              this block is the whole of those two steps, so the spacer that
+              pins #btn-otp-back has to live inside it. `gap-4` is the same
+              16px as before, drawn only between the steps that are actually
+              showing, so the code step opens at the same y as the email step
+              rather than 16px lower for the hidden step above it.
+
+              `hidden` still wins over `flex` when the view is closed: they
+              are both display utilities, and Tailwind emits `hidden` last of
+              them. #app-viewer on the landing screen has shipped on that
+              same pair since step 2 chunk A.
+          */}
+          <div id="otp-view" className={hiddenFirst(view !== 'otp', 'flex grow flex-col gap-4')}>
+            {/*
+                Boards 3 and 4 run each step as three figures at three
+                different distances — the copy block, the card at
+                `margin-top: 20px`, then the action group at
+                `padding-top: 16px`. `space-y-3` drew one 12px everywhere, so
+                the card floated between its sentence and its button with
+                nothing saying which it belonged to. A plain column, with each
+                seam carrying its own board figure, is what says it.
+            */}
+            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}>
+              <p className={STEP_P}>
+                We'll email you a 6-digit code to sign in. New here? You'll get
+                an account and a place on the waitlist.
               </p>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Email
-                </label>
-                <Input
-                  ref={otpEmailInput}
-                  id="otp-email"
-                  type="email"
-                  autoComplete="email"
-                  {...FIELD}
-                  placeholder="you@example.com"
-                />
+              {/*
+                  One field, one card — the same white grouped card the
+                  password form above is, so the three sign-in screens are
+                  three views of one surface rather than three field
+                  treatments. AUTH_CARD / AUTH_ROW / AUTH_LABEL / AUTHFIELD
+                  are that form's own constants, reused rather than
+                  re-spelled.
+              */}
+              <div className={AUTH_CARD}>
+                <div className={AUTH_ROW}>
+                  <label htmlFor="otp-email" className={AUTH_LABEL}>
+                    Email
+                  </label>
+                  <Input
+                    ref={otpEmailInput}
+                    id="otp-email"
+                    type="email"
+                    autoComplete="email"
+                    {...AUTHFIELD}
+                    placeholder="you@example.com"
+                  />
+                </div>
               </div>
               <Button
                 id="btn-otp-request"
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
+                className="mt-4"
                 disabledStyle={cooldownLeft ? 'dim' : 'off'}
                 disabled={cooldownLeft > 0}
                 onClick={() => {
@@ -1307,49 +1532,69 @@ export function LoginScreen() {
                 {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
-            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}>
+              <p className={STEP_P}>
                 {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
                   {otpEmailEcho}
                 </span>
                 .
               </p>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Code
-                </label>
-                <Input
-                  ref={otpCode}
-                  id="otp-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  {...FIELD}
-                  className="tracking-widest text-center"
-                  placeholder="123456"
-                />
+              {/*
+                  The same one-field card as the email step, with the value
+                  spelled as a code (CODE_FIELD). Left-aligned like every
+                  other row of this card: the label sits at the row's left
+                  edge, and `tracking-[8px]` puts its 8px after the last
+                  character too, which centring would then read as off-centre.
+              */}
+              <div className={AUTH_CARD}>
+                <div className={AUTH_ROW}>
+                  <label htmlFor="otp-code" className={AUTH_LABEL}>
+                    6-digit code
+                  </label>
+                  <Input
+                    ref={otpCode}
+                    id="otp-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    {...AUTHFIELD}
+                    className={CODE_FIELD}
+                    placeholder="123456"
+                  />
+                </div>
               </div>
-              <Button
-                id="btn-otp-verify"
-                type="button"
-                data-offline-disabled=""
-                {...SOLID}
-                onClick={onOtpVerify}
-              >
-                Verify code
-              </Button>
-              <button
-                id="btn-otp-resend"
-                type="button"
-                data-offline-disabled=""
-                className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
-                disabled={cooldownLeft > 0}
-                onClick={onOtpResend}
-              >
-                {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
-              </button>
+              {/*
+                  Board 4's action group, the one place on these three screens
+                  where two buttons sit together: `padding-top: 16px` off the
+                  card and `gap: 10px` between them, which is board 2's action
+                  group again. A wrapper rather than margins on the two
+                  buttons, because the resend button's className is already a
+                  choice between two complete literals and a third copy of
+                  that recipe is how the two stop matching.
+              */}
+              <div className="mt-4 flex flex-col gap-2.5">
+                <Button
+                  id="btn-otp-verify"
+                  type="button"
+                  data-offline-disabled=""
+                  {...SOLID}
+                  onClick={onOtpVerify}
+                >
+                  Verify code
+                </Button>
+                <button
+                  id="btn-otp-resend"
+                  type="button"
+                  data-offline-disabled=""
+                  className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
+                  disabled={cooldownLeft > 0}
+                  onClick={onOtpResend}
+                >
+                  {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
+                </button>
+              </div>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -1392,9 +1637,19 @@ export function LoginScreen() {
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}
             </div>
-            <div id="otp-status" className={hiddenLast(!otpStatus, STATUS)}>
+            <div
+              id="otp-status"
+              className={hiddenLast(!otpStatus, otpStep === 'password' ? STATUS : STEP_STATUS)}
+            >
               {otpStatus}
             </div>
+            {/*
+                THE FOOT PIN for the email and code steps, whose one tertiary
+                line is #btn-otp-back. Hidden on the set-password step, which
+                is out of this change's scope: that step keeps its controls in
+                one run, top-anchored, exactly as they sat before.
+            */}
+            <div className={otpStep === 'password' ? 'hidden' : 'grow'} />
             <button
               id="btn-otp-back"
               type="button"
@@ -1404,7 +1659,7 @@ export function LoginScreen() {
                 location.hash = '#login';
               }}
             >
-              Back to login
+              {backLabel}
             </button>
           </div>
           {/*
