@@ -23,14 +23,25 @@ export interface SectionHeadingProps {
   title: React.ReactNode;
   /** Rendered into the blurb `<p>`; omit for a heading with no blurb. */
   children?: React.ReactNode;
+  /**
+   * Extra utilities on the `<h3>`, merged over its defaults (`cn`, so
+   * `mb-0` really does cancel the default `mb-1`).
+   *
+   * It exists for the heading that is an ITEM in a row rather than a block on
+   * its own — the challenge page's participants line sits on one baseline
+   * beside its points total and needs `shrink-0`. Without this a caller in
+   * that position has no way in and re-declares the class string instead,
+   * which is the duplication this primitive was extracted to end.
+   */
+  className?: string;
   /** Extra utilities on the blurb (`leading-relaxed` on the longer ones). */
   blurbClassName?: string;
 }
 
-function SectionHeading({ title, children, blurbClassName }: SectionHeadingProps) {
+function SectionHeading({ title, children, className, blurbClassName }: SectionHeadingProps) {
   return (
     <>
-      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+      <h3 className={cn('text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className)}>
         {title}
       </h3>
       {children === undefined ? null : (

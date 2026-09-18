@@ -46,6 +46,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { SectionHeading } from '@/components/ui/field';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
@@ -219,7 +220,12 @@ const PROSE = 'text-sm text-zinc-600 dark:text-zinc-400';
 // The artwork well: the registry's tone class sets `--tint-art` for both
 // themes, so the one background reads it in either.
 const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]';
-const SECTION_HEADING = 'text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100';
+// The detail page's own section labels are @/components/ui/field's
+// SectionHeading — the platform's heading for "a label tight above the block
+// it names", which is what Requirements, Scoring and the participants line all
+// are. Not grouped-list's SectionHeader: that one is the label that FLOATS in
+// the gutter above a card group, and this page has no gutter and no cards —
+// its sections sit flush on the screen's own surface.
 const CTA_LINK = 'flex h-12 w-full items-center justify-center rounded-[0.875rem] bg-violet-600 px-4 '
   + 'text-[0.9375rem] font-semibold text-white transition-colors hover:bg-violet-500';
 
@@ -481,8 +487,10 @@ function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }):
 
 function PageSection({ heading, children }: { heading: string; children: string }): ReactNode {
   return (
-    <section className="flex flex-col gap-1">
-      <h3 className={SECTION_HEADING}>{heading}</h3>
+    // No `gap-1` any more: SectionHeading's own `mb-1` is that gap, and the two
+    // together would double it.
+    <section className="flex flex-col">
+      <SectionHeading title={heading} />
       <p className={PROSE}>{children}</p>
     </section>
   );
@@ -544,7 +552,10 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <div className="flex items-baseline justify-between gap-3">
-          <h3 className={`shrink-0 ${SECTION_HEADING}`}>{view.participants}</h3>
+          {/* `mb-0`: this heading is an ITEM on a shared baseline with the
+              points total, not a block with its own bottom gap — the section's
+              `gap-2` already spaces it off the entries. */}
+          <SectionHeading className="shrink-0 mb-0" title={view.participants} />
           {view.pointsTotal ? (
             <span className="min-w-0 truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{view.pointsTotal}</span>
           ) : null}

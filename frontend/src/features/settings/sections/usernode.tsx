@@ -95,14 +95,14 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
   if (!b) return null;
   if (b.kind === 'loading') {
     return (
-      <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+      <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
         <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading Homeroom app settings…</p>
       </div>
     );
   }
   if (b.kind === 'error') {
     return (
-      <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+      <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
         {/* Headline unchanged so existing reports stay recognisable. */}
         <p className="text-sm font-bold text-red-700 dark:text-red-400">
           Could not load Homeroom app settings.

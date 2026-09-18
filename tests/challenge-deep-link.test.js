@@ -528,8 +528,13 @@ test('the task is not on the card; the detail overlay carries it in full, never 
   pane._openIdx(0);
   assert.equal(store.get().detail.task, 'Open three apps from the directory and use each one',
     'a tap reveals the task the card leaves out');
-  assert.doesNotMatch(require('node:fs').readFileSync(
-    require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8'), /title=\{/,
+  const paneSrc = require('node:fs').readFileSync(
+    require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
+  // `<SectionHeading title=…/>` is @/components/ui/field's PROP, not the DOM
+  // attribute of the same name: it renders the heading's visible text. Strip
+  // those and the blunt rule below still catches a real tooltip.
+  const noHeadings = paneSrc.replace(/<SectionHeading[\s\S]*?\/>/g, '');
+  assert.doesNotMatch(noHeadings, /title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');
 });
 
