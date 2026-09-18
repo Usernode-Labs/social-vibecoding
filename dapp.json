@@ -770,9 +770,9 @@
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic .dev-card-meta) ~ #dev-issue-comments.dev-topic-comments"
     },
     {
-      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
+      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker; #1688 puts \"Still yes?\" on a card backed on an earlier version and \"Thank <author>\" in a fresh card's kudos slot",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inreview .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn][aria-haspopup=\"menu\"]",
+      "expectSelector": "#dev-kanban-col-inreview:has(.gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn.dev-vote-btn-prior[data-vote-btn=\"prior-yes\"][aria-haspopup=\"menu\"]):has(.gc-vote-item .gc-card-actions .kudos-wrap[data-kudos-variant=\"thanks\"] > .gc-vote-btn.dev-thanks-pill[data-kudos-action=\"give\"] > .dev-thanks-label) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"menu\"]",
       "expectText": "Vote"
     },
     {

@@ -196,7 +196,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     isResolving: () => false,
   });
   stub(ids.ws, {
-    sendSystemMessage: async (_pool, _appId, content, _t, _m, thread) => { systemMessages.push({ content, thread }); },
+    sendSystemMessage: async (_pool, _appId, content, _t, meta, thread) => { systemMessages.push({ content, thread, meta }); },
     pushNotificationToUser() {},
     pushVoteUpdate(data) { voteUpdates.push(data); },
     pushSessionUpdate() {},
@@ -455,6 +455,48 @@ test('finalizeMerge: runs the identical deploy tail for native and imported merg
     void merged;
     const mergeAnnouncements = systemMessages.filter((m) => /is live \(PR #\d+\)\. Thanks to everyone who voted/i.test(m.content));
     assert.ok(mergeAnnouncements.length >= 2, 'both announced a successful merge identically');
+  } finally {
+    restore();
+  }
+});
+
+// ── #1688: the announcement names the people ─────────────────────────
+
+test('finalizeMerge: the merge line names who built, backed and shaped it, in words and as metadata', async () => {
+  const { subject, systemMessages, restore } = loadVotes({
+    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
+  });
+  try {
+    const pool = makeRecordingPool([
+      [/SET status = 'merging'/, [{ id: 1 }]],
+      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'demo', self_hosted: false }]],
+      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
+      [/SELECT username FROM users WHERE id = \$1/, [{ username: 'evan' }]],
+      [/FROM pr_votes pv/, [
+        { username: 'evan', vote: 'yes', reason: null },
+        { username: 'alice', vote: 'yes', reason: 'Love it' },
+        { username: 'carol', vote: 'no', reason: 'The colors clash on mobile.' },
+        { username: 'bob', vote: 'yes', reason: null },
+        { username: 'dave', vote: 'no', reason: null },
+      ]],
+      [/FROM chat_messages cm/, [{ username: 'frank' }, { username: 'alice' }]],
+    ]);
+    await subject.finalizeMerge({
+      required: 1, activeCount: 4, yesCount: 3, majority: 1,
+      force: false, forceBy: null, dstep: () => {}, dend: () => {},
+      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
+      pool, session: { ...nativeSession },
+    });
+    const line = 'Native change is live (PR #30). Built by evan, backed by alice and bob, shaped by carol and frank. (3/4 votes)';
+    const announced = systemMessages.filter((m) => m.content === line);
+    assert.equal(announced.length, 2, 'general chat and the proposal\'s thread, the same line');
+    assert.deepEqual(announced[0].meta, {
+      merged: {
+        sessionId: 11, prNumber: 30, title: 'Native change',
+        author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'], votes: '3/4',
+      },
+    }, 'the names ride as data too, so the general chat draws from them rather than the wording');
+    assert.deepEqual(announced[1].thread, { type: 'session', ref: 11 });
   } finally {
     restore();
   }

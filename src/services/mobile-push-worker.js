@@ -262,6 +262,7 @@ class MobilePushWorker {
                    AND c.kind = 'direct'
               ) AS conversation_direct_blocked,
               cs.session_title, cs.pr_title, cs.branch_name, cs.promoted_at,
+              pv.reason AS vote_reason,
               policy.category AS push_category,
               COALESCE(preference.enabled, policy.default_enabled, FALSE) AS push_enabled,
               d.environment AS delivery_environment,
@@ -280,6 +281,8 @@ class MobilePushWorker {
          LEFT JOIN users su ON su.id = n.source_user_id
          LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
          LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+         -- #1688: the voter's line, for the vote push's body.
+         LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
          LEFT JOIN conversations c ON c.id = n.conversation_id
          LEFT JOIN conversation_messages conversation_message
            ON conversation_message.id = n.conversation_message_id
@@ -489,6 +492,7 @@ class MobilePushWorker {
           branchName: row.branch_name,
           promotedAt: row.promoted_at,
           detail: row.detail,
+          voteReason: row.vote_reason,
         },
       });
     } catch (err) {

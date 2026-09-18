@@ -94,6 +94,7 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
@@ -178,16 +179,10 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
 }
 
 function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
-  return (
-    <button
-      data-notif-id={view.id}
-      className={'notifications-row w-full text-left px-4 py-3.5 '
-        + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
-      onClick={(event) => {
-        event.stopPropagation();
-        controller()?._onItemClick(view.id);
-      }}
-    >
+  // Everything between the row's left edge and its chevron: the tile, the
+  // three lines, the count, the dot.
+  const body = (
+    <>
       <AvatarChip view={view} />
       <span className="flex-1 min-w-0">
         {/* WHAT KIND. Its own line since the subject stopped sharing one with
@@ -265,6 +260,60 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
         </span>
       ) : null}
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
+    </>
+  );
+  // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
+  // keeps the row as the tap that opens the thing, and puts the action
+  // beside it as a real button — never a button inside a button.
+  const actions = view.actions || [];
+  if (actions.length) {
+    return (
+      <div
+        data-notif-id={view.id}
+        className="notifications-row w-full px-4 py-3.5 flex items-center gap-3"
+      >
+        <button
+          className="min-w-0 flex-1 text-left flex items-center gap-4"
+          onClick={(event) => {
+            event.stopPropagation();
+            controller()?._onItemClick(view.id);
+          }}
+        >
+          {body}
+        </button>
+        {actions.map((a) => (
+          // The widget language's filled pill, through the shell's <Button>:
+          // the accent one for the row's primary act, the neutral one beside it.
+          <Button
+            key={a.key}
+            type="button"
+            data-notif-action={a.key}
+            variant={a.primary ? 'pillAccent' : 'pillNeutral'}
+            size="default"
+            ink={a.primary ? 'solid' : 'neutral'}
+            className="shrink-0"
+            onClick={(event) => {
+              event.stopPropagation();
+              controller()?._onRowAction(view.id, a.key);
+            }}
+          >
+            {a.label}
+          </Button>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <button
+      data-notif-id={view.id}
+      className={'notifications-row w-full text-left px-4 py-3.5 '
+        + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?._onItemClick(view.id);
+      }}
+    >
+      {body}
     </button>
   );
 }

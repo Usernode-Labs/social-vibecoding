@@ -4786,11 +4786,20 @@ const AppView = {
     const scope = root || document;
     if (!window.Kudos) return;
     scope.querySelectorAll('[data-kudos-host]').forEach((host) => {
-      if (host.firstElementChild) return;
       const id = parseInt(host.getAttribute('data-kudos-host'), 10);
       const pr = (AppView._merged || []).find((m) => m.id === id)
         || (AppView._proposals || []).find((p) => p.id === id)
         || { id };
+      // #1688: the slot has two faces (Kudos.thanksVariant), and the host is
+      // React's, reused across repaints — so a host that already holds a
+      // button is re-filled only when its face should change (the viewer
+      // voted, or thanked), never on every publish.
+      const wrap = host.firstElementChild;
+      if (wrap) {
+        const want = typeof Kudos.thanksVariant === 'function' && Kudos.thanksVariant(pr) ? 'thanks' : 'count';
+        const have = wrap.getAttribute('data-kudos-variant') || 'count';
+        if (want === have) return;
+      }
       host.innerHTML = Kudos.renderButton(pr, { compact: true });
     });
     Kudos.attach(scope);
@@ -10612,12 +10621,18 @@ const AppView = {
     const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
+    // #1688: a vote of the viewer's on an EARLIER version of this proposal —
+    // still on their row, no longer counted (see the /promoted subquery).
+    // The button then asks "Still yes?" instead of "Vote".
+    const prior = pr.my_vote == null && (pr.my_prior_vote === 'yes' || pr.my_prior_vote === 'no')
+      ? { prior: pr.my_prior_vote } : {};
     return [
       {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
         title: yesT.tip, label: `Yes (${yesT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
+        ...prior,
       },
       {
         key: 'no',
@@ -12993,11 +13008,26 @@ const AppView = {
         : (data.approvers
           ? ` · only invited approvers' (✓) votes count`
           : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
+      // #1688: each voter's own line, under the names, and the people whose
+      // vote was on an earlier version of the proposal.
+      const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
+        .filter((q) => q && q.username && q.reason)
+        .map((q) => ({ who: '@' + q.username, vote: q.vote === 'no' ? 'no' : 'yes', text: String(q.reason) }));
+      const earlierYes = Array.isArray(data.earlier?.yes) ? data.earlier.yes : [];
+      const earlierNo = Array.isArray(data.earlier?.no) ? data.earlier.no : [];
+      const earlierParts = [];
+      if (earlierYes.length) earlierParts.push(`${earlierYes.map((u) => '@' + u).join(', ')} said yes`);
+      if (earlierNo.length) earlierParts.push(`${earlierNo.map((u) => '@' + u).join(', ')} said no`);
+      const earlier = earlierParts.length
+        ? `Earlier version: ${earlierParts.join('; ')}. Not counted until they take another look.`
+        : null;
       publish({
         phase: 'ready',
         yes: { label: `Yes ${rosterCount(data.yes)}`, names: fmt(data.yes) },
         no: { label: `No ${rosterCount(data.no)}`, names: fmt(data.no) },
         needs,
+        reasons,
+        earlier,
       });
     } catch {
       publish({ phase: 'hidden' });
@@ -17431,13 +17461,63 @@ const AppView = {
   // first, so an impatient second click re-sent the same stale stamp and
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
-  async castVote(sessionId, vote, expectedEpoch = null) {
+  // #1688: the line behind a vote, asked for through the kit's prompt card.
+  // A No needs one (the server refuses a No without it); a Yes may skip.
+  // Resolves the line to send (a string), null for "none", or false when
+  // the voter backed out — a cancelled No casts nothing.
+  async _askVoteReason(vote) {
+    const no = vote === 'no';
+    const pu = window.PlatformUI;
+    if (!pu || typeof pu.prompt !== 'function') return null;
+    const answer = await pu.prompt({
+      title: no ? 'What’s not working for you?' : 'Add a line for the group?',
+      message: no
+        ? 'One line is plenty. It goes to the proposer with your vote.'
+        : 'Optional. It shows beside your vote.',
+      placeholder: no ? 'What would you want to change?' : 'What do you like about it?',
+      confirmLabel: no ? 'Vote No' : 'Vote Yes',
+      cancelLabel: no ? 'Cancel' : 'Skip',
+    });
+    if (answer === null) return no ? false : null;
+    const line = String(answer).replace(/\s+/g, ' ').trim();
+    if (no && !line) {
+      pu.toast('A No comes with a line: what is not working for you?');
+      return false;
+    }
+    return line || null;
+  },
+  // The options bag's `reason` key: a string is sent as the line, null sends
+  // none without asking (a re-confirm of an earlier Yes carries its old
+  // line server-side), and an absent key asks first.
+  async _resolveVoteReason(vote, opts) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (Object.prototype.hasOwnProperty.call(o, 'reason')) {
+      const r = o.reason;
+      if (r == null) return null;
+      const line = String(r).replace(/\s+/g, ' ').trim();
+      return line || null;
+    }
+    return AppView._askVoteReason(vote);
+  },
+  async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
     // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
+    // #1688: the line, before anything is painted — a cancelled No must
+    // leave the card exactly as it was.
+    let reason = null;
+    try {
+      reason = await AppView._resolveVoteReason(vote, opts);
+    } catch {
+      reason = null;
+    }
+    if (reason === false) {
+      AppView._voteInFlight.delete(key);
+      return;
+    }
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -17463,7 +17543,7 @@ const AppView = {
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedEpoch: epoch }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -17477,7 +17557,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
-        PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
+        // #1688: a No the server would not take without its line says so in
+        // the server's own words rather than as an opaque failure.
+        PlatformUI.toast((data.error === 'reason_required' && data.message)
+          || data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
       AppView._seenEpoch.delete(sessionId);

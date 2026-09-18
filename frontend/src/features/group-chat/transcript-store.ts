@@ -106,8 +106,31 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
  * for the same proposal, from its own table, or null where app-view.js is
  * not loaded.
  */
+/** One line of the Friday card (#1688): a change that landed, or a proposal waiting. */
+export interface WeeklyItem {
+  id: number | null;
+  prNumber: string;
+  title: string;
+  author: string;
+  /** Whose Yes counted when it merged; empty on an open proposal. */
+  backers: string[];
+}
+
+/** The Friday card's data (#1688): what went live this week and what is waiting on votes. */
+export interface WeeklyCard {
+  app: string;
+  slug: string;
+  merged: WeeklyItem[];
+  mergedTotal: number;
+  open: WeeklyItem[];
+  openTotal: number;
+}
+
 export interface ProposalEvent {
-  type: 'submitted' | 'merged';
+  /** #1688 adds `weekly`: the Friday card, a message from the app itself. */
+  type: 'submitted' | 'merged' | 'weekly';
+  /** The Friday card's data; set only when `type` is `weekly`. */
+  weekly?: WeeklyCard | null;
   /** The session id from the row's metadata tag, or '' on an older row. */
   sessionId: string;
   prNumber: string;
@@ -123,6 +146,12 @@ export interface ProposalEvent {
   /** "a/b", the tally the merge announced; '' on a submission. */
   votes: string;
   icon: { tint: string; path: string; small?: boolean; title?: string } | null;
+  /**
+   * #1688: who the merge announcement named — the proposer, the Yes voters
+   * whose votes counted, and whoever shaped it. Null on a submission, a
+   * force merge, and an announcement from before names were carried.
+   */
+  credits?: { author: string; backers: string[]; shapers: string[] } | null;
 }
 
 /**

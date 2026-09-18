@@ -624,7 +624,10 @@ const GroupChat = {
     const event = GroupChat._proposalEvent(msg, kind);
     // Resolved ONCE for the vote facts below — the row's tint, its phase and
     // the event's link all read the same live PR out of AppView.voteState.
-    const pr = (isVote || event) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
+    // #1688: the Friday card names several proposals in its text, so the
+    // "PR #N" its content happens to carry must not resolve it to one.
+    const linksProposal = !!event && event.type !== 'weekly';
+    const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       kind,
@@ -690,7 +693,7 @@ const GroupChat = {
         mine: !!(event.actor && App.user && event.actor === App.user.username),
         icon: GroupChat._eventIcon(event.type),
       } : null,
-      eventHref: event ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
+      eventHref: linksProposal ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
       // The controls host is module-filled, but only the message knows WHICH
       // pull request it is about — so the pair rides on the view model and
       // lands on the host as the two data-* attributes refreshVoteControls
@@ -2317,13 +2320,94 @@ const GroupChat = {
       };
     }
     if (kind !== 'system') return null;
-    let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) return { type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[3] };
-    m = /^PR #(\d+) is live\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) return { type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[2] };
+    // #1688: the Friday card — a system row carrying `weekly` metadata
+    // (services/weekly-digest.js), drawn as a card from the app itself.
+    const weekly = GroupChat._weeklyEvent(msg);
+    if (weekly) return weekly;
+    // #1688: the sentence between the lead-in and the tally names the people
+    // ("Built by evan, backed by alice and bob, shaped by carol.") — or is the
+    // older "Thanks to everyone who voted". The names ride as metadata on a
+    // new row; an older row, or a row whose metadata did not survive, has
+    // them read back out of the sentence. `credits` is on the event only
+    // when somebody is named, so a row naming nobody keeps its old shape.
+    const credits = GroupChat._mergeCredits(msg);
+    let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) {
+      const named = credits || GroupChat._parseCredits(m[3]);
+      return {
+        type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[4],
+        ...(named ? { credits: named } : {}),
+      };
+    }
+    m = /^PR #(\d+) is live\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) {
+      const named = credits || GroupChat._parseCredits(m[2]);
+      return {
+        type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[3],
+        ...(named ? { credits: named } : {}),
+      };
+    }
     m = /^PR #(\d+)(?:: ([\s\S]*?))? force-merged by admin (\S+) \((\d+\/\d+) votes? at the time\)$/.exec(text);
     if (m) return { type: 'merged', sessionId, prNumber: m[1], title: m[2] || '', actor: m[3], force: true, votes: m[4] };
     return null;
+  },
+
+  // The Friday card's data (#1688), or null on a row that is not one. The
+  // lists are what the card draws; the totals say how many it stands for.
+  _weeklyEvent(msg) {
+    const w = (msg.metadata || msg.meta || {}).weekly;
+    if (!w || typeof w !== 'object') return null;
+    const item = (x) => ({
+      id: x && x.id != null ? Number(x.id) : null,
+      prNumber: x && x.prNumber != null ? String(x.prNumber) : '',
+      title: String((x && x.title) || ''),
+      author: String((x && x.author) || ''),
+      backers: Array.isArray(x && x.backers)
+        ? x.backers.map((n) => String(n || '').trim()).filter(Boolean) : [],
+    });
+    return {
+      type: 'weekly', sessionId: '', prNumber: '', title: '', actor: '', force: false, votes: '',
+      weekly: {
+        app: String(w.app || ''),
+        slug: String(w.slug || ''),
+        merged: (Array.isArray(w.merged) ? w.merged : []).map(item),
+        mergedTotal: Number(w.mergedTotal) || 0,
+        open: (Array.isArray(w.open) ? w.open : []).map(item),
+        openTotal: Number(w.openTotal) || 0,
+      },
+    };
+  },
+
+  // The names a merge announcement carries as metadata (routes/votes.js
+  // finalizeMerge), or null on a row without them.
+  _mergeCredits(msg) {
+    const meta = (msg.metadata || msg.meta || {}).merged;
+    if (!meta || typeof meta !== 'object') return null;
+    const names = (v) => (Array.isArray(v) ? v.map((n) => String(n || '').trim()).filter(Boolean) : []);
+    const author = typeof meta.author === 'string' ? meta.author.trim() : '';
+    const backers = names(meta.backers);
+    const shapers = names(meta.shapers);
+    if (!author && !backers.length && !shapers.length) return null;
+    return { author, backers, shapers };
+  },
+
+  // The same names read back out of the sentence, for a row without
+  // metadata: "Built by evan, backed by alice and bob, shaped by carol."
+  // → { author, backers, shapers }. Null when the sentence names nobody
+  // (the older "Thanks to everyone who voted").
+  _parseCredits(sentence) {
+    const s = String(sentence || '').replace(/\.\s*$/, '');
+    const part = (verb) => {
+      const m = new RegExp(`(?:^|, )[${verb[0].toUpperCase()}${verb[0]}]${verb.slice(1)} by (.+?)(?=, [a-z]+ by |$)`).exec(s);
+      return m ? m[1] : '';
+    };
+    const names = (run) => run.split(/, | and /).map((n) => n.trim())
+      .filter((n) => n && !/^\d+ more$/.test(n));
+    const author = part('built');
+    const backers = names(part('backed'));
+    const shapers = names(part('shaped'));
+    if (!author && !backers.length && !shapers.length) return null;
+    return { author, backers, shapers };
   },
 
   // The glyph the Dev board gives the same proposal — the "done" tick once
@@ -2331,6 +2415,8 @@ const GroupChat = {
   // board's own table, so the two surfaces cannot draw one thing two ways.
   // Null where app-view.js has not loaded (a test), and the row draws none.
   _eventIcon(type) {
+    // #1688: the Friday card has no proposal to take a glyph from.
+    if (type === 'weekly') return null;
     if (typeof AppView === 'undefined' || typeof AppView._devCardIcon !== 'function') return null;
     return AppView._devCardIcon(type === 'merged' ? 'done' : 'proposal', { small: true });
   },

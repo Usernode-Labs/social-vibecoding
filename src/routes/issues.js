@@ -13,7 +13,7 @@ const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
-const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
@@ -1891,8 +1891,10 @@ function issueRoutes(config) {
         }
       }
 
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
-      const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
+      // #1688: what the board shows beside the bounty button is the BOUNTY
+      // allowance, which has its own count now (services/bounties.js).
+      const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
+      const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
       res.json({
         issues,
@@ -1905,7 +1907,7 @@ function issueRoutes(config) {
           ? { refreshed: !!result.refreshed, refreshRetryMs: result.retryInMs || 0 }
           : {}),
         myRemaining,
-        limit: WEEKLY_KUDOS_LIMIT,
+        limit: WEEKLY_BOUNTY_LIMIT,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

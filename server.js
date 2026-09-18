@@ -1124,6 +1124,10 @@ async function becomeLeader() {
   // advisory-locked so only one instance sends, and the counterweight to
   // new-proposal notifications now defaulting off.
   require('./src/services/vote-digest').start(config);
+  // #1688: the Friday "this week on <app>" card. Same shape as the digest
+  // above — hourly sweep, advisory-locked — posting one card per app into
+  // its chat on Fridays, and nothing at all on a quiet week.
+  require('./src/services/weekly-digest').start(config);
   // Season challenges are read from the points ledger, and until this ran
   // only two of them ever wrote to it without an admin typing the rows in.
   // Leader-only and advisory-locked on top of that, because a tick costs
@@ -3224,20 +3228,27 @@ async function finalizeRecoveredTurn({
         await noteMilestone({ votesResetFor: result.sha });
         await require('./src/services/app-admins')
           .refreshExplicitApproval(pool, session, session);
-        const { rowCount } = await pool.query(
-          `DELETE FROM pr_votes WHERE session_id = $1`, [sessionId]
+        // #1688: retired by an epoch bump, not deleted — the same step the
+        // live tail takes (services/vote-revision.js), so the recovered
+        // turn also asks the prior Yes voters back.
+        const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
+        const retired = await require('./src/services/vote-revision').retireAndRecheck(
+          pool, { ...session, id: sessionId }, result.sha,
+          {
+            announce: async ({ retired: dropped }) => {
+              pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+              const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${result.sha.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
+              await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
+              await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+                null, { type: 'session', ref: sessionId }).catch(() => {});
+              log.info('server', 'Recovered turn: retired PR votes after new commit', {
+                sessionId, commitHash: result.sha.substring(0, 8), votesRetired: dropped,
+              });
+            },
+          },
         );
-        if (rowCount > 0) {
-          const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
-          pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
-          const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${result.sha.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-          await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-          await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-            null, { type: 'session', ref: sessionId }).catch(() => {});
+        if (retired.retired > 0) {
           summaryParts.push('Group-chat votes were reset for the new commit.');
-          log.info('server', 'Recovered turn: reset PR votes after new commit', {
-            sessionId, commitHash: result.sha.substring(0, 8), votesDropped: rowCount,
-          });
         }
       } catch (err) {
         log.warn('server', 'Recovered turn: vote reset failed (non-fatal)', {

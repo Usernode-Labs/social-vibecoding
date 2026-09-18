@@ -4814,6 +4814,12 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('proposal_vote', 'proposal_alerts', TRUE),
   ('pr_merged', 'proposal_alerts', TRUE),
   ('vote_digest', 'proposal_alerts', TRUE),
+  -- #1688's two: the re-confirm ask after a proposal's author pushes a new
+  -- version, and the weekly "this week on <app>" card. Both are proposal
+  -- lifecycle, so proposal_alerts, and both are on by default here — the
+  -- per-app switch in services/notification-preferences.js is the first gate.
+  ('revision_recheck', 'proposal_alerts', TRUE),
+  ('weekly_digest', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
@@ -4841,6 +4847,8 @@ DELETE FROM mobile_push_kind_categories
    'connector_submitted', 'agent_awaiting_input',
    -- #1374's five.
    'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
+   -- #1688's two.
+   'revision_recheck', 'weekly_digest',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
  );
@@ -8297,6 +8305,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_mode BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_base_sha VARCHAR(40);
+
+-- #1688: warmer voting.
+--
+-- pr_votes.reason — the sentence behind a vote. routes/votes.js requires one
+-- on a No and accepts one on a Yes; a row written before this column, or a
+-- Yes cast without a line, is NULL and reads exactly as it did. The upsert
+-- keeps an earlier line when the same person re-casts the same side without
+-- a new one, which is what carries a Yes onto a proposal's next version.
+ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
+-- chat_sessions.conversation_prompted_epoch — the approval epoch for which
+-- the "needs a conversation" prompt was posted into the proposal's thread.
+-- Contested is derived from the active-user count, which moves without a
+-- vote, so the prompt is claimed once per epoch here rather than re-posted
+-- on every crossing; a new authored push bumps the epoch and earns a new one.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS conversation_prompted_epoch INTEGER;
+-- apps.weekly_digest_at — when the "this week" card last went to the app's
+-- general chat (services/weekly-digest.js). NULL until the first one.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS weekly_digest_at TIMESTAMPTZ;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
