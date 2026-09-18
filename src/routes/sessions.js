@@ -319,6 +319,7 @@ const estimateGuard = require('../services/estimate-guard');
 // phrase would have. Keyed by the head word of the `[phase]` marker.
 const NEUTRAL_PHASE_TEXT = {
   claude: 'still working through the changes',
+  codex: 'still working through the changes',
   sync: 'syncing with main',
   refresh: 'syncing the branch',
   'inloop-db': 'still working through the changes',
