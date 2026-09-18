@@ -1222,3 +1222,60 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
     server.close();
   }
 });
+
+// ── #2431: the route ships the proposal that closed the issue ────────────
+//
+// The resolution rules are pinned in tests/issue-proposal-ref.test.js. This
+// is the wiring: both issue routes have to carry `addressed_by`, because the
+// topic page of a CLOSED issue renders from the single-issue payload and the
+// page of an OPEN one renders from the list.
+
+test('both issue routes carry addressed_by, resolved in one extra query', async () => {
+  stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  let sessionReads = 0;
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/linked_issues && /.test(s)) {
+      sessionReads += 1;
+      return { rows: [{
+        id: 5001, status: 'merged', user_id: 9, shared_at: null,
+        pr_number: 2431, pr_url: 'https://github.com/o/r/pull/2431',
+        linked_issues: [142, 1], created_from_issue_number: null,
+        last_activity_at: '2026-09-10T00:00:00Z', created_at: '2026-09-01T00:00:00Z',
+        title: 'A closed issue says which proposal closed it',
+      }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const one = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(one.status, 200);
+    const { issue } = await one.json();
+    assert.deepStrictEqual(issue.addressed_by, {
+      sessionId: 5001,
+      state: 'merged',
+      prNumber: 2431,
+      prUrl: 'https://github.com/o/r/pull/2431',
+      title: 'A closed issue says which proposal closed it',
+    });
+
+    // The list resolves every number it carries in the SAME one query — the
+    // reference must never cost a read per card.
+    sessionReads = 0;
+    const list = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(list.status, 200);
+    const body = await list.json();
+    assert.strictEqual(sessionReads, 1, 'one read for the whole board');
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+    assert.strictEqual(byNumber.get(1).addressed_by.sessionId, 5001);
+    assert.strictEqual(byNumber.get(2).addressed_by, null, 'an unlinked issue says nothing');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
