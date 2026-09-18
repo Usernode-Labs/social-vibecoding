@@ -359,7 +359,7 @@ function StorageSection() {
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
         {loadError ? <p className="text-sm text-red-400">{loadError}</p> : null}
-        {!loadError && !data ? <p className={AdminUI.muted}>Loading</p> : null}
+        {!loadError && !data ? <p className={AdminUI.loading}>Loading…</p> : null}
         {data ? (
           <div className={AdminUI.tableWrap}>
             <table id="admin-storage-table" className={AdminUI.table}>

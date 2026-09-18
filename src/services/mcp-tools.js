@@ -31,6 +31,7 @@
 // on the require path to do it.
 const log = require('./logger');
 const { changeWebPath } = require('./change-destination');
+const visualEvidencePlan = require('./visual-evidence-plan');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -910,6 +911,12 @@ function shapeProposal(session, origin) {
     // checking its work has no way to tell which happened. Null until the
     // first capture has run.
     capturePaths: capturedPaths.length ? capturedPaths : null,
+    // Revision-scoped, authenticated evidence authored from the implementing
+    // agent's semantic intent. This is already the public serializer shape;
+    // no replay plan, browser origin, fixture name, or artifact bytes are
+    // exposed to connector clients.
+    visualEvidence: (session.visualEvidence && typeof session.visualEvidence === 'object')
+      ? session.visualEvidence : null,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
@@ -1005,18 +1012,16 @@ async function buildRequestDiscussion({ pool, baseUrl, accessToken, appId, slug,
 
 // ── Testing metadata on a submission ───────────────────────────────────
 //
-// An in-platform build turn ends with a "==== TESTING ====" block, and that
-// block is one way the people voting get before/after screenshots of the
-// screen that changed. Named dapp.json visual scenarios are the durable
-// fallback; explicit connector routes override them for one-off precision.
+// An in-platform build turn may still end with a "==== TESTING ====" block.
+// Those routes drive the manual test link and the legacy check/capture path;
+// they are not revision-scoped, semantically reviewed visual evidence.
 //
 // So submit_work takes the same two things as ordinary arguments. The parsing
 // rules are NOT restated here — services/testing-notes.js owns them, and this
 // reuses its validator, its viewport labels and its caps so a connector
 // submission and a build turn cannot disagree about what a valid route is.
 //
-// Both are optional. With no explicit route, capture uses a matching named
-// scenario and otherwise retains the app-root default.
+// Both are optional. Evidence-v2 intent is collected independently.
 //
 // What it will NOT do is drop a route without saying so (#1214). `parseSubmitted`
 // reports every entry it could not use, and `rejectedPaths` carries that list up
@@ -1076,18 +1081,15 @@ function testingRouteNote(shaped, updating) {
     // Nothing rejected, nothing kept, nothing said on an update: an update that
     // omits the routes deliberately keeps the ones the proposal already has.
     if (kept || updating) return '';
-    return ' No testingPaths were supplied. Homeroom will use a matching named visual scenario from dapp.json; '
-      + 'if none matches, its screenshots default to the app home page. '
-      + 'You can submit again with proposalId and testingPaths pointing at the changed screen — a resubmit of the '
-      + 'same commit only re-shoots the screenshots and clears no votes.';
+    return ' No testingPaths were supplied. That leaves the backward-compatible manual test route unset; '
+      + 'visualEvidence, when supplied, is handled separately through exact-revision interaction replay.';
   }
   const list = rejected.join('; ');
   return kept
-    ? ` Homeroom could not use ${rejected.length} of the testingPaths you sent — ${list}. The screenshots are shot `
-      + `on ${kept.join(', ')} only.`
-    : ` Homeroom could not use any of the testingPaths you sent — ${list}. It will try a matching named visual `
-      + 'scenario and otherwise default to the app home page. Submit again with corrected routes; a resubmit of the '
-      + 'same commit only re-shoots the screenshots and clears no votes.';
+    ? ` Homeroom could not use ${rejected.length} of the testingPaths you sent — ${list}. The manual test link uses `
+      + `${kept.join(', ')} only; verified visual evidence is independent.`
+    : ` Homeroom could not use any of the testingPaths you sent — ${list}. Correct them only if the manual test link `
+      + 'needs them; use visualEvidence for the reviewer-facing interaction proof.';
 }
 
 // ── Server instructions ────────────────────────────────────────────────
@@ -1193,6 +1195,44 @@ function registerTools(server, ctx) {
   } = ctx;
   const canWrite = scopes.includes(WRITE_SCOPE);
   const canRead = scopes.includes(READ_SCOPE);
+  const visualEvidenceOutputSchema = z.object({
+    state: z.enum([
+      'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
+      'verified', 'failed', 'not_required', 'overridden', 'stale', 'cancelled',
+    ]),
+    required: z.boolean(),
+    impact: z.enum(['ui', 'motion', 'none']).nullable(),
+    rationale: z.string().nullable(),
+    claims: z.array(z.object({
+      id: z.string(),
+      claim: z.string(),
+      persona: z.enum(['member', 'read_only_admin']),
+      viewports: z.array(z.string()),
+      steps: z.array(z.string()),
+      baseState: z.enum(['present', 'not_present']),
+      animation: z.enum(['none', 'steps', 'motion']),
+    })),
+    baseSha: z.string().nullable(),
+    headSha: z.string().nullable(),
+    failureCode: z.string().nullable(),
+    failureReason: z.string().nullable(),
+    repairAvailable: z.boolean(),
+    planHash: z.string().nullable(),
+    verifiedReason: z.string().nullable(),
+    overriddenBy: z.number().nullable(),
+    overriddenAt: z.string().nullable(),
+    overrideReason: z.string().nullable(),
+    artifacts: z.array(z.object({
+      id: z.string(), storyId: z.string(), viewport: z.string(),
+      side: z.enum(['base', 'head', 'paired']),
+      variant: z.enum(['focus', 'context', 'animation']),
+      media: z.enum(['png', 'webm', 'gif']),
+      contentType: z.string(), width: z.number().nullable(), height: z.number().nullable(),
+      bytes: z.number().nullable(), focusRect: z.unknown().nullable(),
+      stageLabels: z.array(z.string()).nullable(), url: z.string(),
+    })),
+    updatedAt: z.string().nullable(),
+  }).nullable();
 
   // ── Setup-hint throttle ──────────────────────────────────────────────
   //
@@ -2177,7 +2217,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. A proposal you opened with submit_work is usually 'app_repo' — Homeroom copies the fork branch into the app repository — so revising it goes back through submit_work. `captureRouteSource` identifies submitted routes, named dapp.json scenarios, or the app-root default; `visualScenarios` names matched flows. `captureDefaultedToRoot` flags a screenshot that may not show the changed UI. Fix it by resubmitting the same proposal and commit with corrected `testingPaths`; that only re-shoots screenshots and clears no votes. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `visualEvidence` is the exact-head, claim-labelled proof: verified entries include authenticated media; pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -2287,6 +2327,10 @@ function registerTools(server, ctx) {
       visualScenarios: z.array(z.string()).nullable()
         .describe('Stable dapp.json scenario ids used by the last capture, or null for submitted/historical routes.'),
       capturePaths: z.array(z.string()).nullable(),
+      visualEvidence: visualEvidenceOutputSchema.describe(
+        'Current exact-head visual evidence. Verified entries include authenticated artifact URLs; pending or '
+        + 'failed entries never fall back to legacy route screenshots. Null means this proposal predates evidence v2.'
+      ),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
@@ -2909,6 +2953,7 @@ function registerTools(server, ctx) {
         })),
       nextStep: staleCheckoutWarning(checkout)
         + duplicateWarning(result)
+        + 'First verify that the active agent context is rooted in the app repository or its fork and has loaded that repository\'s own instructions. Some coding agents retain instructions from the project where a task started. If unrelated repository instructions are still active, use guidance to open a fresh task rooted in the app repository even if code-editing tools are available here. '
         + (result.proposalId
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
@@ -2962,13 +3007,15 @@ function registerTools(server, ctx) {
       summary: z.string().optional()
         .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. They explicitly override automatic visual-scenario selection. Homeroom shoots a before/after pair of each one; point them at the SCREEN YOU CHANGED, never the home page. Up to 3 are used and every route also gets a phone still. If omitted, Homeroom selects named dapp.json checks whose visual impact globs match the changed files, then defaults to the app home page when none match. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing submitted routes. The answer reports what was accepted.'),
+        .describe('Backward-compatible routes for the manual “Test this change” link and legacy checks. They do not count as verified visual evidence. For evidence-v2 proposals, describe the actual user interaction in visualEvidence; Homeroom’s evidence agent explores it and the platform replays it against exact base/head revisions. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
+      visualEvidence: z.unknown().optional()
+        .describe('Required evidence intent for this revision. Pass the version-1 object returned by record_visual_evidence_intent: impact "ui" or "motion" with 1-3 claims and their real user flows, or impact "none" with a concrete rationale. Homeroom validates this strictly, explores the UI, and deterministically replays the resulting plan against the exact base and head revisions. Do not add screenshot-only routes or secrets.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
       recheck: z.boolean().optional()
-        .describe('Only with proposalId, on the commit already there: re-run the automated checks and re-shoot the screenshots — the same act as the panel\'s "Re-run checks" button. No code moves and NO votes are cleared. Use it when the verdict is stale for a reason outside this proposal (a platform-side fix, a preview that had died) instead of pushing a commit to provoke a run.'),
+        .describe('Only with proposalId, on the commit already there: re-run the automated checks and legacy capture pipeline. Evidence-v2 has its own fresh paired rerun action. No code moves and NO votes are cleared. Use it when the checks verdict is stale for a reason outside this proposal instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
         .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
@@ -3008,6 +3055,16 @@ function registerTools(server, ctx) {
       // no-op in the answer the agent reads.
       testingUpdated: z.boolean().nullable(),
       captureRerun: z.boolean().nullable(),
+      visualEvidenceState: z.string().nullable()
+        .describe('Revision-scoped visual evidence state after this submission, or null when the feature is disabled or the target already existed.'),
+      visualEvidenceAccepted: z.boolean().nullable()
+        .describe('Whether this call persisted the supplied visualEvidence intent. Null when no intent was supplied or the target already existed.'),
+      visualEvidenceRejected: z.boolean().nullable()
+        .describe('Whether a supplied visualEvidence intent was not persisted (for example because collection is disabled). Validation errors fail the tool instead of silently returning true here.'),
+      visualEvidenceRequired: z.boolean().nullable()
+        .describe('Whether the proposal must produce verified evidence for its current revision.'),
+      visualEvidenceNextStep: z.string().nullable()
+        .describe('Machine-readable next action for evidence, such as await_visual_evidence or rerun_or_correct_visual_evidence.'),
       // Set only by an UPDATE that carried `propose: true`: whether the
       // session was promoted to a vote, and — when it was not — the
       // platform's own words for why. `null` means propose was not requested
@@ -3025,10 +3082,18 @@ function registerTools(server, ctx) {
     annotations: writeAnnotations,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
-    testingPaths, testingSteps, expectedHeadSha, propose, recheck, share,
+    testingPaths, testingSteps, visualEvidence, expectedHeadSha, propose, recheck, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
+    let acceptedVisualEvidence;
+    if (visualEvidence !== undefined) {
+      try {
+        acceptedVisualEvidence = visualEvidencePlan.parseIntent(visualEvidence);
+      } catch (err) {
+        return toolError('invalid_visual_evidence', err.message);
+      }
+    }
     const updating = Number.isInteger(proposalId) && proposalId > 0;
     // #2066. `share` belongs to the taskId shape: the reshare path keys off
     // the TASK's session_id, so passing it here did nothing at all. Silently.
@@ -3118,6 +3183,7 @@ function registerTools(server, ctx) {
         promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+        ...(extra.visualEvidence ? { visualEvidence: extra.visualEvidence } : {}),
         // The About sheet's user-facing half, carried on the same POST as the
         // testing notes. Omitted when the agent sent none, so the route writes
         // null and the proposal reads exactly as it did before — the platform
@@ -3168,6 +3234,7 @@ function registerTools(server, ctx) {
       // submission named — or, when it named none, '/' — and the group voted
       // on home-page screenshots of a change to somewhere else entirely.
       testing,
+      visualEvidence: acceptedVisualEvidence,
       share: share === true,
       importProposal,
       updateProposal,
@@ -3337,6 +3404,11 @@ function registerTools(server, ctx) {
         descriptionUpdated: result.descriptionUpdated === true,
         descriptionRejected: result.descriptionRejected || null,
         captureRerun: result.captureRerun === true,
+        visualEvidenceState: result.visualEvidenceState || null,
+        visualEvidenceAccepted: acceptedVisualEvidence ? result.visualEvidenceAccepted === true : null,
+        visualEvidenceRejected: acceptedVisualEvidence ? result.visualEvidenceRejected === true : null,
+        visualEvidenceRequired: acceptedVisualEvidence ? result.visualEvidenceRequired === true : null,
+        visualEvidenceNextStep: acceptedVisualEvidence ? (result.visualEvidenceNextStep || 'none') : null,
         // #2066. What this push actually set going, rather than what the
         // documentation says usually happens. `previewRebuilding` false with
         // `resumeRequired` true is a paused session: the commit landed and the
@@ -3384,6 +3456,11 @@ function registerTools(server, ctx) {
         testingPathsRejected: result.testingPathsRejected || testing.rejectedPaths || null,
         testingUpdated: null,
         captureRerun: null,
+        visualEvidenceState: result.visualEvidenceState || null,
+        visualEvidenceAccepted: acceptedVisualEvidence ? result.visualEvidenceAccepted === true : null,
+        visualEvidenceRejected: acceptedVisualEvidence ? result.visualEvidenceRejected === true : null,
+        visualEvidenceRequired: acceptedVisualEvidence ? result.visualEvidenceRequired === true : null,
+        visualEvidenceNextStep: acceptedVisualEvidence ? (result.visualEvidenceNextStep || 'none') : null,
         proposed: null,
         proposeError: null,
         webPath: result.sessionId
@@ -3417,6 +3494,11 @@ function registerTools(server, ctx) {
         testingPathsRejected: testing.rejectedPaths || null,
         testingUpdated: null,
         captureRerun: null,
+        visualEvidenceState: null,
+        visualEvidenceAccepted: null,
+        visualEvidenceRejected: null,
+        visualEvidenceRequired: null,
+        visualEvidenceNextStep: null,
         proposed: null,
         proposeError: null,
         // #1347: this submission went to the vote, not to the in-progress
@@ -3451,6 +3533,11 @@ function registerTools(server, ctx) {
       testingPathsRejected: testing.rejectedPaths || null,
       testingUpdated: null,
       captureRerun: null,
+      visualEvidenceState: result.visualEvidenceState || null,
+      visualEvidenceAccepted: acceptedVisualEvidence ? result.visualEvidenceAccepted === true : null,
+      visualEvidenceRejected: acceptedVisualEvidence ? result.visualEvidenceRejected === true : null,
+      visualEvidenceRequired: acceptedVisualEvidence ? result.visualEvidenceRequired === true : null,
+      visualEvidenceNextStep: acceptedVisualEvidence ? (result.visualEvidenceNextStep || 'none') : null,
       // A first submission is promoted by the import itself — `propose` is
       // the session-update opt-in, so there is nothing extra to report here.
       proposed: null,

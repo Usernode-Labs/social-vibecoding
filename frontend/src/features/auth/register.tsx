@@ -16,12 +16,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AuthBackButton, backToLanding } from './back-button';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -129,19 +129,7 @@ export function RegisterScreen() {
     >
       {mounted ? (
         <>
-      <a
-        href="#"
-        data-auth-back=""
-        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-        aria-label="Back"
-        onClick={(e) => {
-          e.preventDefault();
-          location.hash = '#landing';
-        }}
-      >
-        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
-      </a>
+      <AuthBackButton href="#" position="fixed" onClick={backToLanding} />
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
           <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">

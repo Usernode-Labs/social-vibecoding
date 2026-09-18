@@ -6,9 +6,9 @@
 //
 // One screen, three top-level SECTIONS, one pane visible at a time:
 //
-//   topochain   #topochain-leaderboard-root   TopochainLeaderboard  (default)
+//   topochain   #topochain-leaderboard-root   TopochainLeaderboard
 //   kudos       #leaderboard-root             Leaderboard itself
-//   challenges  #challenges-root              TopochainChallenges
+//   challenges  #challenges-root              TopochainChallenges   (default)
 //
 // The two Topochain-domain sections share one event selection, rendered into
 // #leaderboard-event-bar by TopochainEventContext and hidden on Kudos.
@@ -42,9 +42,11 @@
 //
 // The first render must be the hand-written shell character for character, so
 // the strip renders EMPTY until the store reports `mounted` (it flips on the
-// screen's first open, from _renderSectionTabs) and the two hosts that shipped
-// visible still ship visible while #leaderboard-root and #challenges-root ship
-// hidden. Visibility of the screen itself comes from the store:
+// screen's first open, from _renderSectionTabs) and only the DEFAULT section's
+// hosts ship visible: #challenges-root and the event bar, while
+// #leaderboard-root and #topochain-leaderboard-root ship hidden (#2374 swapped
+// the last two — a pane shipped visible that is not the default paints for a
+// frame before _applySection runs). Visibility of the screen itself comes from the store:
 // App._showOnlyScreen publishes (screenId, visible) for every id in
 // App.REACT_SCREEN_IDS and useVisibilityHiddenClass writes the class
 // synchronously inside that notification, because _showOnlyScreen runs inside
@@ -85,8 +87,8 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 //
 // #1917 reordered the strip to Challenges → Kudos → Leaderboard: what you can
 // do next leads, the ranking it feeds comes last. Only the ORDER moved — the
-// keys, labels and the default section behind a bare #leaderboard are as
-// they were.
+// keys and labels are as they were. #2374 then made the first tab the default
+// section too, behind a bare #leaderboard.
 const SECTION_TABS = [
   { key: 'challenges', label: 'Challenges' },
   { key: 'kudos', label: 'Kudos' },
@@ -153,7 +155,7 @@ export function LeaderboardScreen() {
               into ./event-bar-store.js — that module still owns the two fetches,
               the default pick and the subscriber list both panes register with.
 
-              The host ships VISIBLE, with the standings pane below (the default
+              The host ships VISIBLE, with the challenges pane below (the default
               section is an event section), and EMPTY — the bar's interior was
               written on the screen's first open, so the store's initial
               `mounted: false` renders nothing. `_applySection` hides the host on
@@ -184,7 +186,7 @@ export function LeaderboardScreen() {
             a CONSTANT — `_applySection()` keeps toggling `hidden` on it, per
             the note above.
         */}
-        <div id="topochain-leaderboard-root" className="w-full">
+        <div id="topochain-leaderboard-root" className="hidden w-full">
           <TopochainStandingsPane />
         </div>
         {/*
@@ -196,7 +198,7 @@ export function LeaderboardScreen() {
             CONSTANT — `_applySection()` keeps toggling `hidden` on it, per the
             note above.
         */}
-        <div id="challenges-root" className="hidden w-full">
+        <div id="challenges-root" className="w-full">
           <ChallengesPane />
         </div>
       </div>

@@ -286,10 +286,32 @@ export interface IssueLink {
   href: string;
 }
 
+/**
+ * #2431 — the change addressing an issue, on the ISSUE's page: the mirror of
+ * `IssueLink` above.
+ *
+ * `heading` is already worded ("Closed by", "In review", "Work underway") by
+ * `_issueProposalRefView`, because the choice needs the issue's own state as
+ * well as the change's; `state` rides along only so the chip can pick its
+ * tone. Absent when nothing links the issue — there is no "not known yet"
+ * row, which would be a claim nobody made.
+ */
+export interface IssueProposalRef {
+  heading: string;
+  state: 'merged' | 'review' | 'underway';
+  sessionId: number;
+  /** `#<pr number>`, or "Change" before the change has a pull request. */
+  label: string;
+  title: string;
+  href: string;
+}
+
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
+  /** #2431 — on an ISSUE's page, the change that closed it or is on it. */
+  addressedBy?: IssueProposalRef | null;
   /** Open issues already loaded for this app; the picker filters them locally. */
   issueOptions?: IssueLink[];
   /** The proposal owner/full platform admin may change issue associations. */
@@ -313,6 +335,12 @@ export interface TopicBody {
   aboutTitle?: string | null;
   /** An issue's markdown body, already rendered and sanitised. */
   issueBodyHtml?: string | null;
+  /** #2427 — raw Markdown and author-only edit permission for the issue body. */
+  issueBodyEditor?: {
+    issue: number;
+    markdown: string;
+    canEdit: boolean;
+  } | null;
   /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */

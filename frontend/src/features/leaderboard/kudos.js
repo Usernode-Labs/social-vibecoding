@@ -443,7 +443,7 @@ const Kudos = {
       // Click navigates to the Leaderboard screen's KUDOS tab — named
       // explicitly (#leaderboard/prs, its Top PRs sub-view and the place
       // you actually give kudos), because the bare #leaderboard hash opens
-      // the primary standings tab, which this meter is not about. Tooltip
+      // the Challenges tab, which this meter is not about. Tooltip
       // explains the weekly cap + reset boundary.
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0

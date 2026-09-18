@@ -170,7 +170,7 @@ function buildKitUnavailable(err) {
     || /unknown flag: --progress/.test(text);
 }
 
-async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
+async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null, dockerfile = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
@@ -180,7 +180,8 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
   const runBuild = (useBuildKit) => {
     const promise = execFileAsync(
       'docker',
-      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []), '-t', tag, contextPath],
+      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []),
+        ...(dockerfile ? ['-f', dockerfile] : []), '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
       {
@@ -225,6 +226,21 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
   const durationMs = Date.now() - startedAt;
   log.info('docker', 'Image built', { tag, durationMs, buildKit: usedBuildKit });
   return { durationMs, buildKit: usedBuildKit };
+}
+
+// Return an immutable identity for provenance even when callers address a
+// local image by a mutable Docker tag. Prefer a registry digest when one is
+// present; otherwise Docker's content-addressed image ID is still immutable
+// on this host and is enough to prove both replay passes used the same bytes.
+async function imageDigest(image) {
+  const { stdout } = await execFileAsync('docker', [
+    'image', 'inspect', '--format', '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}', image,
+  ], { timeout: 10000 });
+  const digest = String(stdout || '').trim();
+  if (!digest || (!digest.includes('@sha256:') && !/^sha256:[0-9a-f]{64}$/i.test(digest))) {
+    throw new Error(`Docker image ${image} has no immutable digest`);
+  }
+  return digest;
 }
 
 // Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
@@ -934,6 +950,7 @@ module.exports = {
   ensureNetworkAlias,
   containerExists,
   imageExists,
+  imageDigest,
   waitForHealthy,
   probeHealthOnce,
   getHostPort,

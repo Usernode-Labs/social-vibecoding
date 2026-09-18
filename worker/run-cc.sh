@@ -73,10 +73,10 @@ fi
 
 : "${PROMPT_FILE:?PROMPT_FILE required}"
 [ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
-: "${BRANCH:?BRANCH required}"
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:?PLATFORM_URL required}"
 : "${MODE:=build}"
+: "${BRANCH:=}"
 : "${WORKER_JWT:=}"
 : "${MODEL:=claude-sonnet-5}"
 : "${COMMIT_MSG:=Changes via Homeroom}"
@@ -85,25 +85,35 @@ fi
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
+: "${EVIDENCE_JWT:=}"
+: "${EVIDENCE_RUN_ID:=}"
+: "${EVIDENCE_BASE_ORIGIN:=}"
+: "${EVIDENCE_HEAD_ORIGIN:=}"
+: "${EVIDENCE_MEMBER_TOKEN:=}"
+: "${EVIDENCE_ADMIN_TOKEN:=}"
 
 SYSTEM_PROMPT_FLAGS=""
 
 # Scout is deliberately read-only and receives no general worker token.
 # Build/sync still require the token for their platform push callbacks.
-if [ "$MODE" != "scout" ] && [ -z "$WORKER_JWT" ]; then
+if { [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; } && [ -z "$WORKER_JWT" ]; then
   die "WORKER_JWT required for $MODE mode"
 fi
-if [ "$MODE" = "scout" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
+if [ "$MODE" = "evidence" ]; then
+  [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
+  [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+fi
 
 # Every hosted build has a shortened task prompt and therefore requires the
 # separate authoritative system context. Fail before invoking Claude if the
 # host omitted it or failed to materialize it; there is no reduced-context
 # fallback that could silently drop platform rules.
-if [ "$MODE" = "build" ] && [ -z "$SYSTEM_PROMPT_FILE" ]; then
-  die "SYSTEM_PROMPT_FILE required for build mode"
+if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ]; then
+  die "SYSTEM_PROMPT_FILE required for $MODE mode"
 fi
 if [ -n "$SYSTEM_PROMPT_FILE" ]; then
   [ -s "$SYSTEM_PROMPT_FILE" ] \
@@ -119,7 +129,12 @@ if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
     || die "resume fallback prompt file missing or empty: $RESUME_FALLBACK_PROMPT_FILE"
 fi
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+if [ "$MODE" = "evidence" ]; then
+  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-evidence-agent-${EVIDENCE_RUN_ID}.XXXXXX") \
+    || die "could not create evidence workspace"
+else
+  WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+fi
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Re-assert the credential helper. The warm wrapper sets it up at
@@ -134,16 +149,18 @@ fi
 # discards any uncommitted state from a prior turn that didn't get
 # committed (rare, but worth defending against).
 echo "__USERNODE_PHASE__ refresh"
-if ! git fetch origin --quiet 2>&1; then
-  echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
-fi
-if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-    echo "__USERNODE_WARN__ git reset failed"
-elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
-  # Branch missing upstream after PR merge → unrecoverable for build/sync.
-  # Scout mode can still run against the local checkout, so we don't bail.
-  die "branch missing upstream: origin/$BRANCH"
+if [ "$MODE" != "evidence" ]; then
+  if ! git fetch origin --quiet 2>&1; then
+    echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
+  fi
+  if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+    git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
+      echo "__USERNODE_WARN__ git reset failed"
+  elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
+    # Branch missing upstream after PR merge → unrecoverable for build/sync.
+    # Scout mode can still run against the local checkout, so we don't bail.
+    die "branch missing upstream: origin/$BRANCH"
+  fi
 fi
 
 # ── MODE=sync ─────────────────────────────────────────────────────────
@@ -272,6 +289,11 @@ fi
 # worker container even if CC misbehaves.
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
+elif [ "$MODE" = "evidence" ]; then
+  # Evidence turns operate only through platform-seeded MCP servers. Removing
+  # every filesystem, shell, web and delegation tool prevents the model from
+  # reading browser storage state or inherited process credentials.
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -289,6 +311,36 @@ fi
 # for it pays nothing.
 BROWSER_MCP_FLAGS=""
 if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
+  BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
+fi
+
+EVIDENCE_PROXY_PID=""
+EVIDENCE_TMP=""
+cleanup_evidence() {
+  if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
+}
+if [ "$MODE" = "evidence" ]; then
+  EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
+    || die "could not create evidence browser state"
+  chmod 700 "$EVIDENCE_TMP"
+  export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_PROXY_PORT=17891
+  export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
+  export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
+  export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
+  node /usr/local/bin/evidence-origin-proxy.js &
+  EVIDENCE_PROXY_PID=$!
+  trap cleanup_evidence EXIT INT TERM
+  i=0
+  while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
+  [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
+  node /usr/local/bin/evidence-browser-bootstrap.js \
+    || die "evidence browser authentication failed"
+  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN
+  BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
+  node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
+    || die "could not create evidence MCP config"
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
@@ -359,7 +411,7 @@ else
   CC_EXIT=$?
 fi
 
-if [ "$MODE" = "scout" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
   # behind=0 because scout never modifies the tree; the real number
@@ -367,7 +419,7 @@ if [ "$MODE" = "scout" ]; then
   # Terminal phase marker so the progress card ends on "Finished"
   # instead of freezing on the last action line.
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout"
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE"
   exit "$CC_EXIT"
 fi
 

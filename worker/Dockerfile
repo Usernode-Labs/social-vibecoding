@@ -90,6 +90,7 @@ RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUS
 # aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
+RUN npm install -g @modelcontextprotocol/sdk@1.30.0 zod@3.25.76
 # Preserve the pinned CLI's full coding-agent/tool instructions as the base for
 # custom OpenRouter model entries. The per-turn builder replaces only the
 # misleading OpenAI-model identity sentence before copying that text into its
@@ -139,6 +140,11 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
+COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
+COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
+COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
+COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -193,6 +199,11 @@ COPY usernode-debug /usr/local/bin/usernode-debug
 RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/run-codex-agent.sh \
+              /usr/local/bin/evidence-mcp.js \
+              /usr/local/bin/build-evidence-mcp.js \
+              /usr/local/bin/evidence-origin-proxy.js \
+              /usr/local/bin/evidence-browser-bootstrap.js \
+              /usr/local/bin/write-evidence-mcp-config.js \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \

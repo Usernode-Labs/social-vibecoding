@@ -528,7 +528,7 @@ test('each allow-rules block names the file it is for, above the block', () => {
   // And the copy buttons step down off the violet fill, which #connector-url-copy
   // (the section's real primary action) keeps.
   for (const id of ['connector-allow-rules-copy', 'connector-repo-allow-rules-copy']) {
-    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,400}?</Button>`));
+    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,700}?</Button>`));
     assert.ok(btn, `#${id} is a Button`);
     assert.match(btn[0], /variant="outline"/, `#${id} is the neutral bordered control`);
     assert.match(btn[0], /min-h-\[44px\] sm:min-h-\[36px\]/,
@@ -555,7 +555,9 @@ test('copying reports the destination, and reports failure honestly', () => {
   // the thumb is over it — so the toast names the destination.
   assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
   assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
-  assert.match(settingsJs, /Connector URL copied/);
+  // #2370: the field is labelled "MCP server URL" — the words Claude, ChatGPT
+  // and Codex use for the box it gets pasted into — and the toast agrees.
+  assert.match(settingsJs, /MCP server URL copied/);
   // The URL button used to write 'Copied' even when writeText had rejected.
   assert.match(settingsJs, /'Copy failed'/);
   assert.match(settingsJs, /\{ error: true \}/);

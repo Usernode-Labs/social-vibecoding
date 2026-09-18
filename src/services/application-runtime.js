@@ -60,23 +60,31 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
-  port = 3000, memory, cpus, labels,
+  port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
 }) {
   if (mode(config) === 'docker') {
-    await docker.stopAndRemove(dockerName).catch(() => {});
-    const alias = dnsAlias({ environment, sessionId, dockerName });
-    await docker.runContainer(dockerName, {
+    const name = runtimeName || dockerName;
+    if (!name) throw new Error('Docker deployment requires a runtime name');
+    await docker.stopAndRemove(name).catch(() => {});
+    const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
+    await docker.runContainer(name, {
       image: imageRef, env, port, memory, cpus, labels,
       aliases: alias ? [alias] : [],
     });
-    await docker.waitForHealthy(dockerName, port, '/health');
+    await docker.waitForHealthy(name, port, '/health');
+    if (internalOnly) {
+      return {
+        runtimeKind: 'docker', runtimeName: name, imageRef,
+        hostname: name, url: `http://${name}:${port}`,
+      };
+    }
     const hostname = environment === 'production'
       ? caddy.productionHostname(app.slug)
       : caddy.stagingHostname(app.slug, `s${sessionId}`);
     let url = `https://${hostname}`;
     const isLocal = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
     if (isLocal) {
-      const hostPort = await docker.getHostPort(dockerName, port);
+      const hostPort = await docker.getHostPort(name, port);
       if (hostPort) url = `http://localhost:${hostPort}`;
     }
     // Docker returns the container's full ID from `docker run`, but that ID
@@ -84,9 +92,11 @@ async function deploy(config, {
     // `runtimeName` is used both for later Docker commands (which accept the
     // stable --name value) and as the proposal-check capture hostname, so
     // persist the deterministic name rather than the opaque run result.
-    return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
+    return { runtimeKind: 'docker', runtimeName: name, imageRef, hostname, url };
   }
-  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus, labels });
+  return kubernetes.deployApplication(config, {
+    app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
+  });
 }
 
 async function inspect(config, ref) {

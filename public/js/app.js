@@ -3567,15 +3567,15 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard is the standings' own canonical address, so it
+        // #leaderboard opens the default Challenges tab (#2374), so it
         // RESETS to that tab rather than keeping whatever was last active
         // (see _routeLeaderboard). A third segment
         // on the users tab (#leaderboard/users/<username>) deep-links a
         // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
         // and #leaderboard/challenges select a SECTION rather than a
-        // Kudos sub-tab; the first two then self-heal their hash
-        // (#leaderboard/topochain -> #leaderboard, #leaderboard/kudos ->
-        // #leaderboard/prs) through Leaderboard._syncHash.
+        // Kudos sub-tab; #leaderboard/kudos then self-heals its hash to
+        // #leaderboard/prs (and a bare #leaderboard to
+        // #leaderboard/challenges) through Leaderboard._syncHash.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -3721,16 +3721,17 @@ const App = {
         // to the canonical form, then hand off. 'seasons' -> the
         // challenges tab (its challenge grid; its event hero became that
         // screen's shared event bar); anything else, including a bare
-        // #topochain, -> the standings tab, whose canonical address is the
-        // BARE #leaderboard now that it is the primary tab (so this is one
-        // replaceState, not one here and a second from _syncHash). The
+        // #topochain, -> the standings tab. Each is rewritten straight to
+        // its canonical #leaderboard/<section> — never the bare
+        // #leaderboard, which opens Challenges since #2374 — so this is one
+        // replaceState, not one here and a second from _syncHash. The
         // replaceState fires BEFORE the navigate so Leaderboard._syncHash
         // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
         const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
         try {
           history.replaceState(null, '',
-            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard');
+            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard/topochain');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard(_tcSection, null);
         return;
@@ -4247,7 +4248,7 @@ const App = {
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
   // select a Kudos sub-tab, and the SECTION values 'topochain' (the
-  // primary standings tab), 'kudos' and 'challenges' select a whole
+  // standings tab), 'kudos' and 'challenges' (the default) select a whole
   // section instead. `profileUser` (#60) opens the per-user PR profile
   // drill-in instead of a plain tab.
   // A hash segment that must be a positive integer id, or nothing. Returns
@@ -4324,12 +4325,12 @@ const App = {
   // open() each caller runs afterwards dedupes the in-flight load.
   //
   // #1146: the address is the source of truth on ENTRY, including the
-  // absence of a segment. A bare #leaderboard means the standings — that is
-  // the tab's canonical address, and the declared check "Bare #leaderboard
-  // renders all three tabs and opens on the standings (#962)" says so — but
-  // the module remembers its last section for the session, so arriving here
-  // from #leaderboard/challenges used to leave the challenges tab up. Cold
-  // loading hid it (a fresh module starts on 'topochain'); a sibling-fragment
+  // absence of a segment. A bare #leaderboard means Challenges, the default
+  // tab (#2374) — the declared check "Bare #leaderboard renders all three
+  // tabs and opens on Challenges (#962, #2374)" says so — but the module
+  // remembers its last section for the session, so arriving here from
+  // #leaderboard/topochain would leave the standings up. Cold loading hides
+  // it (a fresh module starts on 'challenges'); a sibling-fragment
   // hash switch, which is how the grouped capture runner reaches every
   // cohort of a document, does not. Reset explicitly so both arrivals render
   // the same screen. _setSection early-returns when the section is already
@@ -4338,7 +4339,7 @@ const App = {
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
-      Leaderboard._setSection('topochain');
+      Leaderboard._setSection('challenges');
     } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
@@ -5067,8 +5068,8 @@ const App = {
     // are what says which screen the viewer is coming FROM. The Workshop
     // screen is the one origin with a level of its own to return to, so
     // entering an app from it leaves the Dev lander a real ← rather than the
-    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set,
-    // like `_inBrowse`: the next screen entry clears it, and _showOnlyScreen
+    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set:
+    // the next screen entry clears it, and _showOnlyScreen
     // clears this the moment any non-app root is revealed.
     //
     // A BARE FRAGMENT, not a resolved URL. #back-btn's click handler follows
@@ -5083,6 +5084,11 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    // Retire the directory's detail/back state as we leave. Otherwise its
+    // hidden detail page intercepts the app's Home button, and returning to
+    // #apps takes the in-screen shortcut without revealing the directory.
+    // This exit is state-only; `departing` stays painted for the transition.
+    if (App._inBrowse) App._exitBrowse();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,

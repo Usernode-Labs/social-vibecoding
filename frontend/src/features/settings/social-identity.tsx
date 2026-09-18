@@ -5,7 +5,32 @@
  * settings.js keeps the fetch, the unlink DELETE, the `?demo=` variants and
  * the callback status line (a sibling); every branch that decides WHAT this
  * says is resolved there, in ./social-identity-store.js's shape. This file
- * spells it as markup, class string for class string.
+ * spells it as markup.
+ *
+ * ── One list, not a card over two cards (#2370) ──────────────────────
+ *
+ * This was a tier card ("Layer 1 locked · $0/day" and a sentence about what
+ * would unlock it) above one bordered card per provider, each carrying up to
+ * five lines and four buttons whether or not the account was connected. On a
+ * phone that was a screen of reading before the first Connect.
+ *
+ * It is ONE grouped list now, in the card language the sibling settings panes
+ * already wear (sections/api-key.tsx, password.tsx): the first row is where
+ * you stand, and each row under it is a thing that changes the figure — so the
+ * relationship the sentence described is the layout. Three row shapes:
+ *
+ *   * NOT CONNECTED — the whole row is the Connect control (`ListRow as="a"`),
+ *     a full-width tap target. "Connect" is a `<span>` inside it, an affordance
+ *     rather than a nested control: an interactive inside an anchor is invalid
+ *     markup and a second tab stop for one action.
+ *   * CONNECTED — the row is a `<details>` summary. Its whole width opens the
+ *     manage panel (visibility, refresh, change account, disconnect). Nothing
+ *     destructive is ever one stray thumb away: Disconnect is inside.
+ *   * NOT SET UP on this server — a row that is only read.
+ *
+ * What needs a decision or reports a failure is NOT folded away: the
+ * replacement confirmation, the stranded-attempt note and the action status
+ * render open under their row. dapp.json asserts two of them as visible text.
  *
  * ── Local interaction state ──────────────────────────────────────────
  *
@@ -30,13 +55,24 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+import { CheckIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { Switch } from '@/components/ui/switch';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { socialIdentityStore } from './social-identity-store.js';
 import { openNativeSocialConnect, watchSocialConnectReturn } from './native-social-connect.js';
 
-type TierCardView = { title: string; detail: string; tone: 'plain' | 'warn' | 'ok' };
+type TierCardView = {
+  title: string;
+  /** The figure, or `null` where there honestly is none to show. */
+  amount: string | null;
+  /** One sentence under the list. */
+  note: string | null;
+  done: boolean;
+  /** `warn` is the one state reporting a fault: credits could not be checked. */
+  tone: 'plain' | 'warn';
+};
 
 type DiagnosticsView = {
   source: string;
@@ -54,9 +90,15 @@ type ProviderRowView = {
   provider: 'github' | 'x';
   name: string;
   heading: string;
+  /** `@name` once connected — the row's second line leads with it. */
+  handle?: string | null;
   /** #1557 — the row's own state, as a pill. `null` when not connected. */
   badge: { text: string; tone: 'emerald' | 'amber' } | null;
   state: { text: string; tone: 'amber' | 'emerald' | 'muted' };
+  /** Ticked once this row counts; an empty ring while it is still to do. */
+  done?: boolean;
+  /** The row's figure on the credit ladder; `null` off it. See settings.js. */
+  amount?: string | null;
   linkedAt: string | null;
   noToken: string | null;
   /** `href: null` is the ?demo= variant — a disabled button, not a link. */
@@ -95,14 +137,8 @@ async function refreshIdentitySurfaces() {
   await settings?._loadGithubLink?.();
 }
 
-const TIER_TONE = {
-  plain: '',
-  warn: ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20',
-  ok: ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20',
-};
-
 /**
- * The Connect control's surface, shared by BOTH spellings of it.
+ * The primary OAuth control's surface, shared by BOTH spellings of it.
  *
  * The live one is an `<a href>` — normal browsers navigate directly, while
  * native taps open the system browser — and its ?demo= twin is a disabled `<button>`, because a
@@ -112,11 +148,26 @@ const TIER_TONE = {
  * primitive would leave the pair written two different ways and free to drift.
  * One constant instead, and this file is on
  * tests/shell-primitive-adoption.test.js's allow-list for exactly that reason.
+ *
+ * #2370: a NOT-connected row no longer uses this — the row itself is the
+ * control there, and `ListRow` spells the anchor and the button from one
+ * component. What is left is Reconnect, inside a connected row's panel.
  */
 const CONNECT_SURFACE =
-  'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white inline-flex min-h-[36px] items-center justify-center';
+  'inline-flex min-h-[44px] items-center justify-center rounded-full bg-violet-600 px-4 text-[0.9375rem] font-semibold text-white';
 const SECONDARY_ACTION_SURFACE =
-  'rounded-md bg-zinc-200 dark:bg-zinc-700 px-2 py-1 text-xs font-medium text-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors inline-flex min-h-[36px] items-center justify-center';
+  'inline-flex min-h-[44px] items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-4 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
+const DESTRUCTIVE_ACTION_SURFACE =
+  'inline-flex min-h-[44px] items-center justify-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 disabled:opacity-50 transition-colors';
+
+/**
+ * "Connect", as it sits on the trailing edge of a not-connected row. A
+ * `<span>`: the ROW is the control (see the header), and this is what tells a
+ * thumb the row does something. Tinted rather than filled — two filled pills
+ * stacked in one list shout over the figures they sit beside.
+ */
+const CONNECT_PILL =
+  'inline-flex h-[30px] shrink-0 items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-3.5 text-[0.875rem] font-semibold text-violet-700 dark:text-violet-400';
 
 const STATE_TONE = {
   amber: 'text-amber-800 dark:text-amber-400',
@@ -142,14 +193,56 @@ const BADGE_TONE = {
   amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
 };
 
-function TierCard({ tier }: { tier: TierCardView }) {
-  return (
-    <div
-      className={`rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3${TIER_TONE[tier.tone]}`}
+/** A row's leading mark: ticked once it counts, a ring while it is to do. */
+function Mark({ done }: { done: boolean }) {
+  return done ? (
+    <span
+      aria-hidden="true"
+      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-white"
     >
-      <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{tier.title}</div>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{tier.detail}</div>
-    </div>
+      <CheckIcon className="h-3.5 w-3.5" strokeWidth="3" />
+    </span>
+  ) : (
+    <span
+      aria-hidden="true"
+      className="h-[22px] w-[22px] shrink-0 rounded-full border-2 border-zinc-300 dark:border-zinc-600"
+    />
+  );
+}
+
+/*
+ * What every row of this list passes to ListRow.
+ *
+ *   * `gap-3 py-2.5` over the primitive's `gap-4 py-3.5`: those are tuned for
+ *     a 2.75rem icon tile. A 22px mark sits too far from its title at that
+ *     gap, and three two-line rows at that padding cost a phone 24px for
+ *     nothing. The row is still 68px — well over a 44px target.
+ *   * `inset="none"`: three short rows read as one checklist, and a hairline
+ *     under each would make them three records.
+ *   * a medium title: ListRow bolds for rows whose title is a SUBJECT with a
+ *     subtitle under it (a conversation, an app). These are settings rows —
+ *     the same call settings-nav.tsx makes.
+ *   * the subtitle wraps. The primitive truncates, which is right for a
+ *     timestamp and wrong for the one sentence that says why a legacy link
+ *     needs reconnecting.
+ */
+const ROW_CLASS = 'gap-3 py-2.5';
+const ROW_TITLE = 'font-medium';
+const ROW_SUBTITLE = 'whitespace-normal tabular-nums';
+
+/** The first row: where this account stands today. Read, never tapped. */
+function TierRow({ tier }: { tier: TierCardView }) {
+  return (
+    <ListRow
+      className={ROW_CLASS}
+      inset="none"
+      chevron={false}
+      leading={<Mark done={tier.done} />}
+      title={tier.title}
+      titleClassName={tier.tone === 'warn' ? `${ROW_TITLE} ${STATE_TONE.amber}` : ROW_TITLE}
+      subtitle={tier.amount}
+      subtitleClassName={ROW_SUBTITLE}
+    />
   );
 }
 
@@ -169,7 +262,7 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
   return (
     <p
       {...(provider === 'github' ? { id: 'github-link-audit-note' } : null)}
-      className="text-xs text-zinc-500 dark:text-zinc-500 mt-2"
+      className="mt-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-500"
     >
       {'Review or revoke this authorization at '}
       <a
@@ -433,72 +526,159 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     }
   };
 
-  return (
-    <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 sm:flex-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
-              {row.heading}
-            </div>
-            {row.badge ? (
-              <span
-                id={`${row.provider}-link-badge`}
-                className={`${BADGE_BASE} ${BADGE_TONE[row.badge.tone]}`}
-              >
-                {row.badge.text}
-              </span>
-            ) : null}
-          </div>
-          <div className={`text-xs mt-1 ${STATE_TONE[row.state.tone]}`}>{row.state.text}</div>
-          {row.linkedAt ? (
-            <div className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">{row.linkedAt}</div>
-          ) : null}
-          {row.noToken ? (
-            <div
-              {...(row.provider === 'github' ? { id: 'github-link-no-token' } : null)}
-              className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"
-            >
-              {row.noToken}
-            </div>
+  // The second line: who, then what it is worth. A middle dot joins them only
+  // when both halves exist. An AMBER state is a sentence, not a figure — it
+  // explains a legacy link that needs one reconnect — so on a connected row it
+  // is the first line of the panel (which arrives open) rather than three
+  // wrapped lines squeezed beside the badge.
+  const linked = !!(row.unlink || row.visibility || row.refresh || row.replace);
+  const panelNote = linked && row.state.tone === 'amber' ? row.state.text : '';
+  const detail = panelNote ? '' : (row.state.text || row.amount || '');
+  const subtitle = [row.handle, detail].filter(Boolean).join(' · ') || null;
+  const subtitleClass = `${ROW_SUBTITLE} ${STATE_TONE[detail && row.state.text ? row.state.tone : 'muted']}`;
+  // #1557's badge rides the TITLE line, where the old card had it: the title
+  // is one word now, so there is room, and the second line keeps its width.
+  const title = row.badge ? (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="truncate">{row.heading}</span>
+      <span
+        id={`${row.provider}-link-badge`}
+        className={`${BADGE_BASE} ${BADGE_TONE[row.badge.tone]}`}
+      >
+        {row.badge.text}
+      </span>
+    </span>
+  ) : row.heading;
+
+  let head;
+  if (linked) {
+    // A connected row. The summary is the row, so its whole width opens the
+    // panel; a link that needs a reconnect, or a replacement waiting on a
+    // decision, arrives open because the thing to do is inside.
+    head = (
+      <details className="group" open={!!(row.connect || row.pendingReplacement) || undefined}>
+        <summary className="list-none cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800">
+          <ListRow
+            className={ROW_CLASS}
+            inset="none"
+            chevron={false}
+            leading={<Mark done={!!row.done} />}
+            title={title}
+            titleClassName={ROW_TITLE}
+            subtitle={subtitle}
+            subtitleClassName={subtitleClass}
+            trailing={(
+              <ChevronRightIcon
+                aria-hidden="true"
+                className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 transition-transform group-open:rotate-90"
+              />
+            )}
+          />
+        </summary>
+        <div className="px-4 pb-4 pl-[3.125rem]">
+          {panelNote ? (
+            <p className={`mb-3 text-[0.9375rem] ${STATE_TONE.amber}`}>{panelNote}</p>
           ) : null}
           {row.visibility ? (
-            <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
+            <label className="flex min-h-[44px] items-center justify-between gap-3 text-[0.9375rem] text-zinc-900 dark:text-zinc-100 cursor-pointer select-none">
+              Show on public profile
               <Switch
                 id={`${row.provider}-profile-visible`}
                 checked={publicVisible}
                 disabled={row.visibility.disabled || busy === 'visibility'}
                 onChange={(e) => { void changeVisibility(e.currentTarget.checked); }}
               />
-              Show on public profile
             </label>
           ) : null}
-        </div>
-        <div className="flex flex-wrap gap-2 sm:max-w-[17rem] sm:shrink-0 sm:justify-end">
-          {oauthAction(row.connect, true)}
-          {oauthAction(row.refresh)}
-          {oauthAction(row.replace, true)}
-          {row.unlink ? (
-            <button
-              type="button"
-              disabled={row.unlink.disabled}
-              className="rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors"
-              onClick={(e) => {
-                if (row.unlink?.disabled) return;
-                controller()?._unlinkGithub?.(e.currentTarget, row.provider);
-              }}
-            >
-              Disconnect
-            </button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {oauthAction(row.connect, true)}
+            {oauthAction(row.refresh)}
+            {oauthAction(row.replace)}
+            {row.unlink ? (
+              <button
+                type="button"
+                disabled={row.unlink.disabled}
+                className={DESTRUCTIVE_ACTION_SURFACE}
+                onClick={(e) => {
+                  if (row.unlink?.disabled) return;
+                  controller()?._unlinkGithub?.(e.currentTarget, row.provider);
+                }}
+              >
+                Disconnect
+              </button>
+            ) : null}
+          </div>
+          {row.linkedAt ? (
+            <div className="mt-3 text-[0.8125rem] text-zinc-500 dark:text-zinc-500">{row.linkedAt}</div>
           ) : null}
+          {row.noToken ? (
+            <div
+              {...(row.provider === 'github' ? { id: 'github-link-no-token' } : null)}
+              className="mt-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400"
+            >
+              {row.noToken}
+            </div>
+          ) : null}
+          <AuditNote provider={row.provider} />
         </div>
-      </div>
+      </details>
+    );
+  } else if (row.connect) {
+    // Not connected: the row IS the control. The live one is an anchor — the
+    // OAuth flow is a top-level navigation — and its ?demo= twin a disabled
+    // button, because a fixture must not navigate out of itself. ListRow
+    // spells both from one component, so the pair cannot drift apart.
+    const action = row.connect;
+    const shared = {
+      className: ROW_CLASS,
+      inset: 'none' as const,
+      chevron: false,
+      leading: <Mark done={false} />,
+      title: row.heading,
+      titleClassName: ROW_TITLE,
+      subtitle,
+      subtitleClassName: subtitleClass,
+      // The ?demo= twin dims the PILL, not the row: the fixture is inert, and
+      // the title and figure it exists to show should stay at full strength.
+      trailing: (
+        <span className={action.href ? CONNECT_PILL : `${CONNECT_PILL} opacity-50`}>{action.label}</span>
+      ),
+    };
+    head = action.href ? (
+      <ListRow
+        as="a"
+        href={action.href}
+        onClick={(e) => { void launch(e as React.MouseEvent<HTMLAnchorElement>, action); }}
+        {...shared}
+      />
+    ) : (
+      <ListRow as="button" disabled {...shared} />
+    );
+  } else {
+    head = (
+      <ListRow
+        className={ROW_CLASS}
+        inset="none"
+        chevron={false}
+        leading={<Mark done={false} />}
+        title={row.heading}
+        titleClassName={ROW_TITLE}
+        subtitle={subtitle}
+        subtitleClassName={subtitleClass}
+      />
+    );
+  }
+
+  const notes = 'px-4 pb-3 pl-[3.125rem]';
+  return (
+    <div>
+      {head}
 
       {row.pendingReplacement ? (
         <section
           id={`${row.provider}-replacement-confirmation`}
           aria-label={`Confirm ${row.name} account replacement`}
-          className="mt-3 rounded-lg border border-violet-300 dark:border-violet-800 bg-white dark:bg-zinc-900 p-3"
+          className="mx-4 mb-4 rounded-xl border border-violet-300 dark:border-violet-800 bg-white dark:bg-zinc-900 p-3"
         >
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
             Replace {row.name} account?
@@ -558,25 +738,45 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       ) : null}
 
       {actionStatus ? (
-        <p role="status" className={`text-xs mt-2 ${actionFailed ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+        <p role="status" className={`${notes} text-[0.8125rem] ${actionFailed ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
           {actionStatus}
         </p>
       ) : null}
-      <AuditNote provider={row.provider} />
       {/*
           A provider that rejects our callback address errors on its own page
           and never redirects back, so the only trace of that failure is the
-          stranded attempt the server spotted (#1291).
+          stranded attempt the server spotted (#1291). Open, never folded: it
+          is the one line that explains why Connect appeared to do nothing.
       */}
       {row.strandedNote ? (
         <p
           id={`${row.provider}-link-pending-note`}
-          className="text-xs text-amber-800 dark:text-amber-400 mt-2"
+          className={`${notes} text-[0.8125rem] text-amber-800 dark:text-amber-400`}
         >
           {row.strandedNote}
         </p>
       ) : null}
-      {row.diagnostics ? <Diagnostics view={row.diagnostics} /> : null}
+      {/*
+          The admin-only configuration panel (#1291). The server attaches it for
+          EVERY administrator on every load, not only when something is wrong,
+          so it is folded by default — open, it was a permanent block of
+          credentials prose inside the owner's own credit list. It arrives open
+          when an attempt has stranded, which is the moment it is for. dapp.json
+          asserts #x-link-check by selector, and a closed <details> keeps its
+          body in the document.
+      */}
+      {row.diagnostics ? (
+        <details className="group/diag px-4 pb-3 pl-[3.125rem]" open={!!row.strandedNote || undefined}>
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
+            {`${row.name} setup · admins only`}
+            <ChevronRightIcon
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 transition-transform group-open/diag:rotate-90"
+            />
+          </summary>
+          <Diagnostics view={row.diagnostics} />
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -587,8 +787,18 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
   if (phase === 'loading' || phase === 'error') return <>{message}</>;
   return (
     <>
-      {tier ? <TierCard tier={tier} /> : null}
-      {providers.map((row) => <ProviderRow key={row.provider} row={row} />)}
+      <h4 id="github-link-credits-label" className="px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500">
+        Daily credits
+      </h4>
+      <GroupedList className="mx-0 py-1.5" role="group" aria-labelledby="github-link-credits-label">
+        {tier ? <TierRow tier={tier} /> : null}
+        {providers.map((row) => <ProviderRow key={row.provider} row={row} />)}
+      </GroupedList>
+      {tier?.note ? (
+        <p id="github-link-tier-note" className="px-4 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+          {tier.note}
+        </p>
+      ) : null}
     </>
   );
 }

@@ -81,6 +81,15 @@ const GATES = [
     actor: 'author',
   },
   {
+    key: 'visual_evidence',
+    label: 'Visual evidence is verified',
+    actor: 'author',
+    // Independently reversible rollout gate. Proposals created before v2
+    // enrollment do not acquire a fictional requirement merely because the
+    // platform later enables enforcement.
+    applies: (c) => !!c.evidenceEnforced,
+  },
+  {
     key: 'platform_env',
     label: 'Platform variables have values',
     actor: 'admin',
@@ -112,7 +121,7 @@ const ACTORS = new Set(['auto', 'author', 'admin', 'group']);
 const GATE_KEYS = new Set(GATES.map((g) => g.key));
 
 // The one rule for which commit a proposal's approvals and checks are about.
-const { reviewedHeadForSession } = require('./pr-vote-revision');
+const { reviewedHeadForSession, visualHeadForSession } = require('./pr-vote-revision');
 
 function intOrNull(v) {
   if (v == null) return null;
@@ -495,6 +504,27 @@ function provisional(session) {
           : check === 'pending' ? { note: 'still running' } : null,
   });
 
+  if (s.evidenceEnforced || s.evidence_enforced) {
+    const detail = s.visual_evidence_detail && typeof s.visual_evidence_detail === 'object'
+      ? s.visual_evidence_detail : {};
+    const evidenceState = s.visual_evidence_state || detail.state || 'planned';
+    const currentHead = visualHeadForSession(s);
+    const exactHead = !!currentHead && !!detail.headSha
+      && String(currentHead).toLowerCase() === String(detail.headSha).toLowerCase();
+    const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(evidenceState);
+    out.push({
+      key: 'visual_evidence',
+      label: 'Visual evidence is verified',
+      actor: 'author',
+      state: accepted ? 'done' : evidenceState === 'failed' ? 'blocked' : 'active',
+      detail: accepted
+        ? { state: evidenceState }
+        : { state: evidenceState, note: exactHead
+          ? (detail.failureReason || `visual evidence is ${String(evidenceState).replace(/_/g, ' ')}`)
+          : 'visual evidence has not been verified for the current commit' },
+    });
+  }
+
   // The app's main, when the serializer has joined it on (app_main_check_*).
   // Absent, the step is absent too, like the lock and the platform
   // variables: an answer only the gate has is not guessed here.
@@ -532,6 +562,10 @@ function provisional(session) {
 function recordIsSuperseded(record, session) {
   const ctx = (record && record.context) || {};
   const s = session || {};
+  if (s.evidenceEnforced !== undefined || s.evidence_enforced !== undefined) {
+    const live = !!(s.evidenceEnforced || s.evidence_enforced);
+    if (!!ctx.evidenceEnforced !== live) return true;
+  }
   if (ctx.approvalEpoch != null) {
     const then = intOrNull(ctx.approvalEpoch);
     const now = intOrNull(s.approval_epoch) ?? 0;

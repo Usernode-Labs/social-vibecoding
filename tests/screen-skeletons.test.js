@@ -11,8 +11,8 @@
 //   Messages     a spinner beside "Loading conversations…", centred in an
 //                otherwise empty list pane.
 //   Leaderboard  "Loading…" on the standings — the pane the bare
-//                `#leaderboard` address lands on, so the screen's first
-//                impression — and again on the Kudos lists.
+//                `#leaderboard` address landed on until #2374, so the
+//                screen's first impression — and again on the Kudos lists.
 //   Profile      "Loading profile…" on an otherwise blank screen. The worst
 //                of the three: unlike a list there is no chrome around it to
 //                say what is coming.

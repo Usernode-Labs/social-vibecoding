@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const visuals = require('../services/visuals');
 const galleryDemo = require('../services/gallery-demo');
+const visualEvidenceView = require('../services/visual-evidence-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 // Admin gallery API — read-only, behind an isAdmin guard (any admin, full
@@ -22,13 +23,10 @@ const { visualHeadForSession } = require('../services/pr-vote-revision');
 // nothing written; no-op in prod) so a reviewer can exercise the tiles, the
 // fell-back caption and the no-artifacts branch.
 //
-// The image BYTES are not served from here — tiles point at the existing
-// public GET /visuals/:id (src/routes/visuals.js), which is deliberately
-// mounted pre-auth so GitHub's camo proxy can fetch PR-body embeds
-// anonymously. That asymmetry is intentional and must not be "fixed":
-// this admin gate protects the INDEX (which proposals exist, what shape
-// their captures are, why they failed), not the artifacts, which are
-// already public in PR bodies on GitHub.
+// The image BYTES are not served from here. Historical tiles retain their
+// existing public /visuals/:id URLs for backwards compatibility; evidence-v2
+// artifacts are serialized through their authenticated proposal-scoped route
+// and are never exposed through that legacy path.
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -75,6 +73,26 @@ const PROBLEM_FILTERS = {
     sql: `cs.capture_state IN ('failed', 'console_only', 'partial')`,
     relaxVisuals: true,
   },
+  relevance_failure: {
+    sql: `cs.visual_evidence_state = 'failed'
+          AND cs.visual_evidence_detail->>'failureCode' = 'irrelevant_visual_evidence'`,
+    relaxVisuals: true,
+  },
+  replay_failure: {
+    sql: `cs.visual_evidence_state = 'failed'
+          AND COALESCE(cs.visual_evidence_detail->>'failureCode', '') NOT IN
+              ('irrelevant_visual_evidence', 'unsupported_agent')`,
+    relaxVisuals: true,
+  },
+  unsupported_agent: {
+    sql: `cs.visual_evidence_state = 'failed'
+          AND cs.visual_evidence_detail->>'failureCode' = 'unsupported_agent'`,
+    relaxVisuals: true,
+  },
+  override: {
+    sql: `cs.visual_evidence_state = 'overridden'`,
+    relaxVisuals: true,
+  },
 };
 
 // Base predicate: merged proposals only, newest-first orderable. `merged_at
@@ -83,6 +101,7 @@ const PROBLEM_FILTERS = {
 // sessions carrying visuals have a merged_at, so this excludes nothing real.
 const BASE_WHERE = `cs.status = 'merged' AND cs.merged_at IS NOT NULL`;
 const HAS_VISUALS = `EXISTS (SELECT 1 FROM session_visuals v WHERE v.session_id = cs.id)`;
+const HAS_REVIEW_EVIDENCE = `(${HAS_VISUALS} OR cs.visual_evidence_detail IS NOT NULL)`;
 
 // Clamp a client-supplied page size. Page size is bounded by PAGE WEIGHT,
 // not query cost: production averages ~503 KB of PNG per proposal (p90
@@ -129,7 +148,8 @@ function buildWhere({ app, problem, cursor }) {
   const pf = problem ? PROBLEM_FILTERS[problem] : null;
   // The artifact precondition is relaxed only for failed_or_skipped, whose
   // whole point is proposals that stored nothing.
-  if (!pf || !pf.relaxVisuals) where.push(HAS_VISUALS);
+  if (!pf) where.push(HAS_REVIEW_EVIDENCE);
+  else if (!pf.relaxVisuals) where.push(HAS_VISUALS);
   if (pf) where.push(pf.sql);
 
   if (cursor) {
@@ -168,6 +188,8 @@ function galleryRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
                 cs.capture_state, cs.capture_detail, cs.captured_at,
+                cs.visual_evidence_state, cs.visual_evidence_run_id,
+                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 cs.checks_commit_sha, cs.handoff_head_sha,
                 cs.app_id, a.slug AS app_slug, a.name AS app_name,
@@ -193,6 +215,7 @@ function galleryRoutes(config) {
 
       let hasMore = false;
       if (rows.length > limit) { hasMore = true; rows.length = limit; }
+      const evidenceBySession = await visualEvidenceView.getForSessions(pool, rows);
 
       // Group each row's flat artifact list through services/visuals.js's
       // groupRows — the SAME implementation the proposal cards and PR bodies
@@ -215,6 +238,7 @@ function galleryRoutes(config) {
           captureDetail: r.capture_detail || null,
           capturedAt: r.captured_at,
           visuals: grouped,
+          visualEvidence: evidenceBySession.get(Number(r.id)) || null,
         };
       });
 
@@ -245,7 +269,7 @@ function galleryRoutes(config) {
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
           WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
-            AND EXISTS (SELECT 1 FROM session_visuals v WHERE v.session_id = cs.id)
+            AND (${HAS_REVIEW_EVIDENCE})
           GROUP BY a.id, a.slug, a.name
           ORDER BY a.name ASC`
       );
@@ -277,6 +301,11 @@ function galleryRoutes(config) {
                 COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.root_only.sql})::int AS root_only,
                 COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.failed_or_skipped.sql})::int AS failed_or_skipped,
                 COUNT(*) FILTER (WHERE cs.capture_state = 'captured')::int AS complete,
+                COUNT(*) FILTER (WHERE cs.visual_evidence_state = 'verified')::int AS evidence_verified,
+                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.relevance_failure.sql})::int AS relevance_failure,
+                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.replay_failure.sql})::int AS replay_failure,
+                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.unsupported_agent.sql})::int AS unsupported_agent,
+                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.override.sql})::int AS override,
                 COUNT(*) FILTER (WHERE cs.capture_state IS NULL)::int AS unknown_state
            FROM chat_sessions cs
            LEFT JOIN apps a ON a.id = cs.app_id

@@ -85,6 +85,63 @@ function buildTestingBlock(testingMd, testingPath) {
 // post-capture body patch in src/services/visuals.js.
 const VISUALS_MARKER_START = '<!-- usernode:visuals -->';
 const VISUALS_MARKER_END = '<!-- /usernode:visuals -->';
+const EVIDENCE_MARKER_START = '<!-- usernode:visual-evidence -->';
+const EVIDENCE_MARKER_END = '<!-- /usernode:visual-evidence -->';
+
+function safeMarkdownText(value, max = 1000) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+    .replace(/@/g, '@\u200b')
+    .replace(/[\\`*_[\]()<>]/g, '\\$&');
+}
+
+// Protected visual evidence is reviewed in Homeroom, never embedded through
+// GitHub's public image proxy. The block names the claims and links to the
+// authenticated proposal surface; its wording intentionally does not cache a
+// run state that could become false on the next pushed commit.
+function buildEvidenceBlock({ intent, appSlug, sessionId, domain }) {
+  if (!intent || typeof intent !== 'object' || !appSlug || !domain
+      || !Number.isInteger(Number(sessionId)) || Number(sessionId) <= 0) return '';
+  const claims = Array.isArray(intent.stories)
+    ? intent.stories.slice(0, 3).map((story) => safeMarkdownText(story?.claim)).filter(Boolean)
+    : [];
+  if (intent.impact !== 'none' && !claims.length) return '';
+  const url = `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
+  const lines = [EVIDENCE_MARKER_START, '## Visual evidence', ''];
+  if (intent.impact === 'none') {
+    lines.push(`No user-visible change declared: ${safeMarkdownText(intent.rationale, 1000)}`, '');
+  } else {
+    for (const claim of claims) lines.push(`- ${claim}`);
+    lines.push('');
+  }
+  lines.push(
+    `[Review the current exact-revision evidence in Homeroom](${url})`,
+    '',
+    '_Evidence is authenticated and revision-scoped; protected images are not embedded in this public PR body._',
+    EVIDENCE_MARKER_END
+  );
+  return lines.join('\n');
+}
+
+function upsertEvidenceBlock(body, block) {
+  const base = typeof body === 'string' ? body : '';
+  const start = base.indexOf(EVIDENCE_MARKER_START);
+  const end = base.indexOf(EVIDENCE_MARKER_END);
+  if (start !== -1 && end !== -1 && end > start) {
+    const head = base.slice(0, start).replace(/\n+$/, '');
+    const tail = base.slice(end + EVIDENCE_MARKER_END.length).replace(/^\n+/, '');
+    return [head, block, tail].filter((part) => part && part.trim()).join('\n\n');
+  }
+  if (!block) return base;
+  return base ? `${base}\n\n${block}` : block;
+}
+
+function extractEvidenceBlock(body) {
+  const base = typeof body === 'string' ? body : '';
+  const start = base.indexOf(EVIDENCE_MARKER_START);
+  const end = base.indexOf(EVIDENCE_MARKER_END);
+  if (start === -1 || end === -1 || end <= start) return '';
+  return base.slice(start, end + EVIDENCE_MARKER_END.length);
+}
 
 // Normalize the visuals argument to an ordered list of capture groups
 // (#270). Accepts BOTH the grouped shape from visuals.getForSession —
@@ -215,6 +272,46 @@ function extractVisualsBlock(body) {
   return base.slice(start, end + VISUALS_MARKER_END.length);
 }
 
+async function syncEvidencePrBlock(pool, sessionId) {
+  if (!pool || !Number.isInteger(Number(sessionId)) || Number(sessionId) <= 0) return { updated: false, reason: 'invalid_session' };
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.source, cs.pr_number, cs.pr_body, cs.visual_evidence_detail,
+            a.slug AS app_slug, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.id = $1`,
+    [Number(sessionId)]
+  );
+  const session = rows[0];
+  if (!session || !session.pr_number || session.source === 'imported') {
+    return { updated: false, reason: session?.source === 'imported' ? 'imported_pr' : 'missing_pr' };
+  }
+  const detail = session.visual_evidence_detail;
+  const intent = detail && typeof detail === 'object' ? detail.intent : null;
+  const block = buildEvidenceBlock({
+    intent,
+    appSlug: session.app_slug,
+    sessionId: Number(session.id),
+    domain: require('./caddy').USERNODE_DOMAIN,
+  });
+  if (!block) return { updated: false, reason: 'missing_intent' };
+  // Enrollment in evidence v2 retires the public legacy image embed for this
+  // proposal. Historical artifact rows may remain during rollout, but the PR
+  // carries only the authenticated evidence link from now on.
+  const withoutLegacy = upsertVisualsBlock(session.pr_body || '', '');
+  const nextBody = upsertEvidenceBlock(withoutLegacy, block);
+  if (nextBody === (session.pr_body || '')) return { updated: false, reason: 'unchanged' };
+  const match = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
+  if (!match) return { updated: false, reason: 'invalid_repo' };
+  await github.updatePR(match[1], match[2], session.pr_number, { body: nextBody });
+  await pool.query(
+    `UPDATE chat_sessions
+        SET pr_body = $2, pr_visuals_applied = NULL
+      WHERE id = $1`,
+    [Number(session.id), nextBody]
+  );
+  return { updated: true, block };
+}
+
 // Extract the issue numbers a PR body declares it closes via GitHub's
 // closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
 // resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
@@ -262,11 +359,62 @@ function fallbackPrMetadataDraft(username) {
   };
 }
 
+// Bounds for the deterministic cumulative summary below (#2433). This path
+// has no model to compress a long branch with, so the record is bounded by
+// construction: the most recent DETERMINISTIC_SUMMARY_TURNS updates, each
+// clipped to DETERMINISTIC_SUMMARY_PER_TURN characters. 12 × 1000 keeps the
+// assembled PR body an order of magnitude inside GitHub's 65,536-character
+// ceiling even with the deterministic testing/visuals/closing suffix on top,
+// and the omitted-count line below keeps an over-long branch honest about it.
+const DETERMINISTIC_SUMMARY_TURNS = 12;
+const DETERMINISTIC_SUMMARY_PER_TURN = 1000;
+
+// The whole proposal's record, oldest-first, as the deterministic stand-in for
+// the model path's cumulative prose (#2433). Every turn's coding-agent summary
+// is kept and labelled, because this text is what the About sheet shows as
+// "What changes for you" and what leads the PR body: a follow-up turn that
+// replaced it with its own summary alone described the last iteration rather
+// than the change the group is voting on.
+//
+// `summaries` already carries the in-flight turn (gatherSessionContext appends
+// it), so `ccSummary` is only a fallback for callers that pass the current turn
+// on its own — and is deduped against the tail when both arrive.
+//
+// A single-update branch renders exactly as it did before the labels existed:
+// its lone summary, untouched, so the overwhelmingly common first-turn PR body
+// stays byte-identical.
+function cumulativeDeterministicSummary(summaries, ccSummary) {
+  const list = (Array.isArray(summaries) ? summaries : [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  const cur = String(ccSummary || '').trim();
+  if (cur && list[list.length - 1] !== cur) list.push(cur);
+  if (list.length <= 1) return list[0] || '';
+
+  const kept = list.slice(-DETERMINISTIC_SUMMARY_TURNS);
+  const dropped = list.length - kept.length;
+  const parts = kept.map((text, i) => {
+    const clipped = text.length > DETERMINISTIC_SUMMARY_PER_TURN
+      ? `${text.slice(0, DETERMINISTIC_SUMMARY_PER_TURN - 1).trimEnd()}…`
+      : text;
+    // Numbered from the turn's real position on the branch, so the labels
+    // still line up when the oldest updates fall outside the cap.
+    return `**Update ${dropped + i + 1}**\n\n${clipped}`;
+  });
+  if (dropped) {
+    parts.unshift(`_${dropped} earlier update${dropped === 1 ? '' : 's'} not shown._`);
+  }
+  return parts.join('\n\n');
+}
+
 // OpenRouter sessions must not buy a hidden Anthropic call just to name a
 // pull request after their selected model has finished. Build stable metadata
-// from the session's own request and model-authored summary instead. The first
-// request owns the title for the life of the PR; later turns refresh the body
-// without renaming the change after whichever follow-up happened last.
+// from the session's own requests and model-authored summaries instead. The
+// first request owns the title for the life of the PR; later turns refresh the
+// body without renaming the change after whichever follow-up happened last.
+// This is also the over-budget path for a Claude session (applyPrMetadata's
+// `allowModelGeneration` is false when no payer resolves), so the cumulative
+// summary is not an OpenRouter-only concern.
 function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summaries, username }) {
   const titleSource = (Array.isArray(requests) && requests.find((item) => typeof item === 'string' && item.trim()))
     || userMessage
@@ -276,15 +424,10 @@ function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summar
   // session-title.js), so the display name holds when the PR lands.
   const title = sessionTitles.deterministicTitle(titleSource)
     || `${username || 'User'}'s changes`;
-  const latestSummary = String(
-    ccSummary
-      || (Array.isArray(summaries) && summaries[summaries.length - 1])
-      || '',
-  ).trim();
   return {
     title,
     body: '',
-    summary: latestSummary,
+    summary: cumulativeDeterministicSummary(summaries, ccSummary),
     fallback: false,
   };
 }
@@ -327,7 +470,7 @@ async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summa
 }
 
 function renderPrMetadataDraft(draft, {
-  username, closingBlock, testingBlock, visualsBlock,
+  username, closingBlock, testingBlock, visualsBlock, evidenceBlock,
 }) {
   // `closingBlock` (#75) is the deterministic `Closes #N` text,
   // `testingBlock` (#127) the deterministic "How to test" section, and
@@ -336,6 +479,7 @@ function renderPrMetadataDraft(draft, {
   // and are deliberately NOT fed into the LLM prompt below, so the model
   // can never drop, duplicate, or paraphrase them.
   const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
+    + (evidenceBlock ? `\n\n${evidenceBlock}` : '')
     + (visualsBlock ? `\n\n${visualsBlock}` : '')
     + (closingBlock ? `\n\n${closingBlock}` : '');
   const safeDraft = draft && typeof draft === 'object'
@@ -392,6 +536,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
     requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [],
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
+    visualEvidenceDetail: null, appSlug: null, currentPrBody: null,
     appliedSummary: null,
   };
   if (pool && sessionId != null) {
@@ -440,6 +585,8 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
                 testing_md, testing_path, pr_testing_applied,
                 pr_visuals_applied, pr_summary_md, source,
+                visual_evidence_detail, pr_body,
+                (SELECT slug FROM apps WHERE id = chat_sessions.app_id) AS app_slug,
                 imported_pr_head_sha, reviewed_head_sha,
                 checks_commit_sha, handoff_head_sha
            FROM chat_sessions WHERE id = $1`,
@@ -465,6 +612,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       // the drift marker, not evidence that its artifact rows still describe
       // the proposal's current head; that check happens below.
       ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
+      ctx.visualEvidenceDetail = (liveRows[0] && liveRows[0].visual_evidence_detail) || null;
+      ctx.appSlug = (liveRows[0] && liveRows[0].app_slug) || null;
+      ctx.currentPrBody = (liveRows[0] && liveRows[0].pr_body) || null;
 
       // Plain-language summary last written to pr_summary_md (the in-app
       // proposal view's source of truth). Read here so the drift gate below
@@ -536,6 +686,7 @@ async function applyPrMetadata({
     requests, summaries, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
     visuals, appliedVisuals, appliedSummary,
+    visualEvidenceDetail, appSlug, currentPrBody,
   } = await gatherSessionContext(pool, session && session.id, ccSummary);
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
@@ -551,7 +702,20 @@ async function applyPrMetadata({
   // path (headless → promote), where the capture ran long before the PR
   // exists; on the interactive path visuals.js patches the live body
   // directly after each capture instead.
-  const visualsBlock = buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
+  const evidenceIntent = visualEvidenceDetail && typeof visualEvidenceDetail === 'object'
+    ? visualEvidenceDetail.intent : null;
+  const evidenceBlock = buildEvidenceBlock({
+    intent: evidenceIntent,
+    appSlug: appSlug || session?.app_slug || session?.slug,
+    sessionId: session?.id,
+    domain: require('./caddy').USERNODE_DOMAIN,
+  });
+  // Enrollment in v2 retires public legacy image embeds. The authenticated
+  // Homeroom link is safe for member/admin flows and always resolves the
+  // current exact-revision status instead of caching a verdict in GitHub.
+  const visualsBlock = evidenceIntent
+    ? ''
+    : buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
 
   const generationArgs = {
     userMessage, ccSummary, requests, summaries, specs, username, apiKey,
@@ -568,7 +732,7 @@ async function applyPrMetadata({
   if (deterministic || (!allowModelGeneration && !effectTurnId)) {
     meta = renderPrMetadataDraft(
       deterministicPrMetadataDraft(generationArgs),
-      { username, closingBlock, testingBlock, visualsBlock },
+      { username, closingBlock, testingBlock, visualsBlock, evidenceBlock },
     );
   } else if (effectTurnId) {
     try {
@@ -598,7 +762,7 @@ async function applyPrMetadata({
         : {};
       metadataBillingByok = !!settled.billingByok;
       meta = renderPrMetadataDraft(settled.draft, {
-        username, closingBlock, testingBlock, visualsBlock,
+        username, closingBlock, testingBlock, visualsBlock, evidenceBlock,
       });
     } catch (err) {
       // Receipt uncertainty must keep the durable tail owned. Swallowing it
@@ -608,7 +772,7 @@ async function applyPrMetadata({
     }
   } else {
     meta = await generatePrMetadata({
-      ...generationArgs, closingBlock, testingBlock, visualsBlock,
+      ...generationArgs, closingBlock, testingBlock, visualsBlock, evidenceBlock,
     });
   }
   const { title: generatedTitle, body: prBody } = meta;
@@ -643,6 +807,8 @@ async function applyPrMetadata({
   // And for the visuals section (#195): a capture that landed since the
   // last body write must reach GitHub even on a title-unchanged turn.
   const visualsChanged = visualsBlock !== (appliedVisuals || '');
+
+  const evidenceChanged = evidenceBlock !== extractEvidenceBlock(currentPrBody || session?.pr_body || '');
 
   // Same drift check for the plain-language summary: a revised summary must
   // reach the PR body on a title-unchanged turn (the summary leads the body),
@@ -785,7 +951,8 @@ async function applyPrMetadata({
   // set changed (#195) — these would otherwise be skipped on a
   // title-unchanged turn, leaving the new `Closes #N` line / "How to
   // test" / "Before / after" section off the PR body.
-  if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged && !summaryChanged) {
+  if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged
+      && !evidenceChanged && !summaryChanged) {
     // Generation succeeded and landed on the same title — clear a stale
     // fallback marker if one is set (defensive; in practice a generated
     // title never equals the fallback template).
@@ -807,8 +974,8 @@ async function applyPrMetadata({
     session.pr_summary_md = prSummary || null;
     session.pr_title_fallback = false;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5, pr_title_fallback = FALSE WHERE id = $6`,
-      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, session.id]
+      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5, pr_body = $6, pr_title_fallback = FALSE WHERE id = $7`,
+      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, prBody || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };
@@ -822,5 +989,6 @@ module.exports = {
   generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock, extractVisualsBlock,
+  buildEvidenceBlock, upsertEvidenceBlock, extractEvidenceBlock, syncEvidencePrBlock,
   applyIssueDeclarations, stripClosingLines, sameIssueSet,
 };

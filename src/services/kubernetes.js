@@ -788,11 +788,15 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
 // run's eight concurrent pages get the same headroom on both runtimes;
 // production apps pass nothing and keep the 1-CPU limit they always had.
-async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null, labels: extraLabels = {} }) {
+async function deployApplication(config, {
+  app, environment, sessionId, imageRef, env, cpus = null,
+  labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+}) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
-  const name = appResourceName(app, environment, sessionId);
+  const name = runtimeName || appResourceName(app, environment, sessionId);
+  if (name !== dnsName(name) || name.length > 63) throw new Error('Invalid Kubernetes runtime name');
   const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
   const secretName = withSuffix(name, 'env');
@@ -861,17 +865,19 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   // shared backend would serve a preview the production image's copy of its
   // own files, and the preview's checks would describe bytes that are not in
   // the preview. Its 15 native-kit demo checks caught exactly that.
-  let assetBackend = null;
-  try {
-    const backend = await ensurePlatformAssetBackend(config);
-    if (app.slug !== config.selfAppSlug) assetBackend = backend;
-  } catch (err) {
-    log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
-      namespace, app: app.slug, error: err?.message,
-    });
+  if (!internalOnly) {
+    let assetBackend = null;
+    try {
+      const backend = await ensurePlatformAssetBackend(config);
+      if (app.slug !== config.selfAppSlug) assetBackend = backend;
+    } catch (err) {
+      log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
+        namespace, app: app.slug, error: err?.message,
+      });
+    }
+    await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+      appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   }
-  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
-    appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   try {
     await waitForDeployment(namespace, name, {
       generation: deployed?.metadata?.generation,
@@ -902,7 +908,11 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
     }
     throw err;
   }
-  return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
+  return {
+    runtimeKind: 'kubernetes', runtimeName: name, imageRef,
+    hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
+    url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
+  };
 }
 
 function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {
@@ -1532,6 +1542,10 @@ async function runCaptureJob(config, options) {
   return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'capture');
 }
 
+async function runEvidenceJob(config, options) {
+  return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'evidence');
+}
+
 async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
 }
@@ -1545,7 +1559,9 @@ async function cancelPreviewChecks(config, sessionId) {
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
-    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (!name.startsWith(`sv-capture-s${sessionId}-`)
+        && !name.startsWith(`sv-evidence-s${sessionId}-`)
+        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
@@ -1645,6 +1661,7 @@ async function runCheckJob(config, {
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
+  const evidence = kind === 'evidence';
   const cpuLimit = String(cpus);
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
@@ -1678,7 +1695,9 @@ async function runCheckJob(config, {
   const podVolumes = [];
   if (!unitSuite && inputSecretName) {
     container.command = ['sh', '-c'];
-    container.args = ['exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
+    container.args = [evidence
+      ? 'exec node /app/evidence-replay.js < /var/run/usernode-capture/tests.json'
+      : 'exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
     container.volumeMounts = [{
       name: 'capture-input', mountPath: '/var/run/usernode-capture', readOnly: true,
     }];
@@ -1725,7 +1744,7 @@ async function runCheckJob(config, {
     const createdJob = await batch.createNamespacedJob({ namespace, body });
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
-    if (unitSuite && createdJob?.metadata?.uid) {
+    if (inputSecretName && createdJob?.metadata?.uid) {
       const secret = await core.readNamespacedSecret({ name: inputSecretName, namespace });
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
@@ -2161,7 +2180,7 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,

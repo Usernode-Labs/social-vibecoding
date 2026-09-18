@@ -163,7 +163,7 @@ function CodeList({ keys }: { keys?: string[] }) {
 
 function StatusCard({ status, failed }: { status: MailStatus | null; failed: boolean }) {
   if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the mail configuration.</p>;
-  if (!status) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (!status) return <p className={AdminUI.loading}>Loading…</p>;
 
   // A staging preview is a clone of production data, so it can never reach a
   // real provider — say so plainly rather than letting a tester read a card
@@ -293,7 +293,7 @@ function ActivityCard({
   onToggleFilter: () => void; onRefresh: () => void;
 }) {
   if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load recent activity.</p>;
-  if (!data) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (!data) return <p className={AdminUI.loading}>Loading…</p>;
   const deliveries = data.deliveries || [];
   const last24h = data.last24h || {};
   const totals = Object.keys(last24h).sort().map((k) => `${k} ${last24h[k]}`).join(' · ');

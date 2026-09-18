@@ -374,8 +374,8 @@
           const field = document.getElementById('connector-url');
           return field ? field.value : null;
         },
-        successMessage: 'Connector URL copied',
-        failureMessage: 'Could not copy the connector URL',
+        successMessage: 'MCP server URL copied',
+        failureMessage: 'Could not copy the MCP server URL',
         selectOnFail: () => {
           const field = document.getElementById('connector-url');
           if (field) field.select();
@@ -2105,7 +2105,8 @@
           provider,
           payload.providers[provider] || { provider, linked: false, available: false },
           entitlement,
-          !!payload.demo
+          !!payload.demo,
+          payload.providers
         )),
       });
       // A SIBLING of the block, and still this module's: it reports the OAuth
@@ -2114,85 +2115,140 @@
       this._socialIdentityCallbackStatus(status);
     },
 
-    // The tier card's five states, as text plus a tone. Every one of them is
-    // a different answer to "how much can this account spend today, and why",
-    // so the wording is decided here, next to the entitlement it reads.
+    // The head row of the daily-credits list, in its five states. Every one
+    // of them is a different answer to "how much can this account spend today,
+    // and why", so the wording is decided here, next to the entitlement it
+    // reads.
+    //
+    // #2370: this was a bordered card carrying a title and a sentence — "Layer
+    // 1 locked · $0/day", then a paragraph explaining what would unlock it. It
+    // is the FIRST ROW of one list now, and the rows under it are the things
+    // that change the figure, so the relationship the paragraph described is
+    // the layout instead. Three fields rather than two:
+    //
+    //   title   what this row is ("Signed in" on the ladder, "Your credits"
+    //           where there is no ladder to stand on — never "Daily credits",
+    //           which is the label the list already sits under)
+    //   amount  the figure, or null where there honestly is none
+    //   note    one sentence under the list, or null
+    //   tone    'warn' for the one state that reports a fault. A locked ladder
+    //           is NOT a warning — it is the thing to do next, and the rows
+    //           under it say so — so the amber card it used to wear is gone.
+    //
+    // "Layer 1" is gone on purpose. It is the policy's name for the tier in
+    // src/services/limits.js, and a reader has no Layer 0 or Layer 2 to place
+    // it against.
+    //
+    // ONLY the two ladder states say "Signed in · $0 / day". On a deployment
+    // whose policy is `legacy` (the default — see IDENTITY_CREDIT_POLICY) or
+    // for an account with an administrator override, connecting an account
+    // changes nothing about credits, and a list that implied otherwise would
+    // be a false promise with a Connect button under it.
+    _socialIdentityMoney(cents) {
+      const value = Math.max(0, Number(cents) || 0) / 100;
+      return `$${Number.isInteger(value) ? value : value.toFixed(2)} / day`;
+    },
+
     _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
+      const amount = this._socialIdentityMoney(e.limitCents);
       if (e.entitlementAvailable === false) {
         return {
-          tone: 'plain',
-          title: 'Daily credit tier temporarily unavailable',
-          detail: 'Homeroom could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+          tone: 'warn',
+          done: false,
+          title: 'Daily credits unavailable',
+          amount: null,
+          note: 'We could not check your credits, so calls we pay for are paused. Your own API key still works.',
         };
       }
       if (e.policy === 'legacy') {
         return {
           tone: 'plain',
-          title: `Current daily allowance: ${dollars}`,
-          detail: 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.',
+          done: true,
+          title: 'Your credits',
+          amount,
+          note: 'Your credits do not depend on a connected account yet.',
         };
       }
       if (e.tier === 'override') {
         return {
           tone: 'plain',
-          title: `Administrator-set allowance: ${dollars}`,
-          detail: 'This account has an explicit administrator override, which takes precedence over identity tiers.',
-        };
-      }
-      if (e.verificationRequired) {
-        return {
-          tone: 'warn',
-          title: 'Layer 1 locked · $0/day',
-          detail: 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.',
+          done: true,
+          title: 'Your credits',
+          amount,
+          note: 'An administrator set this amount. A connected account does not change it.',
         };
       }
       return {
-        tone: 'ok',
-        title: `Layer 1 unlocked · ${dollars}`,
-        detail: 'At least one social account ownership proof is current. Provider tokens are not stored.',
+        tone: 'plain',
+        done: true,
+        title: 'Signed in',
+        amount: this._socialIdentityMoney(0),
+        note: 'Either one is enough. Connecting both does not add more.',
       };
     },
 
     // One provider row. Connection, provider verification, public visibility,
     // replacement confirmation and destructive disconnect stay separate.
-    _socialIdentityRowView(provider, link, entitlement, demo) {
+    _socialIdentityRowView(provider, link, entitlement, demo, others) {
       const name = provider === 'github' ? 'GitHub' : 'X';
       const actionHref = (intent) => demo
         ? null
         : `/api/me/social-identities/${provider}/connect?intent=${intent}`;
+      // #2370: `amount` is the row's figure on the ladder, and it is the
+      // reason a row is worth tapping — "$10 / day" sits where "Not connected ·
+      // connect X to unlock Layer 1" used to. Two rules keep it honest, both
+      // from src/services/limits.js ("provider proofs replace one another;
+      // they do not stack"):
+      //
+      //   * an UNLINKED row carries the figure only while the tier is still
+      //     locked. Once one provider has unlocked it, a second "$10 / day"
+      //     beside a Connect button reads as a further $10.
+      //   * of two LINKED rows, only the first carries it, for the same reason.
+      //
+      // Off the ladder (`legacy`, an override, an unverifiable entitlement)
+      // there is no figure at all, because connecting changes no figure.
+      const tiered = entitlement.policy === 'tiered' && entitlement.tier !== 'override'
+        && entitlement.entitlementAvailable !== false;
+      // The figure limits.js calls TIER_ONE_LIMIT_CENTS. A literal, as the
+      // sentence it replaces had it: the status payload reports the CURRENT
+      // limit, not what the next tier would be.
+      const unlock = '$10 / day';
+      const firstLinked = provider === 'github' || !(others && others.github
+        && others.github.linked && !others.github.reconnectRequired);
       let state;
+      let amount = null;
       if (link.reconnectRequired) {
         state = {
           tone: 'amber',
-          text: 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.',
+          text: 'Linked for GitHub attribution. Reconnect once to count it toward daily credits.',
         };
-      } else if (link.linked && entitlement.policy === 'tiered') {
-        state = {
-          tone: 'emerald',
-          text: 'Ownership verified · counts toward the single $10/day social tier.',
-        };
+      } else if (link.linked && tiered) {
+        state = { tone: 'muted', text: firstLinked ? '' : 'No extra credits' };
+        amount = firstLinked ? unlock : null;
       } else if (link.linked) {
-        state = {
-          tone: 'muted',
-          text: 'Ownership verified · identity credit tiers are not active yet.',
-        };
+        state = { tone: 'muted', text: '' };
       } else if (link.available === false) {
-        state = { tone: 'muted', text: `${name} linking is not configured on this deployment.` };
+        state = { tone: 'muted', text: 'Not set up on this server.' };
       } else {
-        state = {
-          tone: 'muted',
-          text: entitlement.verificationRequired
-            ? `Not connected · connect ${name} to unlock Layer 1.`
-            : 'Not connected.',
-        };
+        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : 'Not connected.' };
+        amount = tiered && entitlement.verificationRequired ? unlock : null;
       }
       const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
       return {
         provider,
         name,
-        heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #2370: the title is the provider and nothing else, in every state, so
+        // the list's left edge reads the same before and after connecting. The
+        // handle moved to the second line: beside the badge and the chevron it
+        // was the first thing a 390px row truncated.
+        heading: name,
+        handle: link.linked && link.handle ? `@${link.handle}` : null,
+        // The leading mark: ticked once this row counts, an empty ring while
+        // it is still something to do. A reconnect-needed link is NOT ticked,
+        // for the reason the badge below is not "Connected".
+        done: !!link.linked && !link.reconnectRequired,
+        amount,
         // #1557: the durable half of "did that work?". The OAuth round trip
         // already writes a one-line result into #github-link-status, but that
         // line is transient, xs, and a sibling of this block — come back to
@@ -2216,7 +2272,10 @@
           : null,
         connect: offersConnect
           ? {
-            label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
+            // The row's own title already says which provider, so the
+            // control is the verb alone; `name` keeps the long form for
+            // the accessible name (see social-identity.tsx).
+            label: link.reconnectRequired ? 'Reconnect' : 'Connect',
             // A demo fixture gets the control inert rather than absent: the
             // real flow would navigate straight out of the fixture.
             href: actionHref('connect'),

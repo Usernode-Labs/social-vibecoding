@@ -1,6 +1,6 @@
 // Topochain public standings (Task 14, public screens). Was a screen of
 // its own (#topochain-leaderboard-screen) until the header slim-down made
-// it the SECOND TAB of the Leaderboard screen: it renders into
+// it a TAB of the Leaderboard screen: it renders into
 // #topochain-leaderboard-root inside #leaderboard-screen, and open() /
 // close() are called by the Leaderboard module (./leaderboard.js)
 // when its section flips, not by a navigate* pair in app.js. The legacy

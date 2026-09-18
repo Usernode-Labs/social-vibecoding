@@ -251,7 +251,7 @@ function RunCard({ run }: { run: Run }) {
         {stepsError
           ? <div className="text-xs text-red-700 dark:text-red-400">Failed to load steps: {stepsError}</div>
           : steps == null
-            ? <div className="text-xs text-zinc-500 dark:text-zinc-400">Loading steps…</div>
+            ? <div className={AdminUI.loading}>Loading steps…</div>
             : steps.length
               ? <ol className="space-y-1.5">{steps.map((s, i) => <StepRow key={i} s={s} />)}</ol>
               : <div className="text-xs text-zinc-500 dark:text-zinc-400">No steps recorded.</div>}

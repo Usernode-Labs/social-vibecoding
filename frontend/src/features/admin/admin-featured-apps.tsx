@@ -338,7 +338,7 @@ function FeaturedAppsSection() {
         {error
           ? <p className="text-sm text-red-400">{`Failed to load featured apps (${error})`}</p>
           : featured == null
-            ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+            ? <p className={AdminUI.loading}>Loading…</p>
             : !slugs.length
               ? <p className="text-sm text-zinc-500 dark:text-zinc-400">No featured apps: the home row is hidden for everyone.</p>
               : slugs.map((slug, i) => {

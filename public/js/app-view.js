@@ -3591,7 +3591,15 @@ const AppView = {
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
+        // (#2431) The mirror of a proposal's issue chips: which change
+        // closed this issue, or is working on it.
+        addressedBy: AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
+        issueBodyEditor: {
+          issue: item.number,
+          markdown: String(item.body || ''),
+          canEdit: AppView._canEditIssueAuthor(item),
+        },
         comments: true,
       };
     } else if (t.kind === 'proposal') {
@@ -3649,6 +3657,34 @@ const AppView = {
     AppView._topicCard(card, t.kind, item, body);
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
+  },
+
+  // (#2431) The change addressing one issue, as a view model — the mirror of
+  // the issue chips `_completeChangeView` builds for a proposal.
+  //
+  // The LINK is resolved server-side (services/issue-proposal-ref.js) from
+  // chat_sessions.linked_issues / created_from_issue_number, and it only ever
+  // names a row that has a proposal page, so the href is always the in-app
+  // one — a PR URL fallback would have nothing to fall back from. The
+  // WORDING is the one decision left here, because it needs the issue's own
+  // state: a merged change on a closed issue closed it, while the same
+  // change on an issue still open has only addressed it.
+  _issueProposalRefView(issue) {
+    const ref = issue && issue.addressed_by;
+    if (!ref || !ref.sessionId) return null;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const heading = ref.state === 'merged'
+      ? (issue.state === 'closed' ? 'Closed by' : 'Addressed by')
+      : ref.state === 'review' ? 'In review' : 'Work underway';
+    const n = parseInt(ref.prNumber, 10) || 0;
+    return {
+      heading,
+      state: ref.state,
+      sessionId: ref.sessionId,
+      label: n ? `#${n}` : 'Change',
+      title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
+      href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -4114,7 +4150,12 @@ const AppView = {
     // renders no tiles, which is what stopped the looping <video>s anyway.
     let visuals = null;
     if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
-      const tilesHtml = AppView.visualsTilesHtml(item.visuals);
+      // Once a proposal has entered evidence v2, its state is authoritative.
+      // In particular, pending/failed evidence must never be visually
+      // replaced by an older route capture that happens to exist.
+      const tilesHtml = item.visualEvidence
+        ? AppView.visualEvidenceHtml(item.visualEvidence, { sessionId: item.id })
+        : AppView.visualsTilesHtml(item.visuals);
       // Open: the tiles are the About sheet's before/after row now, not a
       // toggle behind a button.
       if (tilesHtml) {
@@ -6491,7 +6532,34 @@ const AppView = {
   // shot on, and whether it was a phone-frame capture (#768). Null when no
   // group has a still on either side; a group with one honest half is kept,
   // and the feed then shows that side alone.
-  _workshopVisuals(visuals) {
+  _workshopVisuals(visuals, evidence = null) {
+    if (evidence && typeof evidence === 'object') {
+      // A v2 record is authoritative even while pending/failed: returning
+      // null suppresses the legacy capture instead of substituting a picture
+      // that may have nothing to do with the claim.
+      if (evidence.state !== 'verified') return null;
+      const claim = Array.isArray(evidence.claims) ? evidence.claims[0] : null;
+      const viewport = claim && Array.isArray(claim.viewports) && claim.viewports[0]
+        ? String(claim.viewports[0]) : 'desktop';
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/evidence\/[0-9a-f]{32}$/.test(String(url || ''));
+      const find = (side) => (Array.isArray(evidence.artifacts) ? evidence.artifacts : []).find((a) => (
+        a && a.storyId === claim?.id && a.viewport === viewport
+        && a.side === side && a.variant === 'focus' && a.media === 'png' && urlOk(a.url)
+      ));
+      const before = find('base');
+      const after = find('head');
+      if (!before && !after) return null;
+      return {
+        path: claim?.claim || 'Verified visual evidence',
+        claim: claim?.claim || 'Verified visual evidence',
+        mobile: viewport === 'mobile',
+        before: before?.url || null,
+        after: after?.url || null,
+        beforeWebm: null,
+        afterWebm: null,
+        protected: true,
+      };
+    }
     if (!visuals) return null;
     const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
     const groups = Array.isArray(visuals.captures)
@@ -7304,7 +7372,9 @@ const AppView = {
         ago: AppView._workshopAgo(item && (item.promoted_at || item.created_at)),
         number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
         body: null,
-        visuals: kind === 'proposal' ? AppView._workshopVisuals(item && item.visuals) : null,
+        visuals: kind === 'proposal'
+          ? AppView._workshopVisuals(item && item.visuals, item && item.visualEvidence)
+          : null,
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };
@@ -9829,6 +9899,32 @@ const AppView = {
       : '';
   },
 
+  // #2427: the author predicate shared by the issue title and body editors.
+  // It is only an affordance gate; both PATCH routes repeat the authoritative
+  // collab/open/authorship checks. Keeping it here prevents the two pencils
+  // from disagreeing after a live refresh or on a closed issue topic.
+  _canEditIssueAuthor(issue) {
+    return !!(issue && issue.state !== 'closed' && !AppView.readOnly
+      && issue.created_by_username
+      && typeof App !== 'undefined' && App.user
+      && issue.created_by_username === App.user.username);
+  },
+
+  // Update every issue cache the topic may have resolved through, then return
+  // the same rendered/sanitised HTML the next server refresh will produce.
+  // The React body editor uses this for an immediate post-save repaint while
+  // the websocket refresh takes care of other viewers.
+  _cacheIssueBody(issueNumber, body) {
+    const n = Number(issueNumber);
+    for (const issue of (AppView._ghIssues || [])) {
+      if (issue && Number(issue.number) === n) issue.body = body;
+    }
+    if (AppView._topicIssue && Number(AppView._topicIssue.number) === n) {
+      AppView._topicIssue.body = body;
+    }
+    return AppView._issueBodyHtml({ body });
+  },
+
   // #396: is this comment author the platform bot? GitHub App actors
   // comment as `<name>[bot]`; the platform bot account is `usernode-bot`.
   // Tolerant of both so the bot's earlier auto-proposal questions are
@@ -10220,10 +10316,9 @@ const AppView = {
     if (prAge) meta.push(prAge);
     // Live proposals link their "Closes #N" pills to the issue's IN-APP
     // discussion (votes/bounty/thread live there; the GitHub link stays one
-    // click away in the issue topic head). Merged cards keep the external
-    // GitHub links — those issues are closed, so the in-app topic (resolved
-    // from the open-issues cache) would dead-end and GitHub is their
-    // permanent record.
+    // click away in the issue topic head). The merged DETAIL head keeps the
+    // external GitHub links; the Board's compact Done card is built by
+    // _mergedCardModel below and uses the closed-issue topic route instead.
     //
     // These are pills, and they go in the PILL band, not on the end of the
     // meta line where they used to sit: that line is one ellipsising row, so
@@ -10644,11 +10739,14 @@ const AppView = {
         act: () => AppView.swapToStagingForSession(pr.id, ''),
       });
     }
-    if (AppView.visualsTilesHtml(pr.visuals)) {
+    const hasVisualEvidence = !!pr.visualEvidence;
+    if (hasVisualEvidence || AppView.visualsTilesHtml(pr.visuals)) {
       items.push({
-        label: 'Before/after screenshots',
+        label: hasVisualEvidence ? 'Visual evidence' : 'Before/after screenshots',
         icon: 'visuals',
-        title: 'Open this proposal and expand its before/after captures',
+        title: hasVisualEvidence
+          ? 'Open the claim, exact-revision comparison, and verification details'
+          : 'Open this proposal and expand its before/after captures',
         act: () => { AppView._visualsOpen.add(pr.id); AppView.openTopic('proposal', pr.id); },
       });
     }
@@ -14195,9 +14293,7 @@ const AppView = {
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
-    const canEditTitle = !!(noNav && !closed && !AppView.readOnly && issue.created_by_username
-      && typeof App !== 'undefined' && App.user
-      && issue.created_by_username === App.user.username);
+    const canEditTitle = !!(noNav && AppView._canEditIssueAuthor(issue));
     const editing = canEditTitle && AppView._editingIssueTitle === n;
 
     const attrs = { 'data-ref-issue': String(n) };
@@ -14789,7 +14885,13 @@ const AppView = {
       title: { text: mergedLabel, title: mergedQuoteTitle },
       meta,
       pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
-      linked: AppView.closesPillSpecs(pr),
+      // #2423: closed issues resolve on demand in the platform now (#2365),
+      // so the Board's "Closed #N" links can open their Homeroom topic just
+      // like live proposal links do. Keep the completed-card emerald tone.
+      linked: AppView.issueChipSpecs(pr.linked_issues, {
+        label: 'Closed',
+        cls: 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400',
+      }),
       badges: [
         ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
       ].filter(Boolean),
@@ -15763,6 +15865,25 @@ const AppView = {
       });
     }
 
+    const evidence = p.visualEvidence;
+    if (evidence && evidence.required !== false
+        && !['verified', 'not_required', 'overridden'].includes(evidence.state)) {
+      const running = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']
+        .includes(evidence.state);
+      const enforced = AppView.appData?.visualEvidenceEnforced === true;
+      out.push({
+        key: 'visual_evidence',
+        label: running ? 'Visual evidence in progress'
+          : evidence.state === 'failed' ? 'Visual evidence failed' : 'Visual evidence needed',
+        detail: evidence.failureReason
+          || (enforced
+            ? 'Voting and merging wait for verified evidence of the current proposal commit.'
+            : 'This proposal does not yet have verified visual evidence for its current commit.'),
+        running,
+        soft: !enforced,
+      });
+    }
+
     // #2038: the advisory console tag is gone.
     //
     // Console errors already BLOCK — services/visuals.js classifyTests puts
@@ -16259,6 +16380,174 @@ const AppView = {
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
     const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
     return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
+  },
+
+  // #2380: claim-first, exact-revision visual evidence. The server already
+  // returns one sanitized view model to every proposal surface; this is the
+  // shared HTML adapter for the remaining legacy/React boundaries. It never
+  // accepts an absolute URL and never reaches the public /visuals route.
+  visualEvidenceHtml(evidence, opts = {}) {
+    if (!evidence || typeof evidence !== 'object') return '';
+    const sessionId = Number(opts.sessionId);
+    const claims = Array.isArray(evidence.claims) ? evidence.claims.slice(0, 3) : [];
+    const artifacts = Array.isArray(evidence.artifacts) ? evidence.artifacts : [];
+    const state = String(evidence.state || 'planned');
+    const esc = escapeHtml;
+    const attr = escapeAttr;
+    const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
+      ? String(sha).slice(0, 8) : 'unknown';
+    const evidenceUrl = (url) => {
+      const value = String(url || '');
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/evidence\/[0-9a-f]{32}$/.exec(value);
+      if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
+      return value;
+    };
+    const stateCopy = {
+      planned: ['Evidence planned', 'The interaction flow is waiting to start.'],
+      provisioning: ['Preparing evidence', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
+      exploring: ['Finding the relevant UI state', 'The evidence agent is working through the declared user flow on both revisions.'],
+      replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
+      reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
+      failed: ['Visual evidence failed', evidence.failureReason || 'The declared UI state could not be reached or verified.'],
+      stale: ['Visual evidence is stale', evidence.failureReason || 'A newer proposal revision superseded these artifacts.'],
+      cancelled: ['Visual evidence cancelled', evidence.failureReason || 'This run was superseded before it finished.'],
+      not_required: ['No visual evidence required', evidence.rationale || 'The author declared that this change has no user-visible effect.'],
+      overridden: ['Evidence requirement overridden', evidence.overrideReason || 'An app administrator allowed review to continue without verified evidence.'],
+    };
+    const badge = state === 'verified'
+      ? '<span class="dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Verified</span>'
+      : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Evidence pending'])[0])}</span>`;
+    const provenance = `<span>base <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>head <code>${esc(shortSha(evidence.headSha))}</code></span>`;
+
+    if (state !== 'verified') {
+      const copy = stateCopy[state] || ['Evidence pending', 'Visual evidence has not finished yet.'];
+      const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
+      const retry = state === 'failed' && evidence.repairAvailable === true
+        && Number.isInteger(sessionId) && sessionId > 0
+        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry evidence</button>`
+        : '';
+      const override = state === 'overridden' && evidence.overriddenAt
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(evidence.overriddenAt).toLocaleString())}</div>`
+        : '';
+      return `<section data-visual-evidence="1" data-evidence-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
+        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
+        ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}</div>${override}
+      </section>`;
+    }
+
+    const by = (storyId, viewport, side, variant, media = null) => artifacts.find((a) => (
+      a && a.storyId === storyId && a.viewport === viewport && a.side === side
+      && a.variant === variant && (!media || a.media === media) && evidenceUrl(a.url)
+    ));
+    const rendered = [];
+    for (const claim of claims) {
+      const viewports = Array.isArray(claim.viewports) && claim.viewports.length
+        ? claim.viewports.slice(0, 2) : ['desktop'];
+      const flow = Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((s) => esc(s)).join(' <span aria-hidden="true">→</span> ') : '';
+      const viewportRows = [];
+      for (const viewport of viewports) {
+        const baseAbsent = claim.baseState === 'not_present';
+        const baseFocus = by(claim.id, viewport, 'base', 'focus');
+        const headFocus = by(claim.id, viewport, 'head', 'focus');
+        const baseContext = by(claim.id, viewport, 'base', 'context');
+        const headContext = by(claim.id, viewport, 'head', 'context');
+        const animation = by(claim.id, viewport, 'paired', 'animation', 'webm');
+        const baseUrl = baseFocus ? evidenceUrl(baseFocus.url) : '';
+        const headUrl = headFocus ? evidenceUrl(headFocus.url) : '';
+        const beforeContextUrl = baseContext ? evidenceUrl(baseContext.url) : baseUrl;
+        const afterContextUrl = headContext ? evidenceUrl(headContext.url) : headUrl;
+        const compareAttrs = `data-before-url="${attr(beforeContextUrl)}" data-head-url="${attr(afterContextUrl)}" data-claim="${attr(claim.claim || '')}" data-viewport="${attr(viewport)}" data-base-absent="${baseAbsent ? '1' : '0'}"`;
+        const imageStyle = 'display:block;width:100%;height:180px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.24);border-radius:6px';
+        const side = (label, url, missing) => `<figure style="flex:1 1 280px;min-width:0;margin:0">
+          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label}</figcaption>
+          ${url ? `<button type="button" ${compareAttrs} class="block w-full rounded-md border-0 bg-transparent p-0 text-left" aria-label="Open full ${attr(viewport)} comparison for ${attr(claim.claim || '')}" onclick="AppView.openEvidenceComparison(this)"><img src="${attr(url)}" alt="${attr(`${label}: ${claim.claim || ''}`)}" loading="lazy" style="${imageStyle}"></button>`
+            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:180px">${esc(missing)}</div>`}
+        </figure>`;
+        const controls = [];
+        if (beforeContextUrl || afterContextUrl) {
+          controls.push(`<button type="button" ${compareAttrs} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.openEvidenceComparison(this)">Open full context</button>`);
+        }
+        if (animation) {
+          const animationUrl = evidenceUrl(animation.url);
+          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play interaction</summary><video src="${attr(animationUrl)}" controls preload="none" muted playsinline aria-label="Interaction replay for ${attr(claim.claim || '')}" style="display:block;width:100%;max-height:360px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.35)"></video></details>`);
+        }
+        viewportRows.push(`<div data-evidence-viewport="${attr(viewport)}" class="mt-3">
+          <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(claim.persona === 'read_only_admin' ? 'read-only admin' : 'member')}</div>
+          <div class="flex flex-wrap items-stretch gap-2">${side(baseAbsent ? 'Before · Not present in base' : 'Before', baseUrl, baseAbsent ? 'Not present in base' : 'Evidence image unavailable')}${side('After', headUrl, 'Evidence image unavailable')}</div>
+          ${controls.length ? `<div class="mt-2 flex flex-wrap items-start gap-3">${controls.join('')}</div>` : ''}
+        </div>`);
+      }
+      rendered.push(`<article data-evidence-story="${attr(claim.id || '')}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${badge}</div>
+        ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
+        ${viewportRows.join('')}
+        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">View verification details</summary>
+          <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>plan <code>${esc(String(evidence.planHash || '').slice(0, 12) || 'unknown')}</code></span>${evidence.replayCount === 2 ? '<span>2 clean replays</span>' : ''}${evidence.repairCount === 1 ? '<span>1 bounded repair</span>' : ''}${evidence.relativePointer === true ? '<span>relative-pointer flow</span>' : ''}</div>
+          ${evidence.verifiedReason ? `<p class="mt-1">${esc(evidence.verifiedReason)}</p>` : ''}
+        </details>
+      </article>`);
+    }
+    if (!rendered.length) {
+      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Verified evidence metadata is incomplete; no claim can be displayed.</section>`;
+    }
+    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Verified visual evidence" class="space-y-3">${rendered.join('')}</section>`;
+  },
+
+  // Authenticated evidence uses full relative URLs rather than public
+  // artifact ids. Re-validate them at the DOM boundary before placing them
+  // in the React-owned comparison overlay.
+  openEvidenceComparison(triggerEl) {
+    if (!triggerEl) return;
+    const d = triggerEl.dataset || {};
+    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/evidence\/[0-9a-f]{32}$/.test(String(url || ''));
+    const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
+    const head = urlOk(d.headUrl) ? d.headUrl : '';
+    if (!before && !head) return;
+    const label = `${d.claim || 'Visual evidence'}${d.viewport ? ` · ${d.viewport}` : ''}`;
+    const baseAbsent = d.baseAbsent === '1';
+    const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
+    const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
+    const column = (side, url, missing) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${side}</div>${url
+      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(`${side}: ${d.claim || 'visual evidence'}`)}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">Open original ↗</a>`
+      : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${missing}</div>`}</div>`;
+    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'Before · Not present in base' : 'Before', before, baseAbsent ? 'Not present in base' : 'Evidence image unavailable')}${column('After', head, 'Evidence image unavailable')}</div>`;
+    const compare = AppView._visualCompare();
+    compare.open({ label, bodyHtml, openedAt: Date.now() });
+    compare.setHandlers({
+      onBack: () => AppView.closeVisualComparison(),
+      onBackdrop: () => {
+        if (AppView._visualCompareDismissGuarded()) return;
+        AppView.closeVisualComparison();
+      },
+    });
+    AppView._visualCompareKeyHandler = (event) => {
+      if (event.key === 'Escape') AppView.closeVisualComparison();
+    };
+    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
+  },
+
+  async rerunVisualEvidence(sessionId, button) {
+    const id = Number(sessionId);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!Number.isInteger(id) || id <= 0 || !slug) return;
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/evidence/rerun`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
+      PlatformUI.toast('Visual evidence is running again.');
+      AppView.refreshDevData('evidence');
+    } catch (error) {
+      PlatformUI.toast(`Could not retry visual evidence: ${error.message}`);
+    } finally {
+      if (button) button.disabled = false;
+    }
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture
@@ -16833,11 +17122,13 @@ const AppView = {
   // per linked issue, opening the issue's IN-APP discussion topic (the
   // same navigation as tapping the issue row). Unlike closesPillHtml
   // below this never needs pr_url (session cards have none pre-PR) and
-  // never leaves the app. opts.label prefixes each chip (the live
-  // proposal card passes 'Closes' to keep its established wording).
+  // never leaves the app. opts.label prefixes each chip (proposal cards use
+  // 'Closes' / 'Closed'); opts.cls preserves the completed card's emerald
+  // tone while reusing the same navigation behavior.
   issueChipSpecs(linkedIssues, opts) {
     const prefix = opts && opts.label ? `${opts.label} ` : '';
-    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+    const cls = (opts && opts.cls)
+      || 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
       t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
       title: `Open issue #${n}'s discussion`,
@@ -16859,9 +17150,9 @@ const AppView = {
     return nums;
   },
 
-  // The GitHub "Closes #N" links, as SPECS. Merged cards use these (their
-  // issues are closed, so the in-app topic would dead-end and GitHub is
-  // the permanent record); live proposals use issueChipSpecs instead.
+  // The GitHub "Closes #N" links, as SPECS. The merged proposal DETAIL head
+  // and the dev-chat session header use these as explicit external links;
+  // Board cards use issueChipSpecs so their linked issues stay in-platform.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';

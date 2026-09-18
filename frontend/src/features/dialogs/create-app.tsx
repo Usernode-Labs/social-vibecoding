@@ -807,7 +807,7 @@ export function CreateAppDialog() {
             </div>
           </div>
           </div>
-          <div id="create-error" ref={errorRef} className="px-1 text-red-400 text-sm hidden">
+          <div id="create-error" ref={errorRef} className="px-1 text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>
           {/*

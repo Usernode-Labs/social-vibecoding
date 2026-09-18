@@ -27,9 +27,19 @@
  *   rounded-full` then the fill — so routing them through the primitive would
  *   need the group order changed, which would move the rendered class
  *   attribute of every other button in the shell.
- * - `<TabsTrigger>` renders `aria-current`, and these strips never had it. The
- *   section strip above them did, which is why chunk F could adopt the
- *   primitive there and this pane cannot.
+ * - `<TabsTrigger>` renders `aria-current`, which the window pills and history
+ *   chips never had — and should not, since they are not tabs.
+ *
+ * The SUB-TAB strip is the exception, and is a `<TabsTrigger>` as of #2441.
+ * It was an underline row (`border-b-2`, `border-violet-500` under the active
+ * label) sitting directly beneath the reskinned section strip on the same
+ * screen — the one shape @/components/ui/tabs.tsx exists to retire, two
+ * inches below a strip that had already retired it. Restyling it meant giving
+ * up the "nothing moves visually" clause for this strip anyway, so it adopts
+ * the primitive whole: the same track, the same near-black selected fill, and
+ * `aria-current` along with them. Nothing selects on these buttons —
+ * `data-lb-sub` appears in no dapp.json check — so the added attribute costs
+ * nothing and the strip stops being a second implementation of tabs.
  *
  * That leaves the two violet-filled toggles (the active window pill, the
  * active history chip) as literal `bg-violet-600` inside a `<button>` tag,
@@ -50,6 +60,15 @@
 import { Fragment, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import {
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_BASE,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST_BASE,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { kudosPaneStore } from './kudos-pane-store.js';
@@ -297,11 +316,6 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
   );
 }
 
-const SUB_TAB = 'px-3 py-2 text-sm font-medium border-b-2';
-const SUB_TAB_ACTIVE = 'border-violet-500 text-violet-700 dark:text-violet-300';
-const SUB_TAB_INACTIVE = 'border-transparent text-zinc-500 dark:text-zinc-400 '
-  + 'hover:text-zinc-800 dark:hover:text-zinc-200';
-
 const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full';
 const WIN_TAB_INACTIVE = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
   + 'hover:bg-zinc-200 dark:hover:bg-zinc-700';
@@ -317,20 +331,32 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
       <header className="mb-4">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.subtitle}</p>
       </header>
-      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 mb-3">
-        <div className="flex gap-4">
-          {view.subTabs.map((t) => (
-            <button
-              key={t.key}
-              data-lb-sub={t.key}
-              className={`${SUB_TAB} ${t.active ? SUB_TAB_ACTIVE : SUB_TAB_INACTIVE}`}
-              onClick={() => controller()?._setSub(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 pb-1">
+      {/*
+          No rule under this row any more (#2441). The strip separates by
+          figure/ground now, and a `border-b` beneath it would be the
+          underline reintroduced one element out.
+      */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <Tabs
+          value={view.subTabs.find((t) => t.active)?.key ?? ''}
+          onValueChange={(key) => controller()?._setSub(key)}
+        >
+          <TabsList className={SECTION_TABS_LIST_BASE}>
+            {view.subTabs.map((t) => (
+              <TabsTrigger
+                key={t.key}
+                value={t.key}
+                data-lb-sub={t.key}
+                className={SECTION_TAB_BASE}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="flex gap-2">
           {view.winTabs.map((t) => (
             <button
               key={t.key}

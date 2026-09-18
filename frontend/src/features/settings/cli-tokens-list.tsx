@@ -34,6 +34,9 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Settings : null) || null;
 }
 
+/** Matches ROW_CLASS in ./grants-list.tsx — one row language on this screen. */
+const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+
 export function CliTokensListView({ phase, tokens }: CliTokensState) {
   if (phase === 'idle') return null;
   // A bare text node, as `list.textContent = 'Loading credentials…'` produced.
@@ -49,7 +52,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
           // stable for every row that has one; the demo rows have none and
           // never change, so their index is as stable as they are.
           key={token.id || `demo:${i}`}
-          className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2"
+          className={ROW_CLASS}
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -64,7 +67,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
             {token.revocable ? (
               <button
                 type="button"
-                className="shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                className="shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors"
                 onClick={(e) => controller()?._revokeCliToken?.(token.id, e.currentTarget)}
               >
                 Revoke

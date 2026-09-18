@@ -266,24 +266,40 @@ test('the work order says the appendix is partial and names the lookup', () => {
   assert.match(order, /connector traffic does not go through your container/i);
 });
 
-test('the work order asks for the testing routes, pointed at the changed screen', () => {
+test('the work order keeps agent instructions with their repository', () => {
+  const order = instructions(fullOrder());
+  assert.match(order, /has loaded this repository's own instructions/);
+  assert.match(order, /changing directory from an unrelated project may not\s+replace them/);
+  assert.match(order, /start a\s+fresh task rooted in this repository/);
+});
+
+test('the work order separates manual testing routes from interaction evidence', () => {
   const order = instructions(fullOrder());
   assert.match(order, /testingPaths/);
   assert.match(order, /testingSteps/);
-  // Why it matters, in the terms the agent can act on: this is what the
-  // before/after screenshots the voters see are shot from.
-  assert.match(order, /before\/after screenshot/i);
+  // Routes remain useful for a human entering the preview and for durable
+  // checks, but they are no longer presented as visual proof.
+  assert.match(order, /manual "Test this change" link/);
   assert.match(order, /THE SCREEN YOU\s+CHANGED/);
-  assert.match(order, /not the home page/);
-  // And the escape hatch for a screen no URL reaches, so "I cannot give a
-  // route" never becomes a reason to omit them.
-  assert.match(order, /deep link/i);
-  assert.match(order, /query param handled at boot/);
-  // #1214: a route the platform could not use is named in submit_work's own
-  // answer, so the agent checks it while it is still holding the branch
-  // instead of learning it from a boolean minutes later.
+  assert.match(order, /not the\s+home page/);
+  assert.match(order, /do not add a screenshot-only route/);
+  assert.doesNotMatch(order, /query param handled at boot/);
+
+  // The agent declares what changed and how a user reaches that exact state;
+  // Homeroom explores once, then deterministically proves the pair twice.
+  assert.match(order, /visualEvidence/);
+  assert.match(order, /record_visual_evidence_intent/);
+  assert.match(order, /user-visible claim/);
+  assert.match(order, /real interaction steps/);
+  assert.match(order, /bounded plan/);
+  assert.match(order, /replays it twice against exact\s+base and head revisions/);
+
+  // The submission response distinguishes a malformed manual route from the
+  // evidence lifecycle instead of silently replacing either with '/'.
   assert.match(order, /testingPathsRejected/);
-  assert.match(order, /re-shoots the screenshots and clears no votes/);
+  assert.match(order, /visualEvidenceAccepted/);
+  assert.match(order, /visualEvidenceState/);
+  assert.match(order, /visualEvidenceNextStep/);
 });
 
 test('the work order says the checks gate merge and how to clear them', () => {
@@ -301,11 +317,14 @@ test('the work order says the checks gate merge and how to clear them', () => {
   const step7 = order.slice(order.indexOf('7. THEN CHECK THE CHECKS'));
   assert.match(step7, /Do not call\s+`submit_work` again/);
   assert.match(step7, /do not call `prepare_work`/);
-  // A default remains visible, and the work order names both the actionable
-  // signal and the provenance needed to correct a bad one.
-  assert.match(step7, /captureDefaultedToRoot/);
-  assert.match(step7, /captureRouteSource/);
-  assert.match(step7, /visualScenarios/);
+  // Evidence is revision-scoped and can fail honestly; no generic home-page
+  // screenshot is allowed to masquerade as proof of an unreachable state.
+  assert.match(step7, /visualEvidence/);
+  assert.match(step7, /structured claim and flow were accepted/);
+  assert.match(step7, /wait for `verified`/);
+  assert.match(step7, /`failed` includes a specific recovery reason/);
+  assert.match(step7, /does not substitute a home-page screenshot/);
+  assert.doesNotMatch(step7, /captureDefaultedToRoot/);
 });
 
 test('a task with nothing to submit gets none of the submission guidance', () => {
@@ -338,6 +357,7 @@ test('every addition sits above the appendix, and none brings a fence', () => {
   for (const marker of [
     'get_platform_conventions',
     'testingPaths',
+    'visualEvidence',
     '7. THEN CHECK THE CHECKS',
   ]) {
     const at = order.indexOf(marker);

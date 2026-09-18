@@ -435,6 +435,9 @@ export interface DevWorkshopView {
       after: string | null;
       beforeWebm: string | null;
       afterWebm: string | null;
+      /** Authenticated evidence URLs rather than legacy public artifact ids. */
+      protected?: boolean;
+      claim?: string;
     } | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */

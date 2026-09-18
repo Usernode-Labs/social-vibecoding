@@ -45,8 +45,16 @@ export interface DialogController<T = void> {
    * attached to. Before this chunk it wrote `hidden` on the root directly and
    * `adoptStaticModal`'s observer turned that into a dismiss + re-present;
    * this is the same round trip with React in the loop.
+   *
+   * Resolves once the dialog is actually OFF SCREEN (#2346). Hiding is not
+   * instant: the kit plays its exit animation over the card and only removes
+   * it at the end, so a caller that photographs the page the moment this
+   * returns photographs the dialog fading out. Resolves at once when there
+   * was nothing presented to animate, and early on `resume()`, `open()` or
+   * unmount — a caller never waits on an exit that is not coming. Callers
+   * that only want the dialog hidden can ignore it, as before.
    */
-  suspend: () => void;
+  suspend: () => Promise<void>;
   /** Undo `suspend()`. */
   resume: () => void;
 }
@@ -76,7 +84,7 @@ export interface UseDialogResult<T> {
   isOpen: boolean;
   open: (payload?: T) => void;
   close: () => void;
-  suspend: () => void;
+  suspend: () => Promise<void>;
   resume: () => void;
   backdropProps: { onClick: (event: MouseEvent<HTMLElement>) => void };
 }
@@ -103,6 +111,17 @@ export function useDialog<T = void>(
   // exists to prevent.
   const suspended = useRef(false);
 
+  // Whoever is waiting on a suspension's exit — see DialogController.suspend.
+  // Settled by the exit landing, and by every event that means it never will:
+  // a resume or open that retires the outgoing presentation (its late callback
+  // is then dropped by useStaticModal's generation guard), or an unmount.
+  const exitWaiters = useRef<Array<() => void>>([]);
+  const settleExitWaiters = useCallback(() => {
+    const waiting = exitWaiters.current;
+    exitWaiters.current = [];
+    for (const resolve of waiting) resolve();
+  }, []);
+
   // THE DEVICE BACK BUTTON (#1521). A dialog is React state with no history
   // entry, so a back press used to fall straight past it — on Android to the
   // native shell, which now exits at its root, which would close the whole app
@@ -121,6 +140,7 @@ export function useDialog<T = void>(
     // An ordinary open ends any suspension: whatever the round trip was, this
     // presentation is a fresh one and owns its own teardown.
     suspended.current = false;
+    settleExitWaiters();
     if (!releaseBack.current) {
       releaseBack.current = pushDismissible(() => {
         // Answering false leaves the claim in place, so a dialog guarding
@@ -132,7 +152,7 @@ export function useDialog<T = void>(
       });
     }
     setIsOpen(true);
-  }, []);
+  }, [settleExitWaiters]);
 
   const close = useCallback(() => {
     if (opts.current.canClose && !opts.current.canClose()) return;
@@ -153,25 +173,45 @@ export function useDialog<T = void>(
     bookkeeping.current = true;
     suspended.current = true;
     setIsOpen(false);
+    // Not on screen, so there is no exit to wait for. (`openRef` is declared
+    // below; this runs long after render.)
+    if (!openRef.current) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      exitWaiters.current.push(resolve);
+    });
   }, []);
   const resume = useCallback(() => {
     bookkeeping.current = true;
     suspended.current = false;
     setIsOpen(true);
-  }, []);
+    settleExitWaiters();
+  }, [settleExitWaiters]);
 
   // The live open state, readable from a callback that fires outside React's
   // render cycle — the kit's exit lands up to 300ms after the close.
   const openRef = useRef(false);
   openRef.current = isOpen;
 
+  // Unmounted mid-suspension: no exit will ever be reported to this hook.
+  useEffect(() => settleExitWaiters, [settleExitWaiters]);
+
   useStaticModal(rootRef, isOpen, {
-    onKitDismiss: close,
+    // A suspension's own exit landing is not the viewer dismissing anything —
+    // the dialog is on its way back. Passing it to close() would release the
+    // back-press claim mid-round-trip, and resume() does not take it again, so
+    // the restored dialog would no longer answer the back button. Every native
+    // capture now waits for this exit, so it always lands mid-round-trip.
+    onKitDismiss: () => {
+      if (!suspended.current) close();
+    },
     // The card stays on screen for the whole exit animation now, so teardown
     // that empties it has to wait for the end of that animation rather than
     // running on the close tick — otherwise the dialog visibly blanks while it
     // is still sliding away. See StaticModalOptions.onExited.
     onExited: () => {
+      // The surface is gone, whatever happens next — a suspend() caller can
+      // go ahead now.
+      settleExitWaiters();
       // Reopened while the exit was still playing: onOpen has already
       // repopulated the card, and this teardown belongs to the presentation it
       // replaced. Running it would wipe what the viewer is now looking at.

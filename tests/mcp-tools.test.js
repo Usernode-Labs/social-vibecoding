@@ -2394,15 +2394,17 @@ test('a submission whose every route is rejected is told so in its own answer', 
   assert.equal(shaped.rejectedPaths.length, 2);
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use any of the testingPaths/);
-  assert.match(note, /default to the app home page/);
-  assert.match(note, /clears no votes/, 'and the cheap repair is named');
+  assert.match(note, /does not substitute|use visualEvidence/i,
+    'the answer points to semantic evidence without promising a root fallback');
+  assert.doesNotMatch(note, /default.*home page/i);
 });
 
 test('a partly usable list says what will actually be shot', () => {
   const shaped = tools.shapeTestingNotes({ testingPaths: ['/board @mobile', 'nope'] });
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use 1 of the testingPaths/);
-  assert.match(note, /shot on \/board @mobile only/, 'in the spelling the caller used');
+  assert.match(note, /manual test link uses \/board @mobile only/,
+    'the surviving manual route is named without calling it visual evidence');
 });
 
 test('a first submission with no routes at all is warned, an update is not', () => {

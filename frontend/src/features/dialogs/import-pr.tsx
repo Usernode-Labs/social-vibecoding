@@ -72,7 +72,7 @@ type ListState =
   | { kind: 'error'; text: string };
 
 const NOTE_CLASS = 'text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center';
-const ERROR_CLASS = 'text-sm text-red-400 py-6 text-center';
+const ERROR_CLASS = 'text-sm text-red-700 dark:text-red-400 py-6 text-center';
 
 /**
  * Turn an import failure into copy the user can act on.
@@ -390,7 +390,7 @@ export function ImportPrDialog() {
             Still working. GitHub is being slow, so don’t close this window.
           </div>
         </div>
-        <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
+        <div id="import-pr-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden mt-3">
           {error}
         </div>
         <div className="flex gap-3 mt-5">

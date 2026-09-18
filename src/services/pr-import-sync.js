@@ -288,6 +288,16 @@ async function applyHeadChange({
   session.imported_pr_head_sha = newHead;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
+  if (session.visual_evidence_state || session.visual_evidence_detail) {
+    // Revision fencing is synchronous with the imported head advance. Even
+    // when execution is disabled, reviewers must stop seeing evidence from
+    // the commit that just ceased to be current.
+    await require('./visual-evidence-state').markStaleForHead(
+      pool, session.id, String(newHead).toLowerCase()
+    ).catch((err) => log.warn('pr-import-sync', 'Visual evidence invalidation failed', {
+      sessionId: session.id, oldHead, newHead, err: err.message,
+    }));
+  }
   if (bumpEpoch) {
     log.info('integration', 'Approvals cleared', {
       sessionId: session.id, epoch, reason: `imported_head_${kind}`,

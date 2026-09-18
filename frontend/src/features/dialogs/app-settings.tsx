@@ -222,7 +222,7 @@ export function AppSettingsDialog() {
 
   return <DialogRoot id="app-settings-modal" ref={dialog.rootRef} {...dialog.backdropProps}>
     <DialogCard size="sm">
-      <h2 className="text-lg font-bold mb-2">App settings</h2>
+      <h2 className="text-lg font-bold mb-1">App settings</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">{app?.name}</p>
       {app?.demo_mode ? <p
         id="app-demo-mode-notice"
@@ -232,8 +232,8 @@ export function AppSettingsDialog() {
         This app is in demo mode. Proposals and votes from <b>@{app.demo_partner || 'its demo partner'}</b> are
         synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.
       </p> : null}
-      {loading ? <p role="status">Loading app settings…</p> : null}
-      {error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p> : null}
+      {loading ? <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Loading app settings…</p> : null}
+      {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mb-4">{error}</p> : null}
       {!loading && !app && error ? <Button onClick={() => void load(slug.current)}>Retry</Button> : null}
       <section
         id="app-access-section"
@@ -278,7 +278,7 @@ export function AppSettingsDialog() {
         <p
           id="app-access-status"
           role={accessMessageIsError ? 'alert' : 'status'}
-          className={`${accessMessage ? '' : 'hidden'} mt-3 text-sm ${accessMessageIsError ? 'text-red-600 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300'}`}
+          className={`${accessMessage ? '' : 'hidden'} mt-3 text-sm ${accessMessageIsError ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300'}`}
         >{accessMessage}</p>
         <Button
           id="app-access-propose"
@@ -317,7 +317,16 @@ export function AppSettingsDialog() {
           </Button>
         </form>
       </section>
-      <Button type="button" disabled={busy} onClick={() => dialog.close()}>Close</Button>
+      {/* Close is a dismissal, not this dialog's primary act — the widget
+          language's filled NEUTRAL pill, the same one #app-notifications-done
+          and #members-close wear (#2442). */}
+      <Button
+        type="button"
+        variant="neutral"
+        ink="neutral"
+        disabled={busy}
+        onClick={() => dialog.close()}
+      >Close</Button>
     </DialogCard>
   </DialogRoot>;
 }

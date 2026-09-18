@@ -10,6 +10,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const visuals = require('../src/services/visuals');
 const { resolveTargets, waitForScenarioReady } = require('../capture/capture');
 const { buildVisualsBlock } = require('../src/services/pr-metadata');
@@ -116,6 +118,27 @@ test('the root default preserves UI screenshots without adding media to backend-
   assert.equal(visuals.shouldCaptureMedia(false, 'default'), false);
   assert.equal(visuals.shouldCaptureMedia(false, 'submitted'), true);
   assert.equal(visuals.shouldCaptureMedia(false, 'scenario'), true);
+  assert.equal(visuals.shouldCaptureMedia(true, 'default', {
+    suppressLegacyMedia: true,
+  }), false);
+  assert.equal(visuals.shouldCaptureMedia(true, 'submitted', {
+    suppressLegacyMedia: true,
+  }), false);
+});
+
+test('the evidence kill switch stops v2 without reviving legacy review media', async () => {
+  const pool = { query: async () => { throw new Error('kill switch must not query enrollment'); } };
+  assert.equal(await visuals.suppressLegacyMediaForSession(pool, {
+    visualEvidence: { enabled: false, collect: false },
+  }, {}), true);
+  assert.equal(visuals.shouldCaptureMedia(true, 'default', {
+    suppressLegacyMedia: true,
+  }), false);
+});
+
+test('UI-affecting captures persist a missing evidence declaration before choosing legacy media', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
+  assert.match(src, /config\.visualEvidence\?\.collect && uiAffecting[\s\S]*requireIntentForUiChange/);
 });
 
 // ── capture.js resolveTargets: the still-only flag ─────────────────────

@@ -31,6 +31,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { DevCard, ActionButton } from '../card/dev-card';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
@@ -42,6 +43,7 @@ import type {
   ProposalDetails,
   RosterView,
   IssueLink,
+  IssueProposalRef,
   TextRun,
   TopicBody,
   TranscriptSection,
@@ -553,14 +555,50 @@ export function linkedIssueDelta(before: number[], after: number[]): {
   };
 }
 
-function IssueIdentity({ issue }: { issue: IssueLink }): ReactNode {
+/** One reference row: the chip, then one truncating line of title. */
+const REF_ROW = 'flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 transition-colors hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80';
+
+function IssueIdentity({ label, title }: { label: string; title: string }): ReactNode {
   return (
     <>
       <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
-        {`#${issue.n}`}
+        {label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{issue.title}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{title}</span>
     </>
+  );
+}
+
+/**
+ * #2431 — the change addressing THIS issue, on the issue's page.
+ *
+ * The same box, row and chip as `IssueAssociations` below, because this IS
+ * that section read from the other end: a closed issue names the change that
+ * closed it, an open one under work names the change on it. Reusing
+ * `.dev-change-issues` rather than inventing a second way to draw one
+ * reference is the whole point — there is no new styling here.
+ *
+ * The heading arrives already worded (`_issueProposalRefView`), and the href
+ * is always the in-app proposal page: the server resolves the reference FROM
+ * proposal rows, so a reference with no page is a reference that was never
+ * returned.
+ */
+function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
+  return (
+    <aside className="dev-change-issues" aria-label="The change addressing this issue">
+      <h4 className="dev-topic-h">{r.heading}</h4>
+      <div className="mt-2">
+        <a
+          href={r.href}
+          className={REF_ROW}
+          data-addressed-by={r.sessionId}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><IssueIdentity label={r.label} title={r.title} /></a>
+      </div>
+    </aside>
   );
 }
 
@@ -695,13 +733,13 @@ function IssueAssociations({
         <a
           key={issue.n}
           href={issue.href}
-          className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 transition-colors hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80"
+          className={REF_ROW}
           onClick={(event) => {
             if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault(); call('openTopic', 'issue', issue.n);
           }}
-        ><IssueIdentity issue={issue} /></a>
+        ><IssueIdentity label={`#${issue.n}`} title={issue.title} /></a>
       ))}</div> : <p className="dev-topic-note">No issues linked yet.</p>) : null}
       {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
@@ -711,7 +749,7 @@ function IssueAssociations({
           </div>
           {selectedIssues.length ? <div className="space-y-1.5">{selectedIssues.map((issue) => (
             <div key={issue.n} className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 dark:bg-zinc-800/80" data-selected-issue={issue.n}>
-              <IssueIdentity issue={issue} />
+              <IssueIdentity label={`#${issue.n}`} title={issue.title} />
               <button
                 type="button"
                 className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
@@ -746,14 +784,14 @@ function IssueAssociations({
                 className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
                 aria-label={`Add #${issue.n}: ${issue.title}`}
                 onClick={() => addIssue(issue.n)}
-              ><IssueIdentity issue={issue} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
+              ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
             ))}
             {exactOption ? <button
               type="button"
               className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
               aria-label={`Add issue #${exactOption.n}`}
               onClick={() => addIssue(exactOption.n)}
-            ><IssueIdentity issue={exactOption} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
+            ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
             {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open issues. Enter an exact issue number to add it.</p> : null}
           </div> : null}
           <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open issues in this app. Exact issue numbers can always be added.</p>
@@ -820,6 +858,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     <div ref={root} className="dev-topic">
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
+        {/* #2431: an ISSUE's page names the change on it; a CHANGE's page
+            names its issues. Mutually exclusive by topic kind. */}
+        {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
         {(body.issues?.length || body.canEditIssues) && id ? <IssueAssociations
           proposalId={Number(id)}
           issues={body.issues || []}
@@ -833,6 +874,110 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       <TopicBodySections body={conversation ? { ...body, transcript: null, activity: [] } : owner ? { ...body, transcript: null } : body} />
       {conversation && body.changeId ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
     </div>
+  );
+}
+
+function IssueBody({ html: initialHtml, editor }: {
+  html: string;
+  editor: NonNullable<TopicBody['issueBodyEditor']>;
+}): ReactNode {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(editor.markdown);
+  const [html, setHtml] = useState(initialHtml);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // A live issue refresh may replace the rendered Markdown. Adopt it while
+  // reading, but never overwrite a draft the author is actively typing.
+  useEffect(() => {
+    if (editing) return;
+    setDraft(editor.markdown);
+    setHtml(initialHtml);
+  }, [editor.issue, editor.markdown, initialHtml, editing]);
+
+  const cancel = () => {
+    setDraft(editor.markdown);
+    setError('');
+    setEditing(false);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+    const slug = av?.appData?.slug;
+    if (!slug) {
+      setError('This issue is not available right now.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/apps/${slug}/github-issues/${editor.issue}/body`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: draft }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Failed to update the issue body.');
+      const savedBody = typeof result.body === 'string' ? result.body : draft;
+      const rendered = typeof av?._cacheIssueBody === 'function'
+        ? av._cacheIssueBody(editor.issue, savedBody)
+        : '';
+      setDraft(savedBody);
+      setHtml(rendered);
+      setEditing(false);
+      if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update the issue body.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="dev-topic-h">About this issue</h4>
+        {editor.canEdit && !editing ? (
+          <button
+            type="button"
+            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
+            title="Edit this issue's body (you created it)"
+            aria-label="Edit issue body"
+            data-issue-body-edit={editor.issue}
+            onClick={() => { setError(''); setEditing(true); }}
+          >
+            <PencilSquareIcon className="w-4 h-4" />
+          </button>
+        ) : null}
+      </div>
+      {editing ? (
+        <form className="mt-2 space-y-3" data-issue-body-editor={editor.issue} onSubmit={save}>
+          <Textarea
+            id="dev-issue-body-input"
+            rows={10}
+            maxLength={10000}
+            width="full"
+            box="default"
+            className="resize-y"
+            value={draft}
+            autoFocus
+            disabled={saving}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+          />
+          {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
+            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save body'}</Button>
+          </div>
+        </form>
+      ) : html ? (
+        <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: html }} />
+      ) : editor.canEdit ? (
+        <p className="dev-topic-note">No description yet.</p>
+      ) : null}
+    </>
   );
 }
 
@@ -865,14 +1010,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // variables rather than one so the label can never end up over an issue.
   const summaryHtml = body.summaryHtml || null;
   const issueHtml = summaryHtml ? null : (body.issueBodyHtml || null);
+  const issueEditor = summaryHtml ? null : (body.issueBodyEditor || null);
   const tiles = a && a.visuals ? a.visuals : null;
-  const hasAbout = !!(summaryHtml || issueHtml || tiles || body.proposalBody || body.note);
+  const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note);
   return (
     <>
       {body.details ? <LedgerView d={body.details} /> : null}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
-          <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4>
+          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
@@ -880,7 +1026,8 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
               <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
             </>
           ) : null}
-          {issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
+          {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />
+            : issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
               {/* AppView.visualsTilesHtml's markup — four other surfaces

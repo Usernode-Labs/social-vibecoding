@@ -166,6 +166,10 @@ BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
 cat > "$BROWSER_MCP_CONFIG" <<JSON
 {
   "mcpServers": {
+    "visual_intent": {
+      "command": "node",
+      "args": ["/usr/local/bin/build-evidence-mcp.js"]
+    },
     "playwright": {
       "command": "npx",
       "args": ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "$BROWSER_PW_CONFIG"]

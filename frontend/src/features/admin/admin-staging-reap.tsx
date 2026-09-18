@@ -173,7 +173,9 @@ function Tile({ id, label, value }: { id: string; label: string; value: string }
 // them. Only the last carries the staging-demo prefix — the other three were
 // `textContent` writes, so they never did.
 function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; demo: boolean }) {
-  if (!loaded) return <>Loading…</>;
+  // A <span>, not a <p>: this renders INSIDE #admin-reap-summary, which is
+  // already a paragraph.
+  if (!loaded) return <span className={AdminUI.loading}>Loading…</span>;
   if (!job) return <>No sweep has run since this platform process started.</>;
   if (!job.total) {
     return <>{job.finishedAt ? 'Finished. No open previews were found.' : 'Starting…'}</>;

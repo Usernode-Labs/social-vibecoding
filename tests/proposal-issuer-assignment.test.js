@@ -93,7 +93,7 @@ test('native and imported proposal creation assign inside their transactions', (
       ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
       ['transaction commit', "await importClient.query('COMMIT')"],
       ['broadcast', 'pushSessionUpdate({ action: promote'],
-      ['success response', 'res.json({ ok: true, sessionId'],
+      ['success response', '...evidenceSubmission,'],
     ]
   );
 });

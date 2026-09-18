@@ -277,7 +277,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         </> : null}
       </fieldset>
       {loading && !error ? <p role="status" className="text-sm mt-3">Loading preview…</p> : null}
-      {error ? <p role="alert" className="text-sm text-red-500 mt-3">{error}</p> : null}
+      {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
       {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         {'Sent to the group for approval. The illustration changes when the vote passes. '}
         <a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>Open the proposal</a>
