@@ -9957,6 +9957,8 @@ a.drawer-ver--fork:hover {
     --create-modal-radius: 0px;
     --create-modal-gutter: 0px;
     --create-modal-align: flex-start;
+    --create-modal-overflow: auto;
+    --create-modal-overscroll: contain;
     --create-modal-padding: calc(20px + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
   }
 }
@@ -9966,6 +9968,8 @@ html.in-native-webview {
   --create-modal-radius: 0px;
   --create-modal-gutter: 0px;
   --create-modal-align: flex-start;
+  --create-modal-overflow: auto;
+  --create-modal-overscroll: contain;
   --create-modal-padding: calc(20px + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
 }
 /* The same layout if the kit is unavailable. Keep max-width measurable:
@@ -9979,8 +9983,8 @@ html.in-native-webview {
   height: var(--create-modal-height, auto);
   border-radius: var(--create-modal-radius, 1.5rem);
   padding: var(--create-modal-padding, 1.5rem);
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
+  overflow-y: var(--create-modal-overflow, visible);
+  overscroll-behavior-y: var(--create-modal-overscroll, auto);
 }
 
 /* Create-app modal: segmented "Create new | Import existing" toggle.
