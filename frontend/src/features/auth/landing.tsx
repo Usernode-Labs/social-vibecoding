@@ -1080,10 +1080,33 @@ export function LandingScreen() {
             written from outside React (see the file header); a rendered class
             string there would wipe the kit's `hidden`.
 
+            THE COLUMN'S WIDTH grows in two steps and then stops: 384px on a
+            phone, 512 from md, 672 from xl (max-w-sm / lg / 2xl — the shell's
+            own scale rather than three arbitrary pixel counts). One column of
+            words and two pills held at 384 in a maximized window reads as a
+            phone screenshot pasted into the middle of a desktop, which is what
+            a reviewer said of the build before this one.
+
+            NOTHING WIDER THAN 672, because the chip rail below loops by
+            walking half a track one lap long, and a lap is 859px: a container
+            wider than that would show ground between the last chip and the
+            first.
+
+            THE WIDEST STEP IS xl, NOT lg, and the reason is height. The
+            illustration and the heading grow with the column, and at lg the
+            two together are ~90px taller — which on the 768px-tall window a
+            1024-wide one usually is (and on a 1280x800 laptop) pushed "Join
+            the waitlist" under the fold. Tailwind's variants ask about width
+            only, so the step that costs height is taken at the width where a
+            window is tall enough to pay for it. Measured after: every shape
+            from 768x1024 up ends with the status line 37px clear of the
+            bottom edge, and nothing below that scrolls any further than it
+            did before.
+
             min-h-full, not h-full, is what keeps the scroller a scroller. The
             wrapper is AT LEAST the height visible inside the scroller, so when
             the content is shorter than the viewport there is free space for
-            the spacer below the sentence to take. When the content is taller
+            the two spacers to share. When the content is taller
             — a 560px window, or a long translation — the wrapper's height is
             its content's, the free space is zero, and nothing grows or
             shrinks: the illustration and the heading keep their natural
@@ -1094,7 +1117,7 @@ export function LandingScreen() {
             safe-area inset in the scroller's own padding — so the pin cannot
             introduce an overflow of its own.
         */}
-        <div className="max-w-sm mx-auto flex min-h-full flex-col pb-[34px]">
+        <div className="max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col pb-[34px]">
           {/*
               Offline explanation (#1021). Both ways in from this screen —
               the marketing waitlist page and Sign in — need a connection, so
@@ -1132,14 +1155,39 @@ export function LandingScreen() {
               52px bar whose shape is pinned by
               tests/header-height-parity.test.js, so what transfers is the GAP
               below the bar, not the two numbers that produce the board's.
+
+              `xl:w-[320px]` is the desktop size, and 320 rather than the 400
+              the 672px column could hold: the art is a sticker on the
+              wallpaper, not the subject, and every pixel of its height comes
+              off the room the two pills have on a 800px-tall laptop.
           */}
+          {/*
+              THE TOP HALF OF THE CENTRING PAIR. Its twin is the `grow`
+              spacer below the sentence, and the two together are what put
+              the free space EITHER SIDE of this group rather than all of it
+              underneath: two flex children with the same growth factor split
+              what is left equally, so the illustration, the rail and the
+              words sit centred in the band above the two pills while the
+              pills stay pinned to the foot.
+
+              Measured before this existed, the gap under the sentence was
+              155px on a 390x844 phone and 391px at 1920x1080, with the
+              illustration hard against the bar in both — the screen read as
+              two things stuck to opposite edges. Splitting it is the whole
+              change; the pin below is untouched.
+
+              When the content is taller than the scroller there is no free
+              space to split, so this is zero high and the layout is exactly
+              the one a short viewport had before.
+          */}
+          <div className="grow" />
           <img
             src="/brand/people.png"
             alt=""
             width={816}
             height={612}
             draggable={false}
-            className="mx-auto mt-6 block h-auto w-[272px] max-w-full"
+            className="mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full"
           />
           {/*
               The rail deliberately overflows AND loops: its four chips are
@@ -1203,7 +1251,7 @@ export function LandingScreen() {
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               Opening gradually
             </p>
-            <h1 className="mt-2.5 text-[30px] leading-[34px] font-extrabold">
+            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold">
               Come build the next version with us.
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
@@ -1245,6 +1293,12 @@ export function LandingScreen() {
                 above the bottom edge and a tall phone read as top-weighted,
                 with the two ways in floating in the middle of a dead area.
 
+                It has a twin above the illustration now, and the pair is what
+                centres the group between the bar and the pills. Both grow by
+                the same factor, so each takes half of whatever is left; this
+                one alone would put all of it here, which is the gap the twin's
+                note measures.
+
                 A spacer rather than `mt-auto` on the block below, because the
                 32px there is a MINIMUM and an auto margin would replace it
                 rather than add to it. This way the short-viewport case needs
@@ -1252,7 +1306,17 @@ export function LandingScreen() {
                 the spacer is simply zero high, and `mt-8` is the gap.
             */}
             <div className="grow" />
-            <div className="mt-8">
+            {/*
+                The two pills keep the PHONE's width whatever the column does.
+                They are the one part of this screen that is a control rather
+                than a picture or a paragraph: a 672px-wide "Join the waitlist"
+                stops reading as a button, which is exactly what the previous
+                max-w-3xl column drew at 1280 (a 736px pill beside a 272px
+                illustration). So the column above grows and this block does
+                not — same 384px cap as the sign-in screen's own column, on
+                the heading's left edge.
+            */}
+            <div className="mt-8 max-w-sm">
               {/*
                   THE ANONYMOUS WAY IN: the marketing waitlist page, then Sign
                   in, then one line for somebody who already joined. Both
