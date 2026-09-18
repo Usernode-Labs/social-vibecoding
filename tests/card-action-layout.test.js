@@ -417,7 +417,7 @@ test('proposal card: the vote is ONE button beside the bar, and the band holds o
   assert.doesNotMatch(html, /gc-vote-btn-yes|gc-vote-btn-no/, 'no Yes/No pills on the face');
   const band = html.match(/<div class="dev-card-badges dev-card-status">([\s\S]*?)<\/div><div class="gc-card-actions"/);
   assert.ok(band, 'the status band precedes the action band');
-  assert.match(band[1], /dev-status-pill-block[\s\S]*<button [^>]*class="dev-vote-btn" data-vote-btn="open"[^>]*aria-haspopup="menu"/,
+  assert.match(band[1], /dev-status-pill-block[\s\S]*<button [^>]*class="dev-vote-btn" data-vote-btn="open"[^>]*aria-haspopup="dialog"/,
     'the bar, then the vote button, in the status band');
   assert.match(band[1], /data-vote-btn="open"[^>]*>Vote</, '"Vote" until the viewer has voted');
   assert.match(band[1], /dev-vote-caret/, 'and a caret, so it reads as changeable');

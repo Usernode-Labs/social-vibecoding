@@ -11588,9 +11588,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-pop {
   position: fixed;
   z-index: 2000;
-  min-width: 168px;
-  padding: 4px;
-  border-radius: 14px;
+  width: 312px;
+  box-sizing: border-box;
+  padding: 10px 10px 8px;
+  border-radius: 16px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
@@ -11598,50 +11599,64 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   flex-direction: column;
   gap: 2px;
 }
-.dev-vote-opt {
+/* The picker's top: one two-way switch across its width, the chosen half
+   filled — accent for Yes, the blocked tint for No — each carrying its
+   tally. Yes is on when the picker opens (the viewer's own vote when they
+   have one), so a Yes is one click from here. */
+.dev-vote-switch {
   display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+}
+.dev-vote-switch-opt {
+  flex: 1 1 0;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 36px;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
   padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9999px;
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
-  text-align: left;
+  line-height: 1;
   cursor: pointer;
 }
-.dev-vote-opt svg { width: 15px; height: 15px; }
-.dev-vote-opt .dev-vote-n {
-  margin-left: auto;
+.dev-vote-switch-opt svg { width: 14px; height: 14px; }
+.dev-vote-switch-opt .dev-vote-n {
+  font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.dev-vote-opt:hover { background: var(--bg-tertiary); }
-.dev-vote-opt[aria-checked="true"] { background: var(--accent-tint); color: var(--accent); }
-.dev-vote-opt-no[aria-checked="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-switch-opt:not([aria-pressed="true"]):hover { background: var(--bg-primary); }
+.dev-vote-switch-yes[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n { color: var(--accent-ink); opacity: 0.75; }
+.dev-vote-switch-no[aria-pressed="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-switch-no[aria-pressed="true"] .dev-vote-n { color: var(--state-blocked); }
 
-/* ── #1688: the line under the rows ──
-   Picking a side grows the picker by a one-line box: the label above it says
-   what to write, the box holds a sentence, and the two buttons under it send
-   the vote — with the line, or for a Yes without one. A No's send button
-   stays dim until there is a line, so nothing has to say "required". */
-.dev-vote-pop[data-asking] { width: 268px; }
+/* ── #1688: the line under the switch ──
+   Always there, never a second step: the label above the box says what to
+   write for the side that is on, the box holds a sentence, and Cancel sits
+   beside the one button that sends the vote — "Vote yes" or "Vote no" with
+   the switch. A No's button stays dim until there is a line, so nothing has
+   to say "required". */
 .dev-vote-reason {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 4px;
-  padding: 6px 2px 0;
-  border-top: 1px solid var(--border-light);
+  margin-top: 8px;
+  padding: 0 2px;
 }
 .dev-vote-reason-label {
   display: block;
-  padding: 0 6px 2px;
+  padding: 0 4px 2px;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text-muted);
@@ -11665,7 +11680,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  padding: 2px 2px 0;
+  padding: 8px 0 0;
 }
 .dev-vote-reason-cancel, .dev-vote-reason-send {
   height: 28px;
@@ -11688,12 +11703,13 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    box is 16px so iOS does not zoom on focus; the kit's `--un-kb-inset`
    lifts the sheet above the keyboard. */
 .dev-vote-sheet { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; }
-.dev-vote-sheet .dev-vote-opt { height: 48px; padding: 0 14px; border-radius: 12px; font-size: 16px; }
-.dev-vote-sheet .dev-vote-opt svg { width: 18px; height: 18px; }
-.dev-vote-sheet .dev-vote-reason { margin-top: 8px; padding-top: 10px; gap: 6px; }
+.dev-vote-sheet .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
+.dev-vote-sheet .dev-vote-switch-opt svg { width: 16px; height: 16px; }
+.dev-vote-sheet .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
+.dev-vote-sheet .dev-vote-reason { margin-top: 10px; gap: 6px; }
 .dev-vote-sheet .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
-.dev-vote-sheet .dev-vote-reason-actions { padding-top: 6px; gap: 8px; }
+.dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
