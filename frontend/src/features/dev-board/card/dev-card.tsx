@@ -1400,8 +1400,13 @@ function useFoldedActions(
   const [measured, setMeasured] = useState(false);
   // Every pill but a kudos host may fold — the first included. The fixed
   // children ("Open card", the hamburger, Preview) sit at the band's right
-  // and a narrow column may leave no room before them.
-  const foldable = primary.filter((a) => a.kudos == null).length;
+  // and a narrow column may leave no room before them. The topic head hands
+  // its labelled Preview over as an action spec too (ActionButton draws it
+  // as the fixed control, with no fold mark), so it is not a fold either:
+  // counting it put the folded window one spec off, and a folded first pill
+  // never reached the menu.
+  const foldSpecs = primary.filter((a) => a.kudos == null && !a.preview);
+  const foldable = foldSpecs.length;
   // A band whose one pill is the kudos slot still measures: the slot's
   // stages are decided here too.
   const hasKudos = primary.some((a) => a.kudos != null);
@@ -1497,7 +1502,7 @@ function useFoldedActions(
     if (!menuKey) return undefined;
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     if (!av || typeof av._setFoldedCardActions !== 'function') return undefined;
-    const hidden = n > 0 ? primary.filter((a) => a.kudos == null).slice(-n) : [];
+    const hidden = n > 0 ? foldSpecs.slice(-n) : [];
     // The kudos slot, when not even its clap fit, goes last: app-view.js
     // draws its row (`_kudosMenuItem`) through the slot's own button.
     const slot = kudosFolded ? primary.filter((a) => a.kudos != null) : [];

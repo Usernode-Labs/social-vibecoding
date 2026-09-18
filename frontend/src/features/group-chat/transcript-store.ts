@@ -127,8 +127,23 @@ export interface WeeklyCard {
 }
 
 export interface ProposalEvent {
-  /** #1688 adds `weekly`: the Friday card, a message from the app itself. */
-  type: 'submitted' | 'merged' | 'weekly';
+  /**
+   * #1688 adds `weekly`: the Friday card, a message from the app itself.
+   * `vote` and `notice` exist only on a change page's own Discussion
+   * (`GroupChat._threadEvent`), where every row is drawn in this language:
+   * a vote cast, and any other notice the platform posted about the change.
+   */
+  type: 'submitted' | 'merged' | 'weekly' | 'vote' | 'notice';
+  /** `vote` rows: which way, and the line the voter left, if any. */
+  vote?: 'yes' | 'no';
+  reason?: string;
+  /** `notice` rows: the notice, reworded for the page it is on. */
+  text?: string;
+  /**
+   * True on the proposal's OWN page: the row names the act without the
+   * number and title ("Proposed this change for a vote"), and is no door.
+   */
+  here?: boolean;
   /** The Friday card's data; set only when `type` is `weekly`. */
   weekly?: WeeklyCard | null;
   /** The session id from the row's metadata tag, or '' on an older row. */
@@ -303,7 +318,14 @@ export interface TranscriptLead {
    * app's name. Null or absent on the thread transcript, which has its own
    * placeholder above.
    */
-  quiet?: { exhausted: boolean; canPost: boolean; appName: string } | null;
+  quiet?: { exhausted: boolean; canPost: boolean; appName: string; variant?: 'app' | 'change' } | null;
+  /**
+   * How a THREAD transcript draws its rows. 'chat' is the change page's
+   * Discussion: bubbles for people, and every notice as a message from
+   * whoever did it, the general chat's language. Absent or 'flat', the
+   * thread keeps its flat named rows and centred lines (an issue's page).
+   */
+  language?: 'chat' | 'flat';
 }
 
 export interface TranscriptView {

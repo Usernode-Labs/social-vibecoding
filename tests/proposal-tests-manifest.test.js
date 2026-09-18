@@ -125,6 +125,19 @@ test('the list is bounded by MAX_DECLARED_TESTS, not by the old parse cap', () =
 // manifest, which is what a ceiling can only ever be wrong RELATIVE TO. It
 // crossed 300 and the tail was being dropped silently, so the ceiling is
 // stated as headroom over the real count rather than as a bare number.
+test("every declared selector fits the cap the reader and the capture clip at", () => {
+  // readTests and capture/capture.js both `slice(0, 256)` a selector. A
+  // longer one is not refused: it is cut mid-token, becomes an invalid
+  // selector, and its check fails on every build with "was not found" —
+  // which is how five checks of one proposal failed 6 of 6 runs while the
+  // page they described was right. The cap is asserted here, on the
+  // manifest as written, so the cut never happens silently again.
+  const tests = require('../dapp.json').tests;
+  const over = tests.filter((t) => typeof t.expectSelector === 'string' && t.expectSelector.length > 256)
+    .map((t) => `${t.expectSelector.length}: ${t.name}`);
+  assert.deepEqual(over, [], 'shorten these selectors: the runner clips them at 256 characters');
+});
+
 test("this repo's own manifest fits under the ceiling, with room to grow", () => {
   const meta = appManifest.readTestsWithMeta(require('../dapp.json'));
   assert.equal(meta.ceilingDropped, 0,

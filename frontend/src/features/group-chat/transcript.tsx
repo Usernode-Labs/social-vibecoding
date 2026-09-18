@@ -603,11 +603,14 @@ export function Transcript({ source = 'main' }: { source?: string }) {
  * proposal event is that event's message row; the thread draws every row
  * flat, and the line itself where the general chat draws an event.
  */
-function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false) {
+function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
-  if (msg.kind === 'message') return <MessageRow key={key} msg={msg} bubbled={main} />;
-  if (main && msg.event) return <EventRow key={key} msg={msg} />;
+  // `chat` is a change page's own Discussion, drawn in the general chat's
+  // language: bubbles for people, and every notice as a message (its rows
+  // arrive with an event from `GroupChat._threadEvent`).
+  if (msg.kind === 'message') return <MessageRow key={key} msg={msg} bubbled={main || chat} />;
+  if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
 }
 
@@ -645,8 +648,13 @@ export function drawnInGeneralChat(m: TranscriptMessage): boolean {
  */
 export function TranscriptRows({ view, source }: { view: TranscriptView; source: string }) {
   const main = source === 'main';
+  // A change page's Discussion (`lead.language === 'chat'`) keeps every row,
+  // as a thread does, and draws each in the general chat's language — and
+  // ends with the quiet card when nobody has commented, as the general chat
+  // does when nobody has posted.
+  const chat = !main && view.lead.language === 'chat';
   const rows = foldRepeats(view.messages).filter((m) => !main || drawnInGeneralChat(m));
-  const quiet = main && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
+  const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
     ? view.lead.quiet
     : null;
   return (
@@ -666,7 +674,7 @@ export function TranscriptRows({ view, source }: { view: TranscriptView; source:
       {view.lead.placeholder ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {rows.map((msg, i) => renderRow(msg, `i${i}`, main))}
+      {rows.map((msg, i) => renderRow(msg, `i${i}`, main, chat))}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );

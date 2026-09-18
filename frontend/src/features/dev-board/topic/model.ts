@@ -37,7 +37,16 @@ export type NoteTone = 'neutral' | 'ok' | 'warn' | 'error';
  * **maya**…" — and a plain string could not carry that. `{ b }` is the
  * emphasised run; a bare string is ordinary text.
  */
-export type TextRun = string | { b: string };
+export type TextRun = string | {
+  b: string;
+  /**
+   * A row's STATE, as its first word — "Failing.", "Syncing.", "Approved" —
+   * drawn bold in the ledger tone named here, so a reader scanning the
+   * ledger finds the one word they are looking for. Absent, the run is the
+   * plain `font-medium` emphasis the note boxes use for a name.
+   */
+  tone?: 'bad' | 'warn' | 'ok' | 'vote' | 'mute';
+};
 
 export interface NoteItem {
   /** A `<code>` run — a variable name, a file path. */
@@ -229,6 +238,11 @@ export interface LedgerRow {
   actions?: ActionSpec[];
   /** Extra attributes on the row — `data-checks-base="superseded"` for one check. */
   attrs?: Record<string, string>;
+  /**
+   * The Review row: draw "How voting works" at the right end of its line.
+   * It used to be a caption under the whole ledger; it explains this row.
+   */
+  help?: boolean;
 }
 
 export interface ProposalDetails {
@@ -267,6 +281,12 @@ export interface ProposalDetails {
 export interface RosterView {
   /** 'loading' until the fetch answers; 'hidden' when it fails. */
   phase: 'loading' | 'ready' | 'hidden';
+  /**
+   * Whether the vote has what it needs (`_topicLedgerRows` reads the same
+   * counts the pill does). Approved, the line reads "Approved by @maya ✓";
+   * not yet, it reads the tally.
+   */
+  approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
   needs?: string;
@@ -321,9 +341,29 @@ export interface TopicBody {
   /** The proposal owner/full platform admin may change issue associations. */
   canEditIssues?: boolean;
   testing?: { html: string | null; path: string | null };
-  activity?: { label: string; at: string }[];
   workspace?: number | null;
   discussion?: string | null;
+  /**
+   * The Build door: the pill on the card ("Continue building", "Open
+   * build", "Read the build") and the sheet it opens under the Discussion
+   * — the owner's own workspace, or the dev chat the owner published. Null
+   * for a private change somebody else is reading, and for an imported
+   * one, which has no session behind it.
+   */
+  build?: { kind: 'owner' | 'published'; label: string } | null;
+  /**
+   * The visual evidence, as "What changes for you" reads it: the claims as
+   * bullets and the run's state as one strip. A verified run keeps the
+   * before/after card in `actions.visuals` instead, which leads with the
+   * claims itself.
+   */
+  evidence?: {
+    state: string;
+    verified: boolean;
+    label: string;
+    sentence: string;
+    claims: string[];
+  } | null;
   /**
    * The detail actions. The PILLS are merged onto the card's own action band
    * by `_renderTopicHead` (one action line, as on the board); the head draws

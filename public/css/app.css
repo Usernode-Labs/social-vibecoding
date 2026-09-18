@@ -6097,6 +6097,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-color: rgba(90, 169, 255, 0.35);
 }
 .gc-vote-btn-preview:hover { background: rgba(90, 169, 255, 0.18); border-color: rgba(90, 169, 255, 0.5); color: var(--accent); }
+/* The ledger's one action (Re-run checks): the band's accent pill — the
+   tinted fill Preview wears on the card — so the row's button reads as the
+   same kind of control as the card's, not as a second neutral chip. */
+.gc-vote-btn-accent { background: var(--accent-tint); border-color: transparent; color: var(--accent); font-weight: 600; }
+.gc-vote-btn-accent:hover { background: var(--accent-tint); border-color: var(--accent-light); color: var(--accent); }
 /* Admin force-merge / force-undo buttons. Amber instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
@@ -12421,37 +12426,23 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-change-issues { min-width: 0; }
 .dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
+/* The Discussion sheet, and the Build sheet under it (topic/conversation.tsx).
+   The tabs are gone: Activity was three timestamps the card's meta line
+   carries, and Build is the "Open build" / "Continue building" pill on the
+   card, which opens the sheet below the Discussion and scrolls to it. */
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
-.dev-conversation-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  margin-bottom: 12px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-}
-.dev-conversation-tabs [role="tab"] {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--text-muted);
-}
-.dev-conversation-tabs [aria-selected="true"] {
-  color: var(--text-primary);
-  background: var(--dc-sheet);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
-}
-.dev-conversation-tabs [role="tab"]:focus-visible,
-.dev-conversation-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dev-conversation-panel { min-width: 0; }
-.dev-conversation-panel[hidden] { display: none; }
 .dev-conversation-audience { margin: 0 4px 8px; }
 .dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
+/* The thread's scroller wears `overscroll-contain` for the full-height
+   thread screens, where the page behind it must not move. Here the thread is
+   one sheet in a scrolling page, and the utility trapped the wheel: a reader
+   whose pointer rested on the Discussion could not scroll the page even with
+   the thread at its end. Let the scroll chain to the page. */
+.dev-conversation-chat #gc-thread-scroll { overscroll-behavior: auto; }
+.dev-conversation-build { min-width: 0; scroll-margin-top: 12px; }
+.dev-conversation-build[hidden] { display: none; }
+.dev-conversation-build-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dev-conversation-build-head > .dev-topic-h { margin-bottom: 8px; }
 .dev-conversation-workspace {
   display: flex;
   flex-direction: column;
@@ -12473,9 +12464,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   -webkit-backdrop-filter: none;
 }
 #dev-topic-thread .dev-conversation #gc-thread-messages::before { content: none; }
-.dev-conversation-activity { display: flex; flex-direction: column; gap: 16px; padding: 8px 4px; }
-.dev-conversation-activity li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
-.dev-conversation-activity time { color: var(--text-muted); }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -12512,6 +12500,112 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   color: var(--text-muted);
 }
 .dev-topic-sub + .dev-topic-about-body { margin-top: 0; }
+
+/* ── The About sheet's parts ─────────────────────────────────────────────
+   "What changes for you" and "Addresses issue" are two parts of one sheet,
+   in one heading style: a sentence-case semibold line in the text ink, a
+   step below the sheet's uppercase eyebrow. Both indent the same 6px. */
+.dev-topic-part { padding: 0 6px; }
+.dev-topic-part-h { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; line-height: 1.3; color: var(--text-primary); }
+/* The fold: one line of the summary with a fade, and a Show more under it.
+   `flow-root` keeps the children's margins inside the box in BOTH states —
+   with only `overflow: hidden` on the folded state, the first paragraph's
+   margin collapsed through the box when unfolded and the text jumped. */
+.dev-topic-fold { display: flow-root; }
+.dev-topic-fold > .dev-topic-about-body > .dev-issue-body > :first-child,
+.dev-topic-fold > .dev-topic-about-body > :first-child { margin-top: 0; }
+.dev-topic-fold[data-folded] {
+  max-height: 3em;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-mask-image: linear-gradient(to bottom, #000 35%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 35%, transparent 100%);
+}
+.dev-topic-fold-more {
+  position: relative;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.dev-topic-fold-more:hover { text-decoration: underline; }
+.dev-topic-fold[data-folded] + .dev-topic-fold-more { margin-top: -0.5em; }
+/* What the change claims a reader will see, as bullets under the summary,
+   then the evidence run's state as one strip — inside the fold. */
+.dev-topic-claims-h { margin-top: 12px; }
+.dev-topic-claims { margin: 0; padding-left: 20px; list-style: disc; font-size: 13.5px; line-height: 1.5; color: var(--text-primary); }
+.dev-topic-claims li + li { margin-top: 4px; }
+.dev-topic-fold > .dev-topic-visuals { margin-top: 12px; }
+.dev-topic-evidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--bg-primary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.dev-topic-evidence > .dev-badge { flex: none; }
+/* Addresses issue, as the sheet's second part: the grey box goes, a hairline
+   parts it from the summary, and each issue is a row in the Discussion's
+   event-box language — the number where the glyph goes, the title, the
+   chevron — tighter than the chat's box. */
+.dev-topic-about .dev-change-issues {
+  margin: 10px 0 0;
+  padding: 10px 6px 0;
+  border: 0;
+  border-top: 1px solid var(--app-sheet-line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.dev-topic-about .dev-change-issues .dev-topic-part-h { margin: 0; }
+.dev-topic-about .dev-change-issues > .mt-2 { margin-top: 8px; }
+.dev-issue-ref { max-width: none; margin-top: 0; padding: 6px 10px; gap: 9px; font-size: 13.5px; }
+/* ── More about this change ──────────────────────────────────────────────
+   Technical details and Testing instructions, after the ledger, as two
+   collapsed accordion rows: the label on the left, a chevron on the right
+   that turns when the row opens, a hairline between them. */
+.dev-topic-acc { display: flex; flex-direction: column; }
+.dev-topic-acc > .dev-topic-details { margin-top: 0; }
+.dev-topic-acc > .dev-topic-details + .dev-topic-details { border-top: 1px solid var(--app-sheet-line); }
+.dev-topic-acc > .dev-topic-details > .dev-topic-details-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 2px;
+  font-size: 13.5px;
+  color: var(--text-primary);
+}
+/* Both states: the base rules set the ▸/▾ glyph per state further down the
+   sheet, and the open one outranks a plain descendant rule here. */
+.dev-topic-acc > .dev-topic-details > .dev-topic-details-summary::before,
+.dev-topic-acc > .dev-topic-details[open] > .dev-topic-details-summary::before { content: none; }
+.dev-topic-acc > .dev-topic-details > .dev-topic-details-summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition: transform 150ms;
+}
+.dev-topic-acc > .dev-topic-details[open] > .dev-topic-details-summary::after { transform: rotate(-135deg); }
+.dev-topic-acc > .dev-topic-details > .dev-topic-details-body,
+.dev-topic-acc > .dev-topic-details > .dev-topic-note { margin: 0 2px 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .dev-topic-acc > .dev-topic-details > .dev-topic-details-summary::after { transition: none; }
+}
 
 /* The card at full width: the title is not clamped, and the facts line may
    hold every chip (the head shows the unset ones as "Set priority"). */
@@ -12615,11 +12709,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--state-attention);
 }
 
-.dev-ledger-path-note {
-  margin: -4px 0 8px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
 .dev-ledger-k small {
   display: block;
   font-size: 12px;
@@ -12804,10 +12893,82 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-yes { color: var(--state-ok); font-weight: 600; }
 .dev-ledger-no { color: var(--state-blocked); font-weight: 600; }
 .dev-ledger-needs { color: var(--text-muted); }
+/* ── The rows' first word ──────────────────────────────────────────────
+   Each row leads with its STATE — "Syncing.", "Failing.", "Approved" — bold
+   in the row's tone, so a scan down the column reads the path without the
+   sentences. The tone classes mirror the dot's. */
+.dev-ledger-lead { font-weight: 700; }
+.dev-ledger-lead-bad { color: var(--state-blocked); }
+.dev-ledger-lead-warn { color: var(--state-attention); }
+.dev-ledger-lead-ok { color: var(--state-ok); }
+.dev-ledger-lead-vote { color: var(--accent); }
+.dev-ledger-lead-progress { color: var(--state-progress); }
+.dev-ledger-lead-mute { color: var(--text-muted); }
+/* The row that blocks the merge is washed in the blocked tint, bleeding
+   8px past the sheet's text edge on both sides so the wash reads as a band
+   behind the row rather than a box drawn inside it. */
+.dev-ledger-row.dev-ledger-bad {
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 12px;
+  background: var(--state-blocked-bg);
+}
+.dev-ledger-row.dev-ledger-bad + .dev-ledger-row { border-top-color: transparent; }
+/* ── One line per check ─────────────────────────────────────────────────
+   A check's name is one line, however long the declared test's name runs,
+   ending in an ellipsis; the reason sits behind a "Why it failed" disclosure
+   on the line's right. A check that passed on retry keeps the same door,
+   reading "Passed on retry". The passes list reuses the row. */
+.dev-ledger-fails > .dev-ledger-check {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 10px;
+  border-radius: 10px;
+}
+.dev-ledger-fails > .dev-ledger-check-why { display: block; }
+.dev-ledger-check-glyph { flex: none; }
+.dev-ledger-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-ledger-check-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
+.dev-ledger-check .dev-check-flaky { flex: none; }
+.dev-ledger-why { margin: 0; }
+.dev-ledger-check-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+  font: inherit;
+  color: inherit;
+}
+.dev-ledger-check-line::-webkit-details-marker { display: none; }
+.dev-ledger-check-open { flex: none; font-size: 12px; font-weight: 600; color: var(--accent); }
+.dev-ledger-check-line:hover .dev-ledger-check-open { text-decoration: underline; }
+.dev-ledger-why[open] > .dev-ledger-check-line .dev-ledger-check-open::after { content: " ▴"; }
+.dev-ledger-why-body {
+  margin-top: 4px;
+  padding-bottom: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.dev-ledger-why-errors { margin: 4px 0 0; padding-left: 16px; list-style: disc; }
+/* ── The Review line ────────────────────────────────────────────────────
+   "Approved by @alice ✓", and at its right end the "How voting works" link
+   and the "?" — this is the row they explain, so they sit on it. */
+.dev-ledger-review-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.dev-ledger-review-line > .dev-ledger-roster { flex: 1 1 auto; min-width: 0; }
 .dev-ledger-help { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+.dev-ledger-review-line > .dev-ledger-help { margin: 0 0 0 auto; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 @media (max-width: 480px) {
   .dev-ledger-row { grid-template-columns: 22px minmax(0, 1fr); }
   .dev-ledger-v { grid-column: 2; }
+  .dev-ledger-check-path { display: none; }
 }
 
 /* ── About ── */
@@ -12934,6 +13095,25 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 #dev-topic-thread .gc-msg-self > .min-w-0 { background: var(--accent-tint); }
+/* A change's Discussion speaks the general chat's language (group-chat.js
+   `language: 'chat'`): the transcript draws the bubbles itself, the
+   viewer's own in the accent bubble, so the topic page's own bubble dressing
+   above stands down there — the row is the Messages screen's row. */
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg { padding: 8px 16px; gap: 12px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 {
+  flex: 1 1 0%;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg-self > .min-w-0 { background: transparent; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > [aria-hidden="true"] { width: 44px; height: 44px; font-size: 17px; border-radius: 12px; margin-top: 0; }
 /* The editor needs the row's available width, not the bubble's intrinsic
    text width. Save and Cancel clear data-editing and restore bubble sizing. */
 #dev-topic-thread .gc-msg[data-editing="1"] > .min-w-0 {

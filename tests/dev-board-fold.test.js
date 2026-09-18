@@ -782,6 +782,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // must now also hold a card whose button asks "Still yes?" (a Yes cast on
   // an earlier version) and a fresh card whose kudos slot offers thanks by
   // name — one check, no slot consumed.
+  //
+  // 690 → 690: the proposal page redesign (task 495) rewrote the checks the
+  // old page shape held — the sheet order, the two About halves, the path
+  // caption and its who-acts sub, the three conversation tabs, Explore in
+  // ⋯ — and folded its own claims into them with `:has()` on the same
+  // pages (the fold and the More sheet's accordion, the Review line, the
+  // Discussion in the general chat's language, the accent Re-run pill),
+  // merging the bare help-button check into the Review-line one. Its two
+  // new checks — the issue rows under What changes for you (9000013) and
+  // the one-line failing check (9000093) — take the two slots that merging
+  // freed, so the manifest keeps its 20 clear of the ceiling
+  // (tests/improve-session-spinner.test.js, tests/proposal-tests-manifest.test.js).
   assert.equal(DAPP.tests.length, 690);
 });
 
@@ -930,8 +942,12 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
   assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
-  assert.match(CARD, /const foldable = primary\.filter\(\(a\) => a\.kudos == null\)\.length;/);
-  assert.match(CARD, /const hidden = n > 0 \? primary\.filter\(\(a\) => a\.kudos == null\)\.slice\(-n\) : \[\];/);
+  // The fold window is taken over the specs that DRAW a foldable pill: not
+  // the kudos host, and not the topic head's labelled Preview (an action
+  // spec too, drawn as the band's fixed control). Counting Preview put the
+  // window one spec off, and a folded first pill never reached the menu.
+  assert.match(CARD, /const foldSpecs = primary\.filter\(\(a\) => a\.kudos == null && !a\.preview\);\n\s*const foldable = foldSpecs\.length;/);
+  assert.match(CARD, /const hidden = n > 0 \? foldSpecs\.slice\(-n\) : \[\];/);
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
