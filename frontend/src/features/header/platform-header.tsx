@@ -43,7 +43,6 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
-import { GlobalChatModeSwitch } from '../global-chat';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
@@ -560,7 +559,16 @@ export function PlatformHeader() {
               and it is checked BEFORE preventDefault — the rule
               tests/nav-new-tab.test.js pins across the whole shell.
           */}
-          <GlobalChatModeSwitch />
+          {/*
+              The experimental chat toggle rode here, between Improve and the
+              bell, as a pill flipping `Chat` / `Classic`. It is Improve's now
+              — the head of "Changes in progress", as "New chat
+              (experimental)" — for a reason the two labels make plain: it
+              STARTS something, and everything else that starts something on
+              this app lives in that panel. See
+              ../global-chat/new-chat-button.tsx for the rest of the argument,
+              including why the return trip did not need a header control.
+          */}
           <a
             id="notifications-btn"
             href="#notifications"

@@ -13,13 +13,15 @@ const test = require('node:test');
 const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const screen = read('frontend', 'src', 'features', 'global-chat', 'index.tsx');
-const modeSwitch = read('frontend', 'src', 'features', 'global-chat', 'mode-switch.tsx');
+const newChatButton = read('frontend', 'src', 'features', 'global-chat', 'new-chat-button.tsx');
 const store = read('frontend', 'src', 'features', 'global-chat', 'store.ts');
 const renderers = read('frontend', 'src', 'features', 'global-chat', 'renderers.tsx');
 const api = read('frontend', 'src', 'features', 'global-chat', 'api.ts');
 const settings = read('frontend', 'src', 'features', 'settings', 'sections', 'global-chat.tsx');
 const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
+const header = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
+const improvePanel = read('frontend', 'src', 'features', 'improve', 'improve-panel.tsx');
 
 test('Global Chat ships as an experimental sibling while Classic remains the startup mode', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
@@ -27,8 +29,34 @@ test('Global Chat ships as an experimental sibling while Classic remains the sta
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
   assert.match(screen, /Classic remains the default\./);
   assert.match(screen, /snapshot\.open \? 'flex' : 'hidden'/);
-  assert.match(modeSwitch, /if \(!snapshot\.bootstrap\?\.parityReady\) return null/);
-  assert.match(modeSwitch, /Switch to Chat \(experimental\)/);
+  assert.match(newChatButton, /if \(!snapshot\.bootstrap\?\.parityReady\) return null/);
+  assert.match(newChatButton, /New chat \(experimental\)/);
+});
+
+test('the experimental chat entry is Improve\'s, heads its section, and starts a new thread', () => {
+  // It rode in the header as a Chat/Classic toggle. The header keeps no chat
+  // control at all now — the screen's own "Use Classic" and "Open in Classic"
+  // own the return trip.
+  assert.doesNotMatch(header, /GlobalChatNewChatButton|GlobalChatModeSwitch/);
+  assert.match(improvePanel, /<GlobalChatNewChatButton onNavigate=\{dismissForNav\} \/>/);
+
+  // ABOVE the section heading, which #improve-panel renders only when there
+  // are changes to head. Below it the entry would vanish into the "No changes
+  // in progress." state — the one moment it is most wanted.
+  const sessions = improvePanel.slice(improvePanel.indexOf('id="improve-sessions"'));
+  assert.ok(
+    sessions.indexOf('<GlobalChatNewChatButton') >= 0
+      && sessions.indexOf('<GlobalChatNewChatButton') < sessions.indexOf('Changes in progress'),
+    'the chat entry must render before the conditional section heading',
+  );
+
+  // A NEW thread per press, without painting the previous one on the way in.
+  assert.match(newChatButton, /openGlobalChat\(\{ fresh: true \}\)/);
+  assert.match(store, /if \(fresh\) \{\s*await startNewGlobalChat\(\);/);
+
+  // setDocumentMode knows nothing about #improve-panel, so the entry closes
+  // the surface it sits on rather than letting it cover the chat screen.
+  assert.match(newChatButton, /onNavigate\?\.\(\);\s*void openGlobalChat/);
 });
 
 test('Chat mode is memory-only and leaves every launch in Classic', () => {
@@ -82,7 +110,7 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(screen, /aria-label=\{sending \? 'Stop response' : 'Send message'\}/);
   assert.match(css, /\.global-chat-composer[\s\S]*var\(--platform-safe-bottom/);
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
-  assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-mode-switch \{ min-height: 44px; \}/);
+  assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-new-chat-btn \{ min-height: 44px; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
 });
 

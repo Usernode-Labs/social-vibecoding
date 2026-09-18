@@ -146,11 +146,24 @@ async function loadCurrentThread(bootstrap: GlobalChatBootstrap) {
   }
 }
 
-export async function openGlobalChat() {
+/**
+ * `fresh` opens ON a new thread rather than the last one, for the entry point
+ * that offers a new chat (../global-chat/new-chat-button.tsx). It is an option
+ * here rather than two calls at the call site because the obvious sequencing —
+ * open, then start a new chat — resolves `loadCurrentThread` first and paints
+ * the previous conversation for as long as `createThread` takes to replace it.
+ * `startNewGlobalChat` does its own focus pass, so this one is skipped.
+ */
+export async function openGlobalChat({ fresh = false } = {}) {
   setDocumentMode(true);
   publish({ open: true, error: '' });
   const boot = await initializeGlobalChat();
   if (!boot) return;
+  if (fresh) {
+    await startNewGlobalChat();
+    void refreshGlobalChatUsage();
+    return;
+  }
   await loadCurrentThread(boot);
   void refreshGlobalChatUsage();
   requestAnimationFrame(() => document.getElementById('global-chat-composer')?.focus());

@@ -1315,13 +1315,29 @@ body.global-chat-mode > :is(
   width: 100%;
   overflow: hidden;
 }
-.global-chat-mode-switch {
+/*
+ * The experimental chat entry, at the head of Improve's "Changes in progress"
+ * (frontend/src/features/global-chat/new-chat-button.tsx).
+ *
+ * It wore `.global-chat-mode-switch` and a header bar's 28px while it was a
+ * toggle up there. The `.is-chat` fill went with the toggle rather than being
+ * renamed: it marked "you are in chat mode", and the chat screen covers this
+ * button the moment it opens, so there is no longer a moment at which that
+ * state could be seen.
+ *
+ * MARGINS, not padding on a wrapper — this is a direct child of the
+ * #improve-sessions scroller, and 16px is the `px-4` every label and row in
+ * that panel is set to, so the pill's left edge lines up with the heading
+ * below it.
+ */
+.global-chat-new-chat-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 10px;
+  min-height: 30px;
+  margin: 10px 16px 2px;
+  padding: 0 12px;
   border: 1px solid var(--brand-line);
   border-radius: 9999px;
   color: var(--brand-ink);
@@ -1331,10 +1347,11 @@ body.global-chat-mode > :is(
   line-height: 1;
   white-space: nowrap;
 }
-.global-chat-mode-switch.is-chat {
-  color: var(--accent-ink);
-  border-color: transparent;
-  background: var(--accent);
+/* "(experimental)" as the qualifier it is, in the weight and colour the chat
+   screen's own `h2 span` gives the same word. */
+.global-chat-new-chat-btn span span {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 .global-chat-toolbar {
   display: flex;
@@ -1677,7 +1694,7 @@ body.global-chat-mode > :is(
   background: currentColor;
 }
 @media (max-width: 639px) {
-  .global-chat-mode-switch { min-height: 44px; }
+  .global-chat-new-chat-btn { min-height: 44px; }
   .global-chat-toolbar { padding-right: 12px; padding-left: 12px; }
   .global-chat-toolbar p { display: none; }
   .global-chat-budget { display: none; }
