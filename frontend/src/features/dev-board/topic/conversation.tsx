@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { unmountLegacyPortal } from '../../../lib/legacy-portals';
+import { messageStamp } from '../../../lib/timestamp';
 import type { TopicBody, TranscriptSection } from './model';
 
 const TABS = [
@@ -176,7 +177,15 @@ export function ChangeConversation({ item, body }: { item: any; body: TopicBody 
             ? 'This change was imported from a pull request. Work continues on its source branch; there is no agent session attached to it.'
             : 'The author has not shared the agent workspace. The group discussion is available in the Discussion tab.'}</p> : null}
       {key === 'activity' ? body.activity?.length ? <ol className="dev-conversation-activity">
-        {body.activity.map((event) => <li key={event.label}><span>{event.label}</span><time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time></li>)}
+        {body.activity.map((event) => {
+          // #1808: the one stamp rule, from the shared helper — the same one
+          // the Discussion tab beside this one shows. This row used to print
+          // the browser's raw default spelling ("6/16/2025, 2:41:00 PM"),
+          // which is another spelling of the same instant, carrying seconds
+          // nobody reads.
+          const stamp = messageStamp(event.at);
+          return <li key={event.label}><span>{event.label}</span><time dateTime={event.at} title={stamp.title}>{stamp.text}</time></li>;
+        })}
       </ol> : <p className="dev-topic-note">No activity has been recorded yet.</p> : null}
     </div>)}
   </section>;
