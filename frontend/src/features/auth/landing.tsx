@@ -1094,7 +1094,7 @@ export function LandingScreen() {
             safe-area inset in the scroller's own padding — so the pin cannot
             introduce an overflow of its own.
         */}
-        <div className="max-w-3xl mx-auto flex min-h-full flex-col pb-[34px]">
+        <div className="max-w-sm mx-auto flex min-h-full flex-col pb-[34px]">
           {/*
               Offline explanation (#1021). Both ways in from this screen —
               the marketing waitlist page and Sign in — need a connection, so
