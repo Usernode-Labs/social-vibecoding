@@ -52,13 +52,34 @@ const UI = path.join(__dirname, '..', 'frontend', '@', 'components', 'ui');
 const PRIMARY_FILL = 'bg-violet-600';
 
 /**
- * The field box's fill + border run, in both the `zinc-800` (settings and
- * dialogs) and `zinc-900` (auth screens) spellings. Present in an `<input>` or
- * `<textarea>` tag = not converted.
+ * The field box's fill + border run, in each spelling the shell ships: the
+ * `zinc-800` one (settings and dialogs), the `zinc-900` one (sign-in and
+ * register) and the WHITE one (the two waitlist surveys). Present in an
+ * `<input>` or `<textarea>` tag = not converted.
+ *
+ * The white run was missing until #2437, and its absence is exactly the blind
+ * spot this file's header warns about: sixteen hand-written fields across
+ * features/auth/waitlist.tsx and features/auth/more.tsx sat outside the scan
+ * for as long as the primitive has existed, and every gate stayed green. A
+ * fill this rule does not name is a fill the rule does not protect, so a new
+ * box value in input.tsx belongs here the same day.
+ *
+ * ── The gap that is still open, named rather than quietly left ─────────
+ *
+ * `<select>` is NOT scanned. It has the same three fills and the same
+ * primitive (@/components/ui/select.tsx), and adding it here flags four raw
+ * selects that predate this rule — #dc-runner-select, the share dialog's two,
+ * and #settings-dev-flow — in three files none of which #2437 is about.
+ * Converting them is a slice of its own; widening the scan without converting
+ * them would mean three allow-list entries, which is the one thing this file's
+ * header says an allow-list is not for. The three selects on the waitlist
+ * screens DO route through <Select>, and tests/waitlist-field-primitives.test.js
+ * pins that per id.
  */
 const FIELD_BOXES = [
   'bg-zinc-100 dark:bg-zinc-800 border border-zinc-300',
   'bg-zinc-100 dark:bg-zinc-900 border border-zinc-300',
+  'bg-white dark:bg-zinc-900 border border-zinc-300',
 ];
 
 /** See the header. Every entry is a considered exception. */
@@ -365,7 +386,9 @@ test('the primitives are actually adopted, not merely available', () => {
   // converting another screen should raise them, and one that lowers them is
   // a regression worth noticing.
   assert.ok(buttons >= 33, `expected >= 33 <Button> call sites, found ${buttons}`);
-  assert.ok(fields >= 36, `expected >= 36 <Input>/<Textarea> call sites, found ${fields}`);
+  // 36 until #2437, which routed thirteen waitlist-survey fields and the App
+  // AI cap field through the primitive.
+  assert.ok(fields >= 50, `expected >= 50 <Input>/<Textarea> call sites, found ${fields}`);
 });
 
 test('every cva value is a complete literal class name', () => {
