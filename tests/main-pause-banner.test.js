@@ -78,7 +78,11 @@ test('paused: amber, above the cards, the test named, no button for a non-admin'
   const html = bannerHtml(PAUSED);
   assert.match(html, /<div id="dev-main-pause-notice" class="px-3 pt-2">/, 'the slot shows');
   assert.match(html, /data-main-pause="paused"/);
-  assert.match(html, /border-amber-200 bg-amber-50/, 'a condition somebody may need to act on: amber');
+  // #2443 routed this box through alertVariants' `notice` variant, so the tint
+  // is the primitive's alpha spelling now rather than this file's own
+  // `border-amber-200 bg-amber-50`. What the assertion is for is unchanged:
+  // a condition somebody may need to act on is amber.
+  assert.match(html, /border-amber-500\/40 bg-amber-500\/10/, 'a condition somebody may need to act on: amber');
   assert.match(html, /shared-sessions returns linked_issues per row/, 'the culprit, not "main is red"');
   assert.match(html, /since fffffff/);
   assert.doesNotMatch(html, /<button/, 'a viewer who cannot resume is not shown a verb');

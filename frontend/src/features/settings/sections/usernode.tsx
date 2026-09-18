@@ -29,6 +29,21 @@ import { faqTiles } from './usernode-faq';
 import { UnBtn, UnP, UnRow, UnSection, UnSwitch } from './usernode-ui';
 import { usernodeSectionStore, type UsernodeSectionState } from './usernode-store';
 
+/**
+ * #2443 looked at `warn` and left this table alone.
+ *
+ * It is already ONE spelling in three tones — the three strings differ only
+ * in hue — and `Alert`'s `notice` variant is amber and only amber, because
+ * amber is the only tone the consistency audit found in the wild. Routing
+ * `warn` through it would leave `ok` and `plain` on this geometry (`rounded-md
+ * text-xs`) and `warn` on the primitive's (`rounded-lg text-sm`), so three
+ * notices that sit inches apart in one settings section would stop matching
+ * each other — a worse inconsistency than the one being fixed. Fixing all
+ * three instead means adding an emerald and a fill-less neutral variant that
+ * nothing else in the tree asks for.
+ *
+ * When a second surface needs a non-amber notice, move all three at once.
+ */
 const NOTICE_TONE = {
   warn: 'mt-2 rounded-md border px-3 py-2 text-xs border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300',
   ok: 'mt-2 rounded-md border px-3 py-2 text-xs border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300',
