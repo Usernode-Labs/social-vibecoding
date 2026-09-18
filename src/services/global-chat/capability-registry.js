@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { validateJsonSchema, JsonSchemaValidationError } = require('./json-schema');
 
 // The registry is the server-owned bridge between model-selected intent and
 // existing Homeroom domain logic. It contains no model calls and no ambient
@@ -429,6 +430,16 @@ class CapabilityRegistry {
         { id },
       );
     }
+    try {
+      validateJsonSchema(definition.inputSchema, input, { path: 'input' });
+    } catch (error) {
+      if (!(error instanceof JsonSchemaValidationError)) throw error;
+      throw new CapabilityRegistryError(
+        'invalid_capability_input',
+        `Capability input is invalid: ${error.message}`,
+        { id, path: error.path },
+      );
+    }
     const result = await definition.handler(structuredClone(input), executionContext);
     if (!plainObject(result) || !Object.hasOwn(result, 'authoritativeResult')) {
       throw new CapabilityRegistryError(
@@ -442,6 +453,16 @@ class CapabilityRegistry {
       ? result.modelResult
       : result.authoritativeResult;
     const modelResult = redactSensitiveFields(rawModelResult, definition.sensitiveFields);
+    try {
+      validateJsonSchema(definition.resultSchema, modelResult, { path: 'result' });
+    } catch (error) {
+      if (!(error instanceof JsonSchemaValidationError)) throw error;
+      throw new CapabilityRegistryError(
+        'invalid_capability_result',
+        `Capability ${id} returned an invalid model result: ${error.message}`,
+        { id, path: error.path },
+      );
+    }
     const rawClassicPath = Object.hasOwn(result, 'classicPath')
       ? result.classicPath
       : definition.classicPath({

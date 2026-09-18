@@ -213,6 +213,23 @@ test('capability execution keeps authoritative data intact and redacts model-fac
   assert.equal(result.authoritativeResult.items[0].token, 'browser-only');
 });
 
+test('capability inputs are validated locally even when a provider claims strict tool mode', async () => {
+  let called = false;
+  const registry = new CapabilityRegistry([capability({
+    handler: async () => { called = true; return { authoritativeResult: { items: [] } }; },
+  })]);
+  await assert.rejects(
+    registry.execute(
+      'issues.list',
+      { query: 'valid', modelAddedField: 'must not pass' },
+      { actor: { signedIn: true } },
+    ),
+    (error) => error instanceof CapabilityRegistryError
+      && error.code === 'invalid_capability_input',
+  );
+  assert.equal(called, false);
+});
+
 test('the registry rejects destructive capabilities without confirmation and unsafe paths', async () => {
   assert.throws(
     () => new CapabilityRegistry([capability({

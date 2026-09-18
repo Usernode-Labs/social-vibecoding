@@ -629,7 +629,10 @@ read-only mode, and transcript deletion.
   effort, with sanitized capability metadata and no credential disclosure.
 - [x] UTC calendar-month cap semantics and separate Global Chat accounting
   summary (48 focused tests passed for this slice).
-- [ ] Generated Classic control/route/settings inventory and parity audit.
+- [x] Generated Classic route/control/Settings/navigation inventory: 500 mapped
+  Classic routes, 19 Settings sections, 10 navigation surfaces, and zero
+  unexplained client API references. The artifact remains `parityReady: false`
+  until the responsive renderer and deterministic parity paths are complete.
 - [x] OpenRouter streaming/tool transport with strict structured output,
   low-effort reasoning, bounded SSE parsing, live provider usage, and sanitized
   failures.
@@ -638,4 +641,26 @@ read-only mode, and transcript deletion.
   records provider cost or an explicitly labelled catalog estimate.
 - [x] Global Chat invocations are included in the provider-neutral aggregate
   telemetry report without prompt, output, tool payload, or credential fields.
-- [ ] Phases C–F.
+- [x] Capability handlers bridge to the existing authorized Classic routes,
+  never model-selected URLs/methods/headers, and locally validate model tool
+  inputs even when a provider claims strict schema enforcement.
+- [x] One-use sealed confirmations bind user, thread, exact normalized input,
+  capability, expiry, and an available object revision; confirmation rechecks
+  authorization/revision before executing and cannot be performed by the model.
+- [x] Persistent per-user threads, paginated messages, sealed tool inputs and
+  authoritative results, and restart-safe single-turn leases.
+- [x] Bounded orchestration loop with capability discovery, at most eight model
+  iterations, at most four parallel reads, serialized writes, one transient
+  provider retry, authoritative result references, and mandatory
+  `present_response` completion.
+- [x] Streaming turn and More suggestions APIs plus confirmed-action execution;
+  suggestions remain two compact description-free buttons and old suggestions
+  are never hidden or repeated.
+- [x] Focused Global Chat suite: 72 tests passed, 0 failed.
+- [ ] Transcript summary/compaction and explicit development-session handoff
+  contract using the separately configured development profile.
+- [ ] Responsive web/native screen, compact allowlisted renderers, mode switch,
+  client-action completion bridge, accessibility, and deterministic UI paths.
+- [ ] Final role-matrix parity closure, changed/full regression suites, release
+  verification, PR/proposal, and the non-closing issue comment (only when
+  explicitly requested).

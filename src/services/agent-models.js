@@ -56,6 +56,10 @@ function hasParallelToolCallSupport(m) {
   return supportedParameterList(m).includes('parallel_tool_calls');
 }
 
+function hasTemperatureSupport(m) {
+  return supportedParameterList(m).includes('temperature');
+}
+
 // Global Chat has a stricter contract than the coding-agent catalog: its
 // model must choose tools, return the server-owned response schema, and
 // accept the separately configured reasoning effort. This helper accepts
@@ -147,6 +151,7 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
     supportsStructuredOutputs: hasStructuredOutputSupport(m),
     supportsReasoningEffort: hasReasoningEffortSupport(m),
     supportsParallelToolCalls: hasParallelToolCallSupport(m),
+    supportsTemperature: hasTemperatureSupport(m),
     meetsCodexMinimums: meetsStaticMinimums(m),
     meetsGlobalChatMinimums: meetsGlobalChatMinimums(m),
     supportsReasoning,
@@ -274,6 +279,7 @@ module.exports = {
   hasStructuredOutputSupport,
   hasReasoningEffortSupport,
   hasParallelToolCallSupport,
+  hasTemperatureSupport,
   pricePerMillion,
   averageTokenPrice,
   costTier,

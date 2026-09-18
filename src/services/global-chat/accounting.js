@@ -315,6 +315,7 @@ async function invokeAccounted({
   sessionId,
   maxOutputTokens = globalChatOpenRouter.DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
+  parallelToolCalls = true,
   signal,
   onContent,
   validateKey = openrouterClient.validateKey,
@@ -361,6 +362,7 @@ async function invokeAccounted({
       sessionId,
       maxOutputTokens,
       temperature,
+      parallelToolCalls,
       signal,
       onContent,
     });

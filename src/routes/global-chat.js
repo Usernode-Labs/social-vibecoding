@@ -6,6 +6,7 @@
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const { chatLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const credentialStore = require('../services/credential-store');
 const openrouterClient = require('../services/openrouter-client');
@@ -15,10 +16,22 @@ const globalChatStore = require('../services/global-chat/store');
 const { firstUsePresentation } = require('../services/global-chat/presentation');
 const { CapabilityRegistry } = require('../services/global-chat/capability-registry');
 const { classicCapabilityDefinitions } = require('../services/global-chat/classic-capabilities');
+const { ClassicApiClient } = require('../services/global-chat/classic-api-client');
+const { createGlobalChatOrchestrator } = require('../services/global-chat/orchestrator');
+const { createActionExecutor } = require('../services/global-chat/action-executor');
+const { validatePresentation } = require('../services/global-chat/presentation');
+const { PROMPT_VERSION } = require('../services/global-chat/prompt');
 
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
 const PATCH_FIELDS = new Set(['model', 'reasoningEffort', 'spendCapUsd']);
 const CAPABILITY_REGISTRY = new CapabilityRegistry(classicCapabilityDefinitions());
+const TURN_BODY_FIELDS = new Set(['text', 'client', 'context']);
+const MORE_BODY_FIELDS = new Set(['topic', 'client', 'context']);
+const CONFIRM_BODY_FIELDS = new Set(['threadId', 'client']);
+const CLIENT_FIELDS = new Set(['surface', 'viewport', 'classicReturnPath']);
+const CONTEXT_FIELDS = new Set([
+  'locale', 'timezone', 'activeAppSlug', 'activeObject', 'threadSummary',
+]);
 
 function noStore(res) {
   res.setHeader('Cache-Control', 'private, no-store');
@@ -31,9 +44,88 @@ function cleanProviderNumber(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
+function plainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function exactObject(value, allowed, field) {
+  const object = value == null ? {} : value;
+  if (!plainObject(object)) throw new Error(`${field} must be an object.`);
+  const unsupported = Object.keys(object).find((key) => !allowed.has(key));
+  if (unsupported) throw new Error(`${field}.${unsupported} is not supported.`);
+  return object;
+}
+
+function turnRequestBody(value, { more = false } = {}) {
+  const body = exactObject(value, more ? MORE_BODY_FIELDS : TURN_BODY_FIELDS, 'body');
+  const client = exactObject(body.client, CLIENT_FIELDS, 'client');
+  const context = exactObject(body.context, CONTEXT_FIELDS, 'context');
+  if (more) {
+    if (body.topic != null && (typeof body.topic !== 'string' || body.topic.length > 240)) {
+      throw new Error('topic must be a string up to 240 characters.');
+    }
+  } else if (typeof body.text !== 'string' || !body.text.trim()
+      || body.text.length > globalChatStore.MAX_MESSAGE_CHARS) {
+    throw new Error(`text must contain at most ${globalChatStore.MAX_MESSAGE_CHARS} characters.`);
+  }
+  return {
+    text: more
+      ? (body.topic?.trim()
+        ? `Show more suggestions about ${body.topic.trim()}.`
+        : 'Show more suggestions.')
+      : body.text.trim(),
+    client,
+    context,
+  };
+}
+
+function confirmationRequestBody(value) {
+  const body = exactObject(value, CONFIRM_BODY_FIELDS, 'body');
+  if (typeof body.threadId !== 'string') throw new Error('threadId is required.');
+  return {
+    threadId: body.threadId,
+    client: exactObject(body.client, CLIENT_FIELDS, 'client'),
+  };
+}
+
+function sseHeaders(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'private, no-store, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write(': connected\n\n');
+}
+
+function sseWrite(res, event) {
+  if (!event?.type || res.writableEnded || res.destroyed) return;
+  const { type, ...data } = event;
+  res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function requestErrorStatus(error) {
+  if (['invalid_message', 'invalid_actor', 'invalid_model'].includes(error?.code)) return 400;
+  if (error?.code === 'turn_in_progress') return 409;
+  if (['global_chat_cap_exceeded', 'overall_allowance_exhausted'].includes(error?.code)) return 402;
+  if (['authentication', 'model_unavailable'].includes(error?.code)) return 503;
+  if (['invalid_or_expired_action', 'stale_action'].includes(error?.code)) return 409;
+  return 500;
+}
+
 function globalChatRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  const orchestrator = createGlobalChatOrchestrator({
+    pool,
+    config,
+    registry: CAPABILITY_REGISTRY,
+  });
+  const actionExecutor = createActionExecutor({
+    pool,
+    config,
+    registry: CAPABILITY_REGISTRY,
+  });
 
   async function credentialForUser(userId) {
     const metadata = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
@@ -85,6 +177,158 @@ function globalChatRoutes(config) {
       model: row.model_id || null,
       reasoningEffort: row.reasoning_effort || null,
     };
+  }
+
+  async function turnRuntime(userId) {
+    const [profile, credential, development] = await Promise.all([
+      profileService.readProfile(pool, userId, config),
+      credentialForUser(userId),
+      developmentProfile(userId),
+    ]);
+    if (!credential.configured) {
+      const error = new Error('Add an OpenRouter API key in Settings first.');
+      error.code = 'model_unavailable';
+      throw error;
+    }
+    const catalog = await agentModels.listOpenRouterModels({
+      pool,
+      userId,
+      credentialRevision: credential.metadata.revision,
+      apiKey: credential.apiKey,
+      config,
+      forceRefresh: false,
+    });
+    const model = profileService.compatibleModels(catalog, profile.reasoningEffort)
+      .find((candidate) => candidate.id === profile.model);
+    if (!model) {
+      const error = new Error('The configured Global Chat model is unavailable or incompatible.');
+      error.code = 'model_unavailable';
+      throw error;
+    }
+    const usage = await profileService.readMonthlyUsage(pool, userId, {
+      spendCapUsd: profile.spendCapUsd,
+    });
+    return {
+      profile,
+      development,
+      credential,
+      model,
+      budget: {
+        overallRemaining: null,
+        globalChatSpent: usage.spentUsd,
+        globalChatCap: usage.capUsd,
+        resetAt: usage.resetAt,
+      },
+    };
+  }
+
+  function rolesForRequest(req, surface) {
+    const roles = ['member'];
+    if (req.user.isAdmin) roles.push(req.user.adminReadonly ? 'admin_readonly' : 'admin');
+    if (surface === 'native_ios' || surface === 'native_android') roles.push('native');
+    return roles;
+  }
+
+  function executionContext(req, client) {
+    let classicApi = null;
+    if (typeof req.cookies?.session === 'string') {
+      try {
+        classicApi = new ClassicApiClient({
+          baseUrl: `http://127.0.0.1:${config.port || 3000}`,
+          browserOrigin: config.cliAuthOrigin || config.openrouterOrigin || 'https://usernode.dev',
+          sessionToken: req.cookies.session,
+        });
+      } catch {}
+    }
+    return {
+      actor: {
+        id: req.user.id,
+        username: req.user.username,
+        signedIn: true,
+        admin: !!req.user.isAdmin,
+        canAdminWrite: !!req.user.canAdminWrite,
+      },
+      client: { surface: client.surface || 'web' },
+      classicApi,
+      // Browser/native-only capabilities become authoritative pending client
+      // actions. Their result is rendered by the allowlisted component layer;
+      // the model never receives or invents an executable URL or method.
+      dispatchClientAction: async (action) => ({
+        ok: true,
+        status: 202,
+        data: { state: 'client_action_required', action },
+      }),
+    };
+  }
+
+  async function streamTurn(req, res, kind) {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    let input;
+    try {
+      input = turnRequestBody(req.body, { more: kind === 'more_suggestions' });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    let runtime;
+    try {
+      runtime = await turnRuntime(req.user.id);
+    } catch (error) {
+      log.warn('global-chat', 'turn setup failed', {
+        userId: req.user.id,
+        code: error.code,
+        err: error.message,
+      });
+      return res.status(requestErrorStatus(error)).json({
+        error: error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
+    }
+
+    sseHeaders(res);
+    const controller = new AbortController();
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
+    }, 15_000);
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+      clearInterval(heartbeat);
+    });
+    try {
+      await orchestrator.runTurn({
+        threadId: req.params.id,
+        text: input.text,
+        kind,
+        actor: {
+          id: req.user.id,
+          username: req.user.username,
+          roles: rolesForRequest(req, input.client.surface),
+        },
+        client: input.client,
+        context: input.context,
+        globalChatProfile: runtime.profile,
+        developmentProfile: runtime.development,
+        budget: runtime.budget,
+        model: runtime.model,
+        apiKey: runtime.credential.apiKey,
+        executionContext: executionContext(req, input.client),
+        signal: controller.signal,
+        emit: async (event) => sseWrite(res, event),
+      });
+    } catch (error) {
+      log.warn('global-chat', 'turn failed', {
+        userId: req.user.id,
+        threadId: req.params.id,
+        code: error.code,
+        err: error.message,
+      });
+      // The orchestrator emitted a typed, sanitized failure after the stream
+      // opened. Never inject a second JSON response into the SSE body.
+    } finally {
+      clearInterval(heartbeat);
+      if (!res.writableEnded && !res.destroyed) res.end();
+    }
+    return undefined;
   }
 
   router.get('/api/global-chat/bootstrap', async (req, res) => {
@@ -161,6 +405,77 @@ function globalChatRoutes(config) {
       }
       log.warn('global-chat', 'message page failed', { userId: req.user.id, err: err.message });
       return res.status(500).json({ error: 'Failed to load Global Chat messages.' });
+    }
+  });
+
+  router.post('/api/global-chat/threads/:id/turns', chatLimiter, (req, res) => (
+    streamTurn(req, res, 'user_turn')
+  ));
+
+  router.post('/api/global-chat/threads/:id/more-suggestions', chatLimiter, (req, res) => (
+    streamTurn(req, res, 'more_suggestions')
+  ));
+
+  router.post('/api/global-chat/actions/:token/confirm', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    let input;
+    try {
+      input = confirmationRequestBody(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    try {
+      const completed = await actionExecutor.executeConfirmedAction({
+        userId: req.user.id,
+        threadId: input.threadId,
+        token: req.params.token,
+        executionContext: executionContext(req, input.client),
+      });
+      const result = completed.result;
+      const prefix = `confirmed.${result.id}`;
+      const presentation = validatePresentation({
+        message: 'Done.',
+        resultRefs: [result.id],
+        suggestions: [
+          {
+            id: `${prefix}.view`,
+            label: 'View result',
+            prompt: 'Show the updated result.',
+            capabilityHint: result.capabilityId,
+          },
+          {
+            id: `${prefix}.next`,
+            label: 'What next?',
+            prompt: 'What can I do next with this item?',
+            capabilityHint: null,
+          },
+        ],
+      }, { availableResultIds: [result.id] });
+      const message = await globalChatStore.insertMessage(pool, {
+        userId: req.user.id,
+        threadId: input.threadId,
+        role: 'assistant',
+        text: presentation.message,
+        payload: { kind: 'confirmed_action', presentation },
+        promptVersion: PROMPT_VERSION,
+      });
+      return res.json({ ok: true, message, presentation, results: [result] });
+    } catch (error) {
+      log.warn('global-chat', 'confirmed action failed', {
+        userId: req.user.id,
+        threadId: input.threadId,
+        code: error.code,
+        err: error.message,
+      });
+      const status = requestErrorStatus(error);
+      const publicMessage = status === 500
+        ? 'The confirmed action could not be completed.'
+        : error.message;
+      return res.status(status).json({
+        error: publicMessage,
+        ...(error.code ? { code: error.code } : {}),
+      });
     }
   });
 

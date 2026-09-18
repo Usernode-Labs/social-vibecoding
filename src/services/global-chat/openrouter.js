@@ -87,16 +87,15 @@ function buildRequest({
   sessionId,
   maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
+  parallelToolCalls = true,
 }) {
   const request = {
     model: modelId(model),
     messages: jsonArray(messages, 'messages', MAX_MESSAGES),
     tools: jsonArray(tools, 'tools', MAX_TOOLS),
     tool_choice: 'auto',
-    parallel_tool_calls: true,
     response_format: responseFormat(schema),
     reasoning: { effort: reasoningEffort(reasoning) },
-    temperature: boundedNumber(temperature, 0.1, 0, 2, 'temperature'),
     max_tokens: boundedInteger(
       maxOutputTokens,
       DEFAULT_MAX_OUTPUT_TOKENS,
@@ -110,6 +109,10 @@ function buildRequest({
     // Do not silently route to an endpoint that drops a required parameter.
     provider: { require_parameters: true },
   };
+  if (parallelToolCalls != null) request.parallel_tool_calls = parallelToolCalls === true;
+  if (temperature != null) {
+    request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
+  }
   if (sessionId != null) {
     const normalized = String(sessionId).trim();
     if (!normalized || normalized.length > 256 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {

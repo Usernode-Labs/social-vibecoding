@@ -59,6 +59,21 @@ test('OpenRouter request pins tools, strict schema, low effort, usage, and requi
   assert.equal(request.parallel_tool_calls, true);
 });
 
+test('unsupported optional model parameters are omitted instead of weakening required routing', () => {
+  const request = provider.buildRequest({
+    model: MODEL.id,
+    reasoning: 'low',
+    messages: [],
+    tools: [],
+    schema: STRICT_SCHEMA,
+    temperature: null,
+    parallelToolCalls: null,
+  });
+  assert.equal(Object.hasOwn(request, 'temperature'), false);
+  assert.equal(Object.hasOwn(request, 'parallel_tool_calls'), false);
+  assert.deepEqual(request.provider, { require_parameters: true });
+});
+
 test('OpenRouter SSE parser reconstructs split tool calls and provider-reported usage', async () => {
   let sent;
   const result = await provider.streamChat({
