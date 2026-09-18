@@ -22,6 +22,7 @@
 
 import { useCallback, useState, type ReactNode } from 'react';
 
+import { SectionHeading } from '@/components/ui/field';
 import type { UnAction, UnNote, UnStatusRow, UnToggle } from './usernode-store';
 
 function settings(): any {
@@ -56,17 +57,28 @@ function useAction(fallback: string) {
   return { busy, run };
 }
 
+/**
+ * A rule, then the section's heading and blurb, then its controls.
+ *
+ * The heading and blurb are `SectionHeading` (@/components/ui/field) — the
+ * same primitive the other twenty-five settings sections open with. This file
+ * used to re-declare both of its class strings verbatim, which meant the one
+ * section that looks most like the rest of Settings was the one that would
+ * stop matching the first time the primitive changed.
+ *
+ * The rule is `dark:border-zinc-800`, which is what every other separator on
+ * this screen draws (experimental.tsx, alerts.tsx, notification-prefs-list.tsx
+ * …). It was `-700` and the difference was visible in dark mode with two of
+ * them on screen at once.
+ */
 export function UnSection(
   { title, description, id, children }: {
     title: string; description?: string; id?: string; children?: ReactNode;
   },
 ): ReactNode {
   return (
-    <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">{title}</h3>
-      {description ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">{description}</p>
-      ) : null}
+    <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
+      <SectionHeading title={title}>{description || undefined}</SectionHeading>
       {children}
     </div>
   );

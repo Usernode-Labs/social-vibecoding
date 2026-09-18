@@ -156,7 +156,7 @@ export function EpochCard({ epoch, record, current, error, retry }: any) {
     {record?.counts ? <>
       <div className="mt-5 text-sm text-zinc-500 dark:text-zinc-400">Won slots</div>
       <div className="mt-1 text-4xl font-bold tabular-nums">{record.counts.won}</div>
-      <div className="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-700 grid grid-cols-3 gap-2 text-center">
+      <div className="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800 grid grid-cols-3 gap-2 text-center">
         {[
           ['Upcoming', record.counts.upcoming, 'text-amber-700 dark:text-amber-300'],
           ['Produced', record.counts.produced, 'text-emerald-700 dark:text-emerald-400'],

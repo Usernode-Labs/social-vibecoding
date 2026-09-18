@@ -26,7 +26,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
-import { ListRow } from '@/components/ui/grouped-list';
+import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
@@ -180,14 +180,25 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   const ready = rows.filter((view) => view.directoryTier === 'ready');
   const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
   const more = rows.filter((view) => view.directoryTier === 'more');
-  const heading = 'md:col-span-full px-3 pt-3 pb-1 text-sm font-semibold text-zinc-700 dark:text-zinc-300';
+  // A LABEL OVER A CARD GROUP, so it is @/components/ui/grouped-list's
+  // SectionHeader and not a fourth hand-written heading: the rows under it are
+  // that file's ListRow, and on the phone #browse-list IS the card they sit in
+  // (`browse-pane-body`). It stays an <h2> with the label as its only child —
+  // dapp.json's `?sort=users` check reads `#browse-list...:not(:has(h2))` to
+  // say the ungrouped list draws no tier headings at all.
+  //
+  // `md:col-span-full` is the only thing added: at md+ the container is a 2/3
+  // column grid and a heading has to span it. The gutter comes from the
+  // primitive, which is a fix as well as a consolidation — the hand-written
+  // `px-3` did not line up with ListRow's `px-4` text column.
+  const headingClass = 'md:col-span-full';
   return (
     <>
       {grouped ? (
         <>
-          {ready.length ? <h2 className={heading}>Reviewed working apps</h2> : null}
+          {ready.length ? <SectionHeader className={headingClass}>Reviewed working apps</SectionHeader> : null}
           {renderRows(ready)}
-          {unreviewed.length ? <h2 className={heading}>Not yet reviewed</h2> : null}
+          {unreviewed.length ? <SectionHeader className={headingClass}>Not yet reviewed</SectionHeader> : null}
           {renderRows(unreviewed)}
         </>
       ) : renderRows(shown)}

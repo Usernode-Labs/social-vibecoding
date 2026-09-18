@@ -770,7 +770,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
           {`${x.done}/${x.total}`}
         </span>
       </summary>
-      <ol className="list-none m-0 border-t border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 py-1">
+      <ol className="list-none m-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-1">
         {x.gates.map((g) => (
           <li
             key={g.key}
