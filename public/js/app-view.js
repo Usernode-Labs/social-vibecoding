@@ -2960,6 +2960,13 @@ const AppView = {
 
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
+      // #2487: a cold topic deep link starts with the display-only header
+      // snapshot from whichever app this browser visited last. Unlike the
+      // forum, chat and owner-session branches, this branch never replaced
+      // that snapshot after the current app's metadata loaded, so the whole
+      // topic could keep naming another app indefinitely. The topic card
+      // names the inner destination; the chip names the app, with no subtitle.
+      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
       await AppView._renderTopicSubView(content, ref);
       return;
     }
