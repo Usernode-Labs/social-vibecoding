@@ -128,6 +128,11 @@ function sendFailure(res, result) {
     // is now.
     ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
     ...(result.headSha ? { headSha: result.headSha } : {}),
+    ...(result.prNumber ? { prNumber: result.prNumber } : {}),
+    ...(result.prUrl ? { prUrl: result.prUrl } : {}),
+    ...(result.stage ? { stage: result.stage } : {}),
+    ...(result.field ? { field: result.field } : {}),
+    ...(result.recovery ? { recovery: result.recovery } : {}),
   });
 }
 

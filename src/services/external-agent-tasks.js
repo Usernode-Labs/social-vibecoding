@@ -156,6 +156,23 @@ function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
 }
 
+function retryableImportFailure(result) {
+  const status = Number(result?.status) || 0;
+  return !result
+    || result.networkError === true
+    || status === 0
+    || status >= 500
+    || result.body?.retryable === true;
+}
+
+function importFailureContext(result) {
+  const body = result?.body && typeof result.body === 'object' ? result.body : {};
+  return {
+    stage: typeof body.stage === 'string' ? body.stage.slice(0, 80) : null,
+    field: typeof body.field === 'string' ? body.field.slice(0, 80) : null,
+  };
+}
+
 // ── The untrusted envelope ─────────────────────────────────────────────
 //
 // services/mcp-tools.js wraps every piece of platform-authored request text
@@ -1018,8 +1035,10 @@ function buildWorkOrder({
       '   meantime the call is refused rather than overwriting it.',
       '   The proposal keeps its manual testing routes unless you replace them.',
       '   Pass `visualEvidence` for this revision. If available, call',
-      '   `record_visual_evidence_intent` and pass its version-1 object unchanged:',
-      '   visible work uses impact "ui" or "motion" with one to three claims and',
+      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   If that helper is not exposed in this connector session, constructing the',
+      '   documented version-1 object directly is supported too.',
+      '   Visible work uses impact "ui" or "motion" with one to three claims and',
       '   their real user flows; genuinely non-visual work uses impact "none", no',
       '   stories, and a specific rationale. Homeroom produces new exact-base/head',
       '   evidence instead of reusing old captures.',
@@ -1153,6 +1172,8 @@ function buildWorkOrder({
       '   state.',
       '   ALSO PASS `visualEvidence` for this exact revision. If available, call',
       '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   If that helper is not exposed in this connector session, construct the',
+      '   documented version-1 object directly; submit_work validates the same shape.',
       '   For a visible change use impact "ui" or "motion" and one to three stories.',
       '   Each story names the user-visible claim, member or read_only_admin persona,',
       '   viewport, starting path, real interaction steps, final checkpoint, focus,',
@@ -3413,14 +3434,27 @@ async function submitWorkLocked(deps, params) {
     ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
   });
   if (!imported || !imported.ok) {
-    // A head the platform wrote and then could not import is litter on
-    // somebody's app repository. Remove it.
-    if (platformOwnedHead) await platformOwnedHead.cleanup();
+    const retryable = retryableImportFailure(imported);
+    const context = importFailureContext(imported);
+    // A deterministic refusal means the platform-created head has no future
+    // owner and is litter. A transport error or 5xx is different: the open PR
+    // is the recovery handle the work order already documents. Keep it so the
+    // caller can retry with slug + prNumber without consuming another branch
+    // or pull-request number.
+    if (platformOwnedHead && !retryable) await platformOwnedHead.cleanup();
+    const platformMessage = (imported && imported.body
+      && (imported.body.error || imported.body.message))
+      || 'Homeroom could not turn that pull request into a proposal.';
     return {
       ok: false,
       code: 'import_failed',
-      message: (imported && imported.body && imported.body.error)
-        || 'Homeroom could not turn that pull request into a proposal.',
+      message: retryable
+        ? `${platformMessage} PR #${pr.number} remains open; retry with slug "${slug}" and prNumber ${pr.number}.`
+        : platformMessage,
+      retryable,
+      stage: context.stage,
+      field: context.field,
+      recovery: retryable ? 'retry_existing_pr' : null,
       status: imported ? imported.status : 0,
       prNumber: pr.number,
       prUrl: pr.html_url || null,
@@ -3657,6 +3691,8 @@ module.exports = {
   platformOriginFrom,
   normalizeAgent,
   normalizeSource,
+  retryableImportFailure,
+  importFailureContext,
   agentLabel,
   stripEnvelope,
   listOpenWorkOrders,

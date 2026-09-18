@@ -146,77 +146,102 @@ async function withTransaction(pool, fn) {
   }
 }
 
-async function recordIntent(pool, sessionId, rawIntent, options = {}) {
+async function recordIntentWithClient(client, sessionId, intent, detail, state, options) {
+  const selected = await client.query(
+    `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
+       FROM chat_sessions WHERE id = $1 FOR UPDATE`,
+    [sessionId]
+  );
+  const session = selected.rows[0];
+  if (!session) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+
+  // Build tools can report the same declaration more than once (for
+  // example after a transport retry). Treat that as an idempotent write so
+  // a completed, same-head run is not accidentally invalidated.
+  const currentIntent = session.visual_evidence_detail?.intent || null;
+  const sameRevision = !options.headSha
+    || session.visual_evidence_detail?.headSha === options.headSha;
+  const sameIntent = currentIntent
+    && planContract.canonicalJson(currentIntent) === planContract.canonicalJson(intent)
+    && requiredForIntent(currentIntent, options) === detail.required
+    && sameRevision;
+  if (sameIntent) {
+    return {
+      accepted: true,
+      unchanged: true,
+      required: detail.required,
+      state: session.visual_evidence_state || state,
+      intent,
+      detail: session.visual_evidence_detail,
+      runId: session.visual_evidence_run_id || null,
+    };
+  }
+
+  // A changed declaration changes what reviewers are being asked to
+  // verify. Cancel active work and stale terminal evidence before moving
+  // the session pointer; old media may remain for audit/retention but can
+  // no longer be served as current evidence.
+  await client.query(
+    `UPDATE visual_evidence_runs
+        SET state = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'cancelled'
+              ELSE 'stale'
+            END,
+            failure_code = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'intent_changed'
+              ELSE failure_code
+            END,
+            failure_reason = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'The author changed the visual evidence declaration.'
+              ELSE failure_reason
+            END,
+            completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
+      WHERE session_id = $1 AND state NOT IN ('stale','cancelled')`,
+    [sessionId]
+  );
+  await client.query(
+    `UPDATE chat_sessions
+        SET visual_evidence_state = $2,
+            visual_evidence_run_id = NULL,
+            visual_evidence_detail = $3::jsonb,
+            visual_evidence_updated_at = NOW()
+      WHERE id = $1`,
+    [sessionId, state, JSON.stringify(detail)]
+  );
+  return { accepted: true, unchanged: false, required: detail.required, state, intent, detail, runId: null };
+}
+
+function prepareIntent(rawIntent, options) {
   const intent = planContract.parseIntent(rawIntent);
   const detail = pendingDetail(intent, options);
   const state = intent.impact === 'none' && !detail.required ? 'not_required' : 'planned';
-  return withTransaction(pool, async (client) => {
-    const selected = await client.query(
-      `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
-         FROM chat_sessions WHERE id = $1 FOR UPDATE`,
-      [sessionId]
-    );
-    const session = selected.rows[0];
-    if (!session) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  return { intent, detail, state };
+}
 
-    // Build tools can report the same declaration more than once (for
-    // example after a transport retry). Treat that as an idempotent write so
-    // a completed, same-head run is not accidentally invalidated.
-    const currentIntent = session.visual_evidence_detail?.intent || null;
-    const sameRevision = !options.headSha
-      || session.visual_evidence_detail?.headSha === options.headSha;
-    const sameIntent = currentIntent
-      && planContract.canonicalJson(currentIntent) === planContract.canonicalJson(intent)
-      && requiredForIntent(currentIntent, options) === detail.required
-      && sameRevision;
-    if (sameIntent) {
-      return {
-        accepted: true,
-        unchanged: true,
-        required: detail.required,
-        state: session.visual_evidence_state || state,
-        intent,
-        detail: session.visual_evidence_detail,
-        runId: session.visual_evidence_run_id || null,
-      };
-    }
+async function recordIntent(pool, sessionId, rawIntent, options = {}) {
+  const prepared = prepareIntent(rawIntent, options);
+  return withTransaction(pool, (client) => recordIntentWithClient(
+    client, sessionId, prepared.intent, prepared.detail, prepared.state, options
+  ));
+}
 
-    // A changed declaration changes what reviewers are being asked to
-    // verify. Cancel active work and stale terminal evidence before moving
-    // the session pointer; old media may remain for audit/retention but can
-    // no longer be served as current evidence.
-    await client.query(
-      `UPDATE visual_evidence_runs
-          SET state = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'cancelled'
-                ELSE 'stale'
-              END,
-              failure_code = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'intent_changed'
-                ELSE failure_code
-              END,
-              failure_reason = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'The author changed the visual evidence declaration.'
-                ELSE failure_reason
-              END,
-              completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
-        WHERE session_id = $1 AND state NOT IN ('stale','cancelled')`,
-      [sessionId]
-    );
-    await client.query(
-      `UPDATE chat_sessions
-          SET visual_evidence_state = $2,
-              visual_evidence_run_id = NULL,
-              visual_evidence_detail = $3::jsonb,
-              visual_evidence_updated_at = NOW()
-        WHERE id = $1`,
-      [sessionId, state, JSON.stringify(detail)]
-    );
-    return { accepted: true, unchanged: false, required: detail.required, state, intent, detail, runId: null };
-  });
+// PR import already owns the transaction that inserts the proposal row. Its
+// evidence declaration must be part of that same atomic write: a second pool
+// connection cannot see the uncommitted row, while calling `.connect()` on
+// the checked-out PoolClient throws and releasing it would steal ownership
+// from the route. Make that ownership explicit rather than trying to infer a
+// Pool from a PoolClient by the presence of `.connect()` — both have it.
+async function recordIntentInTransaction(client, sessionId, rawIntent, options = {}) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('A transaction client is required');
+  }
+  const prepared = prepareIntent(rawIntent, options);
+  return recordIntentWithClient(
+    client, sessionId, prepared.intent, prepared.detail, prepared.state, options
+  );
 }
 
 async function clearIntent(pool, sessionId) {
@@ -735,6 +760,7 @@ module.exports = {
   pendingDetail,
   missingIntentDetail,
   recordIntent,
+  recordIntentInTransaction,
   requireIntentForUiChange,
   clearIntent,
   createRun,
