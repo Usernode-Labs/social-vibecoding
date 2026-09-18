@@ -3591,6 +3591,9 @@ const AppView = {
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
+        // (#2431) The mirror of a proposal's issue chips: which change
+        // closed this issue, or is working on it.
+        addressedBy: AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
         issueBodyEditor: {
           issue: item.number,
@@ -3654,6 +3657,34 @@ const AppView = {
     AppView._topicCard(card, t.kind, item, body);
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
+  },
+
+  // (#2431) The change addressing one issue, as a view model — the mirror of
+  // the issue chips `_completeChangeView` builds for a proposal.
+  //
+  // The LINK is resolved server-side (services/issue-proposal-ref.js) from
+  // chat_sessions.linked_issues / created_from_issue_number, and it only ever
+  // names a row that has a proposal page, so the href is always the in-app
+  // one — a PR URL fallback would have nothing to fall back from. The
+  // WORDING is the one decision left here, because it needs the issue's own
+  // state: a merged change on a closed issue closed it, while the same
+  // change on an issue still open has only addressed it.
+  _issueProposalRefView(issue) {
+    const ref = issue && issue.addressed_by;
+    if (!ref || !ref.sessionId) return null;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const heading = ref.state === 'merged'
+      ? (issue.state === 'closed' ? 'Closed by' : 'Addressed by')
+      : ref.state === 'review' ? 'In review' : 'Work underway';
+    const n = parseInt(ref.prNumber, 10) || 0;
+    return {
+      heading,
+      state: ref.state,
+      sessionId: ref.sessionId,
+      label: n ? `#${n}` : 'Change',
+      title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
+      href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in

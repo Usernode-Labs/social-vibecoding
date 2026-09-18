@@ -108,6 +108,9 @@ const {
   claimExpiresAt,
   claimIsLive,
 } = require('../services/issue-progress');
+// #2431: which proposal closed an issue, or is working on it. One query for
+// the whole list, so the board pays for it once and not per card.
+const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -1608,6 +1611,13 @@ function issueRoutes(config) {
         claimsByNumber.set(c.n, list);
       }
 
+      // #2431: the proposal addressing each issue, resolved for every listed
+      // number in ONE query — the topic page of an OPEN issue renders from
+      // this payload, so the reference has to travel with the list.
+      const addressedBy = await resolveIssueProposalRefs(
+        pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
+      );
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
         const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
@@ -1632,6 +1642,8 @@ function issueRoutes(config) {
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
+          // #2431: the change addressing this issue, or null.
+          addressed_by: addressedBy.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
           // The Haiku title call failed when this feedback issue was
@@ -1913,7 +1925,9 @@ function issueRoutes(config) {
   // list. Returns `{ issue }` in the list's row shape: creator, bounty tally,
   // discussion count and attributes are resolved the same way; the
   // per-viewer work fields (headless run, in-progress, own session) are left
-  // empty, because a closed issue's page offers no work on it.
+  // empty, because a closed issue's page offers no work on it. `addressed_by`
+  // (#2431) is the exception the closed page needs most: the change that
+  // closed it is a record, not an offer of work.
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues/:number', async (req, res) => {
     try {
@@ -1982,6 +1996,12 @@ function issueRoutes(config) {
       const attrs = (await topicAttrs.summarizeForTargets(
         pool, app.id, 'issue', [number], req.user.id
       )).get(number) || topicAttrs.emptySummary();
+      // #2431: for a CLOSED issue this is the whole answer to "what closed
+      // this?" — the merged change that linked it. Same resolver the list
+      // uses, so both pages name the same proposal.
+      const addressedBy = await resolveIssueProposalRefs(
+        pool, app.id, [number], req.user.id
+      );
 
       return res.json({
         issue: {
@@ -1996,6 +2016,7 @@ function issueRoutes(config) {
           headless: null,
           in_progress: null,
           myPrSessionId: null,
+          addressed_by: addressedBy.get(number) || null,
           chatCount: (chat && chat.cnt) || 0,
           lastMessageAt: (chat && chat.last_at) || null,
           title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
