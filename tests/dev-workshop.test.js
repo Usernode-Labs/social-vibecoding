@@ -4860,3 +4860,36 @@ test('the ear re-measures on every render, or a grouping switch leaves it stale'
   // a size-only observer is not enough on its own.
   assert.match(body, /t\.right - p\.left \+ EAR_GAP_PX/);
 });
+
+test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
+  // A REAL BUG (#2475). This file carried a private `swatchFor` over seven
+  // stock hues hashed with `h * 31`, under a comment claiming it followed
+  // feed-thread's rule. It did not: feed-thread imports
+  // features/messages/format.tsx, which is six PRODUCT swatches hashed with
+  // FNV-1a. So the same person's initial was one colour on a Workshop row
+  // and a different one in that row's own Comments sheet — which renders
+  // <FeedThread /> a few lines below, from the same name.
+  //
+  // Three call sites read it (the faces strip, a theme's letter tile, an
+  // item's byline avatar) and all three take a name and get a colour back,
+  // so the shared function drops in unchanged.
+  assert.match(WORKSHOP, /^import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';$/m,
+    'the Workshop imports the shared swatch');
+  assert.ok(!/(?:function|const)\s+swatchFor\b/.test(WORKSHOP),
+    'and defines no local copy — a second palette is the bug this fixes');
+
+  // The old palette, named so a re-introduction of any of it is loud. None of
+  // these seven is in the product's vocabulary.
+  for (const hex of ['#8e44ad', '#1f8a4c', '#b4620a', '#c0392b', '#0e7c86', '#6d4c41']) {
+    assert.ok(!WORKSHOP.includes(hex), `${hex} is a stock hue the Workshop no longer paints with`);
+  }
+
+  // The row and the sheet under it now agree, which is the visible fix.
+  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  assert.equal(swatchFor('ada'), swatchFor('ada'));
+  assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
+    'and the colour comes from the shared six');
+  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
+    /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
+    'the sheet reads the same module — that is what makes the two match');
+});

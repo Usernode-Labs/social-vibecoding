@@ -64,6 +64,7 @@ import {
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
+import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
 import { CardIcon, Chevron, metaLineNodes } from '../card/dev-card';
 import { DevKanban } from '../card/dev-kanban';
@@ -130,14 +131,6 @@ const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
   { key: 'needs', label: 'Needs you', Icon: SpeechCheckIcon },
   { key: 'all', label: 'All items', Icon: Squares2X2Icon },
 ];
-
-/** The swatch a name gets everywhere (feed-thread's rule, kept in step). */
-function swatchFor(name: string): string {
-  const palette = ['#0a6ee0', '#8e44ad', '#1f8a4c', '#b4620a', '#c0392b', '#0e7c86', '#6d4c41'];
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return palette[h % palette.length];
-}
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
 // 90-second "just now" and a 48-hour bucket that read "36h ago" where every
