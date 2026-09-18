@@ -19,7 +19,7 @@
  *
  * `rows: null` and `rows: []` are different states and both are drawn:
  * null is "the list has not answered yet" (skeletons), `[]` is "you have no
- * apps" (the empty line). An empty list and an unloaded one looking identical
+ * apps" (the empty card). An empty list and an unloaded one looking identical
  * is the bug the Board's own `loading` flag exists to prevent.
  */
 

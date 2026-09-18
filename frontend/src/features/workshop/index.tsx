@@ -280,19 +280,74 @@ export function WorkshopScreen() {
           </span>
         </p>
         <GroupedList id="workshop-list">
-          {/* FIRST, not last, and that is load-bearing: the row separator is
+          {/* #2445: THE EMPTY STATE IS A CARD, NOT A GREY CAPTION — the same
+              correction Home's Discover block took in #1913
+              (features/home/panels/discover.tsx): a title, a quieter second
+              line and a trailing chevron, and the whole thing is the way on
+              to the one thing there is to do here. It reads as an
+              INVITATION rather than as an error note where the rows usually
+              are. Same destination as Discover's, `#apps`, because "you have
+              no apps" and "there is nothing to discover" are answered by the
+              same directory.
+
+              It is a `ListRow`, not a hand-rolled copy of Discover's plate:
+              that card wears the Home panels' lane language
+              (`home-discover-lane`, a tint, a hairline) because that is the
+              surface it sits on, and THIS surface is the grouped-list card
+              every other row on this screen is drawn in. Same shape, this
+              screen's vocabulary. An anchor rather than a button for the
+              reason AppRow gives — a hash href is the browser's to open in a
+              new tab — and with no leading tile.
+
+              FIRST, not last, and that is load-bearing: the row separator is
               `[&:not(:last-child)]:after:*` on the row itself, so a note after
               the rows would leave the last one drawing a hairline under
               nothing. Ahead of them it changes which element is last not at
               all. It ships in the prerender — hidden — because the shell's id
-              inventory resolves against that document. */}
-          <p
-            id="workshop-empty"
-            className={(empty ? '' : 'hidden ')
-              + 'px-4 py-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-500'}
-          >
-            You have no apps yet. Discover finds the ones you can join.
-          </p>
+              inventory resolves against that document.
+
+              THE CARD DRAWS NO HAIRLINE OF ITS OWN, in either state, and that
+              is right rather than incidental. Showing, it is the only thing in
+              the list, and a rule under the last row is a rule under nothing —
+              which is the very reason this sits first. Hidden, the wrapper is
+              `display: none`, so neither it nor the row inside it renders
+              anything at all, and the rows below keep the separators they
+              would have had. The row gets there by being the wrapper's only
+              child, so `:not(:last-child)` is false for it always.
+
+              THE ID AND THE `hidden` CLASS ARE THE API. dapp.json selects
+              `#workshop-empty.hidden` to prove the card is gone once the list
+              has rows, so the id stays on ONE element and visibility stays a
+              class toggle on it — never conditional rendering, which would
+              take the element out of the document the check resolves against.
+
+              AND IT IS A WRAPPER, NOT THE ANCHOR ITSELF. That is the whole
+              reason this div exists, and removing it breaks a merge-gating
+              check silently. A second declared selector reads
+
+                #workshop-list a[data-workshop-app]:first-of-type
+                  [data-workshop-needs]:not([data-workshop-needs="0"])
+
+              to prove an app with a decision waiting LEADS the list.
+              `:first-of-type` counts siblings OF THAT ELEMENT NAME and is
+              purely structural — `display: none` does not exempt an element
+              from it — so an `<a id="workshop-empty">` sitting here as a
+              sibling of the rows makes the first app row the SECOND `<a>`,
+              and that selector matches nothing whether the card is showing or
+              not. It shipped that way once (#2445) and the check failed on
+              the very next run. Inside this div the card's anchor is the
+              first `<a>` among ITS siblings, where it satisfies nothing and
+              blocks nothing, and the first row is the first `<a>` among the
+              list's own children again. */}
+          <div id="workshop-empty" className={empty ? '' : 'hidden'}>
+            <ListRow
+              as="a"
+              href="#apps"
+              title="You have no apps yet"
+              subtitle="Browse the directory to find one to join."
+              subtitleClassName="whitespace-normal"
+            />
+          </div>
           {state.error
             ? (
               <AppsLoadError
