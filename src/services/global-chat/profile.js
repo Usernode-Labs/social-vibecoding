@@ -36,6 +36,13 @@ function reasoningEffort(value) {
   return value;
 }
 
+function enabled(value) {
+  if (typeof value !== 'boolean') {
+    throw new GlobalChatProfileError('invalid_enabled', 'Enabled must be a boolean');
+  }
+  return value;
+}
+
 function compatibleReasoningEffort(model, effort) {
   // The first experimental release offered the generic "minimal" value and
   // some users may have persisted it. GLM 5.3 Flash advertises low/high/max,
@@ -74,6 +81,7 @@ function defaults(config = {}) {
   );
   return Object.freeze({
     backend: 'openrouter',
+    enabled: false,
     model: configuredModel,
     reasoningEffort: compatibleReasoningEffort(configuredModel, configuredEffort),
     spendCapUsd: null,
@@ -87,6 +95,7 @@ function publicProfile(row, config = {}) {
   const selectedEffort = reasoningEffort(row.reasoning_effort || fallback.reasoningEffort);
   return {
     backend: 'openrouter',
+    enabled: row.enabled === true,
     model: selectedModel,
     reasoningEffort: compatibleReasoningEffort(selectedModel, selectedEffort),
     spendCapUsd: money(row.spend_cap_usd),
@@ -99,7 +108,7 @@ function publicProfile(row, config = {}) {
 
 async function readProfile(pool, userId, config = {}) {
   const { rows } = await pool.query(
-    `SELECT model_id, reasoning_effort, spend_cap_usd, updated_at
+    `SELECT enabled, model_id, reasoning_effort, spend_cap_usd, updated_at
        FROM global_chat_profiles
       WHERE user_id = $1`,
     [userId],
@@ -112,23 +121,34 @@ async function writeProfile(pool, userId, profile, config = {}) {
   const selectedModel = modelId(profile.model ?? fallback.model);
   const selectedEffort = reasoningEffort(profile.reasoningEffort ?? fallback.reasoningEffort);
   const normalized = {
+    enabled: Object.hasOwn(profile, 'enabled')
+      ? enabled(profile.enabled)
+      : fallback.enabled,
     model: selectedModel,
     reasoningEffort: compatibleReasoningEffort(selectedModel, selectedEffort),
     spendCapUsd: money(profile.spendCapUsd),
   };
   const { rows } = await pool.query(
     `INSERT INTO global_chat_profiles
-       (user_id, model_id, reasoning_effort, spend_cap_usd)
-     VALUES ($1, $2, $3, $4)
+       (user_id, enabled, model_id, reasoning_effort, spend_cap_usd)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (user_id) DO UPDATE SET
+       enabled = EXCLUDED.enabled,
        model_id = EXCLUDED.model_id,
        reasoning_effort = EXCLUDED.reasoning_effort,
        spend_cap_usd = EXCLUDED.spend_cap_usd,
        updated_at = NOW()
-     RETURNING model_id, reasoning_effort, spend_cap_usd, updated_at`,
-    [userId, normalized.model, normalized.reasoningEffort, normalized.spendCapUsd],
+     RETURNING enabled, model_id, reasoning_effort, spend_cap_usd, updated_at`,
+    [
+      userId,
+      normalized.enabled,
+      normalized.model,
+      normalized.reasoningEffort,
+      normalized.spendCapUsd,
+    ],
   );
   return publicProfile(rows[0] || {
+    enabled: normalized.enabled,
     model_id: normalized.model,
     reasoning_effort: normalized.reasoningEffort,
     spend_cap_usd: normalized.spendCapUsd,
@@ -267,6 +287,7 @@ module.exports = {
   GlobalChatProfileError,
   modelId,
   reasoningEffort,
+  enabled,
   money,
   defaults,
   publicProfile,

@@ -60,7 +60,7 @@ async function mount(t) {
   });
   agentModels.listOpenRouterModels = async () => ({ models: [{ id: 'cheap/global' }] });
   profileService.readProfile = async () => ({
-    backend: 'openrouter', model: 'cheap/global', reasoningEffort: 'low',
+    backend: 'openrouter', enabled: true, model: 'cheap/global', reasoningEffort: 'low',
     spendCapUsd: '1', saved: true,
   });
   profileService.readMonthlyUsage = async () => ({

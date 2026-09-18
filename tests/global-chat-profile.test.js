@@ -17,6 +17,7 @@ const config = {
 test('global-chat profile validation keeps cheap defaults separate and money exact', () => {
   assert.deepEqual(profile.defaults(config), {
     backend: 'openrouter',
+    enabled: false,
     model: 'cheap/default',
     reasoningEffort: 'low',
     spendCapUsd: null,
@@ -51,6 +52,9 @@ test('global-chat profile rejects unsafe values and normalizes valid spend caps'
   assert.throws(() => profile.money('1.000000001'), /at most 8 decimals/);
   assert.throws(() => profile.modelId('model\n[injection]'), /valid model id/);
   assert.throws(() => profile.reasoningEffort('ultra'), /Invalid reasoning effort/);
+  assert.equal(profile.enabled(true), true);
+  assert.equal(profile.enabled(false), false);
+  assert.throws(() => profile.enabled('true'), /boolean/);
 });
 
 test('sanitized OpenRouter metadata exposes the exact Global Chat requirements', () => {
@@ -165,4 +169,6 @@ test('global-chat tables are private and remain above the standalone schema tail
   }
   assert.match(schema, /global_chat_action_tokens[\s\S]*token_hash\s+VARCHAR\(64\) NOT NULL UNIQUE/);
   assert.doesNotMatch(schema, /global_chat_action_tokens[\s\S]{0,800}\braw_token\b/);
+  assert.match(schema, /global_chat_profiles \([\s\S]*enabled\s+BOOLEAN NOT NULL DEFAULT FALSE/);
+  assert.match(schema, /ALTER TABLE global_chat_profiles[\s\S]*ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE/);
 });

@@ -8264,6 +8264,7 @@ COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
 -- The optional spend cap is measured against UTC calendar-month usage.
 CREATE TABLE IF NOT EXISTS global_chat_profiles (
   user_id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  enabled             BOOLEAN NOT NULL DEFAULT FALSE,
   model_id            VARCHAR(255) NOT NULL,
   reasoning_effort    VARCHAR(16) NOT NULL DEFAULT 'low',
   spend_cap_usd       NUMERIC(18,8),
@@ -8276,6 +8277,8 @@ CREATE TABLE IF NOT EXISTS global_chat_profiles (
   CONSTRAINT global_chat_profiles_spend_cap_check
     CHECK (spend_cap_usd IS NULL OR spend_cap_usd >= 0)
 );
+ALTER TABLE global_chat_profiles
+  ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
 COMMENT ON TABLE global_chat_profiles IS 'staging:private';
 
 CREATE TABLE IF NOT EXISTS global_chat_threads (

@@ -24,7 +24,7 @@ const { PROMPT_VERSION } = require('../services/global-chat/prompt');
 const classicInventory = require('../services/global-chat/classic-inventory.generated.json');
 
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
-const PATCH_FIELDS = new Set(['model', 'reasoningEffort', 'spendCapUsd']);
+const PATCH_FIELDS = new Set(['enabled', 'model', 'reasoningEffort', 'spendCapUsd']);
 const CAPABILITY_REGISTRY = new CapabilityRegistry(classicCapabilityDefinitions());
 const TURN_BODY_FIELDS = new Set(['text', 'client', 'context']);
 const MORE_BODY_FIELDS = new Set(['topic', 'client', 'context']);
@@ -220,6 +220,9 @@ function globalChatRoutes(config) {
   async function saveGlobalChatProfile(userId, patch) {
     const current = await profileService.readProfile(pool, userId, config);
     const next = {
+      enabled: Object.hasOwn(patch, 'enabled')
+        ? profileService.enabled(patch.enabled)
+        : current.enabled,
       model: Object.hasOwn(patch, 'model')
         ? profileService.modelId(patch.model)
         : current.model,
@@ -231,9 +234,10 @@ function globalChatRoutes(config) {
         : current.spendCapUsd,
     };
 
-    // A cap-only change remains possible during a provider outage. Model or
-    // effort changes are executable configuration, so fail closed unless the
-    // exact pair is in this user's live, capability-filtered catalog.
+    // Opt-in and cap-only changes remain possible during a provider outage.
+    // Model or effort changes are executable configuration, so fail closed
+    // unless the exact pair is in this user's live, capability-filtered
+    // catalog.
     if (Object.hasOwn(patch, 'model') || Object.hasOwn(patch, 'reasoningEffort')) {
       const { configured, catalog } = await catalogForUser(userId, {
         effort: next.reasoningEffort,
@@ -451,22 +455,24 @@ function globalChatRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     try {
-      const [profile, thread, development, credential] = await Promise.all([
-        profileService.readProfile(pool, req.user.id, config),
-        globalChatStore.ensureThread(pool, req.user.id),
+      const profile = await profileService.readProfile(pool, req.user.id, config);
+      const [thread, development, credential, usage] = await Promise.all([
+        profile.enabled ? globalChatStore.ensureThread(pool, req.user.id) : null,
         developmentProfile(req.user.id),
-        credentialForUser(req.user.id),
+        profile.enabled ? credentialForUser(req.user.id) : { configured: false },
+        profileService.readMonthlyUsage(pool, req.user.id, {
+          spendCapUsd: profile.spendCapUsd,
+        }),
       ]);
-      const usage = await profileService.readMonthlyUsage(pool, req.user.id, {
-        spendCapUsd: profile.spendCapUsd,
-      });
       return res.json({
         experimental: true,
         label: 'Chat (experimental)',
         startupMode: 'classic',
         parityReady: classicInventory.parityReady,
-        available: credential.configured,
-        unavailableReason: credential.configured ? null : 'openrouter_key_required',
+        available: profile.enabled && credential.configured,
+        unavailableReason: !profile.enabled
+          ? 'global_chat_disabled'
+          : (credential.configured ? null : 'openrouter_key_required'),
         capabilityRegistryVersion: CAPABILITY_REGISTRY.version,
         capabilityCount: CAPABILITY_REGISTRY.size,
         thread,
@@ -477,6 +483,26 @@ function globalChatRoutes(config) {
     } catch (err) {
       log.error('global-chat', 'bootstrap failed', { userId: req.user.id, err: err.message });
       return res.status(500).json({ error: 'Failed to open Global Chat.' });
+    }
+  });
+
+  // The bootstrap is deliberately readable while disabled: it supplies the
+  // release + profile state that decides whether the entry point exists, but
+  // it does not create a thread until the user opts in. Every operational
+  // route below this line fails closed on the same persisted setting.
+  router.use('/api/global-chat', async (req, res, next) => {
+    if (!req.user) return next();
+    try {
+      const profile = await profileService.readProfile(pool, req.user.id, config);
+      if (profile.enabled) return next();
+      noStore(res);
+      return res.status(403).json({
+        error: 'Global Chat is disabled. Enable it in Settings first.',
+        code: 'global_chat_disabled',
+      });
+    } catch (err) {
+      log.warn('global-chat', 'opt-in check failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to verify Global Chat settings.' });
     }
   });
 
@@ -660,7 +686,9 @@ function globalChatRoutes(config) {
       : {};
     const keys = Object.keys(body);
     if (keys.length === 0 || keys.some((key) => !PATCH_FIELDS.has(key))) {
-      return res.status(400).json({ error: 'Provide only model, reasoningEffort, or spendCapUsd.' });
+      return res.status(400).json({
+        error: 'Provide only enabled, model, reasoningEffort, or spendCapUsd.',
+      });
     }
     try {
       const { profile, usage } = await saveGlobalChatProfile(req.user.id, body);

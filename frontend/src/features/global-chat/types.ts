@@ -49,6 +49,7 @@ export interface GlobalChatThread {
 
 export interface GlobalChatProfile {
   backend: string;
+  enabled: boolean;
   model: string;
   reasoningEffort: string;
   spendCapUsd: string | null;
@@ -79,7 +80,7 @@ export interface GlobalChatBootstrap {
   unavailableReason: string | null;
   capabilityRegistryVersion: string;
   capabilityCount: number;
-  thread: GlobalChatThread;
+  thread: GlobalChatThread | null;
   firstUse: GlobalChatPresentation;
   profiles: {
     globalChat: GlobalChatProfile;

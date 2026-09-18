@@ -568,7 +568,8 @@ export function ImprovePanel() {
                 of the scroller is invisible to it. It scrolls with the list,
                 as the section's own first line should.
 
-                Renders null until the parity gate opens — see
+                Renders null until both the parity gate and the user's
+                Settings opt-in are open — see
                 ../global-chat/new-chat-button.tsx.
             */}
             <GlobalChatNewChatButton onNavigate={dismissForNav} />

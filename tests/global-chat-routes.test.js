@@ -36,9 +36,10 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
       if (/INSERT INTO global_chat_profiles/.test(sql)) {
         assert.equal(params[0], 7);
         state.profile = {
-          model_id: params[1],
-          reasoning_effort: params[2],
-          spend_cap_usd: params[3],
+          enabled: params[1],
+          model_id: params[2],
+          reasoning_effort: params[3],
+          spend_cap_usd: params[4],
           updated_at: '2026-09-18T15:00:00.000Z',
         };
         writes.push({ sql, params });
@@ -117,25 +118,35 @@ test('Global Chat settings default to Classic startup and GLM-compatible low eff
   const body = await response.json();
   assert.equal(body.experimental, true);
   assert.equal(body.startupMode, 'classic');
+  assert.equal(body.profile.enabled, false);
   assert.equal(body.profile.model, 'cheap/default');
   assert.equal(body.profile.reasoningEffort, 'low');
   assert.equal(body.profile.saved, false);
   assert.equal(body.usage.spentUsd, '0.08');
 });
 
-test('cap-only updates survive provider unavailability and never touch development preferences', async (t) => {
+test('opt-in and cap-only updates survive provider unavailability and never touch development preferences', async (t) => {
   const { base, writes } = await mount(t, { configured: false });
   const response = await fetch(`${base}/api/me/global-chat`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ spendCapUsd: '0.50' }),
+    body: JSON.stringify({ enabled: true, spendCapUsd: '0.50' }),
   });
   assert.equal(response.status, 200);
   const body = await response.json();
+  assert.equal(body.profile.enabled, true);
   assert.equal(body.profile.spendCapUsd, '0.5');
   assert.equal(body.usage.remainingUsd, '0.42');
   assert.equal(writes.length, 1);
   assert.doesNotMatch(writes[0].sql, /user_agent_preferences/);
+
+  const rejected = await fetch(`${base}/api/me/global-chat`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: 'yes' }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal((await rejected.json()).code, 'invalid_enabled');
 });
 
 test('model settings are restricted to the live capability-filtered catalog', async (t) => {
