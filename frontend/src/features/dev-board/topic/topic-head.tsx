@@ -339,8 +339,10 @@ function Roster({ r }: { r: RosterView }): ReactNode {
         </>
       ) : (
         <>
-          <span className="dev-ledger-lead dev-ledger-lead-vote">Waiting for votes.</span>
-          {' '}
+          {/* The space rides inside the lead: a bare whitespace expression
+              between two text runs is the hydration mismatch
+              tests/shell-build.test.js guards against. */}
+          <span className="dev-ledger-lead dev-ledger-lead-vote">{'Waiting for votes. '}</span>
           <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span>
           {` ${r.yes!.names} `}
           <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
