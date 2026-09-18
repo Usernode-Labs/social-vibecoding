@@ -117,6 +117,12 @@ const DENIED_COLUMNS = {
   chat_session_attachments: [
     'data', // raw upload bytes — large and potentially private
   ],
+  global_chat_action_tokens: [
+    // The first hash locates a one-use write capability; the second is a
+    // fingerprint of that capability's exact private action payload.
+    'token_hash',
+    'input_hash',
+  ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)

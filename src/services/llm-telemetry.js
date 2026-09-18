@@ -29,6 +29,7 @@ const COMPONENTS = new Set([
   'progress_estimate',
   'issue_title',
   'report_summary',
+  'global_chat',
   'fleet_maintenance',
   'coding_agent_scout',
   'coding_agent_build',

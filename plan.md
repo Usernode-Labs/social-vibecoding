@@ -621,5 +621,14 @@ read-only mode, and transcript deletion.
 - [x] Separate configurable global-chat model/reasoning defaults.
 - [x] Contract tests for the first foundation slice (8 focused tests; repository
   changed-test mapping: 1,448 passed, 1 skipped, 0 failed).
+- [x] Private Global Chat profile, thread, message, tool-run, confirmation-token,
+  and usage schema.
+- [x] Authenticated Global Chat profile, compatible-model catalog, and monthly
+  usage APIs; Classic remains the explicit startup mode in the contract.
+- [x] Live model filtering for tools, structured output, and selected reasoning
+  effort, with sanitized capability metadata and no credential disclosure.
+- [x] UTC calendar-month cap semantics and separate Global Chat accounting
+  summary (48 focused tests passed for this slice).
 - [ ] Generated Classic control/route/settings inventory and parity audit.
-- [ ] Remaining phases B–F.
+- [ ] Remaining Phase B provider streaming and pre-call cap enforcement.
+- [ ] Phases C–F.

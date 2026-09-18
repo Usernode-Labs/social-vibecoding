@@ -37,6 +37,41 @@ function hasToolSupport(m) {
   return params.includes('tools') || params.includes('tool_choice');
 }
 
+function hasStructuredOutputSupport(m) {
+  const params = supportedParameterList(m);
+  return params.includes('structured_outputs')
+    || params.includes('response_format')
+    || params.includes('json_schema');
+}
+
+function hasReasoningEffortSupport(m) {
+  const params = supportedParameterList(m);
+  // OpenRouter currently describes the request control as either the broad
+  // `reasoning` parameter or the more specific `reasoning_effort` parameter,
+  // depending on the upstream model metadata revision.
+  return params.includes('reasoning_effort') || params.includes('reasoning');
+}
+
+function hasParallelToolCallSupport(m) {
+  return supportedParameterList(m).includes('parallel_tool_calls');
+}
+
+// Global Chat has a stricter contract than the coding-agent catalog: its
+// model must choose tools, return the server-owned response schema, and
+// accept the separately configured reasoning effort. This helper accepts
+// either raw OpenRouter metadata or the sanitized catalog shape.
+function meetsGlobalChatMinimums(m) {
+  if (!m) return false;
+  if (typeof m.supportsTools === 'boolean') {
+    return m.supportsTools
+      && m.supportsStructuredOutputs === true
+      && m.supportsReasoningEffort === true;
+  }
+  return hasToolSupport(m)
+    && hasStructuredOutputSupport(m)
+    && hasReasoningEffortSupport(m);
+}
+
 // Static minimums a model must meet to even be "experimental" for Codex.
 function meetsStaticMinimums(m) {
   if (!m) return false;
@@ -109,7 +144,11 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
     averagePricePerMillion,
     costTier: costTier(averagePricePerMillion),
     supportsTools: hasToolSupport(m),
+    supportsStructuredOutputs: hasStructuredOutputSupport(m),
+    supportsReasoningEffort: hasReasoningEffortSupport(m),
+    supportsParallelToolCalls: hasParallelToolCallSupport(m),
     meetsCodexMinimums: meetsStaticMinimums(m),
+    meetsGlobalChatMinimums: meetsGlobalChatMinimums(m),
     supportsReasoning,
     reasoningEfforts,
     isRecommended: recommended === true,
@@ -230,7 +269,11 @@ function invalidateAll() { cache.clear(); }
 
 module.exports = {
   meetsStaticMinimums,
+  meetsGlobalChatMinimums,
   hasToolSupport,
+  hasStructuredOutputSupport,
+  hasReasoningEffortSupport,
+  hasParallelToolCallSupport,
   pricePerMillion,
   averageTokenPrice,
   costTier,
