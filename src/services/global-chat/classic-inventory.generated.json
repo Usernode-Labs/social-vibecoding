@@ -5281,7 +5281,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 448,
+      "line": 450,
       "method": "GET",
       "path": "/api/global-chat/bootstrap",
       "expression": null,
@@ -5290,7 +5290,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 481,
+      "line": 483,
       "method": "GET",
       "path": "/api/global-chat/threads/current",
       "expression": null,
@@ -5299,7 +5299,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 492,
+      "line": 494,
       "method": "POST",
       "path": "/api/global-chat/threads",
       "expression": null,
@@ -5308,7 +5308,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 504,
+      "line": 506,
       "method": "GET",
       "path": "/api/global-chat/threads/:id/messages",
       "expression": null,
@@ -5317,7 +5317,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 540,
+      "line": 542,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/turns",
       "expression": null,
@@ -5326,7 +5326,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 544,
+      "line": 546,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/more-suggestions",
       "expression": null,
@@ -5335,7 +5335,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 548,
+      "line": 550,
       "method": "POST",
       "path": "/api/global-chat/actions/:token/confirm",
       "expression": null,
@@ -5344,7 +5344,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 616,
+      "line": 618,
       "method": "DELETE",
       "path": "/api/global-chat/threads/:id",
       "expression": null,
@@ -5353,7 +5353,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 632,
+      "line": 634,
       "method": "GET",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5362,7 +5362,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 653,
+      "line": 655,
       "method": "PATCH",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5371,7 +5371,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 675,
+      "line": 677,
       "method": "GET",
       "path": "/api/me/global-chat/models",
       "expression": null,
@@ -5380,7 +5380,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 697,
+      "line": 699,
       "method": "GET",
       "path": "/api/me/global-chat/usage",
       "expression": null,

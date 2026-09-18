@@ -10,7 +10,7 @@ const profile = require('../src/services/global-chat/profile');
 
 const config = {
   openrouterDefaultGlobalChatModel: 'cheap/default',
-  openrouterDefaultGlobalChatReasoning: 'minimal',
+  openrouterDefaultGlobalChatReasoning: 'low',
   openrouterGlobalChatFallbackModels: ['fallback/valid'],
 };
 
@@ -18,7 +18,7 @@ test('global-chat profile validation keeps cheap defaults separate and money exa
   assert.deepEqual(profile.defaults(config), {
     backend: 'openrouter',
     model: 'cheap/default',
-    reasoningEffort: 'minimal',
+    reasoningEffort: 'low',
     spendCapUsd: null,
   });
   assert.throws(
@@ -26,6 +26,21 @@ test('global-chat profile validation keeps cheap defaults separate and money exa
     /nonnegative USD amount/,
     'ambiguous noncanonical amounts are rejected',
   );
+});
+
+test('legacy minimal GLM Flash profiles are read as the supported low effort', () => {
+  const legacyConfig = {
+    openrouterDefaultGlobalChatModel: 'z-ai/glm-5.3-flash',
+    openrouterDefaultGlobalChatReasoning: 'minimal',
+  };
+  assert.equal(profile.defaults(legacyConfig).reasoningEffort, 'low');
+  assert.equal(profile.publicProfile({
+    model_id: 'z-ai/glm-5.3-flash',
+    reasoning_effort: 'minimal',
+    spend_cap_usd: null,
+    updated_at: null,
+  }, config).reasoningEffort, 'low');
+  assert.equal(profile.compatibleReasoningEffort('another/model', 'minimal'), 'minimal');
 });
 
 test('global-chat profile rejects unsafe values and normalizes valid spend caps', () => {
@@ -44,6 +59,7 @@ test('sanitized OpenRouter metadata exposes the exact Global Chat requirements',
     supported_parameters: [
       'tools', 'structured_outputs', 'reasoning', 'parallel_tool_calls',
     ],
+    reasoning: { supported_efforts: ['low', 'high', 'max'] },
     context_length: 64_000,
   }, { status: 'experimental', note: null });
   assert.equal(valid.supportsTools, true);
@@ -51,42 +67,58 @@ test('sanitized OpenRouter metadata exposes the exact Global Chat requirements',
   assert.equal(valid.supportsReasoningEffort, true);
   assert.equal(valid.supportsParallelToolCalls, true);
   assert.equal(valid.meetsGlobalChatMinimums, true);
+  assert.equal(valid.reasoningEfforts, null, 'development-agent effort metadata stays unchanged');
+  assert.deepEqual(valid.globalChatReasoningEfforts, ['low', 'high', 'max']);
+  assert.equal(
+    Object.keys(valid).includes('globalChatReasoningEfforts'),
+    false,
+    'Global Chat metadata must not alter existing development catalog JSON',
+  );
+  assert.equal(profile.supportsEffort(valid, 'low'), true);
+  assert.equal(profile.supportsEffort(valid, 'minimal'), false);
 
   const textOnly = agentModels.sanitizeModel({
     id: 'vendor/text-only',
-    supported_parameters: ['tools', 'reasoning'],
+    supported_parameters: ['reasoning', 'structured_outputs'],
     context_length: 64_000,
   }, { status: 'experimental', note: null });
   assert.equal(textOnly.meetsGlobalChatMinimums, false);
 });
 
-test('global chat catalog includes only models that meet tools, schema, and effort', () => {
+test('global chat catalog includes only models that meet tools and the exact effort', () => {
   const catalog = profile.globalChatCatalog({
     credentialRevision: 4,
     refreshedAt: '2026-09-18T12:00:00.000Z',
     models: [
       {
         id: 'fallback/valid', supportsTools: true, supportsStructuredOutputs: true,
-        supportsReasoningEffort: true, reasoningEfforts: ['minimal', 'low'],
+        supportsReasoningEffort: true, reasoningEfforts: ['low', 'high'],
       },
       {
         id: 'cheap/default', supportsTools: true, supportsStructuredOutputs: true,
         supportsReasoningEffort: true, reasoningEfforts: ['high'],
       },
       {
-        id: 'vendor/no-schema', supportsTools: true, supportsStructuredOutputs: false,
+        id: 'vendor/tool-only', supportsTools: true, supportsStructuredOutputs: false,
+        supportsReasoningEffort: true, reasoningEfforts: ['low'],
+      },
+      {
+        id: 'vendor/no-tools', supportsTools: false, supportsStructuredOutputs: true,
         supportsReasoningEffort: true,
       },
     ],
-  }, config, 'minimal');
+  }, config, 'low');
 
-  assert.deepEqual(catalog.models.map((model) => model.id), ['fallback/valid']);
+  assert.deepEqual(
+    catalog.models.map((model) => model.id),
+    ['fallback/valid', 'vendor/tool-only'],
+  );
   assert.equal(catalog.recommendedModelId, 'fallback/valid');
   assert.equal(catalog.models[0].isGlobalChatRecommended, true);
   assert.deepEqual(catalog.requiredCapabilities, {
     tools: true,
-    structuredOutputs: true,
-    reasoningEffort: 'minimal',
+    structuredOutputs: false,
+    reasoningEffort: 'low',
   });
 });
 

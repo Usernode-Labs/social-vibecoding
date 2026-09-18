@@ -49,9 +49,9 @@ function ceilMoney(value) {
   return fromUnits(BigInt(Math.ceil(value * 100000000)));
 }
 
-function requestBytes({ messages = [], tools = [], schema = {} } = {}) {
+function requestBytes({ messages = [], tools = [] } = {}) {
   try {
-    return Buffer.byteLength(JSON.stringify({ messages, tools, schema }), 'utf8');
+    return Buffer.byteLength(JSON.stringify({ messages, tools }), 'utf8');
   } catch {
     throw new GlobalChatBudgetError('invalid_request', 'Model request is not serializable');
   }
@@ -61,7 +61,6 @@ function estimateInvocationCost({
   model,
   messages,
   tools,
-  schema,
   maxOutputTokens = globalChatOpenRouter.DEFAULT_MAX_OUTPUT_TOKENS,
 }) {
   const inputPrice = Number(model?.inputPricePerMillion);
@@ -77,7 +76,7 @@ function estimateInvocationCost({
   // UTF-8 bytes are a conservative tokenizer-independent upper bound for
   // ordinary text/tool JSON. Completion cost reserves the configured maximum,
   // so concurrent turns cannot both pass a small cap and overspend it.
-  const estimatedInputTokens = requestBytes({ messages, tools, schema });
+  const estimatedInputTokens = requestBytes({ messages, tools });
   const rawCost = ((estimatedInputTokens * inputPrice)
     + (maxOutputTokens * outputPrice)) / 1_000_000;
   return {
@@ -298,6 +297,44 @@ async function releaseReservation(pool, reservation) {
   return result.rowCount === 1;
 }
 
+async function recordTurnOutcome(pool, {
+  userId,
+  threadId,
+  messageId,
+  outcome,
+  errorCode = null,
+  durationMs,
+  invocationCount,
+  resultCount,
+}) {
+  if (!['success', 'error', 'cancelled'].includes(outcome)) {
+    throw new Error('global-chat accounting: invalid turn outcome');
+  }
+  const safeError = errorCode && ERROR_CODE_RE.test(errorCode) ? errorCode : null;
+  const metadata = {
+    turn_outcome: outcome,
+    turn_duration_ms: count(durationMs),
+    turn_invocation_count: count(invocationCount),
+    turn_result_count: count(resultCount),
+    ...(safeError ? { turn_error_code: safeError } : {}),
+  };
+  const result = await pool.query(
+    `WITH latest AS (
+       SELECT id
+         FROM global_chat_usage
+        WHERE user_id = $1 AND thread_id = $2 AND message_id = $3
+        ORDER BY created_at DESC
+        LIMIT 1
+     )
+     UPDATE global_chat_usage g
+        SET metadata = g.metadata || $4::jsonb
+       FROM latest
+      WHERE g.id = latest.id`,
+    [userId, threadId, messageId, JSON.stringify(metadata)],
+  );
+  return result.rowCount === 1;
+}
+
 async function invokeAccounted({
   pool,
   config,
@@ -311,27 +348,33 @@ async function invokeAccounted({
   attemptNumber = 1,
   messages,
   tools,
-  schema,
   sessionId,
   maxOutputTokens = globalChatOpenRouter.DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
   parallelToolCalls = true,
+  toolChoice = 'auto',
+  timeoutMs = globalChatOpenRouter.DEFAULT_TIMEOUT_MS,
   signal,
   onContent,
+  providerAllowance,
   validateKey = openrouterClient.validateKey,
   streamChat = globalChatOpenRouter.streamChat,
   now = new Date(),
 }) {
   const started = Date.now();
-  const allowance = await validateKey(apiKey, {
-    baseUrl: config.openrouterApiBase,
-    origin: config.openrouterOrigin,
-  });
+  // The route validates the key and allowance once while building the turn
+  // runtime. Reusing that snapshot avoids another provider round-trip for
+  // every planning/tool iteration. Direct callers retain the safe fallback.
+  const allowance = providerAllowance === undefined
+    ? await validateKey(apiKey, {
+      baseUrl: config.openrouterApiBase,
+      origin: config.openrouterOrigin,
+    })
+    : providerAllowance;
   const estimate = estimateInvocationCost({
     model,
     messages,
     tools,
-    schema,
     maxOutputTokens,
   });
   const reserved = await reserveInvocation(pool, {
@@ -358,11 +401,12 @@ async function invokeAccounted({
       reasoning: reasoningEffort,
       messages,
       tools,
-      schema,
       sessionId,
       maxOutputTokens,
       temperature,
       parallelToolCalls,
+      toolChoice,
+      timeoutMs,
       signal,
       onContent,
     });
@@ -404,5 +448,6 @@ module.exports = {
   reserveInvocation,
   settleInvocation,
   releaseReservation,
+  recordTurnOutcome,
   invokeAccounted,
 };

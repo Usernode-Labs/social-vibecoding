@@ -248,7 +248,7 @@ function globalChatRoutes(config) {
       if (!catalog.models.some((model) => model.id === next.model)) {
         const error = new profileService.GlobalChatProfileError(
           'incompatible_model',
-          'That model does not support Global Chat tools, structured output, and the selected reasoning effort.',
+          'That model does not support Global Chat tools and the selected reasoning effort.',
         );
         throw error;
       }
@@ -318,6 +318,7 @@ function globalChatRoutes(config) {
       usage,
       credential,
       model,
+      providerAllowance: allowance,
       budget: {
         overallRemaining: cleanProviderNumber(allowance.limitRemaining),
         globalChatSpent: usage.spentUsd,
@@ -420,6 +421,7 @@ function globalChatRoutes(config) {
         globalChatProfile: runtime.profile,
         developmentProfile: runtime.development,
         budget: runtime.budget,
+        providerAllowance: runtime.providerAllowance,
         model: runtime.model,
         apiKey: runtime.credential.apiKey,
         executionContext: executionContext(req, input.client, {

@@ -6,12 +6,11 @@ const {
   buildRuntimeMetadata,
   serializeRuntimeMetadata,
 } = require('./prompt');
-const { validatePresentation } = require('./presentation');
+const { MAX_RESULT_REFS, validatePresentation } = require('./presentation');
 const { validateJsonSchema, JsonSchemaValidationError } = require('./json-schema');
 const {
   BASE_TOOL_NAMES,
   BASE_TOOLS,
-  PRESENTATION_SCHEMA,
   capabilityToolName,
   toolSet,
 } = require('./tool-protocol');
@@ -19,11 +18,13 @@ const defaultStore = require('./store');
 const defaultAccounting = require('./accounting');
 const defaultActions = require('./actions');
 
-const MAX_ITERATIONS = 8;
+const MAX_ITERATIONS = 4;
 const MAX_PARALLEL_READS = 4;
 const MAX_EXPOSED_CAPABILITIES = 60;
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_TOOL_CONTENT_BYTES = 64 * 1024;
+const TURN_TIMEOUT_MS = 45_000;
+const PROVIDER_TIMEOUT_MS = 25_000;
 const TRANSIENT_PROVIDER_ERRORS = new Set([
   'network',
   'timeout',
@@ -80,7 +81,15 @@ function toolFailure(error) {
     schema_validation_failed: 'The tool inputs were invalid.',
     invalid_capability_input: 'The capability inputs were invalid.',
     capability_not_found: 'That capability is not available.',
+    capability_required: 'I need to check Homeroom before answering that request.',
     turn_in_progress: 'Another Global Chat turn is already running.',
+    turn_timeout: 'Global Chat took too long. Please try again.',
+    timeout: 'The chat model took too long. Please try again.',
+    rate_limited: 'The chat model is busy right now. Please try again.',
+    provider_unavailable: 'The chat model is temporarily unavailable. Please try again.',
+    provider_error: 'The chat model could not complete that request. Please try again.',
+    presentation_required: 'The chat model returned an incomplete response. Please try again.',
+    iteration_limit: 'The chat model could not finish that request. Please try again.',
   };
   return { ok: false, error: { code, message: messages[code] || 'The capability could not be completed.' } };
 }
@@ -220,6 +229,7 @@ function createGlobalChatOrchestrator({
     globalChatProfile,
     developmentProfile,
     budget = {},
+    providerAllowance,
     model,
     apiKey,
     executionContext,
@@ -231,6 +241,8 @@ function createGlobalChatOrchestrator({
       try { await rawEmit(event); } catch {}
     };
     const messageText = userText(text);
+    const turnStartedAt = Date.now();
+    const deadlineAt = turnStartedAt + TURN_TIMEOUT_MS;
     const userId = Number(actor?.id);
     if (!Number.isSafeInteger(userId) || userId <= 0 || !actor?.username) {
       throw new GlobalChatOrchestrationError('invalid_actor', 'A signed-in user is required.');
@@ -244,6 +256,8 @@ function createGlobalChatOrchestrator({
 
     let turnId;
     let userMessage;
+    let providerInvocationCount = 0;
+    const turnResultIds = [];
     try {
       turnId = await store.claimTurn(pool, { userId, threadId });
       await emit({ type: 'turn.started', turnId, threadId, kind });
@@ -377,6 +391,7 @@ function createGlobalChatOrchestrator({
               dataKey: config.dataEncryptionKey,
             });
             knownResultIds.add(toolRunId);
+            turnResultIds.push(toolRunId);
             const event = {
               type: 'confirmation.required',
               resultId: toolRunId,
@@ -405,6 +420,7 @@ function createGlobalChatOrchestrator({
             dataKey: config.dataEncryptionKey,
           });
           knownResultIds.add(toolRunId);
+          turnResultIds.push(toolRunId);
           await emit({
             type: 'tool.completed', toolCallId: call.id, capabilityId,
             resultId: toolRunId, status: 'completed',
@@ -435,8 +451,36 @@ function createGlobalChatOrchestrator({
         }
       }
 
+      // Seed the first provider request with deterministic, authorized matches.
+      // This removes an entire model round-trip for ordinary requests while
+      // retaining search_capabilities for ambiguous or multi-step work.
+      if (kind === 'user_turn') {
+        const initialMatches = registry.search(messageText, executionContext, { limit: 8 });
+        for (const match of initialMatches) await exposeCapability(match.id);
+      }
       for (let iteration = 1; iteration <= iterationLimit; iteration += 1) {
-        const currentToolSet = toolSet([...exposed.values()]);
+        if (Date.now() >= deadlineAt) {
+          throw new GlobalChatOrchestrationError(
+            'turn_timeout',
+            'Global Chat exceeded the turn deadline.',
+          );
+        }
+        const suggestionOnly = kind === 'more_suggestions';
+        const mustUseCapability = kind === 'user_turn'
+          && exposed.size > 0
+          && turnResultIds.length === 0;
+        const currentToolSet = toolSet(suggestionOnly ? [] : [...exposed.values()], {
+          includeSearch: !suggestionOnly,
+          includeDescribe: !suggestionOnly,
+          // When a selected capability requires a value the user did not
+          // provide and no read can discover, the model needs one safe escape
+          // from forced tool use instead of looping with guessed arguments.
+          includeAsk: mustUseCapability,
+          // For a platform-data request, do not let the model skip straight to
+          // a plausible-sounding answer. At least one authoritative capability
+          // must finish before presentation becomes an available tool.
+          includePresent: !mustUseCapability,
+        });
         const metadata = buildRuntimeMetadata({
           request: {
             id: turnId,
@@ -471,6 +515,7 @@ function createGlobalChatOrchestrator({
         let response;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
+            providerInvocationCount += 1;
             response = await accounting.invokeAccounted({
               pool,
               config,
@@ -481,18 +526,31 @@ function createGlobalChatOrchestrator({
               model,
               reasoningEffort: globalChatProfile.reasoningEffort,
               spendCapUsd: globalChatProfile.spendCapUsd,
+              providerAllowance,
               attemptNumber: attempt,
               messages,
               tools: currentToolSet.tools,
-              schema: PRESENTATION_SCHEMA,
               sessionId: threadId,
               maxOutputTokens: kind === 'more_suggestions' ? 200 : 800,
               temperature: model.supportsTemperature === false ? null : 0.1,
               parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
+              toolChoice: suggestionOnly
+                ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
+                : (mustUseCapability ? 'required' : 'auto'),
+              timeoutMs: Math.max(1_000, Math.min(
+                PROVIDER_TIMEOUT_MS,
+                deadlineAt - Date.now(),
+              )),
               signal,
             });
             break;
           } catch (error) {
+            if (Date.now() >= deadlineAt) {
+              throw new GlobalChatOrchestrationError(
+                'turn_timeout',
+                'Global Chat exceeded the turn deadline.',
+              );
+            }
             if (attempt === 2 || !TRANSIENT_PROVIDER_ERRORS.has(error?.code)) throw error;
           }
         }
@@ -518,11 +576,36 @@ function createGlobalChatOrchestrator({
         const outcomes = new Map();
         const capabilityCalls = [];
         const presentationCalls = [];
+        const availableToolNames = new Set(
+          currentToolSet.tools.map((tool) => tool.function.name),
+        );
         for (const call of calls) {
           try {
-            if (call.name === BASE_TOOL_NAMES.PRESENT) {
+            if (!availableToolNames.has(call.name)) {
+              throw new GlobalChatOrchestrationError(
+                'invalid_tool_call',
+                'The model selected a tool that was not available in this step.',
+              );
+            } else if (call.name === BASE_TOOL_NAMES.PRESENT) {
               validateBaseArguments(call.name, call.args);
-              presentationCalls.push(call);
+              presentationCalls.push({ call, args: call.args, clarification: false });
+            } else if (call.name === BASE_TOOL_NAMES.ASK) {
+              validateBaseArguments(call.name, call.args);
+              if (!call.args.question.trim().endsWith('?')) {
+                throw new GlobalChatOrchestrationError(
+                  'invalid_presentation',
+                  'A clarification must be one specific question.',
+                );
+              }
+              presentationCalls.push({
+                call,
+                args: {
+                  message: call.args.question,
+                  resultRefs: [],
+                  suggestions: call.args.suggestions,
+                },
+                clarification: true,
+              });
             } else if (call.name === BASE_TOOL_NAMES.SEARCH) {
               validateBaseArguments(call.name, call.args);
               const matches = registry.search(
@@ -548,14 +631,6 @@ function createGlobalChatOrchestrator({
                   ...detail,
                   toolName: capabilityToolName(detail.id),
                 },
-              });
-            } else if (call.name === BASE_TOOL_NAMES.MORE) {
-              validateBaseArguments(call.name, call.args);
-              outcomes.set(call.id, {
-                ok: true,
-                topic: call.args.topic,
-                excludedIds: [...excludedSuggestionIds],
-                instruction: 'Return two new short button options through present_response.',
               });
             } else {
               const capabilityId = currentToolSet.capabilityByToolName.get(call.name);
@@ -584,17 +659,35 @@ function createGlobalChatOrchestrator({
         let presentation = null;
         if (presentationCalls.length === 1) {
           try {
-            presentation = validatePresentation(presentationCalls[0].args, {
+            const presentationCall = presentationCalls[0];
+            const requestedPresentation = presentationCall.args;
+            const presentationInput = requestedPresentation.resultRefs.length === 0
+              && turnResultIds.length > 0
+              ? {
+                ...requestedPresentation,
+                resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
+              }
+              : requestedPresentation;
+            if (!presentationCall.clarification
+                && kind === 'user_turn'
+                && exposed.size > 0
+                && turnResultIds.length === 0) {
+              throw new GlobalChatOrchestrationError(
+                'capability_required',
+                'Use an authoritative Homeroom capability before presenting platform facts.',
+              );
+            }
+            presentation = validatePresentation(presentationInput, {
               availableResultIds: knownResultIds,
               excludedSuggestionIds,
             });
-            outcomes.set(presentationCalls[0].id, { ok: true, accepted: true });
+            outcomes.set(presentationCall.call.id, { ok: true, accepted: true });
           } catch (error) {
-            outcomes.set(presentationCalls[0].id, toolFailure(error));
+            outcomes.set(presentationCalls[0].call.id, toolFailure(error));
           }
         } else if (presentationCalls.length > 1) {
-          for (const call of presentationCalls) {
-            outcomes.set(call.id, toolFailure(new GlobalChatOrchestrationError(
+          for (const entry of presentationCalls) {
+            outcomes.set(entry.call.id, toolFailure(new GlobalChatOrchestrationError(
               'invalid_presentation',
               'Only one presentation may finish a turn.',
             )));
@@ -638,6 +731,17 @@ function createGlobalChatOrchestrator({
             message: assistantMessage,
             presentation,
           });
+          if (typeof accounting.recordTurnOutcome === 'function') {
+            await accounting.recordTurnOutcome(pool, {
+              userId,
+              threadId,
+              messageId: userMessage.id,
+              outcome: 'success',
+              durationMs: Date.now() - turnStartedAt,
+              invocationCount: providerInvocationCount,
+              resultCount: turnResultIds.length,
+            }).catch(() => {});
+          }
           return {
             turnId,
             message: assistantMessage,
@@ -653,6 +757,18 @@ function createGlobalChatOrchestrator({
         'Global Chat could not complete that request within the tool limit.',
       );
     } catch (error) {
+      if (userMessage && typeof accounting.recordTurnOutcome === 'function') {
+        await accounting.recordTurnOutcome(pool, {
+          userId,
+          threadId,
+          messageId: userMessage.id,
+          outcome: error?.code === 'cancelled' ? 'cancelled' : 'error',
+          errorCode: safeCode(error),
+          durationMs: Date.now() - turnStartedAt,
+          invocationCount: providerInvocationCount,
+          resultCount: turnResultIds.length,
+        }).catch(() => {});
+      }
       if (turnId) {
         await emit({
           type: 'turn.failed',
@@ -677,6 +793,7 @@ module.exports = {
   MAX_HISTORY_MESSAGES,
   MAX_ITERATIONS,
   MAX_PARALLEL_READS,
+  TURN_TIMEOUT_MS,
   GlobalChatOrchestrationError,
   boundedToolContent,
   createGlobalChatOrchestrator,

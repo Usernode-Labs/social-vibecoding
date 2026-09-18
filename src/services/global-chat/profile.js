@@ -1,6 +1,5 @@
 'use strict';
 
-const agentModels = require('../agent-models');
 const {
   DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
@@ -37,6 +36,16 @@ function reasoningEffort(value) {
   return value;
 }
 
+function compatibleReasoningEffort(model, effort) {
+  // The first experimental release offered the generic "minimal" value and
+  // some users may have persisted it. GLM 5.3 Flash advertises low/high/max,
+  // so normalize only this known legacy pair instead of sending an invalid or
+  // provider-dependent request forever.
+  return model === DEFAULT_MODEL && effort === 'minimal'
+    ? DEFAULT_REASONING_EFFORT
+    : effort;
+}
+
 function money(value, { nullable = true } = {}) {
   if (value == null || value === '') {
     if (nullable) return null;
@@ -56,12 +65,17 @@ function money(value, { nullable = true } = {}) {
 }
 
 function defaults(config = {}) {
+  const configuredModel = modelId(
+    config.openrouterDefaultGlobalChatModel || DEFAULT_MODEL,
+    'default model',
+  );
+  const configuredEffort = reasoningEffort(
+    config.openrouterDefaultGlobalChatReasoning || DEFAULT_REASONING_EFFORT,
+  );
   return Object.freeze({
     backend: 'openrouter',
-    model: modelId(config.openrouterDefaultGlobalChatModel || DEFAULT_MODEL, 'default model'),
-    reasoningEffort: reasoningEffort(
-      config.openrouterDefaultGlobalChatReasoning || DEFAULT_REASONING_EFFORT,
-    ),
+    model: configuredModel,
+    reasoningEffort: compatibleReasoningEffort(configuredModel, configuredEffort),
     spendCapUsd: null,
   });
 }
@@ -69,10 +83,12 @@ function defaults(config = {}) {
 function publicProfile(row, config = {}) {
   const fallback = defaults(config);
   if (!row) return { ...fallback, saved: false };
+  const selectedModel = modelId(row.model_id || fallback.model);
+  const selectedEffort = reasoningEffort(row.reasoning_effort || fallback.reasoningEffort);
   return {
     backend: 'openrouter',
-    model: modelId(row.model_id || fallback.model),
-    reasoningEffort: reasoningEffort(row.reasoning_effort || fallback.reasoningEffort),
+    model: selectedModel,
+    reasoningEffort: compatibleReasoningEffort(selectedModel, selectedEffort),
     spendCapUsd: money(row.spend_cap_usd),
     saved: true,
     updatedAt: row.updated_at instanceof Date
@@ -93,9 +109,11 @@ async function readProfile(pool, userId, config = {}) {
 
 async function writeProfile(pool, userId, profile, config = {}) {
   const fallback = defaults(config);
+  const selectedModel = modelId(profile.model ?? fallback.model);
+  const selectedEffort = reasoningEffort(profile.reasoningEffort ?? fallback.reasoningEffort);
   const normalized = {
-    model: modelId(profile.model ?? fallback.model),
-    reasoningEffort: reasoningEffort(profile.reasoningEffort ?? fallback.reasoningEffort),
+    model: selectedModel,
+    reasoningEffort: compatibleReasoningEffort(selectedModel, selectedEffort),
     spendCapUsd: money(profile.spendCapUsd),
   };
   const { rows } = await pool.query(
@@ -189,15 +207,27 @@ async function readMonthlyUsage(pool, userId, { now = new Date(), spendCapUsd = 
 
 function supportsEffort(model, effort) {
   if (!model || model.supportsReasoningEffort !== true) return false;
-  return !Array.isArray(model.reasoningEfforts)
-    || model.reasoningEfforts.length === 0
-    || model.reasoningEfforts.includes(effort);
+  const efforts = Array.isArray(model.globalChatReasoningEfforts)
+    ? model.globalChatReasoningEfforts
+    : model.reasoningEfforts;
+  return !Array.isArray(efforts)
+    || efforts.length === 0
+    || efforts.includes(effort);
+}
+
+function meetsGlobalChatMinimums(model) {
+  // present_response is itself a strict function tool. Global Chat therefore
+  // requires tool calling and reasoning effort, but not a simultaneous
+  // response_format/json_schema mode.
+  return !!model
+    && model.supportsTools === true
+    && model.supportsReasoningEffort === true;
 }
 
 function compatibleModels(catalog, effort) {
   const checkedEffort = reasoningEffort(effort);
   return (catalog?.models || []).filter(
-    (model) => agentModels.meetsGlobalChatMinimums(model) && supportsEffort(model, checkedEffort),
+    (model) => meetsGlobalChatMinimums(model) && supportsEffort(model, checkedEffort),
   );
 }
 
@@ -218,7 +248,9 @@ function globalChatCatalog(catalog, config = {}, effort = null) {
     refreshedAt: catalog?.refreshedAt || null,
     requiredCapabilities: {
       tools: true,
-      structuredOutputs: true,
+      // present_response is a strict function tool, so a second simultaneous
+      // response_format/json_schema mode is neither required nor requested.
+      structuredOutputs: false,
       reasoningEffort: selectedEffort,
     },
     recommendedModelId: recommended?.id || null,
@@ -244,6 +276,8 @@ module.exports = {
   remainingSpend,
   readMonthlyUsage,
   supportsEffort,
+  meetsGlobalChatMinimums,
   compatibleModels,
+  compatibleReasoningEffort,
   globalChatCatalog,
 };

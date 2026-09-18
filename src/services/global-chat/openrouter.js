@@ -1,13 +1,16 @@
 'use strict';
 
 // Minimal OpenRouter Chat Completions transport for Global Chat. It accepts
-// only server-built messages/tools/schema, streams SSE safely, and returns a
+// only server-built messages and strict tools, streams SSE safely, and returns a
 // bounded OpenAI-compatible assistant message plus content-free usage facts.
 
 const { platformHeaders } = require('../openrouter-client');
 const { modelId, reasoningEffort } = require('./profile');
 
-const DEFAULT_TIMEOUT_MS = 90_000;
+// A Global Chat turn may make more than one short tool-planning call. Letting
+// any single provider request occupy the UI for 90 seconds made a transient
+// failure look like a frozen application and multiplied badly with retries.
+const DEFAULT_TIMEOUT_MS = 25_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_MESSAGES = 100;
@@ -58,43 +61,34 @@ function jsonArray(value, field, maxItems) {
   }
 }
 
-function responseFormat(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new GlobalChatProviderError('invalid_request', 'response schema is required');
-  }
-  if (value.type !== 'object' || value.additionalProperties !== false) {
-    throw new GlobalChatProviderError(
-      'invalid_request',
-      'response schema must be a strict object schema',
-    );
-  }
-  return {
-    type: 'json_schema',
-    json_schema: {
-      name: 'homeroom_global_chat_response',
-      strict: true,
-      schema: structuredClone(value),
-    },
-  };
-}
-
 function buildRequest({
   model,
   reasoning,
   messages,
   tools,
-  schema,
   sessionId,
   maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
   parallelToolCalls = true,
+  toolChoice = 'auto',
 }) {
+  const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
+  const availableToolNames = new Set(copiedTools.map((tool) => tool?.function?.name).filter(Boolean));
+  let normalizedToolChoice = toolChoice;
+  if (toolChoice && typeof toolChoice === 'object' && !Array.isArray(toolChoice)) {
+    const name = toolChoice.function?.name;
+    if (toolChoice.type !== 'function' || typeof name !== 'string' || !availableToolNames.has(name)) {
+      throw new GlobalChatProviderError('invalid_request', 'toolChoice must select an available tool');
+    }
+    normalizedToolChoice = structuredClone(toolChoice);
+  } else if (!['auto', 'required', 'none'].includes(toolChoice)) {
+    throw new GlobalChatProviderError('invalid_request', 'toolChoice is invalid');
+  }
   const request = {
     model: modelId(model),
     messages: jsonArray(messages, 'messages', MAX_MESSAGES),
-    tools: jsonArray(tools, 'tools', MAX_TOOLS),
-    tool_choice: 'auto',
-    response_format: responseFormat(schema),
+    tools: copiedTools,
+    tool_choice: normalizedToolChoice,
     reasoning: { effort: reasoningEffort(reasoning) },
     max_tokens: boundedInteger(
       maxOutputTokens,
@@ -106,7 +100,10 @@ function buildRequest({
     stream: true,
     // OpenRouter adds token and cost accounting to the stream when requested.
     usage: { include: true },
-    // Do not silently route to an endpoint that drops a required parameter.
+    // Tool schemas already provide the strict structured-output boundary.
+    // Sending response_format at the same time is redundant and excludes or
+    // destabilizes providers that reliably implement tools but not the two
+    // output modes together.
     provider: { require_parameters: true },
   };
   if (parallelToolCalls != null) request.parallel_tool_calls = parallelToolCalls === true;

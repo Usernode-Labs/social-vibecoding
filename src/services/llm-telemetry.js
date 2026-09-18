@@ -386,6 +386,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'file_read_count', 'distinct_file_read_count', 'file_search_count',
   'file_change_count', 'distinct_file_change_count', 'mcp_call_count',
   'subagent_call_count', 'web_tool_call_count', 'tool_search_count',
+  'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
 const CATEGORY_NAMES = Object.freeze([
@@ -393,6 +394,7 @@ const CATEGORY_NAMES = Object.freeze([
   'requested_service_tier', 'service_tier', 'inference_region',
   'requested_inference_region',
   'reasoning_effort', 'error_class', 'usage_reset_detected',
+  'turn_outcome', 'turn_error_code',
 ]);
 
 function snakeToCamel(value) {
@@ -674,7 +676,7 @@ function normalizedCteSql() {
            g.metadata || jsonb_strip_nulls(jsonb_build_object(
              'reasoning_effort', g.reasoning_effort,
              'request_mode', 'stream',
-             'output_format', 'json_schema',
+             'output_format', 'tool_schema',
              'tool_call_count', g.tool_calls
            )) AS telemetry_metadata
       FROM global_chat_usage g

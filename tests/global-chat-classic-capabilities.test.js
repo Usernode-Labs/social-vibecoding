@@ -47,6 +47,29 @@ test('the registry contains every mapped route, Settings section, and navigation
   for (const exempt of inventory.routes.filter((item) => item.status === 'exempt')) {
     if (exempt.capabilityId) assert.equal(registry.get(exempt.capabilityId), null);
   }
+  for (const definition of definitions) {
+    assert.deepEqual(
+      [...definition.inputSchema.required].sort(),
+      Object.keys(definition.inputSchema.properties).sort(),
+      `${definition.id} must represent every strict-tool property as required`,
+    );
+  }
+});
+
+test('natural user wording discovers the intended read and development tools', () => {
+  const registry = new CapabilityRegistry(classicCapabilityDefinitions());
+  const execution = context();
+
+  assert.equal(registry.search('Show me apps I can explore.', execution)[0]?.id, 'apps.get.apps.b3dd6aff');
+  assert.equal(
+    registry.search('list the current issues', execution)[0]?.id,
+    'issues.get.apps.item.issues.bcb11122',
+  );
+  assert.equal(
+    registry.search('start developing issue 2377', execution)[0]?.id,
+    'development.post.apps.item.sessions.5206fad0',
+  );
+  assert.deepEqual(registry.search('What can I do?', execution), []);
 });
 
 test('route capabilities have strict bounded inputs and preserve the original route as authority', async () => {
@@ -62,6 +85,11 @@ test('route capabilities have strict bounded inputs and preserve the original ro
   assert.equal(definition.inputSchema.additionalProperties, false);
   assert.equal(definition.inputSchema.properties.pathParameters.additionalProperties, false);
   assert.equal(definition.inputSchema.properties.query.items.additionalProperties, false);
+  assert.match(definition.inputSchema.description, new RegExp(`${route.method} ${route.path}`));
+  assert.match(definition.inputSchema.properties.pathParameters.description, /:slug/);
+  assert.match(definition.inputSchema.properties.pathParameters.properties.slug.description, /context\.activeAppSlug/);
+  assert.match(definition.inputSchema.properties.query.description, /Use \[\] when none are needed/);
+  assert.match(definition.inputSchema.properties.bodyJson.description, /JSON-encoded request body/);
 
   let call;
   const execution = context({
@@ -255,6 +283,9 @@ test('development handoff creates a session without letting the global model cho
   assert.equal(definition.title, 'Start development work');
   assert.match(definition.summary, /configured Development AI profile/);
   assert.deepEqual(Object.keys(definition.inputSchema.properties).sort(), [
+    'appSlug', 'issueNumber', 'task',
+  ]);
+  assert.deepEqual([...definition.inputSchema.required].sort(), [
     'appSlug', 'issueNumber', 'task',
   ]);
 

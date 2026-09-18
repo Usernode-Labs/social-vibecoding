@@ -46,7 +46,7 @@ export function GlobalChatSettingsSection() {
   const [overall, setOverall] = useState<OverallAllowance | null>(null);
   const [catalog, setCatalog] = useState<GlobalChatModelCatalog | null>(null);
   const [model, setModel] = useState('');
-  const [effort, setEffort] = useState('minimal');
+  const [effort, setEffort] = useState('low');
   const [cap, setCap] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -70,10 +70,10 @@ export function GlobalChatSettingsSection() {
       setProfile(current.profile);
       setUsage(current.usage);
       setModel(current.profile.model);
-      setEffort(current.profile.reasoningEffort || 'minimal');
+      setEffort(current.profile.reasoningEffort || 'low');
       setCap(current.profile.spendCapUsd || '');
       const [nextCatalog, nextUsage] = await Promise.all([
-        loadModels(current.profile.reasoningEffort || 'minimal', refresh),
+        loadModels(current.profile.reasoningEffort || 'low', refresh),
         api.usage(),
       ]);
       setOverall(nextUsage.overallAllowance);
@@ -189,8 +189,8 @@ export function GlobalChatSettingsSection() {
               value={effort}
               onChange={(event) => void changeEffort(event.target.value)}
             >
-              <option value="minimal">Minimal · recommended</option>
-              <option value="low">Low</option>
+              <option value="low">Low · recommended for GLM Flash</option>
+              <option value="minimal">Minimal · only for supported models</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
               <option value="xhigh">Extra high</option>

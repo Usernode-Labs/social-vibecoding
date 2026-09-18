@@ -271,30 +271,110 @@ function normalizeSearchText(value) {
     .trim();
 }
 
-function searchTerms(query) {
-  return [...new Set(normalizeSearchText(query).split(/\s+/).filter(Boolean))].slice(0, 20);
+// Discovery queries are natural-language prompts, not exact boolean searches.
+// Requiring every word in "show me the current issues" to occur in a route
+// descriptor made the useful noun lose to harmless filler such as "me" and
+// "current", returning an empty registry even though hundreds of authorized
+// capabilities existed. Keep action words (open/edit/delete) because they
+// distinguish risk, but discard conversational filler and standalone ids.
+const SEARCH_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'can', 'could', 'current', 'do', 'for', 'from',
+  'give', 'i', 'in', 'is', 'me', 'my', 'of', 'on', 'please', 'show', 'some',
+  'tell', 'that', 'the', 'these', 'this', 'to', 'what', 'which', 'with',
+  'would', 'you',
+]);
+const SEARCH_TERM_ALIASES = Object.freeze({
+  closing: 'close',
+  configuring: 'configure',
+  creating: 'create',
+  deleting: 'delete',
+  developed: 'develop',
+  developer: 'develop',
+  developing: 'develop',
+  development: 'develop',
+  editing: 'edit',
+  listing: 'list',
+  merging: 'merge',
+  opening: 'open',
+  searching: 'search',
+  viewing: 'view',
+  voting: 'vote',
+});
+const SEARCH_ACTION_TERMS = new Set([
+  'change', 'close', 'configure', 'continue', 'create', 'delete', 'edit',
+  'find', 'get', 'list', 'merge', 'open', 'remove', 'run', 'search', 'start',
+  'update', 'view', 'vote',
+]);
+
+function searchTerm(value) {
+  if (!value || SEARCH_STOP_WORDS.has(value) || /^\d+$/.test(value)) return '';
+  if (SEARCH_TERM_ALIASES[value]) return SEARCH_TERM_ALIASES[value];
+  // A small, deterministic plural fold is enough for route vocabulary such
+  // as apps/issues/proposals without introducing a language-model dependency
+  // into the authorization-sensitive registry.
+  if (value.endsWith('ies') && value.length > 4) return `${value.slice(0, -3)}y`;
+  if (value.endsWith('s') && !value.endsWith('ss') && value.length > 3) {
+    return value.slice(0, -1);
+  }
+  return value;
 }
 
-function searchScore(definition, terms) {
-  if (!terms.length) return 1;
+function searchTerms(query) {
+  return [...new Set(normalizeSearchText(query).split(/\s+/).map(searchTerm).filter(Boolean))]
+    .slice(0, 20);
+}
+
+function searchScore(definition, terms, { hasNumericIdentifier = false } = {}) {
+  // A greeting or generic help request must not preload arbitrary tools. In
+  // particular, sorting an empty query by capability id used to expose delete
+  // operations first and then force the model to call one.
+  if (!terms.length) return 0;
   const fields = {
-    id: normalizeSearchText(definition.id),
-    title: normalizeSearchText(definition.title),
-    domain: normalizeSearchText(definition.domain),
-    keywords: normalizeSearchText(definition.keywords.join(' ')),
-    summary: normalizeSearchText(definition.summary),
+    id: new Set(searchTerms(definition.id)),
+    title: new Set(searchTerms(definition.title)),
+    domain: new Set(searchTerms(definition.domain)),
+    keywords: new Set(searchTerms(definition.keywords.join(' '))),
+    summary: new Set(searchTerms(definition.summary)),
   };
   let score = 0;
+  let matchedTerms = 0;
   for (const term of terms) {
     let matched = false;
-    if (fields.id.includes(term)) { score += 8; matched = true; }
-    if (fields.title.includes(term)) { score += 6; matched = true; }
-    if (fields.keywords.includes(term)) { score += 4; matched = true; }
-    if (fields.domain.includes(term)) { score += 3; matched = true; }
-    if (fields.summary.includes(term)) { score += 1; matched = true; }
-    if (!matched) return 0;
+    if (fields.id.has(term)) { score += 8; matched = true; }
+    if (fields.title.has(term)) { score += 6; matched = true; }
+    if (fields.keywords.has(term)) { score += 4; matched = true; }
+    if (fields.domain.has(term)) { score += 3; matched = true; }
+    if (fields.summary.has(term)) { score += 1; matched = true; }
+    if (matched) matchedTerms += 1;
   }
-  return score;
+  if (!matchedTerms) return 0;
+  const requestedObjects = terms.filter((term) => !SEARCH_ACTION_TERMS.has(term));
+  if (requestedObjects.length && !requestedObjects.some(
+    (term) => Object.values(fields).some((field) => field.has(term)),
+  )) return 0;
+  const requestedActions = terms.filter((term) => SEARCH_ACTION_TERMS.has(term));
+  for (const action of requestedActions) {
+    const actionMatched = Object.values(fields).some((field) => field.has(action));
+    // Action verbs carry more intent than object nouns. Without this boost,
+    // "start developing issue 2377" ranked unrelated issue-link reads above
+    // the purpose-built Start development work capability.
+    score += actionMatched ? 16 : -6;
+  }
+  const pathParameters = definition.inputSchema?.properties?.pathParameters?.required || [];
+  if (definition.risk === 'read') score += 5;
+  else if (definition.risk === 'destructive') score -= 5;
+  else if (definition.risk === 'external_write') score -= 2;
+  if (hasNumericIdentifier
+      && pathParameters.some((name) => ['id', 'number', 'issueId'].includes(name))) {
+    score += 6;
+  } else if (pathParameters.length === 0) {
+    score += 3;
+  }
+  const titleWords = normalizeSearchText(definition.title).split(/\s+/).filter(Boolean).length;
+  score += Math.max(0, 5 - titleWords);
+  // Partial matching is intentional: the strongest matching descriptor wins,
+  // while a small coverage bonus keeps multi-word intent above generic routes.
+  return score + matchedTerms * 2;
 }
 
 function isAuthorized(definition, executionContext) {
@@ -403,9 +483,13 @@ class CapabilityRegistry {
   search(query, executionContext, { limit = 8 } = {}) {
     const boundedLimit = Math.max(1, Math.min(20, Number.isInteger(limit) ? limit : 8));
     const terms = searchTerms(query);
+    const hasNumericIdentifier = /(?:^|\D)\d+(?:\D|$)/.test(String(query || ''));
     return [...this._byId.values()]
       .filter((definition) => isAuthorized(definition, executionContext))
-      .map((definition) => ({ definition, score: searchScore(definition, terms) }))
+      .map((definition) => ({
+        definition,
+        score: searchScore(definition, terms, { hasNumericIdentifier }),
+      }))
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score || a.definition.id.localeCompare(b.definition.id))
       .slice(0, boundedLimit)
