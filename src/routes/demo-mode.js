@@ -74,13 +74,29 @@ const votes = require('./votes');
 // vote path does not: the pr_proposed fan-out, which is the notification the
 // viewer is waiting for.
 //
+// A take has two cues, not one, when the operator wants them apart. With
+// `hold: true` demo/propose files the same proposal as an UNSHARED
+// in-progress row — status 'active', shared_at NULL — so the pull request
+// opens and the preview and checks build exactly as above, but nothing is
+// announced and nothing lists it: the In-progress area shows shared rows
+// only, the vote list shows promoted ones, and the build narrates into the
+// proposal's own thread, which nothing can open yet. demo/promote is the
+// second cue, and it is the promotion routes/votes.js performs for a
+// person's in-progress work — status 'promoted', the "promoted … for
+// voting" lines, the event, the pr_proposed fan-out — with the partner's
+// vote cast first when asked, so the card already reads "voted yes" when
+// the notification is tapped. By then the preview is minutes old, which is
+// the point: the beat the camera waits for is the notification, not a
+// build.
+//
 // demo/vote records the partner's vote through recordVote and hands the
 // session to checkAndMerge, exactly as routes/votes.js does for a person.
-// demo/reset tears the partner's proposals down, puts main back to the
-// commit demo mode was switched on at, and rebuilds production. GET demo
-// lists what would silently spoil a take — the notification preference that
-// defaults off, a creator who has not used the app lately — before the
-// camera rolls.
+// demo/reset tears the partner's proposals down, held ones included, puts
+// main back to the commit demo mode was switched on at, and rebuilds
+// production. GET demo lists what would silently spoil a take — the
+// notification preference that defaults off, a creator who has not used
+// the app lately — before the camera rolls, and says whether a held
+// proposal's preview has finished building.
 
 // Owner/repo from an app's repo_url, or null. Same shape as routes/votes.js.
 function parseRepo(url) {
@@ -194,6 +210,95 @@ function demoModeRoutes(config) {
       [app.id, partner.id]
     );
     return rows[0] || null;
+  }
+
+  // ── What a promotion says, whom it reaches, and the partner's vote ──────
+  //
+  // Shared by demo/propose (straight to the vote) and demo/promote (a held
+  // proposal, on cue). The group-chat lines, the session update and the
+  // event are the ones routes/votes.js emits when a person promotes.
+  async function announcePromotion({ app, partner, session }) {
+    const line = `${partner.username} promoted ${prLabel(session.pr_number, session.pr_title)} for voting`;
+    const meta = { vote: { sessionId: session.id, prNumber: session.pr_number } };
+    await ws.sendSystemMessage(pool, app.id, line, 'vote', meta).catch(() => {});
+    await ws.sendSystemMessage(pool, app.id, line, 'vote', meta, { type: 'session', ref: session.id })
+      .catch(() => {});
+    ws.pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: app.slug });
+    try {
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_PROMOTED,
+        userId: partner.id, appId: app.id, sessionId: session.id,
+        metadata: { prNumber: session.pr_number, source: 'imported', demo: true },
+      });
+    } catch { /* events are best-effort */ }
+  }
+
+  // The beat the feature exists for. Same fan-out as the promote route in
+  // routes/votes.js. The partner is the proposer, so it is excluded, and
+  // the creator — active, and the app's creator — is who it reaches.
+  // Answers how many it reached; a failed fan-out is a warning, not a
+  // failed promotion.
+  async function notifyVoters({ app, partner, session }) {
+    try {
+      const rows = await notifications.createPrProposedNotifications(pool, {
+        appId: app.id, sessionId: session.id, proposerId: partner.id,
+      });
+      for (const row of rows) {
+        ws.pushNotificationToUser(row.user_id, {
+          type: 'notification_new',
+          notification: notifications.serialize({
+            ...row, app_slug: app.slug, app_name: app.name,
+            pr_title: session.pr_title, pr_number: session.pr_number,
+            source_username: partner.username,
+          }),
+        });
+      }
+      return rows.length;
+    } catch (err) {
+      log.warn('demo-mode', 'pr_proposed fan-out failed', { sessionId: session.id, err: err.message });
+      return 0;
+    }
+  }
+
+  // The partner's vote: the same write a person's click makes
+  // (routes/votes.js), stamped with the reviewed head and the approval
+  // epoch, under the row lock. No pre-vote reconciliation — the head is the
+  // platform's own and nothing else writes that branch; checkAndMerge
+  // re-verifies it regardless. True when it counted.
+  //
+  // No "somebody voted on your proposal" notification: the author IS the
+  // partner, and a notification to an account that cannot sign in is a row
+  // nobody reads.
+  async function castPartnerVote({ app, partner, session, vote }) {
+    const recorded = await votes.recordVote({
+      pool, session, userId: partner.id, vote,
+      headSha: reviewedHeadForSession(session), revisionEnforced: true,
+    });
+    if ((recorded.rowCount || 0) === 0) return false;
+    const label = prLabel(session.pr_number || session.id, session.pr_title);
+    await ws.sendSystemMessage(pool, app.id, `${partner.username} voted ${vote} on ${label}`, 'vote',
+      { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+      { type: 'session', ref: session.id }).catch(() => {});
+    ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: false });
+    try {
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_VOTE_CAST,
+        userId: partner.id, appId: app.id, sessionId: session.id, metadata: { vote, demo: true },
+      });
+    } catch { /* best-effort */ }
+    return true;
+  }
+
+  // After a vote, the merge check — off the request, as routes/votes.js
+  // runs it for a person's vote.
+  function mergeCheckAfterVote(app, session) {
+    votes.checkAndMerge(config, pool, session)
+      .then((result) => {
+        if (result?.merged) ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: true });
+      })
+      .catch((err) => log.error('demo-mode', 'Background merge failed', {
+        sessionId: session.id, err: err.message,
+      }));
   }
 
   // ── The switch ─────────────────────────────────────────────────────────
@@ -332,10 +437,16 @@ function demoModeRoutes(config) {
         openProposal: open ? {
           sessionId: open.id,
           status: open.status,
+          // Held: filed, building, announced to nobody yet (demo/promote).
+          held: open.status === 'active',
           prNumber: open.pr_number || null,
           prUrl: open.pr_url || null,
           title: open.pr_title || null,
           stagingUrl: open.staging_url || null,
+          // The checks verdict on the preview: 'pending' while it builds,
+          // 'passing' once it is the preview a vote would open.
+          checkState: open.check_state || null,
+          previewReady: !!open.staging_url,
           votes: tally,
         } : null,
         ready: reasons.length === 0,
@@ -379,6 +490,10 @@ function demoModeRoutes(config) {
         ? req.body.testingPaths.filter((p) => typeof p === 'string' && p.trim())
           .map((p) => p.trim()).slice(0, 3)
         : [];
+      // Held: filed as the partner's unshared in-progress work, so the pull
+      // request opens and the preview builds while nothing is announced;
+      // demo/promote is the cue that puts it up for the vote.
+      const hold = req.body?.hold === true;
 
       const repo = parseRepo(app.repo_url);
       if (!repo || !github.isEnabled()) {
@@ -454,15 +569,16 @@ function demoModeRoutes(config) {
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, created_at, testing_path, testing_paths, linked_issues,
             pr_body, pr_summary_md)
-         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
+         VALUES ($1, $2, $3, $4, $5, $6, $14::text,
             'imported', $7, $8, $9,
-            NOW(), NOW(), $10, $11::jsonb, '{}', $12, $13)
+            CASE WHEN $14::text = 'promoted' THEN NOW() END, NOW(), $10, $11::jsonb, '{}', $12, $13)
          RETURNING id, status`,
         [
           app.id, partner.id, branch, prNumber, prUrl, title,
           headSha, botLogin, `${repo.owner}/${repo.repo}`,
           testingPaths[0] || null, testingPaths.length ? JSON.stringify(testingPaths) : null,
           description || null, summary,
+          hold ? 'active' : 'promoted',
         ]
       );
       const sessionId = inserted[0].id;
@@ -473,7 +589,8 @@ function demoModeRoutes(config) {
         id: sessionId, app_id: app.id, app_slug: app.slug, app_name: app.name,
         user_id: partner.id, branch_name: branch, pr_number: prNumber, pr_url: prUrl,
         pr_title: title, pr_body: description || null, pr_summary_md: summary,
-        repo_url: app.repo_url, staging_url: null, source: 'imported', status: 'promoted',
+        repo_url: app.repo_url, staging_url: null, source: 'imported',
+        status: hold ? 'active' : 'promoted',
         imported_pr_head_sha: headSha, imported_pr_head_repo: `${repo.owner}/${repo.repo}`,
         testing_md: null, testing_path: testingPaths[0] || null,
         testing_paths: testingPaths.length ? testingPaths : null,
@@ -481,46 +598,98 @@ function demoModeRoutes(config) {
       // Preview + checks, exactly as an import gets them. Never throws.
       prImportSync.kickImportedChecks({ config, pool, session, app, headSha });
 
-      const line = `${partner.username} promoted ${prLabel(prNumber, title)} for voting`;
-      await ws.sendSystemMessage(pool, app.id, line, 'vote', { vote: { sessionId, prNumber } })
-        .catch(() => {});
-      await ws.sendSystemMessage(pool, app.id, line, 'vote', { vote: { sessionId, prNumber } },
-        { type: 'session', ref: sessionId }).catch(() => {});
-      ws.pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
-      try {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_PROMOTED,
-          userId: partner.id, appId: app.id, sessionId,
-          metadata: { prNumber, source: 'imported', demo: true },
-        });
-      } catch { /* events are best-effort */ }
-
-      // The beat the feature exists for. Same fan-out as the promote route in
-      // routes/votes.js. The partner is the proposer, so it is excluded, and
-      // the creator — active, and the app's creator — is who it reaches.
       let notified = 0;
-      try {
-        const rows = await notifications.createPrProposedNotifications(pool, {
-          appId: app.id, sessionId, proposerId: partner.id,
-        });
-        for (const row of rows) {
-          ws.pushNotificationToUser(row.user_id, {
-            type: 'notification_new',
-            notification: notifications.serialize({
-              ...row, app_slug: app.slug, app_name: app.name,
-              pr_title: title, pr_number: prNumber, source_username: partner.username,
-            }),
-          });
-        }
-        notified = rows.length;
-      } catch (err) {
-        log.warn('demo-mode', 'pr_proposed fan-out failed', { sessionId, err: err.message });
+      if (hold) {
+        // Nothing said and nothing listed. The build narrates into the
+        // proposal's thread (pr-import-sync.postProposalNote), which nothing
+        // can open until demo/promote.
+        log.info('demo-mode', 'Demo proposal held', { slug: app.slug, sessionId, prNumber });
+      } else {
+        await announcePromotion({ app, partner, session });
+        notified = await notifyVoters({ app, partner, session });
+        log.info('demo-mode', 'Demo proposal opened', { slug: app.slug, sessionId, prNumber, notified });
       }
-
-      log.info('demo-mode', 'Demo proposal opened', { slug: app.slug, sessionId, prNumber, notified });
-      res.json({ ok: true, sessionId, prNumber, prUrl, headSha, notified });
+      res.json({ ok: true, sessionId, prNumber, prUrl, headSha, held: hold, notified });
     } catch (err) {
       log.error('demo-mode', 'Propose failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Promote: the second cue ────────────────────────────────────────────
+  router.post('/api/apps/:slug/demo/promote', drainGuard, async (req, res) => {
+    try {
+      const app = await loadDemoApp(req, res);
+      if (!app) return;
+      const partner = await loadPartner(app);
+      if (!partner) return res.status(409).json({ error: 'Demo mode has no partner.' });
+      const vote = req.body?.vote === 'yes' || req.body?.vote === 'no' ? req.body.vote : null;
+
+      const session = await openDemoSession(app, partner);
+      if (!session) {
+        return res.status(404).json({ error: 'No demo proposal is held. Propose one with hold first.' });
+      }
+      if (session.status !== 'active') {
+        return res.status(409).json({ error: 'The demo proposal is already up for the vote.' });
+      }
+
+      // What goes up for the vote is what was proposed. The promote route in
+      // routes/votes.js re-reads the pull request before it opens voting and
+      // fails closed when it cannot; so does this. Nothing else writes the
+      // branch, so a moved head is a take that needs a reset, not a rebuild.
+      const repo = parseRepo(app.repo_url);
+      if (repo && github.isEnabled() && session.pr_number) {
+        let pr;
+        try {
+          pr = await github.getPR(repo.owner, repo.repo, session.pr_number);
+        } catch (err) {
+          log.warn('demo-mode', 'Could not read the pull request before promoting', {
+            sessionId: session.id, err: err.message,
+          });
+          return res.status(503).json({ error: 'GitHub could not verify the pull request. Try again shortly.' });
+        }
+        if (pr?.merged) {
+          return res.status(409).json({
+            error: `PR #${session.pr_number} was already merged on GitHub, so there is nothing to vote on. Reset before the next take.`,
+          });
+        }
+        if (pr?.state === 'closed') {
+          return res.status(409).json({ error: `PR #${session.pr_number} is closed on GitHub. Reset and propose again.` });
+        }
+        const head = String(pr?.head?.sha || '').toLowerCase();
+        const proposedAt = String(session.imported_pr_head_sha || '').toLowerCase();
+        if (head && proposedAt && head !== proposedAt) {
+          return res.status(409).json({ error: 'The branch moved since it was proposed. Reset and propose again.' });
+        }
+      }
+
+      // promoted_at anchors the stale-PR sweeper's clock, as in routes/
+      // votes.js; the status guard is the same one, so two cues racing
+      // cannot promote twice.
+      const promoted = await pool.query(
+        `UPDATE chat_sessions
+            SET status = 'promoted', promoted_at = NOW(), stale_notified_at = NULL
+          WHERE id = $1 AND status = 'active'`,
+        [session.id]
+      );
+      if (!promoted.rowCount) return res.status(409).json({ error: 'session_state_changed' });
+      session.status = 'promoted';
+      await refreshPartnerStanding(app, partner, req.user.id);
+
+      await announcePromotion({ app, partner, session });
+      // The vote goes before the fan-out on purpose: the notification should
+      // open on a card that already reads "voted yes".
+      let voted = null;
+      if (vote && await castPartnerVote({ app, partner, session, vote })) voted = vote;
+      const notified = await notifyVoters({ app, partner, session });
+
+      log.info('demo-mode', 'Demo proposal promoted', {
+        slug: app.slug, sessionId: session.id, prNumber: session.pr_number, voted, notified,
+      });
+      res.json({ ok: true, sessionId: session.id, prNumber: session.pr_number || null, voted, notified });
+      if (voted) mergeCheckAfterVote(app, session);
+    } catch (err) {
+      log.error('demo-mode', 'Promote failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -535,43 +704,19 @@ function demoModeRoutes(config) {
       const vote = req.body?.vote === 'no' ? 'no' : 'yes';
 
       const session = await openDemoSession(app, partner);
+      if (session && session.status === 'active') {
+        return res.status(409).json({
+          error: 'The demo proposal is held, not yet up for the vote. Promote it first (POST /api/apps/:slug/demo/promote), which can cast this vote as well.',
+        });
+      }
       if (!session || !['promoted', 'merging'].includes(session.status)) {
         return res.status(404).json({ error: 'No demo proposal is up for a vote.' });
       }
-      // The same write a person's click makes (routes/votes.js): stamped with
-      // the reviewed head and the approval epoch, under the row lock. No
-      // pre-vote reconciliation — the head is the platform's own and nothing
-      // else writes that branch; checkAndMerge re-verifies it regardless.
-      const recorded = await votes.recordVote({
-        pool, session, userId: partner.id, vote,
-        headSha: reviewedHeadForSession(session), revisionEnforced: true,
-      });
-      if ((recorded.rowCount || 0) === 0) {
+      if (!await castPartnerVote({ app, partner, session, vote })) {
         return res.status(409).json({ error: 'The proposal is no longer open for votes.' });
       }
-      const label = prLabel(session.pr_number || session.id, session.pr_title);
-      await ws.sendSystemMessage(pool, app.id, `${partner.username} voted ${vote} on ${label}`, 'vote',
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
-        { type: 'session', ref: session.id }).catch(() => {});
-      ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: false });
-      try {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_VOTE_CAST,
-          userId: partner.id, appId: app.id, sessionId: session.id, metadata: { vote, demo: true },
-        });
-      } catch { /* best-effort */ }
-      // No "somebody voted on your proposal" notification: the author IS the
-      // partner, and a notification to an account that cannot sign in is a
-      // row nobody reads.
       res.json({ ok: true, sessionId: session.id, vote });
-
-      votes.checkAndMerge(config, pool, session)
-        .then((result) => {
-          if (result?.merged) ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: true });
-        })
-        .catch((err) => log.error('demo-mode', 'Background merge failed', {
-          sessionId: session.id, err: err.message,
-        }));
+      mergeCheckAfterVote(app, session);
     } catch (err) {
       log.error('demo-mode', 'Vote failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });

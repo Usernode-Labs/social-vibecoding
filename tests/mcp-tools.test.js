@@ -1541,7 +1541,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'answer_questions', 'claim_request', 'create_request',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
-    'demo_mode', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
@@ -1719,7 +1719,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'create_request', 'demo_mode', 'demo_propose', 'demo_reset', 'demo_vote',
+    'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'prepare_work', 'start_platform_build',
     'submit_platform_build', 'submit_work', 'update_proposal_issues',
   ]);
@@ -1855,7 +1855,7 @@ test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
     'create_request', 'prepare_work', 'submit_work',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
-    'demo_mode', 'demo_propose', 'demo_vote', 'demo_reset',
+    'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];
   for (const name of writeTools) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -3607,7 +3607,7 @@ test('#2136 — submit_work answers name the proposal by its pull request first'
 
 // ── Demo mode ──────────────────────────────────────────────────────────
 //
-// Five tools, one property: they replay the caller's token at
+// Six tools, one property: they replay the caller's token at
 // /api/apps/:slug/demo* and add nothing of their own. Every refusal that
 // matters — not in demo mode, not the creator, not this user's app — is the
 // platform's, so what a connector can do here is exactly what its user can.
@@ -3623,8 +3623,9 @@ test('get_demo_status hands back the platform\'s own readiness list, shaped and 
       activeCount: 2, required: 2, creatorActive: true, partnerActive: true,
       notifyOnNewProposals: false,
       openProposal: {
-        sessionId: 9, status: 'promoted', prNumber: 42, prUrl: 'https://github.com/x/y/pull/42',
-        title: 'Smooth <b>animations</b>', stagingUrl: null, votes: { yes: 1, no: 0 },
+        sessionId: 9, status: 'active', held: true, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42',
+        title: 'Smooth <b>animations</b>', stagingUrl: 'https://p.example', checkState: 'passing',
+        previewReady: true, votes: { yes: 1, no: 0 },
       },
       ready: false,
       reasons: ['"New proposals to vote on" is off for you on this app'],
@@ -3637,6 +3638,10 @@ test('get_demo_status hands back the platform\'s own readiness list, shaped and 
     assert.equal(out.ready, false);
     assert.match(out.reasons[0], /New proposals to vote on/);
     assert.equal(out.openProposal.votes.yes, 1);
+    // A held proposal, built: the operator's cue to call demo_promote.
+    assert.equal(out.openProposal.held, true);
+    assert.equal(out.openProposal.checkState, 'passing');
+    assert.equal(out.openProposal.previewReady, true);
     assert.match(out.openProposal.title, /^<untrusted-content>/, 'a title is text somebody typed');
     assert.equal(out.partner.username, 'sam');
     assert.equal(out.required, 2);
@@ -3646,12 +3651,18 @@ test('get_demo_status hands back the platform\'s own readiness list, shaped and 
 });
 
 test('the demo write tools post to the demo routes and pass the platform\'s refusal through', async () => {
+  const demoCalls = [];
   const c = connector((method, pathname) => {
     if (pathname === '/api/apps/demo-app/demo-mode') {
       return { demoMode: true, partner: { id: 50, username: 'sam' }, baseSha: 'b'.repeat(40) };
     }
     if (pathname === '/api/apps/demo-app/demo/propose') {
-      return { sessionId: 9, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42', headSha: 'c'.repeat(40), notified: 1 };
+      // Held, the platform announces nobody; the answer says so.
+      const held = !!(demoCalls.at(-1) && demoCalls.at(-1).body && demoCalls.at(-1).body.hold);
+      return { sessionId: 9, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42', headSha: 'c'.repeat(40), held, notified: held ? 0 : 1 };
+    }
+    if (pathname === '/api/apps/demo-app/demo/promote') {
+      return { ok: true, sessionId: 9, prNumber: 42, voted: 'yes', notified: 1 };
     }
     if (pathname === '/api/apps/demo-app/demo/vote') return { ok: true, sessionId: 9, vote: 'yes' };
     if (pathname === '/api/apps/demo-app/demo/reset') {
@@ -3659,7 +3670,7 @@ test('the demo write tools post to the demo routes and pass the platform\'s refu
     }
     // Any other app: what the platform tells somebody who is not the creator.
     return { __http: { ok: false, status: 403, body: { error: "Only the app's creator can use demo mode." } } };
-  }, demoScopes);
+  }, { ...demoScopes, calls: demoCalls });
   try {
     const on = await c.handlers.get('demo_mode')({ slug: 'demo-app', enabled: true, partnerName: 'sam' });
     assert.notEqual(on.isError, true);
@@ -3677,7 +3688,30 @@ test('the demo write tools post to the demo routes and pass the platform\'s refu
     assert.equal(c.calls.at(-1).method, 'POST');
     assert.equal(c.calls.at(-1).body.branch, 'demo/animations');
     assert.equal(c.calls.at(-1).body.summary, 'Categories glide open.');
+    assert.equal(c.calls.at(-1).body.hold, undefined, 'straight to the vote unless told to hold');
+    assert.equal(proposed.structuredContent.held, false);
     assert.match(proposed.structuredContent.nextStep, /demo_vote/);
+
+    // The two-cue take: hold, then promote on cue with the partner's yes.
+    const held = await c.handlers.get('demo_propose')({
+      slug: 'demo-app', branch: 'demo/animations', title: 'Smooth category animations', hold: true,
+    });
+    assert.notEqual(held.isError, true);
+    assert.equal(c.calls.at(-1).body.hold, true);
+    assert.equal(held.structuredContent.held, true);
+    assert.equal(held.structuredContent.notified, 0);
+    assert.match(held.structuredContent.nextStep, /get_demo_status.*demo_promote/);
+    const promoted = await c.handlers.get('demo_promote')({ slug: 'demo-app', vote: 'yes' });
+    assert.notEqual(promoted.isError, true);
+    assert.equal(c.calls.at(-1).method, 'POST');
+    assert.equal(c.calls.at(-1).pathname, '/api/apps/demo-app/demo/promote');
+    assert.deepEqual(c.calls.at(-1).body, { vote: 'yes' });
+    assert.equal(promoted.structuredContent.voted, 'yes');
+    assert.equal(promoted.structuredContent.notified, 1);
+    assert.match(promoted.structuredContent.nextStep, /demo_reset/);
+    const promotedQuiet = await c.handlers.get('demo_promote')({ slug: 'demo-app' });
+    assert.deepEqual(c.calls.at(-1).body, {}, 'no vote unless asked');
+    assert.notEqual(promotedQuiet.isError, true);
 
     // The usual way in: a patch, forwarded whole, with no branch beside it.
     const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';

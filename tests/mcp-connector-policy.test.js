@@ -40,6 +40,7 @@ test('the allowlist permits exactly the routes the tools need', () => {
     ['POST', '/api/apps/recipe-box/demo-mode'],
     ['GET', '/api/apps/recipe-box/demo'],
     ['POST', '/api/apps/recipe-box/demo/propose'],
+    ['POST', '/api/apps/recipe-box/demo/promote'],
     ['POST', '/api/apps/recipe-box/demo/vote'],
     ['POST', '/api/apps/recipe-box/demo/reset'],
     ['GET', '/api/apps/recipe-box'],
@@ -460,8 +461,8 @@ test('the demo routes are on the list only because every one of them is gated on
   // …and every route goes through it.
   const routes = [...DEMO_SRC.matchAll(/router\.(?:get|post)\('(\/api\/apps\/:slug\/demo[^']*)'/g)].map((m) => m[1]);
   assert.deepEqual(routes.sort(), [
-    '/api/apps/:slug/demo', '/api/apps/:slug/demo-mode', '/api/apps/:slug/demo/propose',
-    '/api/apps/:slug/demo/reset', '/api/apps/:slug/demo/vote',
+    '/api/apps/:slug/demo', '/api/apps/:slug/demo-mode', '/api/apps/:slug/demo/promote',
+    '/api/apps/:slug/demo/propose', '/api/apps/:slug/demo/reset', '/api/apps/:slug/demo/vote',
   ]);
   assert.equal((DEMO_SRC.match(/await loadDemoApp\(req, res/g) || []).length, routes.length,
     'every handler loads the app through the gate');
@@ -470,5 +471,6 @@ test('the demo routes are on the list only because every one of them is gated on
   // The general vote stays off the list; only the partner's demo vote is on it.
   assert.equal(policy.isConnectorApiRequest('POST', '/api/sessions/9/vote'), false);
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/vote'), true);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/promote'), true);
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });
