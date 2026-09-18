@@ -256,9 +256,17 @@ export type ChallengeCardView = {
 // tailwind.config.js) less its 12px padding and 1px border is the 11px the
 // tile and the rail take (TILE_RADIUS, RAIL_SIZE.md), so the inner shapes
 // follow the outer one instead of looking pinched inside it.
-const CARD = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 '
-  + 'dark:border-zinc-800 p-3 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 '
-  + 'transition-colors';
+// The FACE — the ground, the hairline, the 24px corners, the 12px padding and
+// the three-column layout, and nothing that implies the card can be pressed.
+// Exported because the Challenges tab's loading placeholder
+// (./challenges-pane.tsx) stands in for a card and must draw the card's own
+// geometry rather than a second copy of it, which goes wrong silently the
+// first time this line moves. A placeholder is not pressable, so the
+// affordances below are deliberately NOT part of it.
+export const CHALLENGE_CARD_FACE = 'flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl '
+  + 'border border-zinc-200 dark:border-zinc-800 p-3';
+const CARD = CHALLENGE_CARD_FACE
+  + ' cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
 
 // The card: tile, then title, the meta line ("5d left · 500 pts") and the
 // rail — nothing else. The task is not on the card (the tab's detail overlay
