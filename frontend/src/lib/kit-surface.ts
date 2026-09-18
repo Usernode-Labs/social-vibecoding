@@ -256,7 +256,7 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
   }
   presented = true;
   if (handle.el && designWidth) {
-    handle.el.style.width = `min(${designWidth}, calc(100vw - 32px))`;
+    handle.el.style.width = `var(--un-modal-width, min(${designWidth}, calc(100vw - 32px)))`;
   }
 
   return {

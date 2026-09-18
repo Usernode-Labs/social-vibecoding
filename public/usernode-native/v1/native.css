@@ -981,14 +981,15 @@ html.un-kb .un-action-sheet {
      the max-height too. Both are 0 on resize-mode Android / desktop. */
   top: calc(50% - var(--un-kb-inset, 0px) / 2);
   z-index: 9992;
-  width: min(480px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px - var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - var(--un-kb-inset, 0px));
+  width: var(--un-modal-width, min(480px, calc(100vw - 32px)));
+  height: var(--un-modal-height, auto);
+  max-height: var(--un-modal-max-height, calc(100vh - 32px));
+  max-height: var(--un-modal-max-height, calc(100dvh - 32px - var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - var(--un-kb-inset, 0px)));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: 20px 16px;
-  border-radius: 14px;
+  padding: var(--un-modal-padding, 20px 16px);
+  border-radius: var(--un-modal-radius, 14px);
   background: var(--un-sheet-bg);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);

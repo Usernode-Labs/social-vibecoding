@@ -349,11 +349,16 @@ export function CreateAppDialog() {
   }
 
   /**
-   * #1911: leave the details step. The same two guards the old single page
+   * Continue with the selected start option, or leave the details step.
+   * The same two guards the old single page
    * applied at submit, applied one step earlier so the access step is never
    * reached with nothing to create; the error line names what is missing.
    */
   function next() {
+    if (step === 'start') {
+      choose(mode);
+      return;
+    }
     const name = (nameRef.current?.value || '').trim();
     if (mode === 'import') {
       if (!normalizeRepositoryUrlInput()) return setError('Paste a GitHub repo URL first.');
@@ -603,7 +608,7 @@ export function CreateAppDialog() {
               pills — same class, same data-mode-pill, same
               #create-card[data-mode] selection colours in app.css — so
               coming back to this step shows which way the dialog is set.
-              A choice advances; there is no Next here.
+              A choice advances; the footer's Next uses the selected choice.
           */}
           <div data-create-step="start" className="space-y-2">
             <p className={STEP_HEADING}>1. How do you want to start?</p>

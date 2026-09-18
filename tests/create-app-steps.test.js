@@ -51,9 +51,22 @@ test('the start step\'s choices are the mode pills, and a choice advances', () =
   // Once collapsed, pressing the chosen row reopens the choice.
   assert.match(SRC, /if \(step !== 'start'\) \{\s*setError\(''\);\s*setStep\('start'\);\s*return;\s*\}/);
   assert.equal((start.match(/className=\{CHOICE_CHANGE\}/g) || []).length, 2, 'each row carries a Change affordance');
-  assert.doesNotMatch(start, /id="create-next"/, 'no Next on the start step: the choice is the way forward');
+  assert.doesNotMatch(start, /id="create-next"/, 'Next belongs to the shared footer, outside the choices');
   assert.match(start, /Start from scratch/);
   assert.match(start, /Import a GitHub repo/);
+});
+
+test('Next on the start step advances the selected mode without validating hidden details', () => {
+  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** Verbatim from App.setCreateMode'));
+  for (const mode of ['new', 'import']) {
+    const choices = [];
+    const hiddenName = { get current() { throw new Error('The name field is still hidden'); } };
+    const next = new Function('step', 'mode', 'choose', 'nameRef', `${source}; return next;`)(
+      'start', mode, (selected) => choices.push(selected), hiddenName,
+    );
+    next();
+    assert.deepEqual(choices, [mode], 'Next must use the same transition as the selected choice');
+  }
 });
 
 test('the details step keeps the import block and the name card, in that order', () => {
