@@ -60,8 +60,10 @@ test('renderButton: the thanks face in the compact slot, the count pill everywhe
   Kudos.primeFromPr(fresh({ id: 20, my_kudos: false, my_kudos_direct: false }));
   const html = Kudos.renderButton(fresh({ id: 20, kudos_count: 3 }), { compact: true });
   assert.match(html, /class="kudos-wrap relative inline-block" data-kudos-session="20" data-kudos-variant="thanks"/);
-  assert.match(html, /<button class="gc-vote-btn dev-thanks-pill"\s+data-kudos-action="give" data-kudos-session-id="20">/);
-  assert.match(html, /<span aria-hidden="true">👏<\/span><span class="dev-thanks-label">Thank evan for putting this up<\/span><span data-kudos-count class="hidden">3<\/span>/);
+  assert.match(html, /<button class="gc-vote-btn dev-thanks-pill"\s+aria-label="Thank evan for putting this up" title="Thank evan for putting this up"\s+data-kudos-action="give" data-kudos-session-id="20">/,
+    'the whole line is the button\'s name and tooltip, whichever face the band keeps');
+  assert.match(html, /<span aria-hidden="true">👏<\/span><span class="dev-thanks-label">Thank evan<span class="dev-thanks-tail"> for putting this up<\/span><\/span><span data-kudos-count class="hidden">3<\/span>/,
+    'the tail is its own span, so a narrow band can keep the name alone');
   assert.doesNotMatch(html, /disabled/);
 
   const escaped = Kudos.renderButton(fresh({ id: 21, username: 'a<b' }), { compact: true });

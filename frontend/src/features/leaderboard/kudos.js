@@ -112,8 +112,13 @@ const Kudos = {
     // should change). The count still rides along, hidden, so the live
     // counter has somewhere to land.
     const thanks = opts.compact && !disabled ? Kudos.thanksVariant(pr) : null;
+    // The line's tail is its own span: on a narrow band the fold keeps the
+    // name and hides the tail, then the whole label (dev-card.tsx
+    // useFoldedActions, `data-thanks`), so the button carries the whole
+    // line as its name and tooltip at every face.
+    const line = thanks ? `Thank ${thanks} for putting this up` : '';
     const face = thanks
-      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)} for putting this up</span><span data-kudos-count class="hidden">${count}</span>`
+      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
       : `<span aria-hidden="true">\u{1F44F}</span>
           <span data-kudos-count>${count}</span>`;
 
@@ -122,7 +127,7 @@ const Kudos = {
     // (called by app-view after innerHTML render).
     return `
       <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}" data-kudos-variant="${thanks ? 'thanks' : 'count'}">
-        <button class="${sizeCls}${thanks ? ' dev-thanks-pill' : ''}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${tipAttr}
+        <button class="${sizeCls}${thanks ? ' dev-thanks-pill' : ''}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${thanks ? ` aria-label="${escapeAttr(line)}" title="${escapeAttr(line)}"` : tipAttr}
                 data-kudos-action="give" data-kudos-session-id="${pr.id}"${locked ? ' data-kudos-locked="1"' : ''}>
           ${face}
         </button>

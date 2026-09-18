@@ -4254,13 +4254,37 @@ const AppView = {
   _foldedCardActions: Object.create(null),
   _setFoldedCardActions(key, specs) {
     if (!key) return;
-    const list = Array.isArray(specs) ? specs.filter((a) => a && a.act && a.act.fn) : [];
+    const list = Array.isArray(specs) ? specs.filter((a) => a && ((a.act && a.act.fn) || a.kudos != null)) : [];
     if (list.length) AppView._foldedCardActions[key] = list;
     else delete AppView._foldedCardActions[key];
+  },
+  // The kudos slot, folded off the band (useFoldedActions: not even its clap
+  // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row
+  // — "Thank <author> for putting this up", or "Give kudos" once it is the
+  // count pill — acting through the slot's own button, which stays rendered
+  // on the band's clipped row, so Kudos keeps every rule it has (give or
+  // retract, the budget, the toast). Read at open time, so the row says what
+  // the slot would.
+  _kudosMenuItem(id) {
+    const host = typeof document !== 'undefined' && document.querySelector
+      ? document.querySelector(`[data-kudos-host="${id}"]`)
+      : null;
+    const btn = host ? host.querySelector('[data-kudos-action="give"]') : null;
+    const label = host ? host.querySelector('.dev-thanks-label') : null;
+    const entry = window.Kudos && typeof Kudos._ensureCache === 'function' ? Kudos._ensureCache(id) : null;
+    const retract = !!(entry && entry.my_kudos && entry.my_kudos_direct);
+    return {
+      label: label ? label.textContent.trim() : (retract ? 'Retract kudos' : 'Give kudos'),
+      icon: 'kudos',
+      title: (btn && btn.getAttribute('title')) || null,
+      disabled: !!(btn && btn.disabled),
+      act: () => { if (btn && !btn.disabled) btn.click(); },
+    };
   },
   // A folded ActionSpec as a ⋯ descriptor: same label, same tooltip, same
   // call (`AppView[fn](...args)`), with a glyph picked by what the call does.
   _foldedMenuItem(a) {
+    if (a.kudos != null) return AppView._kudosMenuItem(a.kudos);
     const fn = a.act.fn;
     const icon = fn === 'markIssueInProgress' ? 'progress'
       : fn === 'clearIssueClaim' ? 'clear'
