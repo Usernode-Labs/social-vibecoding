@@ -657,6 +657,8 @@ read-only mode, and transcript deletion.
   suggestions remain two compact description-free buttons and old suggestions
   are never hidden or repeated.
 - [x] Focused Global Chat suite: 72 tests passed, 0 failed.
+- [x] Repository changed-test gate against the exact base commit: 6,305 tests,
+  6,280 passed, 25 skipped, 0 failed.
 - [ ] Transcript summary/compaction and explicit development-session handoff
   contract using the separately configured development profile.
 - [ ] Responsive web/native screen, compact allowlisted renderers, mode switch,
