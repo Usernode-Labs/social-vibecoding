@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 import { useStoreState } from '../../lib/use-store-state';
+import { GlobalChatNewChatButton } from '../global-chat';
 import { iconViewFor } from '../apps/app-card.js';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -549,6 +550,28 @@ export function ImprovePanel() {
             id="improve-sessions"
             className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
           >
+            {/*
+                THE EXPERIMENTAL CHAT ENTRY, above the heading and not under
+                it — which is the one placement decision this needed.
+
+                It reads as the section's action, and it has to outlive the
+                section's contents: the heading below is conditional on there
+                being changes to head, and "nothing is running" is exactly the
+                moment someone wants to start something. A button that
+                vanished with the empty state would be absent precisely when
+                it was useful.
+
+                Inside #improve-sessions rather than beside it. dapp.json's
+                band-order check selects `#improve-body > #improve-quick-actions
+                + #improve-views + #improve-sessions + #improve-footer` on
+                DIRECT children, so a fifth band here would break it; a child
+                of the scroller is invisible to it. It scrolls with the list,
+                as the section's own first line should.
+
+                Renders null until the parity gate opens — see
+                ../global-chat/new-chat-button.tsx.
+            */}
+            <GlobalChatNewChatButton onNavigate={dismissForNav} />
             {/* THE HEADING ONLY EARNS ITS LINE WHEN THERE IS A LIST UNDER IT.
                 A section label over an empty section is a label describing
                 nothing, and it was the reason the empty state read as

@@ -246,4 +246,4 @@ export function GlobalChatScreen() {
   );
 }
 
-export { GlobalChatModeSwitch } from './mode-switch';
+export { GlobalChatNewChatButton } from './new-chat-button';
