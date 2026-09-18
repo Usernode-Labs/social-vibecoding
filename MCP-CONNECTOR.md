@@ -160,7 +160,7 @@ issue, a build — and the platform merges none of it without a group vote:
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
-| `demo_mode`, `demo_propose`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
+| `demo_mode`, `demo_propose`, `demo_promote`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
 
 The vote is the confirmation, and it is a better one than a prompt clicked
 through mid-loop by the one person already driving the agent. A per-call prompt
@@ -182,13 +182,14 @@ can be driven from a connected agent while the phone in shot stays untouched.
 An app's creator, when they are also a full platform admin, switches the app
 into demo mode and names a *partner*: a
 synthetic account the platform owns, with no usable password and no OAuth,
-that the session middleware and the login route refuse outright. Through four
+that the session middleware and the login route refuse outright. Through five
 tools, and only these, the partner acts:
 
 | Tool | What it actually does |
 |---|---|
 | `demo_mode` | Switches an app the caller created into demo mode; creates the partner |
-| `demo_propose` | The partner opens a proposal from a branch already on the repo, or from a patch the platform applies there itself, and sends the real vote notification |
+| `demo_propose` | The partner opens a proposal from a branch already on the repo, or from a patch the platform applies there itself, and sends the real vote notification; with `hold` it opens the pull request and builds the preview but announces nothing |
+| `demo_promote` | Puts a held proposal up for the vote on cue, which sends that notification, casting the partner's vote first when asked |
 | `demo_vote` | The partner casts its vote — a real vote, through the real path |
 | `demo_reset` | Takes the partner's proposals down, moves the app's `main` back to where demo mode was switched on, and redeploys |
 

@@ -179,6 +179,7 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/apps/:slug/demo-mode' },
   { method: 'GET', pattern: '/api/apps/:slug/demo' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/propose' },
+  { method: 'POST', pattern: '/api/apps/:slug/demo/promote' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/vote' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/reset' },
 ]);

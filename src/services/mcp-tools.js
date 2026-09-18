@@ -131,12 +131,14 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //   demo_mode              — switches an app the user created into demo mode,
 //                            creating its synthetic partner
 //   demo_propose           — the partner opens a proposal and sends the vote
-//                            notification
+//                            notification, or holds it for demo_promote
+//   demo_promote           — puts a held demo proposal up for the vote, which
+//                            sends that notification
 //   demo_vote              — the partner casts its vote
 //   demo_reset             — takes the partner's proposals down, moves the
 //                            app's main back and redeploys it
 //
-// The four demo tools are the connector's one group that acts on an app
+// The five demo tools are the connector's one group that acts on an app
 // directly rather than filing something for a vote: a synthetic partner
 // votes, and a reset rewinds main. They may because of where they are
 // refused — on every app not in demo mode, on any app the caller did not
@@ -156,6 +158,7 @@ const ACTING_TOOLS = Object.freeze([
   'update_proposal_issues',
   'demo_mode',
   'demo_propose',
+  'demo_promote',
   'demo_vote',
   'demo_reset',
 ]);
@@ -3791,7 +3794,7 @@ function registerTools(server, ctx) {
   });
   // ── Demo mode ──────────────────────────────────────────────────────────
   //
-  // Five tools over routes/demo-mode.js. They exist so a RECORDING of the
+  // Six tools over routes/demo-mode.js. They exist so a RECORDING of the
   // proposal flow can be driven from a connected agent while the phone in
   // shot stays untouched: the partner proposes, the notification lands, the
   // partner has already voted yes, the viewer votes, it merges, and a reset
@@ -3806,7 +3809,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('get_demo_status', {
     title: 'Demo mode: is the next take ready?',
-    description: 'What state an app\'s demo mode is in and, more usefully, what would spoil a take: `reasons` names every condition that would stop the notification or the vote from landing — the "New proposals to vote on" preference that defaults off, a creator who has not used the app in 10 days and so is not counted as a voter, a vote threshold that is not 2. `ready` is true when that list is empty. Also reports the partner, the commit demo_reset puts main back to, and the partner\'s open proposal with its tally and preview URL. Read-only; answers for any app this user created (this user must also be a full platform admin), in demo mode or not.',
+    description: 'What state an app\'s demo mode is in and, more usefully, what would spoil a take: `reasons` names every condition that would stop the notification or the vote from landing — the "New proposals to vote on" preference that defaults off, a creator who has not used the app in 10 days and so is not counted as a voter, a vote threshold that is not 2. `ready` is true when that list is empty. Also reports the partner, the commit demo_reset puts main back to, and the partner\'s open proposal with its tally and preview URL; a proposal opened with hold reads `held: true`, and its `checkState` and `previewReady` say whether the preview has finished building, which is what to wait for before demo_promote. Read-only; answers for any app this user created (this user must also be a full platform admin), in demo mode or not.',
     inputSchema: { slug: z.string().describe('The app slug, as returned by list_apps.') },
     outputSchema: {
       demoMode: z.boolean(),
@@ -3821,10 +3824,13 @@ function registerTools(server, ctx) {
       openProposal: z.object({
         sessionId: z.number(),
         status: z.string(),
+        held: z.boolean(),
         prNumber: z.number().nullable(),
         prUrl: z.string().nullable(),
         title: z.string().nullable(),
         stagingUrl: z.string().nullable(),
+        checkState: z.string().nullable(),
+        previewReady: z.boolean(),
         votes: z.object({ yes: z.number(), no: z.number() }).nullable(),
       }).nullable(),
       ready: z.boolean(),
@@ -3852,11 +3858,14 @@ function registerTools(server, ctx) {
       openProposal: open ? {
         sessionId: Number(open.sessionId),
         status: String(open.status || ''),
+        held: !!open.held,
         prNumber: open.prNumber == null ? null : Number(open.prNumber),
         prUrl: open.prUrl || null,
         // A title is text somebody typed; wrapped like everything else.
         title: open.title ? untrusted(String(open.title), MAX_TITLE_CHARS) : null,
         stagingUrl: open.stagingUrl || null,
+        checkState: open.checkState ? String(open.checkState) : null,
+        previewReady: !!open.previewReady,
         votes: open.votes
           ? { yes: Number(open.votes.yes) || 0, no: Number(open.votes.no) || 0 }
           : null,
@@ -3903,7 +3912,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('demo_propose', {
     title: 'Demo mode: the partner proposes a change',
-    description: 'Open a proposal as the app\'s synthetic partner from a branch already on the app\'s repository or from a `patch` (`git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB) that the platform applies there itself — the usual way in, because an app\'s repository is the platform\'s own and its creator cannot push to it — and put it straight up for the vote — which sends the real "please come vote" notification to the app\'s creator. The pull request is opened by the platform\'s own bot, as every connector submission is; the proposal is the partner\'s. A staging preview and the checks follow, as for any proposal. One demo proposal at a time: refused while one is open, so demo_reset between takes. `summary` is what a voter reads first — plain English, what changes on screen; `description` is the technical half and becomes the pull request body.',
+    description: 'Open a proposal as the app\'s synthetic partner from a branch already on the app\'s repository or from a `patch` (`git format-patch <base>..HEAD --stdout` or a plain `git diff`, at most 256 KB) that the platform applies there itself — the usual way in, because an app\'s repository is the platform\'s own and its creator cannot push to it — and put it straight up for the vote — which sends the real "please come vote" notification to the app\'s creator. With `hold: true` it stops short of that: the pull request opens and the staging preview and checks build, but the proposal is filed as the partner\'s unshared in-progress work, announced to nobody and listed nowhere, until demo_promote puts it up for the vote on cue — the way to have the preview built before the notification is the thing on camera. The pull request is opened by the platform\'s own bot, as every connector submission is; the proposal is the partner\'s. A staging preview and the checks follow, as for any proposal. One demo proposal at a time: refused while one is open, held or not, so demo_reset between takes. `summary` is what a voter reads first — plain English, what changes on screen; `description` is the technical half and becomes the pull request body.',
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       branch: z.string().optional()
@@ -3916,17 +3925,20 @@ function registerTools(server, ctx) {
       description: z.string().optional().describe('The technical half; becomes the pull request body.'),
       testingPaths: z.array(z.string()).optional()
         .describe('Up to three in-app routes the change is visible on, for the before/after screenshots.'),
+      hold: z.boolean().optional()
+        .describe('true opens the pull request and starts the preview build but announces nothing: no vote, no notification, nothing listed, until demo_promote. Defaults to false, which puts it up for the vote at once.'),
     },
     outputSchema: {
       sessionId: z.number(),
       prNumber: z.number(),
       prUrl: z.string().nullable(),
       headSha: z.string().nullable(),
+      held: z.boolean(),
       notified: z.number(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, branch, patch, title, summary, description, testingPaths }) => {
+  }, async ({ slug, branch, patch, title, summary, description, testingPaths, hold }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3959,19 +3971,63 @@ function registerTools(server, ctx) {
       summary: summary == null ? undefined : String(summary),
       description: bodyCheck.value || '',
       testingPaths: Array.isArray(testingPaths) ? testingPaths : undefined,
+      hold: hold === true ? true : undefined,
+    });
+    if (!r.ok) return platformError(r);
+    const b = r.body || {};
+    const notified = Number(b.notified) || 0;
+    const held = !!b.held;
+    return toolResult({
+      sessionId: Number(b.sessionId),
+      prNumber: Number(b.prNumber),
+      prUrl: b.prUrl || null,
+      headSha: b.headSha || null,
+      held,
+      notified,
+      nextStep: held
+        ? 'Held: the pull request is open and the preview is building, and nobody has been told. Watch get_demo_status until openProposal.checkState reads passing (previewReady true); then demo_promote puts it up for the vote and sends the notification, with vote: "yes" if the partner should already have voted when the creator opens it.'
+        : notified > 0
+          ? 'The notification is on its way to the creator. If the partner should already have voted when they open it, call demo_vote now; get_demo_status then shows the tally, and the preview URL once the build finishes.'
+          : 'Nobody was notified: the creator has "New proposals to vote on" off for this app, or is not counted as active. get_demo_status says which.',
+    });
+  });
+
+  server.registerTool('demo_promote', {
+    title: 'Demo mode: put the held proposal up for the vote',
+    description: 'The second cue. Put the partner\'s HELD demo proposal (demo_propose with hold: true) up for the vote: the same promotion a person\'s in-progress work gets, and the step that sends the real "please come vote" notification to the app\'s creator. Pass vote: "yes" to have the partner\'s vote cast first, so the card already reads "voted yes" when the notification is tapped; the merge check then runs as it does for any vote. Refused when nothing is held, when the proposal is already up for the vote, and when the pull request has closed or its branch moved since it was proposed (reset and propose again). Check get_demo_status first: openProposal.checkState passing means the preview a voter would open is built.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      vote: z.enum(['yes', 'no']).optional()
+        .describe('Cast the partner\'s vote as part of the promotion, before the notification goes out. Omitted, nobody has voted yet.'),
+    },
+    outputSchema: {
+      sessionId: z.number(),
+      prNumber: z.number().nullable(),
+      voted: z.string().nullable(),
+      notified: z.number(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, vote }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const r = await callPlatform(baseUrl, accessToken, 'POST', demoPath(slug, '/promote'), {
+      vote: vote === 'yes' || vote === 'no' ? vote : undefined,
     });
     if (!r.ok) return platformError(r);
     const b = r.body || {};
     const notified = Number(b.notified) || 0;
     return toolResult({
       sessionId: Number(b.sessionId),
-      prNumber: Number(b.prNumber),
-      prUrl: b.prUrl || null,
-      headSha: b.headSha || null,
+      prNumber: b.prNumber == null ? null : Number(b.prNumber),
+      voted: b.voted ? String(b.voted) : null,
       notified,
       nextStep: notified > 0
-        ? 'The notification is on its way to the creator. If the partner should already have voted when they open it, call demo_vote now; get_demo_status then shows the tally, and the preview URL once the build finishes.'
-        : 'Nobody was notified: the creator has "New proposals to vote on" off for this app, or is not counted as active. get_demo_status says which.',
+        ? (b.voted
+          ? 'The notification is on its way to the creator, and the card already shows the partner\'s vote. get_demo_status shows the tally; once it has merged, demo_reset puts the app back for the next take.'
+          : 'The notification is on its way to the creator. If the partner should already have voted when they open it, call demo_vote now.')
+        : 'It is up for the vote, but nobody was notified: the creator has "New proposals to vote on" off for this app, or is not counted as active. get_demo_status says which.',
     });
   });
 
