@@ -6,7 +6,8 @@
 // or "Vote no" with the switch. The same panel is the anchored popover on
 // desktop and a kit bottom sheet on touch (#1688 follow-ups).
 //
-//   1. the panel: the switch and its tallies, "Still yes" / "Not this time"
+//   1. the panel: the "Your vote" header, the switch and its tallies,
+//      "Still yes" / "Not this time"
 //      on a prior Yes, the label and placeholder that follow the side, and
 //      the button that is off on a No until there is a line;
 //   2. VoteButton draws the panel once for both homes; on touch the kit
@@ -40,7 +41,8 @@ const picker = (over) => renderComponent(CARD, 'VotePicker', {
 
 test('the switch: Yes on by default with its tally, No beside it; "Still yes" / "Not this time" on a prior Yes', () => {
   const html = picker();
-  assert.match(html, /<div class="dev-vote-switch" role="group" aria-label="Yes or No">/);
+  assert.match(html, /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><div class="dev-vote-switch" role="group" aria-labelledby="dev-vote-reason-7-head">/,
+    'the "Your vote" header, then the switch it names');
   assert.match(html, /<button type="button" class="dev-vote-switch-opt dev-vote-switch-yes" aria-pressed="true"[^>]*data-act="castVote"[^>]*>[\s\S]*?Yes<span class="dev-vote-n">2\/3<\/span><\/button>/);
   assert.match(html, /<button type="button" class="dev-vote-switch-opt dev-vote-switch-no" aria-pressed="false"[^>]*>[\s\S]*?No<span class="dev-vote-n">0\/3<\/span><\/button>/);
   const flipped = picker({ side: 'no' });
@@ -130,6 +132,14 @@ test('the switch has two filled states, the popover one even inset, and the shee
   assert.match(rule('.dev-vote-switch-yes[aria-pressed="true"]'), /background: var\(--accent\); color: var\(--accent-ink\)/, 'Yes on: the accent fill');
   assert.match(rule('.dev-vote-switch-no[aria-pressed="true"]'), /background: var\(--state-blocked-bg\); color: var\(--state-blocked\)/, 'No on: the blocked tint');
   assert.doesNotMatch(CSS, /\.dev-vote-opt\b|data-asking/, 'the rows and their growing width are gone');
+  const head = rule('.dev-vote-switch-label');
+  const label = rule('.dev-vote-reason-label');
+  const type = (r) => (r.match(/font-size: [^;]+;|font-weight: [^;]+;|color: [^;]+;/g) || []).join(' ');
+  assert.ok(type(head).includes('font-size') && type(head).includes('color'), 'the header rule exists');
+  assert.equal(type(head), type(label), 'the "Your vote" header is the twin of the label over the box: same size, weight and ink');
+  assert.match(head, /padding: 0 6px 4px/, '2px further in than the label, which sits inside the reason block\'s own inset');
+  assert.match(rule('.dev-vote-sheet .dev-vote-switch-label'), /font-size: 14px/, 'and at the sheet\'s label size there');
+  assert.match(rule('.dev-vote-sheet .dev-vote-reason-label'), /font-size: 14px/);
   assert.match(rule('.dev-vote-sheet .dev-vote-switch-opt'), /height: 44px/, 'tap-target rows in the sheet');
   assert.match(rule('.dev-vote-sheet .dev-vote-reason-box'), /font-size: 16px/, '16px so iOS does not zoom the page on focus');
   assert.match(rule('.dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send'), /height: 44px/);

@@ -687,10 +687,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
 }
 
 /**
- * The picker's one panel: the two-way switch across the top (Yes on by
- * default, each half carrying its tally), the line box under it, and Cancel
- * beside the one button that reads "Vote yes" or "Vote no" with the switch —
- * off on a No until there is a line. One drawing for both of its homes,
+ * The picker's one panel: a "Your vote" header over the two-way switch
+ * across the top (Yes on by default, each half carrying its tally), the line
+ * box under its own label, and Cancel beside the one button that reads
+ * "Vote yes" or "Vote no" with the switch — off on a No until there is a
+ * line. One drawing for both of its homes,
  * `VoteButton`'s anchored popover on desktop and its kit bottom sheet on
  * touch, so the wording and the rules cannot drift between the two.
  * `withLine` is false on a governance vote, which carries no line. Exported
@@ -716,9 +717,12 @@ export function VotePicker({
 }): ReactNode {
   const trimmed = line.replace(/\s+/g, ' ').trim();
   const yesOn = side === 'yes';
+  // The header over the switch is also the switch's accessible name.
+  const headId = `${reasonId}-head`;
   return (
     <>
-      <div className="dev-vote-switch" role="group" aria-label="Yes or No">
+      <div className="dev-vote-switch-label" id={headId}>Your vote</div>
+      <div className="dev-vote-switch" role="group" aria-labelledby={headId}>
         <button
           type="button"
           className="dev-vote-switch-opt dev-vote-switch-yes"
