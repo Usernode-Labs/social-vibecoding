@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const state = require('../src/services/visual-evidence-state');
+const { intent } = require('./fixtures/visual-evidence');
 
 test('visual evidence lifecycle permits only the documented progression and one repair loop', () => {
   const allowed = [
@@ -38,6 +39,48 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
     headSha: 'a'.repeat(40),
     reason: 'This proposal appears to change the UI but has no visual evidence declaration yet.',
   });
+});
+
+test('recordIntentInTransaction reuses its caller-owned client without reconnecting or releasing it', async () => {
+  const queries = [];
+  let connectCalls = 0;
+  let releaseCalls = 0;
+  const client = {
+    async connect() {
+      connectCalls += 1;
+      throw new Error('a checked-out PoolClient must not be connected again');
+    },
+    release() { releaseCalls += 1; },
+    async query(sql, values) {
+      queries.push({ sql: String(sql), values });
+      if (/SELECT visual_evidence_state/.test(String(sql))) {
+        return {
+          rows: [{
+            visual_evidence_state: null,
+            visual_evidence_run_id: null,
+            visual_evidence_detail: null,
+          }],
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+
+  const result = await state.recordIntentInTransaction(
+    client, 42, intent(), { headSha: 'a'.repeat(40) }
+  );
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.state, 'planned');
+  assert.equal(connectCalls, 0, 'the route already checked this client out');
+  assert.equal(releaseCalls, 0, 'the route retains ownership of its client');
+  assert.deepEqual(
+    queries.map(({ sql }) => sql.trim().split(/\s+/)[0]),
+    ['SELECT', 'UPDATE', 'UPDATE'],
+    'only the evidence statements run inside the existing transaction'
+  );
+  assert.ok(!queries.some(({ sql }) => /^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql.trim())),
+    'the caller owns the surrounding transaction boundary');
 });
 
 test('the UI heuristic durably enrolls a missing declaration instead of allowing a gate bypass', async () => {

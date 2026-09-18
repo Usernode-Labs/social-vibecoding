@@ -2574,6 +2574,11 @@ function registerTools(server, ctx) {
     ...(result.conflictUrl ? { conflictUrl: result.conflictUrl } : {}),
     ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
     ...(result.headSha ? { headSha: result.headSha } : {}),
+    ...(result.prNumber ? { prNumber: result.prNumber } : {}),
+    ...(result.prUrl ? { prUrl: result.prUrl } : {}),
+    ...(result.stage ? { stage: result.stage } : {}),
+    ...(result.field ? { field: result.field } : {}),
+    ...(result.recovery ? { recovery: result.recovery } : {}),
   });
 
   const fetchApp = async (slug) => {
@@ -3014,7 +3019,7 @@ function registerTools(server, ctx) {
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       visualEvidence: z.unknown().optional()
-        .describe('Required evidence intent for this revision. Pass the version-1 object returned by record_visual_evidence_intent: impact "ui" or "motion" with 1-3 claims and their real user flows, or impact "none" with a concrete rationale. Homeroom validates this strictly, explores the UI, and deterministically replays the resulting plan against the exact base and head revisions. Do not add screenshot-only routes or secrets.'),
+        .describe('Required evidence intent for this revision. Pass the version-1 object returned by record_visual_evidence_intent, or construct that documented v1 shape directly when the helper is not exposed in this connector session: impact "ui" or "motion" with 1-3 claims and their real user flows, or impact "none" with a concrete rationale. Homeroom validates both paths identically, explores the UI, and deterministically replays the resulting plan against the exact base and head revisions. Do not add screenshot-only routes or secrets.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
       recheck: z.boolean().optional()
@@ -3246,7 +3251,12 @@ function registerTools(server, ctx) {
     if (!result.ok) {
       // A platform refusal is reported in the platform's own words — the
       // 409 "already imported" and the collab-access 404 both matter.
-      if (result.platformResult) return platformError(result.platformResult, 'import_failed');
+      // Transient import failures instead use the service result: it carries
+      // the still-open PR number plus stage/field recovery context that the
+      // raw loopback response cannot know about.
+      if (result.platformResult && !result.retryable) {
+        return platformError(result.platformResult, 'import_failed');
+      }
       return serviceError(result);
     }
 

@@ -1419,6 +1419,12 @@ test('submit_work carries the request its work order named into the import', () 
   assert.match(block, /: \{\}\),\s*\}\s*\);/);
 });
 
+test('submit_work documents direct v1 evidence input when the helper tool is absent', () => {
+  const block = registration('submit_work');
+  assert.match(block, /construct that documented v1 shape directly when the helper is not exposed/);
+  assert.match(block, /validates both paths identically/);
+});
+
 test('list_requests says when the board itself could not be read in full', () => {
   // Distinct from `truncated`, which is only about this page. A degraded
   // fetch means "no duplicate found" is not evidence of anything, and the
