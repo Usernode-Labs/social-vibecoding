@@ -230,3 +230,45 @@ test('no section module re-spells a recipe the registry already holds', () => {
     }
   }
 });
+
+test('every waiting-for-data line renders through AdminUI.loading', () => {
+  // #2448: the console spelled its loading state SIX ways — bare unstyled
+  // text, `text-xs` muted, a hand-written copy of `muted`, `muted` itself
+  // without the ellipsis, and admin-node's empty-state recipe standing in for
+  // a load — while the eleven programme screens all drew
+  // topochain/ui.tsx's <Skeleton>. One recipe now covers the single-line case.
+  //
+  // The rule above cannot express this one on its own. It fires on a pasted
+  // COPY of a recipe, and four of the six spellings were not copies of
+  // anything: `<>Loading…</>` has no class string at all, and `text-xs
+  // text-zinc-500 dark:text-zinc-400` is a different string from every recipe
+  // in the registry. Lowering that rule's threshold would not have caught them
+  // either — it is the wrong shape of check. So: find the loading LINES by
+  // their text and require each one to name the recipe.
+  //
+  // Deliberately literal. It matches an element whose first text child begins
+  // "Loading", which is what every one of these lines looks like in both
+  // renderers (`<p className={…}>Loading…</p>`, `<p class="${…}">Loading…</p>`)
+  // and matches neither a string handed to setState nor a ternary that picks
+  // "Loading…" as one of several values for a line that also carries results
+  // and errors (admin-db-export's target line, admin-features' summary) —
+  // those are not loading-only elements and this recipe is not theirs.
+  const openTagRe = /<([a-z][\w]*)((?:[^<>]|\{[^{}]*\})*)>(\s*)Loading/g;
+  let found = 0;
+  for (const file of ADMIN_FILES) {
+    const src = fs.readFileSync(path.join(JS_DIR, file), 'utf8');
+    for (const m of src.matchAll(openTagRe)) {
+      found += 1;
+      const [, tag, attrs] = m;
+      const line = src.slice(0, m.index).split('\n').length;
+      assert.ok(attrs.includes('AdminUI.loading'),
+        `frontend/src/features/admin/${file}:${line} spells a loading state by hand:\n`
+        + `    <${tag}${attrs}>Loading…\n`
+        + '  The console has ONE loading line — render it with AdminUI.loading '
+        + '(a programme screen uses topochain/ui.tsx\'s <Skeleton> instead).');
+    }
+  }
+  // A regex that silently stops matching is a test that silently stops
+  // testing. There are 15 of these lines today across 11 modules.
+  assert.ok(found >= 10, `only ${found} loading lines matched — the pattern has drifted`);
+});

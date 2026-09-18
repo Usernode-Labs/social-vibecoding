@@ -169,6 +169,20 @@ export const AdminUI = Object.freeze({
   // Typography / misc.
   sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   muted: 'text-sm text-zinc-500 dark:text-zinc-400',
+  // Loading — ONE spelling of "waiting for data" for the whole console. The
+  // eleven programme screens draw a shaped placeholder (topochain/ui.tsx's
+  // <Skeleton>, which the fetching row/table layouts earn); everywhere else
+  // the wait is a single line, and it used to be spelled six different ways
+  // — bare unstyled text, `text-xs` muted, a hand-written copy of `muted`,
+  // `muted` itself with no ellipsis, and admin-node's EMPTY-state recipe
+  // standing in for a load (#2448).
+  //
+  // `inline-flex` so one recipe serves both slots it lands in: a block <p>
+  // of its own, and a <span> inside a summary paragraph that already exists
+  // (rollover, staging-reap) — a <p> may not nest inside a <p>. The
+  // `animate-pulse` is the tie to the skeleton: the same signal that this is
+  // a wait and not a result, at the two densities the console draws at.
+  loading: 'inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 animate-pulse',
   separator: 'border-t border-zinc-200 dark:border-zinc-800',
   kbd: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:text-zinc-100',
 });
@@ -1232,7 +1246,7 @@ const AdminConsole = {
       // they actually asked for rather than the one this call was for.
       const pending = AdminConsole._ensureSections();
       if (pending) {
-        host.innerHTML = `<p class="${AdminUI.muted} p-4">Loading…</p>`;
+        host.innerHTML = `<p class="${AdminUI.loading} p-4">Loading…</p>`;
         pending.then(() => {
           const live = document.getElementById('admin-section-content');
           if (live && AdminConsole._open) AdminConsole._renderSection();

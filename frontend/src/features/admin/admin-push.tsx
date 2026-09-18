@@ -426,7 +426,7 @@ function PushSection() {
           ? <p className="text-sm text-rose-600 dark:text-rose-400">Could not load mobile push diagnostics.</p>
           : data
             ? <><Runtime runtime={data.runtime} deployment={data.overview?.deployment} /><Fleet overview={data.overview || {}} /></>
-            : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading push deployment health…</p>}
+            : <p className={AdminUI.loading}>Loading push deployment health…</p>}
       </div>
       <section className={`${AdminUI.card} p-5`}>
         <div className={AdminUI.cardHeader}>
@@ -449,7 +449,7 @@ function PushSection() {
       <div id="admin-push-user-result">
         {failed ? null
           : loadingUser
-            ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading account diagnostics…</p>
+            ? <p className={AdminUI.loading}>Loading account diagnostics…</p>
             : data ? <UserResult data={data} /> : null}
       </div>
     </div>
