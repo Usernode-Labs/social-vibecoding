@@ -39,6 +39,8 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
+import { SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE } from '@/components/ui/tabs';
+
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
@@ -53,14 +55,37 @@ function selectTab(key: string): void {
   if (av && typeof av._onKanbanTabSelect === 'function') av._onKanbanTabSelect(key);
 }
 
+/*
+ * One tab — the language's segmented control since #2441, not the underline
+ * row it shipped as.
+ *
+ * ── Why the classes and not <TabsTrigger> ─────────────────────────────
+ *
+ * The SELECTED TREATMENT comes from @/components/ui/tabs.tsx, so this strip
+ * and the Leaderboard's section strip invert the same way. The COMPONENT does
+ * not, for two reasons that both point the same direction:
+ *
+ * - `SECTION_TAB_BASE`'s geometry is a single line of text 32px tall. These
+ *   tabs are two lines (title over count) at a 44px minimum, four of them
+ *   sharing a phone's width — a shape that primitive does not spell.
+ * - `<TabsTrigger>` renders `aria-current` and cannot be talked out of it.
+ *   This strip is a real `role="tablist"` whose tabs say `aria-selected` and
+ *   point at their panel with `aria-controls`; tabs.tsx's own header notes
+ *   that `aria-current` is the OTHER convention, and a button wearing both
+ *   states its selection twice in two vocabularies. dapp.json's
+ *   `#dev-kanban-tabs [data-kanban-tab="…"]` checks and three suites here
+ *   read these attributes, so every one of them is byte-identical to what it
+ *   was: only the class strings changed.
+ */
 function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
-    + 'border-b-2 transition-colors '
-    + (active
-      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
-      : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
+    + 'rounded-full font-semibold transition-colors '
+    + (active ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE);
+  // The count rides the tab's own ground: page-coloured ink on the selected
+  // fill, the zinc ladder off it (a zero column stays the lightest of the
+  // three, which is how an empty column reads as empty at a glance).
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-700 dark:text-violet-400' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
+    + (active ? 'text-white dark:text-zinc-900' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
   return (
     <button
       type="button"
@@ -195,11 +220,17 @@ export function DevKanban(): ReactNode {
   if (!v.cols.length) return null;
   return (
     <>
+      {/*
+          The raised white track of SECTION_TABS_LIST, laid out to SPAN the
+          phone rather than to hug its labels: four columns share this width
+          and each tab is `flex-1 basis-0`, so `flex` and not `inline-flex`.
+          The `border-b` rule it replaces is gone with the underline (#2441).
+      */}
       <div
         id="dev-kanban-tabs"
         role="tablist"
         aria-label="Board columns"
-        className="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800"
+        className="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0.5"
       >
         {v.cols.map((col) => (
           <Tab key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />

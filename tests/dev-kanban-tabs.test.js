@@ -166,6 +166,102 @@ test('each tab is a real button wired to its column for assistive tech', () => {
   assert.equal((html.match(/aria-selected="true"/g) || []).length, 1);
 });
 
+// ── The strip is a segmented control, not an underline row (#2441) ─────────
+//
+// It shipped as a `border-b` track with `border-violet-500` under the active
+// tab. That is the one shape the widget language replaces everywhere — it
+// separates by RULE where the language separates by figure/ground — and
+// @/components/ui/tabs.tsx's header says so at length. The strip now draws
+// the raised white track and the near-black selected fill that primitive
+// exports, so the Dev board's phone tabs, the Leaderboard's section strip
+// and the Workshop's own conversation pill all read the same way.
+//
+// What did NOT change is every attribute: dapp.json selects
+// `#dev-kanban-tabs [data-kanban-tab="…"]`, and the tests above read
+// `role="tab"` / `aria-selected` / `aria-controls`. This is a restyle.
+//
+// The treatment is read out of tabs.tsx rather than transcribed, so the two
+// surfaces cannot drift the first time the palette moves. The GEOMETRY is
+// local on purpose: SECTION_TAB_BASE is one line of text 32px tall, and
+// these are two lines at a 44px minimum, four abreast on a phone.
+
+// One rendered tab's opening tag, anchored by its id.
+function tabTag(html, key) {
+  const m = html.match(new RegExp(`<button[^>]*id="dev-kanban-tab-${key}"[^>]*>`));
+  assert.ok(m, `the ${key} tab's opening tag is located`);
+  return m[0];
+}
+
+// A class-table constant out of @/components/ui/tabs.tsx, with its
+// concatenated string pieces joined back up.
+function tabsConstant(name) {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', '@', 'components', 'ui', 'tabs.tsx'), 'utf8');
+  const start = src.indexOf(`export const ${name} =`);
+  assert.notEqual(start, -1, `${name} is exported from @/components/ui/tabs.tsx`);
+  const decl = src.slice(start, src.indexOf(';', start));
+  const parts = Array.from(decl.matchAll(/'([^']*)'/g), (m) => m[1]);
+  assert.ok(parts.length > 0, `${name} is a literal class string`);
+  return parts.join('');
+}
+
+test('the tab strip wears the language\'s segmented control (#2441)', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  const html = kanbanHtml(AppView);
+
+  const strip = html.match(/<div id="dev-kanban-tabs"[^>]*>/);
+  assert.ok(strip, 'the strip container is located');
+  // The track: the same raised white pill SECTION_TABS_LIST_BASE draws, laid
+  // out to span the phone (`flex`, not `inline-flex`) because its four tabs
+  // are `flex-1 basis-0` and share that width.
+  const surface = 'rounded-full bg-white dark:bg-zinc-900 p-0.5';
+  assert.ok(tabsConstant('SECTION_TABS_LIST_BASE').includes(surface),
+    'the track surface is still spelled this way in tabs.tsx');
+  assert.match(strip[0],
+    /class="sm:hidden flex items-stretch gap-0\.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0\.5"/);
+  assert.ok(!/border-b/.test(strip[0]), 'no rule under the strip any more');
+
+  const active = tabTag(html, 'issues');
+  assert.ok(active.includes(tabsConstant('SECTION_TAB_ACTIVE')),
+    'the selected tab is the language\'s inversion, from tabs.tsx');
+  assert.ok(active.includes('rounded-full'), 'and it is a pill, not an underlined cell');
+
+  for (const key of ['inprogress', 'inreview', 'done']) {
+    assert.ok(tabTag(html, key).includes(tabsConstant('SECTION_TAB_INACTIVE')),
+      `the ${key} tab is the unselected treatment, from tabs.tsx`);
+  }
+
+  // The retired shape, in every one of its spellings.
+  for (const tab of ['issues', 'inprogress', 'inreview', 'done'].map((k) => tabTag(html, k))) {
+    assert.ok(!/border-b-2|border-violet-500|border-transparent/.test(tab),
+      'no underline left on any tab');
+    assert.ok(!/violet/.test(tab), 'and no violet ink: the selection is the near-black fill');
+  }
+});
+
+test('the restyle left every attribute the checks select on untouched (#2441)', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  const html = kanbanHtml(AppView);
+  // dapp.json's two declared checks select `#dev-kanban-tabs
+  // [data-kanban-tab="inreview"]` and `…="done"` — the container id and the
+  // key, never a class.
+  assert.match(html, /<div id="dev-kanban-tabs"[^>]*role="tablist"[^>]*aria-label="Board columns"/);
+  for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
+    const tab = tabTag(html, key);
+    assert.match(tab, new RegExp(`^<button type="button" role="tab" id="dev-kanban-tab-${key}" `
+      + `data-kanban-tab="${key}" aria-selected="(true|false)" `
+      + `aria-controls="dev-kanban-col-${key}" class="`),
+      `the ${key} tab's attributes, in their shipped order`);
+  }
+  assert.match(tabTag(html, 'issues'), /aria-selected="true"/);
+  // And it is still a tablist of four, not a `<TabsTrigger>` strip that would
+  // state its selection twice (see the note over Tab() in dev-kanban.tsx).
+  assert.equal((html.match(/aria-current=/g) || []).length, 0,
+    'aria-selected is this strip\'s convention; aria-current is the other one');
+});
+
 // ── Counts match the column headers ────────────────────────────────────────
 
 test('tab counts mirror the column header counts', () => {
