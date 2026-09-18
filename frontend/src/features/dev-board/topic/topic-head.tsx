@@ -27,6 +27,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
+import { messageStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -1059,7 +1060,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
       ) : null}
       {body.activity?.length ? <section className="dev-topic-sheet"><details className="dev-topic-details">
         <summary className="dev-topic-details-summary">Activity</summary>
-        {body.activity.map((event) => <p key={event.label} className="dev-topic-note">{event.label} · <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time></p>)}
+        {body.activity.map((event) => {
+          // #1808: the same stamp the conversation card's Activity tab shows,
+          // in place of the browser's raw default spelling
+          // (topic/conversation.tsx), from the same helper — these two lists
+          // are the same events on mutually exclusive paths, so they cannot
+          // be allowed to spell an instant differently.
+          const stamp = messageStamp(event.at);
+          return <p key={event.label} className="dev-topic-note">{event.label} · <time dateTime={event.at} title={stamp.title}>{stamp.text}</time></p>;
+        })}
       </details></section> : null}
       {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
           so app.css can run it into the Discussion sheet below the head. */}
