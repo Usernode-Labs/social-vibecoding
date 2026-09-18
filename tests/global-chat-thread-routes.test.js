@@ -27,7 +27,7 @@ async function listen(router, { authenticated = true } = {}) {
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
-async function mount(t, { authenticated = true } = {}) {
+async function mount(t, { authenticated = true, enabled = true } = {}) {
   const calls = [];
   const pool = {
     async query(sql, params) {
@@ -58,7 +58,7 @@ async function mount(t, { authenticated = true } = {}) {
   profileService.readProfile = async (_pool, userId) => {
     calls.push({ name: 'readProfile', userId });
     return {
-      backend: 'openrouter', model: 'cheap/global', reasoningEffort: 'low',
+      backend: 'openrouter', enabled, model: 'cheap/global', reasoningEffort: 'low',
       spendCapUsd: '1', saved: true,
     };
   };
@@ -149,6 +149,7 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.equal(body.available, true);
   assert.equal(body.thread.id, THREAD_ID);
   assert.equal(body.profiles.globalChat.model, 'cheap/global');
+  assert.equal(body.profiles.globalChat.enabled, true);
   assert.equal(body.profiles.globalChat.reasoningEffort, 'low');
   assert.deepEqual(body.profiles.development, {
     backend: 'codex', model: 'glm/dev', reasoningEffort: 'high',
@@ -161,6 +162,22 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.ok(body.firstUse.suggestions.every((suggestion) => !Object.hasOwn(suggestion, 'description')));
   assert.equal(JSON.stringify(body).includes('sk-or-private'), false);
   assert.ok(calls.some((call) => call.name === 'ensureThread' && call.userId === 7));
+});
+
+test('disabled profiles can inspect bootstrap state but cannot create or use chat threads', async (t) => {
+  const { base, calls } = await mount(t, { enabled: false });
+  const bootstrap = await fetch(`${base}/api/global-chat/bootstrap`);
+  assert.equal(bootstrap.status, 200);
+  const body = await bootstrap.json();
+  assert.equal(body.profiles.globalChat.enabled, false);
+  assert.equal(body.available, false);
+  assert.equal(body.unavailableReason, 'global_chat_disabled');
+  assert.equal(body.thread, null);
+  assert.equal(calls.some((call) => call.name === 'ensureThread'), false);
+
+  const current = await fetch(`${base}/api/global-chat/threads/current`);
+  assert.equal(current.status, 403);
+  assert.equal((await current.json()).code, 'global_chat_disabled');
 });
 
 test('thread endpoints use authenticated ownership and preserve append-only suggestion history', async (t) => {

@@ -9,8 +9,8 @@ import {
 } from './store';
 
 /**
- * The way IN to the experimental chat interface — from Improve, at the head of
- * "Changes in progress".
+ * The way IN to the experimental chat interface after a user opts in — from
+ * Improve, at the head of "Changes in progress".
  *
  * ── It is an entry point now, not a mode switch ────────────────────────
  *
@@ -40,9 +40,10 @@ import {
  *
  * ── First render is still the prerender ────────────────────────────────
  *
- * `parityReady` arrives from an effect, so this renders `null` on the SSG pass
- * and on hydration alike — the invariant #improve-panel's own header states,
- * and the reason this control can live inside that island without a mismatch.
+ * `parityReady` and the persisted opt-in arrive from an effect, so this renders
+ * `null` on the SSG pass and on hydration alike — the invariant
+ * #improve-panel's own header states, and the reason this control can live
+ * inside that island without a mismatch.
  */
 export function GlobalChatNewChatButton({ onNavigate }: {
   /** Close the surface this button sits on before the chat screen covers it. */
@@ -57,10 +58,11 @@ export function GlobalChatNewChatButton({ onNavigate }: {
     return () => window.removeEventListener('sv:authed', retry);
   }, []);
 
-  // This is the release gate, not a cohort flag. The control is absent until
-  // the checked-in parity artifact says the complete experimental interface
-  // is ready; once true it is shown to every signed-in viewer.
-  if (!snapshot.bootstrap?.parityReady) return null;
+  // The checked-in parity artifact remains the release gate, while the
+  // persisted profile is each user's explicit opt-in. Both must be true: a
+  // ready experiment does not become a platform-wide rollout by accident.
+  if (!snapshot.bootstrap?.parityReady
+      || snapshot.bootstrap.profiles.globalChat.enabled !== true) return null;
 
   return (
     <button

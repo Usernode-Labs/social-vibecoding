@@ -125,14 +125,19 @@ export async function initializeGlobalChat({ force = false } = {}): Promise<Glob
 }
 
 async function loadCurrentThread(bootstrap: GlobalChatBootstrap) {
-  if (loadedThreadId === bootstrap.thread.id) {
+  const thread = bootstrap.thread;
+  if (!thread) {
+    publish({ phase: 'idle', error: '' });
+    return;
+  }
+  if (loadedThreadId === thread.id) {
     publish({ phase: 'ready', error: '' });
     return;
   }
   publish({ phase: 'loading', error: '' });
   try {
-    const page = await api.messages(bootstrap.thread.id, { limit: 40 });
-    loadedThreadId = bootstrap.thread.id;
+    const page = await api.messages(thread.id, { limit: 40 });
+    loadedThreadId = thread.id;
     publish({
       phase: 'ready',
       messages: page.messages,
@@ -155,10 +160,10 @@ async function loadCurrentThread(bootstrap: GlobalChatBootstrap) {
  * `startNewGlobalChat` does its own focus pass, so this one is skipped.
  */
 export async function openGlobalChat({ fresh = false } = {}) {
+  const boot = await initializeGlobalChat();
+  if (!boot?.profiles.globalChat.enabled || !boot.thread) return;
   setDocumentMode(true);
   publish({ open: true, error: '' });
-  const boot = await initializeGlobalChat();
-  if (!boot) return;
   if (fresh) {
     await startNewGlobalChat();
     void refreshGlobalChatUsage();
@@ -205,7 +210,7 @@ export async function toggleGlobalChat() {
 function appendOptimisticUser(text: string) {
   const message: GlobalChatMessage = {
     id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    threadId: state.bootstrap?.thread.id || '',
+    threadId: state.bootstrap?.thread?.id || '',
     role: 'user',
     text,
     payload: { kind: 'local' },
@@ -222,6 +227,11 @@ async function runTurn({ text, more = false, topic }: {
 }) {
   const boot = state.bootstrap || await initializeGlobalChat();
   if (!boot || state.phase === 'sending') return;
+  const thread = boot.thread;
+  if (!boot.profiles.globalChat.enabled || !thread) {
+    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    return;
+  }
   if (!boot.available) {
     publish({ error: 'Add or claim an OpenRouter key in Settings to use Global Chat.' });
     return;
@@ -233,7 +243,7 @@ async function runTurn({ text, more = false, topic }: {
   let completed = false;
   try {
     await api.streamTurn({
-      threadId: boot.thread.id,
+      threadId: thread.id,
       text,
       more,
       topic,
@@ -257,7 +267,7 @@ async function runTurn({ text, more = false, topic }: {
           const presentation = event.presentation as GlobalChatPresentation | undefined;
           const assistant: GlobalChatMessage = message || {
             id: `assistant-${Date.now()}`,
-            threadId: boot.thread.id,
+            threadId: thread.id,
             role: 'assistant',
             text: presentation?.message || '',
             payload: { kind: more ? 'more_suggestions' : 'user_turn', presentation },
@@ -319,7 +329,7 @@ export function stopGlobalChatTurn() {
 }
 
 export async function loadOlderGlobalChatMessages() {
-  const threadId = state.bootstrap?.thread.id;
+  const threadId = state.bootstrap?.thread?.id;
   if (!threadId || !state.before || state.phase === 'loading') return;
   publish({ phase: 'loading', error: '' });
   try {
@@ -368,7 +378,7 @@ export function dismissConfirmation(resultId: string) {
 }
 
 export async function confirmGlobalChatAction(result: GlobalChatResult, token: string) {
-  const threadId = state.bootstrap?.thread.id;
+  const threadId = state.bootstrap?.thread?.id;
   if (!threadId || !token || state.consumedConfirmations[result.id]) return;
   publish({ activity: 'Applying…', error: '' });
   try {

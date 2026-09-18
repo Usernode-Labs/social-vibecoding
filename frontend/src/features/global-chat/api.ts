@@ -85,7 +85,7 @@ export async function models(
 
 export async function saveProfile(patch: Partial<Pick<
   GlobalChatProfile,
-  'model' | 'reasoningEffort' | 'spendCapUsd'
+  'enabled' | 'model' | 'reasoningEffort' | 'spendCapUsd'
 >>): Promise<{ profile: GlobalChatProfile; usage: GlobalChatUsage }> {
   return json(await fetch('/api/me/global-chat', {
     method: 'PATCH',

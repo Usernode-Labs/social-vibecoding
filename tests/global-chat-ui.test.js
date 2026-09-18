@@ -38,7 +38,7 @@ test('Global Chat ships as an experimental sibling while Classic remains the sta
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
   assert.match(screen, /Classic remains the default\./);
   assert.match(screen, /snapshot\.open \? 'flex' : 'hidden'/);
-  assert.match(newChatButton, /if \(!snapshot\.bootstrap\?\.parityReady\) return null/);
+  assert.match(newChatButton, /!snapshot\.bootstrap\?\.parityReady[\s\S]*profiles\.globalChat\.enabled !== true/);
   assert.match(newChatButton, /New chat \(experimental\)/);
 });
 
@@ -139,6 +139,10 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
 });
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
+  assert.match(settings, /id="settings-global-chat-enabled"/);
+  assert.match(settings, /Enable experimental Global Chat/);
+  assert.match(settings, /api\.saveProfile\(\{ enabled: nextEnabled \}\)/);
+  assert.match(settings, /initializeGlobalChat\(\{ force: true \}\)/);
   assert.match(settings, /Global Chat model/);
   assert.match(settings, /Low · recommended for GLM Flash/);
   assert.match(settings, /Monthly Chat cap in USD/);

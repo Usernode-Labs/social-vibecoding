@@ -5,8 +5,10 @@ import { SectionHeading } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 
 import * as api from '../../global-chat/api';
+import { initializeGlobalChat } from '../../global-chat/store';
 import type {
   GlobalChatModel,
   GlobalChatModelCatalog,
@@ -45,11 +47,13 @@ export function GlobalChatSettingsSection() {
   const [usage, setUsage] = useState<GlobalChatUsage | null>(null);
   const [overall, setOverall] = useState<OverallAllowance | null>(null);
   const [catalog, setCatalog] = useState<GlobalChatModelCatalog | null>(null);
+  const [enabled, setEnabled] = useState(false);
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('low');
   const [cap, setCap] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingEnabled, setSavingEnabled] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -69,6 +73,7 @@ export function GlobalChatSettingsSection() {
       const current = await api.profile();
       setProfile(current.profile);
       setUsage(current.usage);
+      setEnabled(current.profile.enabled === true);
       setModel(current.profile.model);
       setEffort(current.profile.reasoningEffort || 'low');
       setCap(current.profile.spendCapUsd || '');
@@ -119,6 +124,7 @@ export function GlobalChatSettingsSection() {
       });
       setProfile(next.profile);
       setUsage(next.usage);
+      setEnabled(next.profile.enabled === true);
       setCap(next.profile.spendCapUsd || '');
       setStatus('Global Chat settings saved.');
     } catch (reason) {
@@ -126,6 +132,30 @@ export function GlobalChatSettingsSection() {
       setError(reason instanceof Error ? reason.message : 'Global Chat settings could not be saved.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function changeEnabled(nextEnabled: boolean) {
+    const previous = enabled;
+    setEnabled(nextEnabled);
+    setSavingEnabled(true);
+    setStatus('Saving…');
+    setError('');
+    try {
+      const next = await api.saveProfile({ enabled: nextEnabled });
+      setProfile(next.profile);
+      setUsage(next.usage);
+      setEnabled(next.profile.enabled === true);
+      await initializeGlobalChat({ force: true });
+      setStatus(next.profile.enabled
+        ? 'Experimental Global Chat enabled.'
+        : 'Experimental Global Chat disabled.');
+    } catch (reason) {
+      setEnabled(previous);
+      setStatus('');
+      setError(reason instanceof Error ? reason.message : 'Global Chat could not be updated.');
+    } finally {
+      setSavingEnabled(false);
     }
   }
 
@@ -137,6 +167,29 @@ export function GlobalChatSettingsSection() {
 
       {loading ? <p className="text-sm text-zinc-500 dark:text-zinc-400 py-2">Loading…</p> : null}
       {error ? <p role="alert" className="mb-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
+
+      {!loading && profile ? (
+        <div className="mb-4 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3">
+          <label className="flex items-start justify-between gap-4 cursor-pointer select-none" htmlFor="settings-global-chat-enabled">
+            <span>
+              <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                Enable experimental Global Chat
+              </span>
+              <span id="settings-global-chat-enabled-description" className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">
+                Show the New chat entry in Improve. Classic remains the default experience.
+              </span>
+            </span>
+            <Switch
+              id="settings-global-chat-enabled"
+              className="mt-0.5 shrink-0"
+              checked={enabled}
+              disabled={savingEnabled || saving}
+              aria-describedby="settings-global-chat-enabled-description"
+              onChange={(event) => void changeEnabled(event.target.checked)}
+            />
+          </label>
+        </div>
+      ) : null}
 
       {!loading && catalog && !catalog.configured ? (
         <div className="rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3">
@@ -220,7 +273,7 @@ export function GlobalChatSettingsSection() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="pillAccent" size="pill" disabled={saving} onClick={() => void save()}>
+            <Button variant="pillAccent" size="pill" disabled={saving || savingEnabled} onClick={() => void save()}>
               {saving ? 'Saving…' : 'Save Global Chat settings'}
             </Button>
             <Button
@@ -232,9 +285,10 @@ export function GlobalChatSettingsSection() {
               Development AI settings
             </Button>
           </div>
-          {status ? <p role="status" className="text-sm text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         </div>
       ) : null}
+
+      {status ? <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">{status}</p> : null}
 
       {profile ? (
         <p className="mt-4 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
