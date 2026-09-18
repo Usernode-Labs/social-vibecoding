@@ -108,6 +108,16 @@ export interface ListRowProps
    * (features/settings/social-identity.tsx).
    */
   disabled?: boolean;
+  /**
+   * The DOM `title` TOOLTIP.
+   *
+   * It needs its own name because `title` is this component's row CONTENT (see
+   * the Omit above), so a caller that wants a hover hint as well as a row
+   * label has no other way to ask for one — and dropping the hint was the last
+   * thing keeping the app detail page's rows hand-rolled (#2446). Rendered as
+   * the attribute, so `undefined` writes nothing at all.
+   */
+  tooltip?: string;
   /** The leading rounded-square glyph tile. */
   leading?: React.ReactNode;
   title: React.ReactNode;
@@ -144,7 +154,7 @@ export interface ListRowProps
  */
 export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function ListRow({
   className, leading, title, subtitle, dot, chevron = true, trailing, inset, as = 'div',
-  titleClassName, contentClassName, subtitleClassName, ...props
+  titleClassName, contentClassName, subtitleClassName, tooltip, ...props
 }, ref) {
   const Tag = as;
   // A row with no tile has nothing to inset the hairline PAST, so it falls back
@@ -165,6 +175,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
         rowSeparator({ inset: depth }),
         className,
       )}
+      title={tooltip}
       {...props}
     >
       {leading}
