@@ -329,6 +329,156 @@ test('OpenRouter PR metadata is deterministic and makes no hidden Anthropic call
   }
 });
 
+// ---- #2433: the deterministic draft describes the whole PR ----
+//
+// The model path is pinned above: it is handed every request and every
+// summary, and llm.js tells it to cover ALL of them. The deterministic path
+// (an OpenRouter/GLM session, or a Claude session with no payer) had no such
+// range — it took the latest summary alone, so each follow-up turn overwrote
+// "About this change" with a description of that turn.
+
+test('the model prompt is framed on the whole PR, not the latest update (#2433)', () => {
+  const src = require('node:fs').readFileSync(
+    require.resolve('../src/services/llm'), 'utf8'
+  );
+  const i = src.indexOf('You write concise GitHub pull request titles');
+  assert.ok(i > 0, 'the PR-metadata system prompt is still here');
+  const system = src.slice(i, src.indexOf('Respond with ONLY a JSON object', i));
+  assert.match(system, /FULL history of the user's requests and the coding agent's summaries/);
+  assert.match(system, /reflects ALL the changes in the PR, not just the latest update/);
+  // And the user block labels the range it is handing over, so a multi-turn
+  // branch cannot read as one update.
+  assert.match(src.slice(i), /CODING AGENT SUMMAR\$\{sumList\.length > 1 \? 'IES \(one per update, chronological\)'/);
+});
+
+test('a multi-turn deterministic proposal describes every update, not the last (#2433)', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+  });
+  try {
+    const pool = mockPool([
+      { role: 'user', content: 'Add a login form', metadata: {} },
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Added the login form.' } },
+      { role: 'user', content: 'Now add password reset', metadata: {} },
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Added password reset.' } },
+      { role: 'user', content: 'Also remember me', metadata: {} },
+    ]);
+    const session = {
+      id: 12,
+      branch_name: 'feat/auth',
+      pr_number: null,
+      agent_backend: 'codex_openrouter',
+    };
+
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Also remember me',
+      ccSummary: 'Wired the remember-me checkbox.',
+      username: 'evan',
+    });
+
+    assert.equal(generateCalls, 0, 'still no hidden Anthropic call on this path');
+    const { body } = githubCalls[0].opts;
+    for (const text of [
+      'Added the login form.', 'Added password reset.', 'Wired the remember-me checkbox.',
+    ]) {
+      assert.ok(body.includes(text), `the body carries "${text}"`);
+    }
+    // Oldest-first, and labelled by position on the branch so a reader can
+    // see the whole sequence rather than guessing which turn they are reading.
+    assert.ok(body.indexOf('Added the login form.') < body.indexOf('Added password reset.'));
+    assert.ok(body.indexOf('Added password reset.') < body.indexOf('Wired the remember-me checkbox.'));
+    assert.match(body, /\*\*Update 1\*\*/);
+    assert.match(body, /\*\*Update 3\*\*/);
+
+    // pr_summary_md is what the About sheet reads, so it has to carry the
+    // same whole-PR text and not just the turn that happened to run last.
+    const insert = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.ok(insert, 'the new-PR insert ran');
+    const storedSummary = insert.params[6];
+    assert.ok(storedSummary.includes('Added the login form.'),
+      'the stored summary still covers the first update');
+    assert.ok(storedSummary.includes('Wired the remember-me checkbox.'));
+    assert.equal(session.pr_summary_md, storedSummary);
+  } finally {
+    restore();
+  }
+});
+
+test('a single-update deterministic summary is its bare summary, unlabelled', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // The common case (a first turn) must stay byte-identical: labelling one
+    // update would rewrite every existing one-turn PR body on its next touch.
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Build a todo app'],
+      summaries: ['Scaffolded the todo app.'],
+      ccSummary: 'Scaffolded the todo app.',
+      username: 'evan',
+    });
+    assert.equal(draft.summary, 'Scaffolded the todo app.');
+  } finally {
+    restore();
+  }
+});
+
+test('the in-flight summary is not doubled when it is also the stored tail', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['One', 'Two'],
+      summaries: ['Did one.', 'Did two.'],
+      ccSummary: 'Did two.',
+      username: 'evan',
+    });
+    assert.match(draft.summary, /\*\*Update 1\*\*/);
+    assert.match(draft.summary, /\*\*Update 2\*\*/);
+    assert.doesNotMatch(draft.summary, /\*\*Update 3\*\*/);
+    assert.equal(draft.summary.match(/Did two\./g).length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('a long deterministic history is bounded and names what it dropped', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // No model to compress with, so the cap is structural: the most recent
+    // twelve updates, each clipped. It must still say the earlier ones exist.
+    const summaries = Array.from({ length: 15 }, (_, i) => `Update body ${i + 1}. ${'x'.repeat(2000)}`);
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Start it'], summaries, ccSummary: summaries[14], username: 'evan',
+    });
+    assert.match(draft.summary, /_3 earlier updates not shown\._/);
+    assert.doesNotMatch(draft.summary, /\*\*Update 3\*\*/, 'the oldest three are outside the cap');
+    assert.match(draft.summary, /\*\*Update 4\*\*/, 'and the numbering keeps their positions');
+    assert.match(draft.summary, /\*\*Update 15\*\*/);
+    assert.match(draft.summary, /…/, 'each over-long update is clipped');
+    assert.ok(draft.summary.length < 14000, `bounded, got ${draft.summary.length}`);
+  } finally {
+    restore();
+  }
+});
+
+test('the deterministic path keeps the first request as the title across turns', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // The cumulative summary must not drag the title along with it: a PR that
+    // renames itself after every follow-up is the behaviour #1949 removed.
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a login form', 'Now add password reset'],
+      summaries: ['Added the login form.', 'Added password reset.'],
+      username: 'evan',
+    });
+    assert.equal(draft.title, 'Add a login form');
+  } finally {
+    restore();
+  }
+});
+
 // ---- #75: closing keywords ----
 
 test('no linked issues -> body has no Closes line and is unchanged', async () => {

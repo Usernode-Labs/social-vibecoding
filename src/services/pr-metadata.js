@@ -359,11 +359,62 @@ function fallbackPrMetadataDraft(username) {
   };
 }
 
+// Bounds for the deterministic cumulative summary below (#2433). This path
+// has no model to compress a long branch with, so the record is bounded by
+// construction: the most recent DETERMINISTIC_SUMMARY_TURNS updates, each
+// clipped to DETERMINISTIC_SUMMARY_PER_TURN characters. 12 × 1000 keeps the
+// assembled PR body an order of magnitude inside GitHub's 65,536-character
+// ceiling even with the deterministic testing/visuals/closing suffix on top,
+// and the omitted-count line below keeps an over-long branch honest about it.
+const DETERMINISTIC_SUMMARY_TURNS = 12;
+const DETERMINISTIC_SUMMARY_PER_TURN = 1000;
+
+// The whole proposal's record, oldest-first, as the deterministic stand-in for
+// the model path's cumulative prose (#2433). Every turn's coding-agent summary
+// is kept and labelled, because this text is what the About sheet shows as
+// "What changes for you" and what leads the PR body: a follow-up turn that
+// replaced it with its own summary alone described the last iteration rather
+// than the change the group is voting on.
+//
+// `summaries` already carries the in-flight turn (gatherSessionContext appends
+// it), so `ccSummary` is only a fallback for callers that pass the current turn
+// on its own — and is deduped against the tail when both arrive.
+//
+// A single-update branch renders exactly as it did before the labels existed:
+// its lone summary, untouched, so the overwhelmingly common first-turn PR body
+// stays byte-identical.
+function cumulativeDeterministicSummary(summaries, ccSummary) {
+  const list = (Array.isArray(summaries) ? summaries : [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  const cur = String(ccSummary || '').trim();
+  if (cur && list[list.length - 1] !== cur) list.push(cur);
+  if (list.length <= 1) return list[0] || '';
+
+  const kept = list.slice(-DETERMINISTIC_SUMMARY_TURNS);
+  const dropped = list.length - kept.length;
+  const parts = kept.map((text, i) => {
+    const clipped = text.length > DETERMINISTIC_SUMMARY_PER_TURN
+      ? `${text.slice(0, DETERMINISTIC_SUMMARY_PER_TURN - 1).trimEnd()}…`
+      : text;
+    // Numbered from the turn's real position on the branch, so the labels
+    // still line up when the oldest updates fall outside the cap.
+    return `**Update ${dropped + i + 1}**\n\n${clipped}`;
+  });
+  if (dropped) {
+    parts.unshift(`_${dropped} earlier update${dropped === 1 ? '' : 's'} not shown._`);
+  }
+  return parts.join('\n\n');
+}
+
 // OpenRouter sessions must not buy a hidden Anthropic call just to name a
 // pull request after their selected model has finished. Build stable metadata
-// from the session's own request and model-authored summary instead. The first
-// request owns the title for the life of the PR; later turns refresh the body
-// without renaming the change after whichever follow-up happened last.
+// from the session's own requests and model-authored summaries instead. The
+// first request owns the title for the life of the PR; later turns refresh the
+// body without renaming the change after whichever follow-up happened last.
+// This is also the over-budget path for a Claude session (applyPrMetadata's
+// `allowModelGeneration` is false when no payer resolves), so the cumulative
+// summary is not an OpenRouter-only concern.
 function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summaries, username }) {
   const titleSource = (Array.isArray(requests) && requests.find((item) => typeof item === 'string' && item.trim()))
     || userMessage
@@ -373,15 +424,10 @@ function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summar
   // session-title.js), so the display name holds when the PR lands.
   const title = sessionTitles.deterministicTitle(titleSource)
     || `${username || 'User'}'s changes`;
-  const latestSummary = String(
-    ccSummary
-      || (Array.isArray(summaries) && summaries[summaries.length - 1])
-      || '',
-  ).trim();
   return {
     title,
     body: '',
-    summary: latestSummary,
+    summary: cumulativeDeterministicSummary(summaries, ccSummary),
     fallback: false,
   };
 }
