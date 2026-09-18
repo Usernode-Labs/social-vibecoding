@@ -46,10 +46,12 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -231,7 +233,14 @@ const PANEL_TAIL = 'max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-20
 const CLOSE_X = 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none dark:text-zinc-400';
 // A row is a button: the name and points are one control that opens the
 // participant's profile, reachable by keyboard as well as by touch.
-const ENTRY_ROW = 'tc-se-entry -mx-2 flex min-h-11 w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-lg px-2 '
+//
+// The BOX is split off the hook and the affordances so the loading
+// placeholder (EntriesSkeleton) can stand at the row's real height, outdent
+// and padding without also claiming to be a row: `tc-se-entry` is a selector
+// hook, and a placeholder that can be hovered or pressed is a row with
+// nothing behind it. The rendered string is unchanged.
+const ENTRY_BOX = '-mx-2 flex min-h-11 w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-lg px-2';
+const ENTRY_ROW = `tc-se-entry ${ENTRY_BOX} `
   + 'text-left text-sm font-medium cursor-pointer hover:bg-zinc-200/60 disabled:cursor-default dark:hover:bg-zinc-800';
 // × as a character, not `&times;` — the entity was HTML source; this is text.
 const TIMES = '×';
@@ -248,13 +257,63 @@ function Card({ view }: { view: CardView }): ReactNode {
   );
 }
 
+/**
+ * The grid's loading state, at the CARD's own geometry.
+ *
+ * Challenges is the DEFAULT section of this screen (#2374), so this is the
+ * first thing the screen shows — and it was one small grey line, "Loading
+ * challenges…", at the top of an otherwise empty pane. That is the same
+ * "reads as blank space" the two sibling panes were fixed for
+ * (./topochain-standings.tsx, ./kudos-pane.tsx, and tests/screen-skeletons.test.js
+ * for the argument); this pane is the third, and the last.
+ *
+ * The wrapper is GRID — the constant the real groups draw with, so the cards
+ * arrive into columns that are already the right width — and each placeholder
+ * is CHALLENGE_CARD_FACE, the shared card's own face, exported from
+ * ./challenge-card.tsx so this cannot drift from the thing it stands in for.
+ * Inside it are that card's three parts at their own sizes: the 5rem artwork
+ * tile (IconTile `xl`), the title with its meta line, and the rail at the
+ * card's 36px height and 11px corners.
+ *
+ * The season progress leads, because it leads the loaded grid: its one line
+ * over its segment track, at the same `mb-4`. Without it the whole grid jumps
+ * up by that block's height the moment the payload lands, which is the shift
+ * a skeleton exists to hold open.
+ *
+ * Four cards, not the six the standings table draws: a challenge card is
+ * about 104px, so six would run a phone well past the fold, and four is two
+ * full rows at the two columns this pane usually has.
+ */
+function GridSkeleton(): ReactNode {
+  return (
+    <SkeletonGroup label="Loading challenges">
+      <div className="flex flex-col gap-2 mb-4">
+        <Skeleton className="w-40" />
+        <Skeleton shape="muted" className="h-[5px] w-full rounded-full" />
+      </div>
+      <div className={GRID}>
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className={CHALLENGE_CARD_FACE}>
+            <Skeleton shape="block" className="h-20 w-20 rounded-2xl" />
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className="min-w-0">
+                <Skeleton className={i % 2 ? 'w-32' : 'w-40'} />
+                <Skeleton shape="muted" className="mt-1.5 w-24" />
+              </div>
+              <Skeleton shape="block" className="h-9 w-full rounded-[0.6875rem]" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
 function Grid({ view }: { view: GridView | null }): ReactNode {
   // Before the first load there is nothing to say — the pane opens, the fetch
-  // starts and the loading line arrives on the very next render.
+  // starts and the placeholders arrive on the very next render.
   if (!view) return null;
-  if (view.kind === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading challenges…</p>;
-  }
+  if (view.kind === 'loading') return <GridSkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
@@ -354,10 +413,32 @@ function Cta({ view }: { view: CtaView }): ReactNode {
   );
 }
 
+/**
+ * The participant list's loading state, at the ENTRY row's own geometry.
+ *
+ * ENTRY_BOX is the real row's box — the 44px minimum height, the outdent and
+ * the padding that let a row's hover reach past the page's text column — so
+ * the names arrive where the placeholders stood. No `tc-se-entry` and no
+ * hover: see the note on that constant.
+ *
+ * Three rows, because the list itself is short: the detail page shows the
+ * leading few and puts the rest behind "Show all N →".
+ */
+function EntriesSkeleton(): ReactNode {
+  return (
+    <SkeletonGroup label="Loading participants" className="flex flex-col">
+      {Array.from({ length: 3 }, (_, i) => (
+        <div key={i} className={ENTRY_BOX}>
+          <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+          <Skeleton shape="muted" className="w-16" />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }): ReactNode {
-  if (view.kind === 'loading') {
-    return <p className={PROSE}>Loading participants…</p>;
-  }
+  if (view.kind === 'loading') return <EntriesSkeleton />;
   if (view.kind === 'error') return <p className={PROSE}>{view.message}</p>;
   if (view.kind === 'empty') return <p className={PROSE}>No participants yet.</p>;
   return (
@@ -476,8 +557,43 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
 
 // ── Profile overlay ─────────────────────────────────────────────────────
 
+/**
+ * The profile overlay's loading state, at the PANEL's own three parts.
+ *
+ * A bare "Loading…" in a 28rem panel said nothing about what was coming, and
+ * the panel then grew by the name, the stat grid and the activity list all at
+ * once, under a close button that had already moved. These are those three,
+ * in that order and at their spacing: the name, four stats in the real
+ * two-column grid, the "Activities" label, and three rows with a figure at
+ * the right end where the real ones carry their points.
+ */
+function ProfileSkeleton(): ReactNode {
+  return (
+    <SkeletonGroup label="Loading the profile">
+      <Skeleton shape="block" className="h-5 w-40 mb-3" />
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i}>
+            <Skeleton shape="muted" className="w-16" />
+            <Skeleton className="mt-1.5 w-12" />
+          </div>
+        ))}
+      </div>
+      <Skeleton shape="muted" className="w-16 mb-2" />
+      <div className="space-y-2">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="flex items-center justify-between gap-3">
+            <Skeleton className={i % 2 ? 'w-32' : 'w-40'} />
+            <Skeleton shape="muted" className="w-10" />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
 function ProfileBody({ view }: { view: ProfileView }): ReactNode {
-  if (view.kind === 'loading') return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (view.kind === 'loading') return <ProfileSkeleton />;
   if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
   return (
     <>

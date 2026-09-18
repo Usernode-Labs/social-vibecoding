@@ -102,7 +102,13 @@ test('optional parts drop out cleanly', () => {
   assert.doesNotMatch(html, /<a /, 'a scheme-rejected action is text, never an anchor');
   assert.match(html, /\(link unavailable\)/);
   assert.doesNotMatch(html, /Requirements|Scoring|between them|tc-se-breakdown-more|gap-1\.5 text-sm leading-5|uppercase|<img|h-56/);
-  assert.match(html, /Loading participants…/);
+  // The participant list loads into placeholder rows at the real row's box,
+  // not into the words "Loading participants…" (#2440; the geometry and the
+  // per-slot rules are tests/screen-skeletons.test.js's).
+  assert.doesNotMatch(html, /Loading participants…/);
+  assert.match(html, /<div class="sr-only" role="status">Loading participants<\/div>/,
+    'a screen reader still hears it once');
+  assert.match(html, /<div class="animate-pulse flex flex-col" aria-hidden="true">/);
 });
 
 test('the artwork well: only for a registry illustration, on its tone, and dropped if it fails to load', () => {
