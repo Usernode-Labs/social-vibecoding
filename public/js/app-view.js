@@ -16098,6 +16098,35 @@ const AppView = {
     return out;
   },
 
+  // How wide each side's bar is, as a percentage of the pill.
+  //
+  // Yes grows from the left, No from the right (app.css), both full height,
+  // so the gap between them is what is still undecided. Each side is its
+  // share of the majority threshold — and where those two shares would
+  // CROSS, both are scaled by the same factor so the bars meet instead of
+  // overlapping. Scaling rather than truncating keeps the ratio between them
+  // true: an overlap would simply paint the later bar over the earlier one
+  // and make whichever is drawn first look smaller than its share.
+  //
+  // Reachable: a contested tally is exactly the case where both sides have
+  // votes and neither has reached the threshold (5 active, 3 needed, 2 yes
+  // and 2 no is 133% between them).
+  //
+  // Transcribed into frontend/src/features/dev-board/card/dev-card.tsx,
+  // which cannot import a classic script; tests/dev-status-pill.test.js
+  // reads both ends.
+  voteFillWidths(yes, no, majority) {
+    const maj = majority > 0 ? majority : 1;
+    let y = Math.min(100, (Math.max(yes, 0) / maj) * 100);
+    let n = Math.min(100, (Math.max(no, 0) / maj) * 100);
+    const total = y + n;
+    if (total > 100) {
+      y = (y / total) * 100;
+      n = (n / total) * 100;
+    }
+    return { yes: y, no: n };
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -16267,7 +16296,7 @@ const AppView = {
         : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
       const fills = reached
         ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${Math.min(100, (yes / n) * 100)}%"></span>`;
+        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${AppView.voteFillWidths(yes, 0, n).yes}%"></span>`;
       return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
         + fills
         + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
@@ -16339,12 +16368,11 @@ const AppView = {
       // the winning side's color (green = Yes, red = No).
       fills = `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-${state}"></span>`;
     } else {
-      // In progress: top stripe = Yes share, bottom stripe = No share, each a
-      // fraction of the majority threshold, filling left→right.
-      const yesPct = Math.min(100, (yes / maj) * 100);
-      const noPct = Math.min(100, (no / maj) * 100);
-      fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${yesPct}%"></span>`
-        + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${noPct}%"></span>`;
+      // In progress: Yes from the left, No from the right, each its share of
+      // the majority threshold, meeting rather than overlapping.
+      const w = AppView.voteFillWidths(yes, no, maj);
+      fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${w.yes}%"></span>`
+        + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${w.no}%"></span>`;
     }
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
