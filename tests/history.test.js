@@ -431,6 +431,22 @@ test('/illustrations/ is in PUBLIC_PATHS, and nothing broader was opened with it
   assert.deepEqual(related, ['/illustrations/']);
 });
 
+// The signed-out landing's own artwork. Its whole audience is the tier that
+// has no platform access, so the gate must not see the request at all: a 302
+// to '/' in an <img> is a broken picture, which is what staging drew before
+// this entry existed. Same shape as the two above.
+test('/brand/ is in PUBLIC_PATHS, and nothing broader was opened with it', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'middleware', 'auth.js'),
+    'utf8'
+  );
+  const m = src.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);
+  assert.ok(m, 'PUBLIC_PATHS array found');
+  const entries = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const related = entries.filter((p) => p.startsWith('/brand') || '/brand/'.startsWith(p));
+  assert.deepEqual(related, ['/brand/']);
+});
+
 // Uploaded challenge artwork decorates the same public cards, so its image
 // route is public too, at its own prefix. Same shape as the entry above: the
 // trailing slash stays, and nothing wider comes along with it.

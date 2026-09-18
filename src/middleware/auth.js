@@ -102,6 +102,14 @@ const PUBLIC_PATHS = [
   // the card fallback. Same public tier as /icons/ above. Static SVG files
   // only, no data access.
   '/illustrations/',
+  // The brand assets the signed-out screens draw (public/brand/). The landing
+  // is the screen a stranger with no session meets, so its illustration has to
+  // be readable by exactly the tier that cannot get past the gate — and the
+  // gate answers an image request with a 302 to the root, which draws a broken
+  // picture rather than nothing. Caught on staging, where the landing rendered
+  // correctly around an empty box. Static image files only, no data access;
+  // same public tier as /icons/ and /illustrations/ above.
+  '/brand/',
   // Uploaded challenge artwork (routes/topochain/challenge-illustrations.js),
   // public for the same reason as the directory above: it decorates the same
   // public challenge cards. The route mounts BEFORE this middleware, so this
