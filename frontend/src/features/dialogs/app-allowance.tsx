@@ -73,7 +73,7 @@ export function AppAllowance({ id, surface = 'inset' }: { id?: string; surface?:
           {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Admins have your request. You’ll be notified when it is reviewed.</p> : null}
         </div>
       ) : null}
-      {error || requestError ? <p role="alert" className="mt-2 text-xs text-red-500">{requestError || error}</p> : null}
+      {error || requestError ? <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">{requestError || error}</p> : null}
       {error ? <Button type="button" size="sm" disabled={loading} onClick={() => void refreshAppAllowance()}>Refresh allowance</Button> : null}
     </div>
   );
