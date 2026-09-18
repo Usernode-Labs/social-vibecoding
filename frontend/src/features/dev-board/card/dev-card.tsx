@@ -85,6 +85,29 @@ function call(ref: ActionRef | undefined, node?: HTMLElement): void {
 }
 
 /**
+ * `AppView.voteFillWidths`, transcribed (see the header): how wide each
+ * side's bar is, as a percentage of the pill.
+ *
+ * Yes grows from the left, No from the right (app.css), both full height, so
+ * the gap between them is what is still undecided. Each side is its share of
+ * the majority threshold, and where those two shares would CROSS both are
+ * scaled by the same factor, so the bars meet instead of overlapping —
+ * which keeps the ratio between them true rather than painting one over the
+ * other.
+ */
+export function voteFillWidths(yes: number, no: number, majority: number): { yes: number; no: number } {
+  const maj = majority > 0 ? majority : 1;
+  let y = Math.min(100, (Math.max(yes, 0) / maj) * 100);
+  let n = Math.min(100, (Math.max(no, 0) / maj) * 100);
+  const total = y + n;
+  if (total > 100) {
+    y = (y / total) * 100;
+    n = (n / total) * 100;
+  }
+  return { yes: y, no: n };
+}
+
+/**
  * `AppView._fmtCountdown`, transcribed (see the header): two-unit,
  * floor-rounded — ~Xd Yh above a day, ~Xh Ym above an hour, ~Xm below.
  */
@@ -168,10 +191,11 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
     } else if (s.no >= maj) {
       fills = fullFill('no');
     } else {
+      const w = voteFillWidths(s.yes, s.no, maj);
       fills = (
         <>
-          <span className="gc-vote-fill gc-vote-fill-yes" style={{ width: `${Math.min(100, (s.yes / maj) * 100)}%` }}></span>
-          <span className="gc-vote-fill gc-vote-fill-no" style={{ width: `${Math.min(100, (s.no / maj) * 100)}%` }}></span>
+          <span className="gc-vote-fill gc-vote-fill-yes" style={{ width: `${w.yes}%` }}></span>
+          <span className="gc-vote-fill gc-vote-fill-no" style={{ width: `${w.no}%` }}></span>
         </>
       );
     }

@@ -6144,18 +6144,25 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-count-attention { color: var(--state-attention); }
 .gc-vote-count-blocked { color: var(--state-blocked); }
 .gc-vote-count-ok { color: var(--state-ok); }
-/* Proportional fill stripes: top = Yes share, bottom = No share, each a
-   fraction of majority, filling left→right behind the label. */
+/* Proportional fill bars: Yes grows from the LEFT, No from the RIGHT, both
+   the pill's full height, so the gap between them is what is still
+   undecided. They used to be half-height lanes stacked one above the other
+   (Yes top, No bottom), which reads correctly only when both sides have
+   votes — and most of the time only one does, so a lone Yes rendered as a
+   bar covering half the pill's height and looked like a fault rather than a
+   tally. Facing each other, one side alone is simply a shorter bar.
+   The widths are computed so the two can meet but never overlap; see
+   voteFillWidths in public/js/app-view.js. */
 .gc-vote-fill {
   position: absolute;
-  left: 0;
-  height: 50%;
+  top: 0;
+  height: 100%;
   pointer-events: none;
 }
-.gc-vote-fill-yes { top: 0; background: var(--state-ok-fill); }
-.gc-vote-fill-no { bottom: 0; background: var(--state-blocked-fill); }
+.gc-vote-fill-yes { left: 0; background: var(--state-ok-fill); }
+.gc-vote-fill-no { right: 0; background: var(--state-blocked-fill); }
 /* Finalized: one side hit majority, so the whole pill fills with its color. */
-.gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
+.gc-vote-fill-full { left: 0; top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: var(--state-ok-fill); }
 .gc-vote-fill-full-no { background: var(--state-blocked-fill); }
 /* text-primary because a vote pill's fill stripes sweep UNDER the label,
