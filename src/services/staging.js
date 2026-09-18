@@ -876,12 +876,51 @@ function serializeRebuild(slug, fn) {
   return result; // callers still get the real containerId/sha or the real error
 }
 
-async function rebuildProduction(config, app) {
+// `options.reuseImage` — { imageRef, buildRef, treeSha, fromSha } — offers an
+// image that is ALREADY built, to be deployed instead of building a new one.
+// It is used only when the tree this rebuild is about to build is the same
+// tree that image was built from, which the caller states as `treeSha` and
+// this function verifies against the clone it just made. Same source, same
+// Dockerfile, same builder: the same image.
+//
+// What it saves is the build — measured at ~9s of an ~18s merge-to-live on a
+// small app, even with the layer cache warm, because a build is a Kubernetes
+// Job to schedule, a daemon to start and a push. What it costs is that the
+// image's baked GIT_SHA names `fromSha` (the commit whose code it is) rather
+// than the commit main now points at, so the caller has to be one for which
+// that is true and harmless. Today that is demo mode, and routes/votes.js
+// gates it there; a general "deploy the artifact the checks ran against"
+// needs that difference resolved rather than tolerated.
+async function rebuildProduction(config, app, options = {}) {
   return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app)));
+    () => rebuildProductionInner(config, app, options)));
 }
 
-async function rebuildProductionInner(config, app) {
+// Whether an offered image is of the tree that was just cloned, and so the
+// image this rebuild would otherwise spend a build producing. Pure, and the
+// whole guarantee: same tree sha means the same source, byte for byte, so the
+// same Dockerfile and the same builder produce the same image. Anything
+// missing or unequal answers null, which means build.
+function reusedBuild(offered, mergedTree) {
+  if (!offered || !offered.imageRef || !offered.treeSha) return null;
+  if (!mergedTree || mergedTree !== String(offered.treeSha).toLowerCase()) return null;
+  return { imageRef: offered.imageRef, buildRef: offered.buildRef || null, reused: true };
+}
+
+// The tree the working copy is at, or null when git cannot say — in which
+// case no reuse happens, which is the safe direction.
+async function treeShaOf(dir) {
+  try {
+    const { stdout } = await docker.execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD^{tree}'], { timeout: 5000 });
+    const sha = (stdout || '').trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch (err) {
+    log.warn('staging', 'Could not read the merged tree; building rather than reusing', { err: err.message });
+    return null;
+  }
+}
+
+async function rebuildProductionInner(config, app, options = {}) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
@@ -999,13 +1038,30 @@ async function rebuildProductionInner(config, app) {
       throw new MissingSecretsError(merge.missingRequired);
     }
 
-    const build = await applicationRuntime.build(config, {
-      app,
-      revision: mainSha,
-      environment: 'production',
-      sourceDir: cloneDir,
-      dockerImage: imageName,
-    });
+    // An image built from this exact tree already exists: deploy it. The
+    // comparison is the whole guarantee, so it is made HERE, against the tree
+    // just cloned, rather than taken from the caller's word about which
+    // commits ought to match.
+    const offered = options.reuseImage;
+    const mergedTree = offered ? await treeShaOf(cloneDir) : null;
+    let build = reusedBuild(offered, mergedTree);
+    if (offered) {
+      log.info('staging', build
+        ? 'Deploying an image already built from this tree'
+        : 'Offered image is of a different tree; building', {
+        app: app.slug, mergedTree, offeredTree: offered.treeSha || null,
+        fromSha: offered.fromSha || null, imageRef: offered.imageRef || null,
+      });
+    }
+    if (!build) {
+      build = await applicationRuntime.build(config, {
+        app,
+        revision: mainSha,
+        environment: 'production',
+        sourceDir: cloneDir,
+        dockerImage: imageName,
+      });
+    }
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // Reload the app row to pick up apps.db_password — the per-role
@@ -1073,6 +1129,7 @@ async function rebuildProductionInner(config, app) {
       runtimeName: deployed.runtimeName,
       imageRef: build.imageRef,
       buildRef: build.buildRef,
+      imageReused: !!build.reused,
       sha: mainSha,
     };
   } catch (err) {
@@ -1164,6 +1221,11 @@ module.exports = {
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
+  // The image-reuse decision and the tree read behind it, unit-tested
+  // directly: the decision IS the guarantee, and rebuildProductionInner
+  // around it is a clone, a database and a cluster.
+  reusedBuild,
+  treeShaOf,
   // Exported for services/app-rollover.js: its cheap respawn path
   // (appRespawn.runExistingImage) does its own stopAndRemove +
   // runContainer without going through rebuildProduction, so it has to
