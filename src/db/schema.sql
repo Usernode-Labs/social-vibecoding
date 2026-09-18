@@ -8371,18 +8371,29 @@ CREATE TABLE IF NOT EXISTS global_chat_usage (
   provider          VARCHAR(32) NOT NULL DEFAULT 'openrouter',
   requested_model   VARCHAR(255),
   served_model      VARCHAR(255),
+  reasoning_effort  VARCHAR(16),
   input_tokens      BIGINT NOT NULL DEFAULT 0,
+  cached_input_tokens BIGINT NOT NULL DEFAULT 0,
   output_tokens     BIGINT NOT NULL DEFAULT 0,
   reasoning_tokens  BIGINT NOT NULL DEFAULT 0,
   cost_usd          NUMERIC(18,8),
   cost_source       VARCHAR(32) NOT NULL DEFAULT 'unavailable',
   outcome           VARCHAR(16) NOT NULL DEFAULT 'unknown',
+  attempt_number    INTEGER NOT NULL DEFAULT 1,
+  tool_calls        INTEGER NOT NULL DEFAULT 0,
+  error_code        VARCHAR(64),
   duration_ms       INTEGER,
+  metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT global_chat_usage_counts_check
-    CHECK (input_tokens >= 0 AND output_tokens >= 0 AND reasoning_tokens >= 0
+    CHECK (input_tokens >= 0 AND cached_input_tokens >= 0
+           AND output_tokens >= 0 AND reasoning_tokens >= 0
+           AND attempt_number > 0 AND tool_calls >= 0
            AND (cost_usd IS NULL OR cost_usd >= 0)
            AND (duration_ms IS NULL OR duration_ms >= 0)),
+  CONSTRAINT global_chat_usage_reasoning_check
+    CHECK (reasoning_effort IS NULL
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh')),
   CONSTRAINT global_chat_usage_cost_source_check
     CHECK (cost_source IN ('provider_reported', 'catalog_estimate', 'unavailable')),
   CONSTRAINT global_chat_usage_outcome_check

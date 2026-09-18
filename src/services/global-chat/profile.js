@@ -155,6 +155,8 @@ async function readMonthlyUsage(pool, userId, { now = new Date(), spendCapUsd = 
        COALESCE(SUM(output_tokens), 0)::text AS output_tokens,
        COALESCE(SUM(reasoning_tokens), 0)::text AS reasoning_tokens,
        COUNT(*)::text AS turns,
+       COUNT(cost_usd)::text AS priced_turns,
+       COUNT(*) FILTER (WHERE outcome = 'unknown')::text AS pending_turns,
        COUNT(*) FILTER (WHERE outcome = 'success')::text AS successful_turns
      FROM global_chat_usage
      WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
@@ -163,6 +165,8 @@ async function readMonthlyUsage(pool, userId, { now = new Date(), spendCapUsd = 
   const row = rows[0] || {};
   const spentUsd = money(row.spent_usd || '0', { nullable: false });
   const capUsd = money(spendCapUsd);
+  const turns = String(row.turns || '0');
+  const pricedTurns = String(row.priced_turns || '0');
   return {
     period: 'utc_calendar_month',
     periodStart: start.toISOString(),
@@ -171,7 +175,11 @@ async function readMonthlyUsage(pool, userId, { now = new Date(), spendCapUsd = 
     capUsd,
     remainingUsd: remainingSpend(capUsd, spentUsd),
     capReached: capUsd == null ? false : moneyToUnits(spentUsd) >= moneyToUnits(capUsd),
-    turns: String(row.turns || '0'),
+    turns,
+    pricedTurns,
+    unpricedTurns: String(BigInt(turns) - BigInt(pricedTurns)),
+    pendingTurns: String(row.pending_turns || '0'),
+    costComplete: turns === pricedTurns,
     successfulTurns: String(row.successful_turns || '0'),
     inputTokens: String(row.input_tokens || '0'),
     outputTokens: String(row.output_tokens || '0'),

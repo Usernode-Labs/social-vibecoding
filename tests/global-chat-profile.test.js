@@ -97,7 +97,8 @@ test('monthly usage uses UTC boundaries and reports exact cap remaining', async 
       calls.push({ sql, params });
       return { rows: [{
         spent_usd: '0.12345678', input_tokens: '10', output_tokens: '4',
-        reasoning_tokens: '2', turns: '3', successful_turns: '2',
+        reasoning_tokens: '2', turns: '3', priced_turns: '2', pending_turns: '1',
+        successful_turns: '2',
       }] };
     },
   };
@@ -109,6 +110,9 @@ test('monthly usage uses UTC boundaries and reports exact cap remaining', async 
   assert.equal(result.resetAt, '2026-10-01T00:00:00.000Z');
   assert.equal(result.remainingUsd, '0.07654322');
   assert.equal(result.capReached, false);
+  assert.equal(result.unpricedTurns, '1');
+  assert.equal(result.pendingTurns, '1');
+  assert.equal(result.costComplete, false);
   assert.deepEqual(calls[0].params, [
     7,
     new Date('2026-09-01T00:00:00.000Z'),

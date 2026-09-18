@@ -630,5 +630,12 @@ read-only mode, and transcript deletion.
 - [x] UTC calendar-month cap semantics and separate Global Chat accounting
   summary (48 focused tests passed for this slice).
 - [ ] Generated Classic control/route/settings inventory and parity audit.
-- [ ] Remaining Phase B provider streaming and pre-call cap enforcement.
+- [x] OpenRouter streaming/tool transport with strict structured output,
+  low-effort reasoning, bounded SSE parsing, live provider usage, and sanitized
+  failures.
+- [x] Atomic pre-call reservations enforce both the live overall allowance and
+  UTC monthly Global Chat cap before every model attempt/retry; settlement
+  records provider cost or an explicitly labelled catalog estimate.
+- [x] Global Chat invocations are included in the provider-neutral aggregate
+  telemetry report without prompt, output, tool payload, or credential fields.
 - [ ] Phases C–F.
