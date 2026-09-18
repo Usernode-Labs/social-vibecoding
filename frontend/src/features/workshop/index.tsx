@@ -297,8 +297,7 @@ export function WorkshopScreen() {
               every other row on this screen is drawn in. Same shape, this
               screen's vocabulary. An anchor rather than a button for the
               reason AppRow gives — a hash href is the browser's to open in a
-              new tab — and with no leading tile, so the hairline falls back
-              to the text inset.
+              new tab — and with no leading tile.
 
               FIRST, not last, and that is load-bearing: the row separator is
               `[&:not(:last-child)]:after:*` on the row itself, so a note after
@@ -307,23 +306,48 @@ export function WorkshopScreen() {
               all. It ships in the prerender — hidden — because the shell's id
               inventory resolves against that document.
 
+              THE CARD DRAWS NO HAIRLINE OF ITS OWN, in either state, and that
+              is right rather than incidental. Showing, it is the only thing in
+              the list, and a rule under the last row is a rule under nothing —
+              which is the very reason this sits first. Hidden, the wrapper is
+              `display: none`, so neither it nor the row inside it renders
+              anything at all, and the rows below keep the separators they
+              would have had. The row gets there by being the wrapper's only
+              child, so `:not(:last-child)` is false for it always.
+
               THE ID AND THE `hidden` CLASS ARE THE API. dapp.json selects
               `#workshop-empty.hidden` to prove the card is gone once the list
-              has rows, so the id stays on this element (never on a child) and
-              visibility stays a class toggle — never conditional rendering,
-              which would take the element out of the document the check
-              resolves against. `cn` drops the row's own `flex` when `hidden`
-              is merged over it, which is the display rule winning as it
-              should. */}
-          <ListRow
-            as="a"
-            href="#apps"
-            id="workshop-empty"
-            className={empty ? '' : 'hidden'}
-            title="You have no apps yet"
-            subtitle="Browse the directory to find one to join."
-            subtitleClassName="whitespace-normal"
-          />
+              has rows, so the id stays on ONE element and visibility stays a
+              class toggle on it — never conditional rendering, which would
+              take the element out of the document the check resolves against.
+
+              AND IT IS A WRAPPER, NOT THE ANCHOR ITSELF. That is the whole
+              reason this div exists, and removing it breaks a merge-gating
+              check silently. A second declared selector reads
+
+                #workshop-list a[data-workshop-app]:first-of-type
+                  [data-workshop-needs]:not([data-workshop-needs="0"])
+
+              to prove an app with a decision waiting LEADS the list.
+              `:first-of-type` counts siblings OF THAT ELEMENT NAME and is
+              purely structural — `display: none` does not exempt an element
+              from it — so an `<a id="workshop-empty">` sitting here as a
+              sibling of the rows makes the first app row the SECOND `<a>`,
+              and that selector matches nothing whether the card is showing or
+              not. It shipped that way once (#2445) and the check failed on
+              the very next run. Inside this div the card's anchor is the
+              first `<a>` among ITS siblings, where it satisfies nothing and
+              blocks nothing, and the first row is the first `<a>` among the
+              list's own children again. */}
+          <div id="workshop-empty" className={empty ? '' : 'hidden'}>
+            <ListRow
+              as="a"
+              href="#apps"
+              title="You have no apps yet"
+              subtitle="Browse the directory to find one to join."
+              subtitleClassName="whitespace-normal"
+            />
+          </div>
           {state.error
             ? (
               <AppsLoadError

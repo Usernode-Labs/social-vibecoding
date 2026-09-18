@@ -38,6 +38,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderComponent, renderToHtml } = require('./lib/render-tsx');
+const { tokenize } = require('./helpers/html-tokens');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -251,7 +252,7 @@ test('the prerendered screen is hidden and its list has no rows', () => {
   // leave the last one drawing a hairline under nothing.
   const list = /<div[^>]*id="workshop-list"[^>]*>([\s\S]*?)$/.exec(html);
   assert.ok(list, '#workshop-list is in the prerender');
-  assert.match(list[1].trimStart(), /^<a\b[^>]*id="workshop-empty"/);
+  assert.match(list[1].trimStart(), /^<div\b[^>]*id="workshop-empty"/);
   // The document the shell actually ships agrees.
   const shipped = read('public/index.html');
   assert.match(shipped, /<main id="workshop-screen" class="hidden /);
@@ -276,18 +277,21 @@ test('the empty state is a card that offers the directory, not a grey caption', 
   const html = renderComponent('frontend/src/features/workshop/index.tsx', 'WorkshopScreen', {});
   const tag = emptyTag(html);
 
-  // A link, so cmd-click, middle-click and "open in new tab" work — the same
-  // argument AppRow makes for being an anchor.
-  assert.match(tag, /^<a\b/, 'the card is an anchor');
-  assert.match(tag, /\bhref="#apps"/,
-    'and it goes where Discover\'s own empty card goes — the directory');
-
   // Title over subtitle over chevron, drawn by ListRow rather than by hand,
-  // so the card is the same object every other row on this screen is.
+  // so the card is the same object every other row on this screen is. The card
+  // is the anchor INSIDE the id-carrying wrapper — see the ordering test below
+  // for why it may not be the wrapper itself.
   const from = html.indexOf(tag) + tag.length;
   const end = html.indexOf('</a>', from);
-  assert.ok(end > from, 'the card has an end tag');
+  assert.ok(end > from, 'the card inside it has an end tag');
   const inner = html.slice(from, end);
+
+  // A link, so cmd-click, middle-click and "open in new tab" work — the same
+  // argument AppRow makes for being an anchor.
+  assert.match(inner, /^<a\b[^>]*\bhref="#apps"/,
+    'the card is an anchor, and it goes where Discover\'s own empty card '
+    + 'goes — the directory');
+
   assert.match(inner, /font-bold[^"]*">You have no apps yet</,
     'a title in the row\'s own subject weight');
   assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find one to join\.</,
@@ -314,9 +318,9 @@ test('the empty card keeps the id and the `hidden` toggle dapp.json selects', ()
     + 'change, the markup change is wrong, not the check');
 
   const src = read('frontend/src/features/workshop/index.tsx');
-  assert.match(src, /id="workshop-empty"/, 'the id is written on the element');
-  assert.match(src, /className=\{empty \? '' : 'hidden'\}/,
-    'visibility is a class on that same element — the row is always rendered');
+  assert.match(src, /id="workshop-empty" className=\{empty \? '' : 'hidden'\}/,
+    'the id and the class toggle are on ONE element, and visibility is a '
+    + 'class on it — the element is always rendered');
 
   // Both states, through the component rather than through the source. One
   // module instance for both renders: loadTsx bundles afresh on every call,
@@ -333,10 +337,6 @@ test('the empty card keeps the id and the `hidden` toggle dapp.json selects', ()
   const shown = render();
   assert.doesNotMatch(shown, /\bclass="[^"]*\bhidden\b/,
     'an account with no apps: the same element, with the class off');
-  // `cn` merges `hidden` over the row's own `flex`; with the class off the row
-  // lays out again rather than staying display:none by leftover.
-  assert.match(shown, /\bclass="[^"]*\bflex\b/,
-    'and it lays out as a row again');
 
   mod.workshopStore.set({ rows: [{ slug: 'notes-9206f8', name: 'Notes', working: 0, needs: 0 }] });
   const withRows = render();
@@ -344,6 +344,90 @@ test('the empty card keeps the id and the `hidden` toggle dapp.json selects', ()
     'a list with rows: the element is STILL THERE and hidden, which is the '
     + 'state dapp.json\'s `#workshop-empty.hidden` resolves against — '
     + 'conditional rendering would leave that check nothing to match');
+});
+
+/**
+ * The direct element children of `#workshop-list`, as { tag, attrs }.
+ *
+ * `:first-of-type` is about SIBLINGS, so a regex over the flat string cannot
+ * answer the question this file now has to ask; the repo's own tokenizer can.
+ */
+function listChildren(html) {
+  const tokens = tokenize(html);
+  const start = tokens.findIndex(
+    (t) => t.kind === 'open' && t.attrs.some((a) => a.name === 'id' && a.value === 'workshop-list'),
+  );
+  assert.ok(start >= 0, '#workshop-list is in the render');
+  const out = [];
+  let depth = 0;
+  for (const t of tokens.slice(start + 1)) {
+    if (t.kind === 'open') {
+      if (depth === 0) {
+        const attrs = {};
+        for (const a of t.attrs) attrs[a.name] = a.value === null ? '' : a.value;
+        out.push({ tag: t.tag, attrs });
+      }
+      if (!t.selfClosing) depth++;
+    } else if (t.kind === 'close') {
+      if (depth === 0) break; // the list's own close tag
+      depth--;
+    }
+  }
+  return out;
+}
+
+test('an app row, never the empty card, is the first <a> in #workshop-list', () => {
+  // THE REGRESSION THIS FILE EXISTS FOR, SECOND TIME. dapp.json declares
+  //
+  //   #workshop-list a[data-workshop-app]:first-of-type
+  //     [data-workshop-needs]:not([data-workshop-needs="0"])
+  //
+  // to prove that an app with a decision waiting LEADS the list. That check
+  // does not name the empty state at all, which is exactly why #2445's first
+  // cut broke it and got all the way to the platform: the empty card became an
+  // `<a>` sitting among the rows, so the first app row stopped being the first
+  // `<a>` among its siblings and the compound matched nothing.
+  //
+  // `:first-of-type` counts siblings sharing a TAG NAME and is purely
+  // structural — `display: none` does not exempt an element from it, so
+  // `hidden` is no defence. The rule is therefore about the TREE, and it is
+  // asserted here on the tree rather than inferred from the JSX.
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+
+  // The demo payload the declared check runs against (/?demo=1#workshop):
+  // route.DEMO_COUNTS' own numbers, so "leads the list" means what it means
+  // in the browser.
+  mod.workshopStore.set({
+    open: true,
+    error: false,
+    rows: [
+      { slug: 'staging-demo-image-icon', name: 'Image', working: 1, needs: 0 },
+      { slug: 'staging-demo-your-app', name: 'Your app', working: 2, needs: 3 },
+    ],
+  });
+
+  const kids = listChildren(html());
+  const anchors = kids.filter((k) => k.tag === 'a');
+  assert.ok(anchors.length > 0, 'the rows render as anchors');
+  assert.ok('data-workshop-app' in anchors[0].attrs,
+    'the FIRST <a> child of #workshop-list is an app row — anything else '
+    + 'here steals `a[data-workshop-app]:first-of-type` and silently kills a '
+    + 'merge-gating check');
+  assert.equal(anchors[0].attrs['data-workshop-app'], 'staging-demo-your-app',
+    'and it is the app with votes waiting, which is what that check asserts');
+
+  // The empty card is still present, still first, and still out of the
+  // anchors' way — it is a wrapper, and its own link is one level down.
+  const empty = kids.find((k) => k.attrs.id === 'workshop-empty');
+  assert.ok(empty, '#workshop-empty is a direct child of the list');
+  assert.equal(kids[0], empty, 'and the FIRST child, so no row draws a '
+    + 'hairline under nothing');
+  assert.notEqual(empty.tag, 'a',
+    'but NOT an <a>: that is the whole regression. Keep the id on a wrapper '
+    + 'and put the ListRow anchor inside it.');
+  assert.match(empty.attrs.class || '', /\bhidden\b/,
+    'and with rows it is hidden, for #workshop-empty.hidden');
 });
 
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
