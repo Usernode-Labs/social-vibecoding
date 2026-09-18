@@ -280,19 +280,50 @@ export function WorkshopScreen() {
           </span>
         </p>
         <GroupedList id="workshop-list">
-          {/* FIRST, not last, and that is load-bearing: the row separator is
+          {/* #2445: THE EMPTY STATE IS A CARD, NOT A GREY CAPTION — the same
+              correction Home's Discover block took in #1913
+              (features/home/panels/discover.tsx): a title, a quieter second
+              line and a trailing chevron, and the whole thing is the way on
+              to the one thing there is to do here. It reads as an
+              INVITATION rather than as an error note where the rows usually
+              are. Same destination as Discover's, `#apps`, because "you have
+              no apps" and "there is nothing to discover" are answered by the
+              same directory.
+
+              It is a `ListRow`, not a hand-rolled copy of Discover's plate:
+              that card wears the Home panels' lane language
+              (`home-discover-lane`, a tint, a hairline) because that is the
+              surface it sits on, and THIS surface is the grouped-list card
+              every other row on this screen is drawn in. Same shape, this
+              screen's vocabulary. An anchor rather than a button for the
+              reason AppRow gives — a hash href is the browser's to open in a
+              new tab — and with no leading tile, so the hairline falls back
+              to the text inset.
+
+              FIRST, not last, and that is load-bearing: the row separator is
               `[&:not(:last-child)]:after:*` on the row itself, so a note after
               the rows would leave the last one drawing a hairline under
               nothing. Ahead of them it changes which element is last not at
               all. It ships in the prerender — hidden — because the shell's id
-              inventory resolves against that document. */}
-          <p
+              inventory resolves against that document.
+
+              THE ID AND THE `hidden` CLASS ARE THE API. dapp.json selects
+              `#workshop-empty.hidden` to prove the card is gone once the list
+              has rows, so the id stays on this element (never on a child) and
+              visibility stays a class toggle — never conditional rendering,
+              which would take the element out of the document the check
+              resolves against. `cn` drops the row's own `flex` when `hidden`
+              is merged over it, which is the display rule winning as it
+              should. */}
+          <ListRow
+            as="a"
+            href="#apps"
             id="workshop-empty"
-            className={(empty ? '' : 'hidden ')
-              + 'px-4 py-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-500'}
-          >
-            You have no apps yet. Discover finds the ones you can join.
-          </p>
+            className={empty ? '' : 'hidden'}
+            title="You have no apps yet"
+            subtitle="Browse the directory to find one to join."
+            subtitleClassName="whitespace-normal"
+          />
           {state.error
             ? (
               <AppsLoadError
