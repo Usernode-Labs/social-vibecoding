@@ -27,6 +27,16 @@
  * above it is left out there. Standings keeps its hero until a slice of its own.
  * The section comes from ./section-store.ts, the seam the tab strip reads.
  *
+ * ── Only a viewer with the season history gets a bar at all ────────────
+ *
+ * The picker reaches standings other than the ones on screen. A member
+ * enrolled fresh into the season on screen, or anyone signed out, has none
+ * to reach, so for them the bar is nothing — not an empty picker, not a hero
+ * — on both event tabs (issue #2495). An admin always has it. The server
+ * decides on the events list (`viewer.history`);
+ * ./topochain-event-context.js carries the verdict into the store, and this
+ * component only reads it.
+ *
  * ── `hidden` on the host is still someone else's ───────────────────────
  *
  * `Leaderboard._applySection()` toggles `.hidden` on `#leaderboard-event-bar`
@@ -72,6 +82,8 @@ interface EventBarState {
   placeholder: string | null;
   selectedId: number | null;
   hero: HeroView | null;
+  /** An admin, or a member with a trace in a season other than the default event's. */
+  history: boolean;
 }
 
 function context(): any {
@@ -132,12 +144,15 @@ const PICKER = 'w-full appearance-none rounded-2xl border border-zinc-200 dark:b
   + 'dark:text-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
 
 export function EventBarView({
-  mounted, options, placeholder, selectedId, hero, section,
+  mounted, options, placeholder, selectedId, hero, history, section,
 }: EventBarState & { section?: string }) {
-  if (!mounted) return null;
+  if (!mounted || !history) return null;
   const showHero = hero != null && section !== 'challenges';
+  // The gap below the bar travels with the bar: the host's own className is
+  // a constant (see ./index.tsx), so a margin there would stand even when
+  // nothing is drawn.
   return (
-    <>
+    <div className="w-full mb-4">
       <div className="relative w-full sm:max-w-xs">
         <select
           id="tc-ev-select"
@@ -166,7 +181,7 @@ export function EventBarView({
       <div id="tc-ev-hero" className={showHero ? 'mt-3' : undefined}>
         {showHero && hero ? <Hero hero={hero} /> : null}
       </div>
-    </>
+    </div>
   );
 }
 

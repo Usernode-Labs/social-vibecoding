@@ -73,6 +73,14 @@ const SEASON_EVENTS = [
     is_active: false, internal: false, display_leaderboard: true, disclaimer: null,
     season_id: 10, type: 'regular', chain_id: null, start_epoch: null, end_epoch: null,
   },
+  {
+    // The one event in ANOTHER season (#2495): long over, so it never
+    // becomes the default, and never scored, so the standings fixtures
+    // above are untouched. A trace here is what gives a member the history.
+    id: 105, name: 'Last Season Finale', description: 'season 9, ended long ago', starts_at: T(-400), ends_at: T(-300),
+    is_active: false, internal: false, display_leaderboard: true, disclaimer: null,
+    season_id: 9, type: 'regular', chain_id: null, start_epoch: null, end_epoch: null,
+  },
 ];
 
 const ONCHAIN_ACCOUNTS = [
@@ -207,6 +215,10 @@ const USER_ENROLLMENTS = [
   // users_count stays 3 while frank still counts as a participant for
   // the enrollment-or-snapshot scoping predicate below.
   { season_event_id: 101, user_id: 6 },
+  // A user whose ONLY trace is an enrollment in last season's event 105
+  // (#2495). No USERS row on purpose: the events list never resolves a
+  // name, and every other route still treats id 8 as unknown.
+  { season_event_id: 105, user_id: 8 },
 ];
 
 // Mirrors the participant predicate the routes now apply (security fix):
@@ -288,6 +300,23 @@ function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
     if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+
+    // GET /season-events: the viewer's season history (#2495). Mirrors the
+    // route's three-table EXISTS against the fixtures, season by season;
+    // first so no broader matcher below claims a statement that names all
+    // three tables at once.
+    if (sql.includes('AS has_history')) {
+      const [userId, seasonId] = params;
+      const seasonOf = (eventId) => {
+        const e = SEASON_EVENTS.find((x) => x.id === eventId);
+        return e && !e.internal ? e.season_id : undefined;
+      };
+      const elsewhere = (sid) => sid !== undefined && sid !== seasonId;
+      const history = USER_ENROLLMENTS.some((r) => r.user_id === userId && elsewhere(seasonOf(r.season_event_id)))
+        || USER_ACTIVITIES.some((a) => a.user_id === userId && elsewhere(seasonOf(a.season_event_id)))
+        || LEADERBOARD_SNAPSHOTS.some((s) => s.user_id === userId && elsewhere(seasonOf(s.season_event_id)));
+      return { rows: [{ has_history: history }] };
+    }
 
     // standings.js shared aggregate (used by /leaderboard/global, the
     // 'season'/'all_time' branch of fetchEventLeaderboardRows, and the
@@ -623,6 +652,8 @@ test.before(async () => {
     // so it never overwrites this test-injected value.
     app.use((req, _res, next) => {
       if (req.headers['x-test-admin'] === '1') req.user = { id: 999, username: 'admin', isAdmin: true };
+      // Any signed-in member, by id (#2495's viewer tests).
+      if (req.headers['x-test-user']) req.user = { id: Number(req.headers['x-test-user']), username: 'member', isAdmin: false };
       next();
     });
     app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
@@ -957,7 +988,48 @@ test('GET /season-events: include_past=true still hides internal, shows inactive
   const res = await get('/api/v4/season-events?include_past=true');
   const body = await res.json();
   const ids = body.data.map((e) => e.id).sort();
-  assert.deepEqual(ids, [100, 101, 103, 104]);
+  assert.deepEqual(ids, [100, 101, 103, 104, 105]);
+});
+
+// ─── GET /season-events: the viewer's season history (#2495) ───────────
+//
+// The Leaderboard screen draws its event picker only for a viewer with the
+// season history: an admin, or a member with a season to go back to. The
+// default event here is 100 (the season-type 103 has not started), so
+// "another season" means anything outside season 10.
+
+test('GET /season-events: signed out, viewer is null — unknown, not no', async () => {
+  const res = await get('/api/v4/season-events?include_past=1');
+  const body = await res.json();
+  assert.equal(body.viewer, null);
+  assert.ok(Array.isArray(body.data), 'the list itself is unchanged');
+});
+
+test('GET /season-events: a member whose every trace is in the default season gets no history', async () => {
+  // bob: enrolled in 100, on its board, credited on its ledger — all season 10.
+  const res = await get('/api/v4/season-events?include_past=1', { headers: { 'x-test-user': '2' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: false });
+});
+
+test('GET /season-events: a member enrolled in another season gets the history', async () => {
+  const res = await get('/api/v4/season-events?include_past=1', { headers: { 'x-test-user': '8' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: true });
+});
+
+test('GET /season-events: a member with no trace anywhere gets no history', async () => {
+  // grace: a platform account with no enrollment, no board row, no credit.
+  const res = await get('/api/v4/season-events', { headers: { 'x-test-user': '7' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: false });
+});
+
+test('GET /season-events: an admin gets the history whatever their own trace', async () => {
+  // The admin fixture (id 999) has no row in any table.
+  const res = await get('/api/v4/season-events', { headers: { 'x-test-admin': '1' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: true }, 'admins run the seasons and read every one');
 });
 
 // ─── GET /season-events/{id} ─────────────────────────────────────────

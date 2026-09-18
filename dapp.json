@@ -3223,7 +3223,7 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "The shared event picker renders above the Topochain tab",
+      "name": "The shared event picker renders above the Topochain tab for a viewer with history (the checks identity is an admin)",
       "path": "/#leaderboard/topochain",
       "expectSelector": "#leaderboard-event-bar:not(.hidden) #tc-ev-select"
     },
