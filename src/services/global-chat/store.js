@@ -8,6 +8,8 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const MAX_RESULT_IDS = 50;
 const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 100;
+const MAX_THREAD_SUMMARY_CHARS = 1_800;
+const SUMMARY_MESSAGE_LIMIT = 120;
 const TURN_STALE_MS = 10 * 60 * 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MESSAGE_ROLES = new Set(['user', 'assistant']);
@@ -99,6 +101,39 @@ function messageShape(row) {
     reasoningEffort: row.reasoning_effort || null,
     createdAt: iso(row.created_at),
   };
+}
+
+function summaryText(value, max = 320) {
+  const normalized = String(value || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1).trimEnd()}…`;
+}
+
+function compactSummary(existing, messages) {
+  const parts = [];
+  const prior = summaryText(existing, MAX_THREAD_SUMMARY_CHARS);
+  if (prior) parts.push(prior);
+  for (const message of messages || []) {
+    const presentation = message?.structured_payload?.presentation || message?.payload?.presentation;
+    const content = message?.role === 'assistant'
+      ? summaryText(presentation?.message || message?.plain_text || message?.text)
+      : summaryText(message?.plain_text || message?.text);
+    if (!content) continue;
+    parts.push(`${message.role === 'assistant' ? 'Assistant' : 'User'}: ${content}`);
+  }
+  const joined = parts.join(' | ');
+  if (joined.length <= MAX_THREAD_SUMMARY_CHARS) return joined;
+  return `…${joined.slice(-(MAX_THREAD_SUMMARY_CHARS - 1))}`;
+}
+
+async function threadForUser(pool, requestedUserId, threadId) {
+  const { rows } = await pool.query(
+    `SELECT id, summary, summary_cursor, created_at, updated_at
+       FROM global_chat_threads
+      WHERE id = $1 AND user_id = $2 AND archived_at IS NULL`,
+    [uuid(threadId, 'thread id'), userId(requestedUserId)],
+  );
+  return threadShape(rows[0]);
 }
 
 async function currentThread(pool, requestedUserId) {
@@ -202,6 +237,47 @@ async function listMessages(pool, {
     hasMore,
     before: hasMore && page.length ? page[0].id : null,
   };
+}
+
+// Keep the model prompt bounded without allowing a browser-authored summary
+// into system metadata. Once more than the live transcript window exists,
+// fold the immediately preceding messages into a short one-line recap. The
+// oldest tail may be discarded on a first compaction of a very long thread;
+// recent context is deliberately preferred and every subsequent turn advances
+// the cursor incrementally.
+async function compactThread(pool, {
+  userId: requestedUserId,
+  threadId,
+  before,
+}) {
+  const owner = userId(requestedUserId);
+  const ownedThreadId = uuid(threadId, 'thread id');
+  const beforeCursor = cursor(before);
+  if (!beforeCursor) throw new GlobalChatStoreError('invalid_cursor', 'Summary boundary is required.');
+  const current = await threadForUser(pool, owner, ownedThreadId);
+  if (!current) throw new GlobalChatStoreError('thread_not_found', 'That Global Chat thread is unavailable.');
+  const { rows } = await pool.query(
+    `SELECT m.id, m.role, m.plain_text, m.structured_payload
+       FROM global_chat_messages m
+      WHERE m.thread_id = $1 AND m.id < $2::bigint
+        AND ($3::bigint IS NULL OR m.id > $3::bigint)
+      ORDER BY m.id DESC
+      LIMIT $4`,
+    [ownedThreadId, beforeCursor, current.summaryCursor, SUMMARY_MESSAGE_LIMIT],
+  );
+  if (!rows.length) return current;
+  const chronological = rows.reverse();
+  const summary = compactSummary(current.summary, chronological);
+  const summaryCursor = String(chronological.at(-1).id);
+  const updated = await pool.query(
+    `UPDATE global_chat_threads
+        SET summary = $3, summary_cursor = $4::bigint, updated_at = NOW()
+      WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
+        AND (summary_cursor IS NULL OR summary_cursor < $4::bigint)
+      RETURNING id, summary, summary_cursor, created_at, updated_at`,
+    [ownedThreadId, owner, summary, summaryCursor],
+  );
+  return threadShape(updated.rows[0]) || threadForUser(pool, owner, ownedThreadId);
 }
 
 async function insertMessage(pool, {
@@ -386,9 +462,13 @@ module.exports = {
   MAX_MESSAGE_CHARS,
   MAX_PAGE_SIZE,
   MAX_PAYLOAD_BYTES,
+  MAX_THREAD_SUMMARY_CHARS,
+  SUMMARY_MESSAGE_LIMIT,
   TURN_STALE_MS,
   GlobalChatStoreError,
   claimTurn,
+  compactSummary,
+  compactThread,
   createThread,
   currentThread,
   deleteThread,
@@ -402,5 +482,6 @@ module.exports = {
   releaseTurn,
   sealJson,
   startToolRun,
+  threadForUser,
   threadShape,
 };

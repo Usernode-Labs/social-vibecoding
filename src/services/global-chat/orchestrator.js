@@ -106,6 +106,26 @@ function toolMessage(callId, value) {
   return { role: 'tool', tool_call_id: callId, content: boundedToolContent(value) };
 }
 
+function confirmationPreview(definition, input, executionContext) {
+  if (typeof definition.confirmationPreview !== 'function') return null;
+  const preview = definition.confirmationPreview(structuredClone(input), executionContext);
+  if (!plainObject(preview)) {
+    throw new GlobalChatOrchestrationError(
+      'invalid_confirmation_preview',
+      'The confirmation preview is unavailable.',
+    );
+  }
+  let json;
+  try { json = JSON.stringify(preview); } catch { json = null; }
+  if (!json || Buffer.byteLength(json, 'utf8') > 8 * 1024) {
+    throw new GlobalChatOrchestrationError(
+      'invalid_confirmation_preview',
+      'The confirmation preview is unavailable.',
+    );
+  }
+  return JSON.parse(json);
+}
+
 function historyForModel(messages) {
   return messages.map((message) => {
     if (message.role === 'user') return { role: 'user', content: message.text };
@@ -232,6 +252,16 @@ function createGlobalChatOrchestrator({
         userId, threadId, limit: MAX_HISTORY_MESSAGES,
       });
       const priorMessages = page.messages || [];
+      let ownedThread = typeof store.threadForUser === 'function'
+        ? await store.threadForUser(pool, userId, threadId)
+        : null;
+      if (page.hasMore && page.before && typeof store.compactThread === 'function') {
+        ownedThread = await store.compactThread(pool, {
+          userId,
+          threadId,
+          before: page.before,
+        });
+      }
       const priorState = transcriptState(priorMessages);
       const priorResults = await store.loadToolResults(pool, {
         userId,
@@ -315,10 +345,20 @@ function createGlobalChatOrchestrator({
             const authoritativeResult = {
               status: 'confirmation_required',
               capabilityId,
+              // Server-owned copy for the browser confirmation card. The
+              // model cannot rename a protected action into something more
+              // reassuring than the capability the registry actually sealed.
+              title: definition.title,
+              preview: confirmationPreview(definition, call.args, executionContext),
               confirmationToken: prepared.token,
               expiresAt: prepared.expiresAt,
               objectRevision: prepared.objectRevision,
             };
+            const preparedClassicPath = registry.classicPath(
+              capabilityId,
+              call.args,
+              executionContext,
+            );
             const modelResult = {
               ok: true,
               status: 202,
@@ -332,7 +372,7 @@ function createGlobalChatOrchestrator({
               modelResult,
               authoritativeResult,
               renderer: 'confirmation',
-              classicPath: null,
+              classicPath: preparedClassicPath,
               durationMs: Date.now() - started,
               dataKey: config.dataEncryptionKey,
             });
@@ -414,7 +454,11 @@ function createGlobalChatOrchestrator({
           context: {
             activeAppSlug: context.activeAppSlug,
             activeObject: context.activeObject,
-            threadSummary: context.threadSummary,
+            // Summary text is derived and bounded by the owned server-side
+            // transcript store. A caller-provided summary must never enter a
+            // system message, even though its underlying conversation text
+            // remains untrusted data under rule 2 of the system prompt.
+            threadSummary: ownedThread?.summary || null,
             excludedSuggestionIds: [...excludedSuggestionIds],
           },
           globalChatProfile,

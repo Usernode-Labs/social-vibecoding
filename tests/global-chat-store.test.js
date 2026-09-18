@@ -139,6 +139,56 @@ test('messages are bounded and returned chronologically with an opaque cursor', 
   );
 });
 
+test('rolling transcript summaries are bounded, one-line, and prefer recent context', () => {
+  const summary = store.compactSummary('Earlier context', [
+    { role: 'user', text: 'Please inspect\nthis issue.' },
+    {
+      role: 'assistant',
+      text: 'fallback',
+      payload: { presentation: { message: 'I found the issue.' } },
+    },
+    { role: 'user', text: 'x'.repeat(3_000) },
+  ]);
+  assert.ok(summary.length <= store.MAX_THREAD_SUMMARY_CHARS);
+  assert.doesNotMatch(summary, /[\r\n]/);
+  assert.match(summary, /Assistant: I found the issue\./);
+  assert.match(summary, /User: x+/);
+});
+
+test('thread compaction reads only owned older messages and advances its cursor', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/FROM global_chat_threads\s+WHERE id/.test(sql)) {
+        return { rows: [{
+          id: THREAD, summary: 'Previous', summary_cursor: 4,
+          created_at: '2026-09-18T12:00:00Z', updated_at: '2026-09-18T12:00:00Z',
+        }] };
+      }
+      if (/FROM global_chat_messages m/.test(sql)) {
+        return { rows: [
+          { id: 8, role: 'assistant', plain_text: 'Done', structured_payload: {} },
+          { id: 7, role: 'user', plain_text: 'Find it', structured_payload: {} },
+        ] };
+      }
+      if (/SET summary = \$3/.test(sql)) {
+        return { rows: [{
+          id: THREAD, summary: params[2], summary_cursor: params[3],
+          created_at: '2026-09-18T12:00:00Z', updated_at: '2026-09-18T12:03:00Z',
+        }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const thread = await store.compactThread(pool, { userId: 7, threadId: THREAD, before: '10' });
+  assert.equal(thread.summaryCursor, '8');
+  assert.equal(thread.summary, 'Previous | User: Find it | Assistant: Done');
+  assert.deepEqual(calls[1].params, [THREAD, '10', '4', store.SUMMARY_MESSAGE_LIMIT]);
+  assert.match(calls[0].sql, /user_id = \$2/);
+  assert.match(calls[2].sql, /summary_cursor < \$4/);
+});
+
 test('schema carries restart-safe turn leases above the standalone tail', () => {
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   const marker = schema.indexOf('EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.');

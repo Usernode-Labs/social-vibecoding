@@ -48,6 +48,7 @@ async function mount(t, { authenticated = true } = {}) {
     currentThread: globalChatStore.currentThread,
     createThread: globalChatStore.createThread,
     listMessages: globalChatStore.listMessages,
+    loadToolResults: globalChatStore.loadToolResults,
     deleteThread: globalChatStore.deleteThread,
   };
 
@@ -80,10 +81,27 @@ async function mount(t, { authenticated = true } = {}) {
   globalChatStore.listMessages = async (_pool, options) => {
     calls.push({ name: 'listMessages', options });
     return {
-      messages: [{ id: '2', threadId: THREAD_ID, role: 'assistant', text: 'Done.' }],
+      messages: [{
+        id: '2', threadId: THREAD_ID, role: 'assistant', text: 'Done.',
+        payload: {
+          presentation: {
+            message: 'Done.', resultRefs: ['00000000-0000-4000-8000-000000000001'],
+            suggestions: [],
+          },
+        },
+      }],
       hasMore: false,
       before: null,
     };
+  };
+  globalChatStore.loadToolResults = async (_pool, options) => {
+    calls.push({ name: 'loadToolResults', options });
+    return [{
+      id: '00000000-0000-4000-8000-000000000001',
+      renderer: 'issue',
+      authoritativeResult: { ok: true, status: 200, data: { number: 7, title: 'Example' } },
+      classicPath: '#app/demo/dev/issues/7',
+    }];
   };
   globalChatStore.deleteThread = async (_pool, userId, threadId) => {
     calls.push({ name: 'deleteThread', userId, threadId });
@@ -110,6 +128,7 @@ async function mount(t, { authenticated = true } = {}) {
     globalChatStore.currentThread = originals.currentThread;
     globalChatStore.createThread = originals.createThread;
     globalChatStore.listMessages = originals.listMessages;
+    globalChatStore.loadToolResults = originals.loadToolResults;
     globalChatStore.deleteThread = originals.deleteThread;
     delete require.cache[routePath];
   });
@@ -126,7 +145,7 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.equal(body.experimental, true);
   assert.equal(body.label, 'Chat (experimental)');
   assert.equal(body.startupMode, 'classic');
-  assert.equal(body.parityReady, false);
+  assert.equal(body.parityReady, true);
   assert.equal(body.available, true);
   assert.equal(body.thread.id, THREAD_ID);
   assert.equal(body.profiles.globalChat.model, 'cheap/global');
@@ -161,10 +180,21 @@ test('thread endpoints use authenticated ownership and preserve append-only sugg
     `${base}/api/global-chat/threads/${THREAD_ID}/messages?before=12&limit=7`,
   );
   assert.equal(messages.status, 200);
-  assert.equal((await messages.json()).messages[0].text, 'Done.');
+  const messagePage = await messages.json();
+  assert.equal(messagePage.messages[0].text, 'Done.');
+  assert.equal(messagePage.results[0].renderer, 'issue');
   assert.deepEqual(
     calls.find((call) => call.name === 'listMessages').options,
     { userId: 7, threadId: THREAD_ID, before: '12', limit: '7' },
+  );
+  assert.deepEqual(
+    calls.find((call) => call.name === 'loadToolResults').options,
+    {
+      userId: 7,
+      threadId: THREAD_ID,
+      resultIds: ['00000000-0000-4000-8000-000000000001'],
+      dataKey: 'test-key',
+    },
   );
 
   const deleted = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}`, { method: 'DELETE' });

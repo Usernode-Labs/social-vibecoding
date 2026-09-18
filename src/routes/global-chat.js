@@ -21,6 +21,7 @@ const { createGlobalChatOrchestrator } = require('../services/global-chat/orches
 const { createActionExecutor } = require('../services/global-chat/action-executor');
 const { validatePresentation } = require('../services/global-chat/presentation');
 const { PROMPT_VERSION } = require('../services/global-chat/prompt');
+const classicInventory = require('../services/global-chat/classic-inventory.generated.json');
 
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
 const PATCH_FIELDS = new Set(['model', 'reasoningEffort', 'spendCapUsd']);
@@ -30,7 +31,10 @@ const MORE_BODY_FIELDS = new Set(['topic', 'client', 'context']);
 const CONFIRM_BODY_FIELDS = new Set(['threadId', 'client']);
 const CLIENT_FIELDS = new Set(['surface', 'viewport', 'classicReturnPath']);
 const CONTEXT_FIELDS = new Set([
-  'locale', 'timezone', 'activeAppSlug', 'activeObject', 'threadSummary',
+  'locale', 'timezone', 'activeAppSlug', 'activeObject', 'clientSettings',
+]);
+const CLIENT_SETTING_FIELDS = new Set([
+  'theme', 'devAlerts', 'devConsoleMode', 'adminPreview',
 ]);
 
 function noStore(res) {
@@ -60,6 +64,28 @@ function turnRequestBody(value, { more = false } = {}) {
   const body = exactObject(value, more ? MORE_BODY_FIELDS : TURN_BODY_FIELDS, 'body');
   const client = exactObject(body.client, CLIENT_FIELDS, 'client');
   const context = exactObject(body.context, CONTEXT_FIELDS, 'context');
+  const suppliedClientSettings = Object.hasOwn(context, 'clientSettings');
+  const clientSettings = exactObject(
+    context.clientSettings,
+    CLIENT_SETTING_FIELDS,
+    'context.clientSettings',
+  );
+  if (Object.hasOwn(clientSettings, 'theme')
+      && !['system', 'light', 'dark'].includes(clientSettings.theme)) {
+    throw new Error('context.clientSettings.theme is invalid.');
+  }
+  if (Object.hasOwn(clientSettings, 'devAlerts')
+      && typeof clientSettings.devAlerts !== 'boolean') {
+    throw new Error('context.clientSettings.devAlerts is invalid.');
+  }
+  if (Object.hasOwn(clientSettings, 'devConsoleMode')
+      && !['always', 'errors-only'].includes(clientSettings.devConsoleMode)) {
+    throw new Error('context.clientSettings.devConsoleMode is invalid.');
+  }
+  if (Object.hasOwn(clientSettings, 'adminPreview')
+      && typeof clientSettings.adminPreview !== 'boolean') {
+    throw new Error('context.clientSettings.adminPreview is invalid.');
+  }
   if (more) {
     if (body.topic != null && (typeof body.topic !== 'string' || body.topic.length > 240)) {
       throw new Error('topic must be a string up to 240 characters.');
@@ -75,7 +101,10 @@ function turnRequestBody(value, { more = false } = {}) {
         : 'Show more suggestions.')
       : body.text.trim(),
     client,
-    context,
+    context: {
+      ...context,
+      ...(suppliedClientSettings ? { clientSettings } : {}),
+    },
   };
 }
 
@@ -105,12 +134,25 @@ function sseWrite(res, event) {
 }
 
 function requestErrorStatus(error) {
-  if (['invalid_message', 'invalid_actor', 'invalid_model'].includes(error?.code)) return 400;
+  if ([
+    'invalid_message', 'invalid_actor', 'invalid_model', 'invalid_reasoning',
+    'invalid_spend_cap', 'credential_required', 'incompatible_model',
+  ].includes(error?.code)) return 400;
   if (error?.code === 'turn_in_progress') return 409;
   if (['global_chat_cap_exceeded', 'overall_allowance_exhausted'].includes(error?.code)) return 402;
   if (['authentication', 'model_unavailable'].includes(error?.code)) return 503;
   if (['invalid_or_expired_action', 'stale_action'].includes(error?.code)) return 409;
   return 500;
+}
+
+function pendingClientAction(result) {
+  const authoritative = plainObject(result?.authoritativeResult)
+    ? result.authoritativeResult
+    : {};
+  const data = plainObject(authoritative.data) ? authoritative.data : authoritative;
+  return data.state === 'client_action_required' && plainObject(data.action)
+    ? data.action
+    : null;
 }
 
 function globalChatRoutes(config) {
@@ -175,6 +217,50 @@ function globalChatRoutes(config) {
     };
   }
 
+  async function saveGlobalChatProfile(userId, patch) {
+    const current = await profileService.readProfile(pool, userId, config);
+    const next = {
+      model: Object.hasOwn(patch, 'model')
+        ? profileService.modelId(patch.model)
+        : current.model,
+      reasoningEffort: Object.hasOwn(patch, 'reasoningEffort')
+        ? profileService.reasoningEffort(patch.reasoningEffort)
+        : current.reasoningEffort,
+      spendCapUsd: Object.hasOwn(patch, 'spendCapUsd')
+        ? profileService.money(patch.spendCapUsd)
+        : current.spendCapUsd,
+    };
+
+    // A cap-only change remains possible during a provider outage. Model or
+    // effort changes are executable configuration, so fail closed unless the
+    // exact pair is in this user's live, capability-filtered catalog.
+    if (Object.hasOwn(patch, 'model') || Object.hasOwn(patch, 'reasoningEffort')) {
+      const { configured, catalog } = await catalogForUser(userId, {
+        effort: next.reasoningEffort,
+      });
+      if (!configured) {
+        const error = new profileService.GlobalChatProfileError(
+          'credential_required',
+          'Add your OpenRouter API key in Settings first.',
+        );
+        throw error;
+      }
+      if (!catalog.models.some((model) => model.id === next.model)) {
+        const error = new profileService.GlobalChatProfileError(
+          'incompatible_model',
+          'That model does not support Global Chat tools, structured output, and the selected reasoning effort.',
+        );
+        throw error;
+      }
+    }
+
+    const profile = await profileService.writeProfile(pool, userId, next, config);
+    const usage = await profileService.readMonthlyUsage(pool, userId, {
+      spendCapUsd: profile.spendCapUsd,
+    });
+    return { profile, usage };
+  }
+
   async function developmentProfile(userId) {
     const { rows } = await pool.query(
       `SELECT backend, model_id, reasoning_effort
@@ -202,14 +288,23 @@ function globalChatRoutes(config) {
       error.code = 'model_unavailable';
       throw error;
     }
-    const catalog = await agentModels.listOpenRouterModels({
-      pool,
-      userId,
-      credentialRevision: credential.metadata.revision,
-      apiKey: credential.apiKey,
-      config,
-      forceRefresh: false,
-    });
+    const [catalog, usage, allowance] = await Promise.all([
+      agentModels.listOpenRouterModels({
+        pool,
+        userId,
+        credentialRevision: credential.metadata.revision,
+        apiKey: credential.apiKey,
+        config,
+        forceRefresh: false,
+      }),
+      profileService.readMonthlyUsage(pool, userId, {
+        spendCapUsd: profile.spendCapUsd,
+      }),
+      openrouterClient.validateKey(credential.apiKey, {
+        baseUrl: config.openrouterApiBase,
+        origin: config.openrouterOrigin,
+      }),
+    ]);
     const model = profileService.compatibleModels(catalog, profile.reasoningEffort)
       .find((candidate) => candidate.id === profile.model);
     if (!model) {
@@ -217,16 +312,14 @@ function globalChatRoutes(config) {
       error.code = 'model_unavailable';
       throw error;
     }
-    const usage = await profileService.readMonthlyUsage(pool, userId, {
-      spendCapUsd: profile.spendCapUsd,
-    });
     return {
       profile,
       development,
+      usage,
       credential,
       model,
       budget: {
-        overallRemaining: null,
+        overallRemaining: cleanProviderNumber(allowance.limitRemaining),
         globalChatSpent: usage.spentUsd,
         globalChatCap: usage.capUsd,
         resetAt: usage.resetAt,
@@ -241,7 +334,7 @@ function globalChatRoutes(config) {
     return roles;
   }
 
-  function executionContext(req, client) {
+  function executionContext(req, client, runtime = {}) {
     let classicApi = null;
     if (typeof req.cookies?.session === 'string') {
       try {
@@ -261,7 +354,13 @@ function globalChatRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
       },
       client: { surface: client.surface || 'web' },
+      clientSettings: runtime.clientSettings || {},
+      globalChatProfile: runtime.profile || null,
+      globalChatUsage: runtime.usage || null,
+      developmentProfile: runtime.development || null,
+      budget: runtime.budget || {},
       classicApi,
+      updateGlobalChatProfile: (patch) => saveGlobalChatProfile(req.user.id, patch),
       // Browser/native-only capabilities become authoritative pending client
       // actions. Their result is rendered by the allowlisted component layer;
       // the model never receives or invents an executable URL or method.
@@ -323,7 +422,10 @@ function globalChatRoutes(config) {
         budget: runtime.budget,
         model: runtime.model,
         apiKey: runtime.credential.apiKey,
-        executionContext: executionContext(req, input.client),
+        executionContext: executionContext(req, input.client, {
+          ...runtime,
+          clientSettings: input.context.clientSettings,
+        }),
         signal: controller.signal,
         emit: async (event) => sseWrite(res, event),
       });
@@ -360,7 +462,7 @@ function globalChatRoutes(config) {
         experimental: true,
         label: 'Chat (experimental)',
         startupMode: 'classic',
-        parityReady: false,
+        parityReady: classicInventory.parityReady,
         available: credential.configured,
         unavailableReason: credential.configured ? null : 'openrouter_key_required',
         capabilityRegistryVersion: CAPABILITY_REGISTRY.version,
@@ -409,7 +511,22 @@ function globalChatRoutes(config) {
         before: req.query.before,
         limit: req.query.limit,
       });
-      return res.json(page);
+      // A persisted presentation stores opaque result references, while the
+      // authoritative objects themselves live encrypted in tool runs. Return
+      // the owned results for this page alongside its messages so a reload can
+      // redraw the same cards and pending confirmations the live SSE turn did.
+      // The model-facing bounded result is not used by the browser renderer.
+      const resultIds = [...new Set(page.messages.flatMap((message) => {
+        const refs = message?.payload?.presentation?.resultRefs;
+        return Array.isArray(refs) ? refs : [];
+      }))];
+      const results = await globalChatStore.loadToolResults(pool, {
+        userId: req.user.id,
+        threadId: req.params.id,
+        resultIds,
+        dataKey: config.dataEncryptionKey,
+      });
+      return res.json({ ...page, results });
     } catch (err) {
       if (err instanceof globalChatStore.GlobalChatStoreError
           && ['invalid_id', 'invalid_cursor'].includes(err.code)) {
@@ -445,9 +562,14 @@ function globalChatRoutes(config) {
         executionContext: executionContext(req, input.client),
       });
       const result = completed.result;
+      const pendingAction = pendingClientAction(result);
       const prefix = `confirmed.${result.id}`;
       const presentation = validatePresentation({
-        message: 'Done.',
+        message: pendingAction?.transport === 'development_handoff'
+          ? 'Development session ready. Opening it now.'
+          : pendingAction
+            ? 'Ready to apply.'
+            : 'Done.',
         resultRefs: [result.id],
         suggestions: [
           {
@@ -539,40 +661,7 @@ function globalChatRoutes(config) {
       return res.status(400).json({ error: 'Provide only model, reasoningEffort, or spendCapUsd.' });
     }
     try {
-      const current = await profileService.readProfile(pool, req.user.id, config);
-      const next = {
-        model: Object.hasOwn(body, 'model')
-          ? profileService.modelId(body.model)
-          : current.model,
-        reasoningEffort: Object.hasOwn(body, 'reasoningEffort')
-          ? profileService.reasoningEffort(body.reasoningEffort)
-          : current.reasoningEffort,
-        spendCapUsd: Object.hasOwn(body, 'spendCapUsd')
-          ? profileService.money(body.spendCapUsd)
-          : current.spendCapUsd,
-      };
-
-      // A cap-only change remains possible during a provider outage. Model or
-      // effort changes are executable configuration, so fail closed unless
-      // the exact pair is in this user's live, capability-filtered catalog.
-      if (Object.hasOwn(body, 'model') || Object.hasOwn(body, 'reasoningEffort')) {
-        const { configured, catalog } = await catalogForUser(req.user.id, {
-          effort: next.reasoningEffort,
-        });
-        if (!configured) {
-          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
-        }
-        if (!catalog.models.some((model) => model.id === next.model)) {
-          return res.status(400).json({
-            error: 'That model does not support Global Chat tools, structured output, and the selected reasoning effort.',
-          });
-        }
-      }
-
-      const profile = await profileService.writeProfile(pool, req.user.id, next, config);
-      const usage = await profileService.readMonthlyUsage(pool, req.user.id, {
-        spendCapUsd: profile.spendCapUsd,
-      });
+      const { profile, usage } = await saveGlobalChatProfile(req.user.id, body);
       res.json({ ok: true, profile, usage });
     } catch (err) {
       if (err instanceof profileService.GlobalChatProfileError) {

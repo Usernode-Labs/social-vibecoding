@@ -87,8 +87,8 @@ test('every Settings section and navigation surface is discoverable on mobile', 
   }
 });
 
-test('inventory review alone cannot expose the experimental Chat switch', () => {
-  assert.equal(inventory.parityReady, false);
+test('the reviewed first-version artifact enables the all-user experimental release gate', () => {
+  assert.equal(inventory.parityReady, true);
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(packageJson.scripts['global-chat:inventory:check'],
     'node scripts/generate-global-chat-inventory.js --check');

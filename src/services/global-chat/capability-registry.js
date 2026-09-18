@@ -190,6 +190,14 @@ function normalizeDefinition(definition) {
       { id },
     );
   }
+  if (definition.confirmationPreview != null
+      && typeof definition.confirmationPreview !== 'function') {
+    throw new CapabilityRegistryError(
+      'invalid_definition',
+      `${id}.confirmationPreview must be a function when provided`,
+      { id },
+    );
+  }
   if (typeof definition.mobileSupported !== 'boolean') {
     throw new CapabilityRegistryError(
       'invalid_definition',
@@ -210,6 +218,7 @@ function normalizeDefinition(definition) {
     access: definition.access,
     risk,
     confirmation,
+    confirmationPreview: definition.confirmationPreview || null,
     classicPath: definition.classicPath,
     mobileSupported: definition.mobileSupported,
     sensitiveFields: Object.freeze(
@@ -238,6 +247,7 @@ function descriptorForHash(definition) {
     renderer: definition.renderer,
     risk: definition.risk,
     confirmation: definition.confirmation,
+    hasConfirmationPreview: typeof definition.confirmationPreview === 'function',
     mobileSupported: definition.mobileSupported,
     sensitiveFields: definition.sensitiveFields,
     tests: definition.tests,
@@ -412,6 +422,39 @@ class CapabilityRegistry {
       );
     }
     return detailDescriptor(definition);
+  }
+
+  classicPath(id, input, executionContext) {
+    const definition = this._byId.get(id);
+    if (!definition || !isAuthorized(definition, executionContext)) {
+      throw new CapabilityRegistryError(
+        'capability_not_found',
+        'That capability does not exist or is not available to this user.',
+        { id },
+      );
+    }
+    if (!plainObject(input)) {
+      throw new CapabilityRegistryError(
+        'invalid_capability_input',
+        'Capability input must be an object.',
+        { id },
+      );
+    }
+    try {
+      validateJsonSchema(definition.inputSchema, input, { path: 'input' });
+    } catch (error) {
+      if (!(error instanceof JsonSchemaValidationError)) throw error;
+      throw new CapabilityRegistryError(
+        'invalid_capability_input',
+        `Capability input is invalid: ${error.message}`,
+        { id, path: error.path },
+      );
+    }
+    return safeClassicPath(definition.classicPath({
+      input: structuredClone(input),
+      result: null,
+      context: executionContext,
+    }), id);
   }
 
   async execute(id, input, executionContext) {

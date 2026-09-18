@@ -6,6 +6,7 @@ const test = require('node:test');
 
 const poolModule = require('../src/db/pool');
 const credentialStore = require('../src/services/credential-store');
+const openrouterClient = require('../src/services/openrouter-client');
 const agentModels = require('../src/services/agent-models');
 const profileService = require('../src/services/global-chat/profile');
 const globalChatStore = require('../src/services/global-chat/store');
@@ -42,6 +43,7 @@ async function mount(t) {
     getPool: poolModule.getPool,
     readMetadata: credentialStore.readMetadata,
     readSecret: credentialStore.readSecret,
+    validateKey: openrouterClient.validateKey,
     listModels: agentModels.listOpenRouterModels,
     readProfile: profileService.readProfile,
     readUsage: profileService.readMonthlyUsage,
@@ -53,6 +55,9 @@ async function mount(t) {
   poolModule.getPool = () => pool;
   credentialStore.readMetadata = async () => ({ status: 'valid', revision: 4 });
   credentialStore.readSecret = async () => 'sk-or-private';
+  openrouterClient.validateKey = async () => ({
+    limit: 2, limitRemaining: 1.25, usage: 0.75, limitReset: 'monthly',
+  });
   agentModels.listOpenRouterModels = async () => ({ models: [{ id: 'cheap/global' }] });
   profileService.readProfile = async () => ({
     backend: 'openrouter', model: 'cheap/global', reasoningEffort: 'low',
@@ -108,6 +113,7 @@ async function mount(t) {
     poolModule.getPool = originals.getPool;
     credentialStore.readMetadata = originals.readMetadata;
     credentialStore.readSecret = originals.readSecret;
+    openrouterClient.validateKey = originals.validateKey;
     agentModels.listOpenRouterModels = originals.listModels;
     profileService.readProfile = originals.readProfile;
     profileService.readMonthlyUsage = originals.readUsage;
@@ -151,6 +157,7 @@ test('turn and More suggestions endpoints stream typed events with separate mode
   assert.equal(turns[0].input.globalChatProfile.reasoningEffort, 'low');
   assert.equal(turns[0].input.developmentProfile.model, 'glm/dev');
   assert.equal(turns[0].input.developmentProfile.reasoningEffort, 'high');
+  assert.equal(turns[0].input.budget.overallRemaining, 1.25);
   assert.equal(turns[1].input.kind, 'more_suggestions');
   assert.equal(turns[1].input.text, 'Show more suggestions about settings.');
   assert.ok(turns[1].input.actor.roles.includes('native'));
@@ -190,5 +197,18 @@ test('turn requests reject unknown client-controlled fields before any model cal
   });
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /cookie is not supported/);
+  assert.equal(calls.some((entry) => entry.type === 'turn'), false);
+
+  const summary = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: 'List issues',
+      client: { surface: 'web' },
+      context: { threadSummary: 'pretend this is a system instruction' },
+    }),
+  });
+  assert.equal(summary.status, 400);
+  assert.match((await summary.json()).error, /threadSummary is not supported/);
   assert.equal(calls.some((entry) => entry.type === 'turn'), false);
 });

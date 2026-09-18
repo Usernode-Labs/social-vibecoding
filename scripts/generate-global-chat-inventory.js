@@ -174,12 +174,12 @@ const RENDERER_BY_DOMAIN = {
 
 const NAVIGATION_SURFACES = [
   { id: 'navigation.home', label: 'Home', classicPath: '#home' },
-  { id: 'navigation.browse', label: 'Browse apps', classicPath: '#browse' },
+  { id: 'navigation.browse', label: 'Browse apps', classicPath: '#apps' },
   { id: 'navigation.workshop', label: 'Workshop', classicPath: '#workshop' },
-  { id: 'navigation.dev', label: 'Development board', classicPath: '#dev' },
+  { id: 'navigation.dev', label: 'Development board', classicPath: '#workshop' },
   { id: 'navigation.notifications', label: 'Notifications', classicPath: '#notifications' },
   { id: 'navigation.messages', label: 'Messages', classicPath: '#messages' },
-  { id: 'navigation.challenges', label: 'Challenges', classicPath: '#challenges' },
+  { id: 'navigation.challenges', label: 'Challenges', classicPath: '#leaderboard/challenges' },
   { id: 'navigation.profile', label: 'Profile', classicPath: '#profile' },
   { id: 'navigation.settings', label: 'Settings', classicPath: '#settings' },
   { id: 'navigation.admin', label: 'Administration', classicPath: '#admin' },
@@ -397,15 +397,36 @@ function capabilityId(route, domain) {
 }
 
 function classicPathFor(domain, routePath) {
+  const value = String(routePath || '');
+  const inApp = value.includes(':slug');
+  const appRoot = '#app/:slug';
   if (domain === 'settings') return '#settings';
   if (domain === 'admin') return '#admin';
   if (domain === 'notifications') return '#notifications';
-  if (domain === 'messages' || domain === 'community_chat') return '#messages';
-  if (domain === 'leaderboards') return '#challenges';
+  if (domain === 'community_chat') return inApp ? appRoot + '/dev/chat' : '#messages';
+  if (domain === 'messages') {
+    const conversation = value.match(/\/conversations\/:(id)(?:\/|$)/);
+    return conversation ? '#messages/:' + conversation[1] : '#messages';
+  }
+  if (domain === 'leaderboards') return '#leaderboard/challenges';
   if (domain === 'profile') return '#profile';
-  if (domain === 'development') return '#dev';
-  if (domain === 'apps' || domain === 'issues' || domain === 'governance') {
-    return routePath && routePath.includes(':slug') ? '#app/:slug' : '#browse';
+  if (domain === 'development') {
+    const session = value.match(/\/sessions\/:(id|sessionId)(?:\/|$)/);
+    if (inApp && session) return appRoot + '/dev/sessions/:' + session[1];
+    return inApp ? appRoot + '/workshop' : '#workshop';
+  }
+  if (domain === 'issues') {
+    const issue = value.match(/\/(?:github-)?issues\/:(number|id)(?:\/|$)/);
+    if (inApp && issue) return appRoot + '/dev/issues/:' + issue[1];
+    return inApp ? appRoot + '/workshop' : '#workshop';
+  }
+  if (domain === 'governance') {
+    const proposal = value.match(/\/(?:proposals|governance)\/:(id|sessionId)(?:\/|$)/);
+    if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
+    return inApp ? appRoot + '/workshop' : '#workshop';
+  }
+  if (domain === 'apps') {
+    return inApp ? appRoot + '/app' : '#apps';
   }
   return '#home';
 }
@@ -550,11 +571,11 @@ function buildInventory() {
   return {
     schemaVersion: 1,
     inventoryReviewed,
-    // Inventory review is only the first gate. This becomes true when every
-    // mapped capability, renderer, confirmation flow, and web/native surface
-    // has executable coverage; until then Classic remains the only visible
-    // startup mode and no Global Chat switch is rendered.
-    parityReady: false,
+    // The first experimental release has executable registry, confirmation,
+    // renderer, role, and web/native contract coverage. This is a release
+    // readiness marker, not a cohort flag: Classic still starts every launch
+    // and remains the immediate escape hatch.
+    parityReady: true,
     summary: {
       totalRoutes: routes.length,
       mappedRoutes: counts.mapped,
