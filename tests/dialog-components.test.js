@@ -38,6 +38,7 @@ const { idsOf } = require('./helpers/html-tokens');
 
 const ROOT = path.join(__dirname, '..');
 const DIALOGS = path.join(ROOT, 'frontend', 'src', 'features', 'dialogs');
+const MESSAGES = path.join(ROOT, 'frontend', 'src', 'features', 'messages');
 
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -94,6 +95,27 @@ const allSrc = new Map(
 );
 const componentFiles = allFiles.filter((f) => !SUPPORT_FILES.includes(f));
 const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
+
+/**
+ * The chassis rule below is about every component that renders its OWN modal
+ * root, and until #2436 it iterated features/dialogs/ alone. That scope is
+ * exactly how the three Messages dialogs came to transcribe the root class
+ * string, the `data-modal-backdrop` wrapper AND the card: they sit on the same
+ * `useDialog` seam, they own three more roots, and nothing scanned them. They
+ * had already drifted (`p-5` instead of the card's `p-6`, a text `×` instead of
+ * XIcon) by the time the UI-consistency audit found them.
+ *
+ * What is deliberately NOT here is features/dev-board/modals/**. Those cards
+ * mount INTO a root public/js/app-view.js creates rather than rendering one, so
+ * they have no DialogRoot to use and render the centring wrapper themselves —
+ * see the comment above AutoSessionModal. They already build on DialogCard,
+ * which is the whole of the chassis available to them.
+ */
+const MESSAGES_DIALOGS = ['create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
+const chassisSrc = new Map([
+  ...componentSrc,
+  ...MESSAGES_DIALOGS.map((f) => [`messages/${f}`, fs.readFileSync(path.join(MESSAGES, f), 'utf8')]),
+]);
 
 test('the dialogs/ directory is exactly the dialog roots plus its known support files', () => {
   assert.equal(componentFiles.length, DIALOG_IDS.length,
@@ -181,13 +203,21 @@ test('the chassis owns the backdrop root, the wrapper and the card', () => {
   assert.match(DIALOG_UI, /data-modal-backdrop=""/,
     'DialogRoot must render the wrapper useDialog dismisses on');
 
-  for (const [file, src] of componentSrc) {
+  // The Messages list is kept honest the way the dialogs/ partition is: a
+  // fourth root-rendering file there must be scanned, not silently skipped.
+  const strays = fs.readdirSync(MESSAGES)
+    .filter((f) => f.endsWith('.tsx') && !MESSAGES_DIALOGS.includes(f))
+    .filter((f) => /id="[a-z0-9-]+-(dialog|modal)"/.test(fs.readFileSync(path.join(MESSAGES, f), 'utf8')));
+  assert.deepEqual(strays, [],
+    'features/messages/ renders a modal root this test does not scan — add it to MESSAGES_DIALOGS');
+
+  for (const [file, src] of chassisSrc) {
     assert.match(src, /from '@\/components\/ui\/dialog'/, `${file} does not import the chassis`);
     assert.ok(!src.includes('data-modal-backdrop'),
       `${file} hand-writes the backdrop wrapper — DialogRoot renders it`);
     assert.ok(!/fixed inset-0 z-50/.test(src),
       `${file} hand-writes the backdrop root class — DialogRoot owns it`);
-    assert.ok(!/bg-white dark:bg-zinc-900 rounded-xl p-6 w-full/.test(src),
+    assert.ok(!/bg-white dark:bg-zinc-900 rounded-xl p-\d w-full/.test(src),
       `${file} hand-writes the card class — DialogCard owns it`);
   }
 });
