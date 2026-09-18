@@ -19,6 +19,7 @@
  */
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { grantsStore } from './grants-store.js';
@@ -105,13 +106,24 @@ function GrantRow({ grant }: { grant: GrantView }) {
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
         <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
           Cap $
-          <input
+          {/* #2437 widened tests/shell-primitive-adoption.test.js's field-box
+              scan to the WHITE fill, which is the fill this row has always
+              used — so this field, hand-written since the conversion, became
+              visible to the rule for the first time. It renders the same class
+              attribute, token for token: `w20` + `insetTight` + `mono` +
+              `text`, with `ring={false}` because the string carried no focus
+              rule and the browser's own outline is the cue. */}
+          <Input
             data-role="cap"
             type="number"
             min="0.01"
             step="0.01"
             defaultValue={grant.capValue}
-            className="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100"
+            width="w20"
+            box="insetTight"
+            mono={true}
+            ring={false}
+            text={true}
             onChange={(e) => controller()?._onGrantCapChange?.(grant.appId, e.currentTarget.value)}
           />
         </label>
