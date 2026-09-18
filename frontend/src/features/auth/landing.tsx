@@ -1246,15 +1246,35 @@ export function LandingScreen() {
               Board 1 opens the block 20px under the rail's 4px tail —
               `pb-1` up there plus `mt-5` here — and sets eyebrow, heading
               and sentence 10px apart (`mt-2.5`).
+
+              `text-balance` on the heading and `text-pretty` on the sentence
+              are what centring made necessary: ragged-left, a short last line
+              is invisible; centred, "us." alone under a full line is the
+              first thing the eye lands on. Both are hints — a browser without
+              them wraps exactly as before — so neither is load-bearing.
           */}
-          <div className="px-4 flex grow flex-col">
+          {/*
+              CENTRED, not ragged-left. The illustration above is centred on
+              the column and the pair of pills below is a symmetric block, so
+              left-aligned words between them put the composition's weight on
+              one edge and left the other empty — which is what a reviewer
+              called "stuck" when the screen was tall enough to show it. One
+              `text-center` here carries the eyebrow, the heading, the
+              sentence and the way out to the marketing site; the status line
+              under the pills was already centred for the same reason.
+
+              It is on the BLOCK rather than on each line because the
+              alignment is a property of the composition, not of any one
+              string, and a later line added here should inherit it.
+          */}
+          <div className="px-4 flex grow flex-col text-center">
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               Opening gradually
             </p>
-            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold">
+            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance">
               Come build the next version with us.
             </h1>
-            <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
+            <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
               Access opens in batches, and we'll email you when your spot is ready.
             </p>
             {/*
@@ -1316,7 +1336,7 @@ export function LandingScreen() {
                 not — same 384px cap as the sign-in screen's own column, on
                 the heading's left edge.
             */}
-            <div className="mt-8 max-w-sm">
+            <div className="mt-8 w-full max-w-sm md:max-w-md mx-auto">
               {/*
                   THE ANONYMOUS WAY IN: the marketing waitlist page, then Sign
                   in, then one line for somebody who already joined. Both
@@ -1329,52 +1349,74 @@ export function LandingScreen() {
               */}
               <div className={hiddenLast(session, 'flex flex-col gap-2.5')}>
                 {/*
-                    The waitlist form lives on the MARKETING SITE, and this
-                    pill is the only thing that points at it. Three
-                    consequences worth stating where they are made:
+                    THE PAIR. Stacked on a phone, side by side from md, where
+                    the column is wide enough that two full-width pills read
+                    as a stack of bars rather than a choice. The primary
+                    keeps its prominence from its fill, not from its width,
+                    which is the same way the shell's own dialogs pair a
+                    confirm with a cancel.
 
-                    `target="_blank"` on a cross-origin URL is what the
-                    shell's delegated capture listener (public/js/nav-link.js)
-                    hands to the native bridge's openExternal, so the system
-                    browser opens it instead of the webview navigating off the
-                    bound domain. Same-origin would not fire that listener at
-                    all.
+                    A two-column GRID, not `flex-row` with `flex-1` on each:
+                    a flex item's `basis-0` is a content-box zero that its own
+                    padding still adds to, and these two pills are padded
+                    differently — measured, that drew 239px beside 199px. Grid
+                    tracks are sized by the track, so the halves are equal
+                    whatever each pill carries inside it.
 
-                    `href`, `target` and `rel` arrive TOGETHER or not at all,
-                    and the pill is HIDDEN until they do — the URL comes from
-                    the options fetch, so that is the first paint, and forever
-                    if the request fails. A fully-styled, hover-reactive pill
-                    that swallows the tap is worse than no pill: the visitor
-                    still has "Sign in" and the status line, both of which
-                    work. It is hidden rather than given a fallback href
-                    because there are only two candidates and this design
-                    rules out both — the marketing host is configuration and
-                    is never written into this file, and the in-app #waitlist
-                    form is the one destination the redesign removes, so
-                    pointing there even for a tick would undo the change.
-
-                    HIDDEN, not unmounted: the id inventory reads this
-                    interior's static markup, where no effect has run, so the
-                    anchor must be present and carrying `hidden` there — the
-                    same rule the two branches of this block follow.
-
-                    `data-offline-disabled` because joining is a POST on the
-                    other end and cannot work offline either.
+                    The row is a wrapper INSIDE the block rather than the
+                    block itself, because the "Already joined?" line below is
+                    a footnote to both pills and stays under them at every
+                    width.
                 */}
-                <a
-                  id="landing-waitlist-link"
-                  href={waitlistUrl || undefined}
-                  target={waitlistUrl ? '_blank' : undefined}
-                  rel={waitlistUrl ? 'noopener' : undefined}
-                  data-offline-disabled=""
-                  className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
-                  onClick={onLeaveCta}
-                >
-                  Join the waitlist
-                </a>
-                <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
-                  Sign in
-                </a>
+                <div className="flex flex-col gap-2.5 md:grid md:grid-cols-2">
+                  {/*
+                      The waitlist form lives on the MARKETING SITE, and this
+                      pill is the only thing that points at it. Three
+                      consequences worth stating where they are made:
+
+                      `target="_blank"` on a cross-origin URL is what the
+                      shell's delegated capture listener (public/js/nav-link.js)
+                      hands to the native bridge's openExternal, so the system
+                      browser opens it instead of the webview navigating off the
+                      bound domain. Same-origin would not fire that listener at
+                      all.
+
+                      `href`, `target` and `rel` arrive TOGETHER or not at all,
+                      and the pill is HIDDEN until they do — the URL comes from
+                      the options fetch, so that is the first paint, and forever
+                      if the request fails. A fully-styled, hover-reactive pill
+                      that swallows the tap is worse than no pill: the visitor
+                      still has "Sign in" and the status line, both of which
+                      work. It is hidden rather than given a fallback href
+                      because there are only two candidates and this design
+                      rules out both — the marketing host is configuration and
+                      is never written into this file, and the in-app #waitlist
+                      form is the one destination the redesign removes, so
+                      pointing there even for a tick would undo the change.
+
+                      HIDDEN, not unmounted: the id inventory reads this
+                      interior's static markup, where no effect has run, so the
+                      anchor must be present and carrying `hidden` there — the
+                      same rule the two branches of this block follow.
+
+                      `data-offline-disabled` because joining is a POST on the
+                      other end and cannot work offline either.
+                  */}
+                  <a
+                    id="landing-waitlist-link"
+                    href={waitlistUrl || undefined}
+                    target={waitlistUrl ? '_blank' : undefined}
+                    rel={waitlistUrl ? 'noopener' : undefined}
+                    data-offline-disabled=""
+                    className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
+                    onClick={onLeaveCta}
+                  >
+                    Join the waitlist
+                  </a>
+                  <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
+                    Sign in
+                  </a>
+                </div>
                 {/*
                     The way back for somebody who already joined, on a device
                     that knows nothing about it (#1538). It opens the same
