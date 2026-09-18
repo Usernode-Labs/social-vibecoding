@@ -123,12 +123,27 @@ export interface WaitlistOptions {
   /** Flat `alpha2 -> name`, in display order (sorted by English name). */
   countries?: Record<string, string>;
   discovery_sources?: Record<string, string>;
-  discovery_detail_labels?: Record<string, string>;
   group_sizes?: Record<string, string>;
   group_roles?: Record<string, string>;
   group_tools?: Record<string, string>;
   loss_answers?: Record<string, string>;
   loss_kinds?: Record<string, string>;
+  /**
+   * The MARKETING site's /waitlist page, absolute — the logged-out landing's
+   * primary pill points at it. Built server-side from `MARKETING_BASE_URL`
+   * (src/services/marketing-links.js) precisely so no client hardcodes the
+   * host: a self-hosted deployment has its own marketing site, or none.
+   *
+   * Optional like its siblings, and the caller must mean it: render no href
+   * at all until it arrives rather than falling back to the in-app
+   * `#waitlist` route, which is the destination this design removed.
+   */
+  waitlist_url?: string;
+  /** The marketing site's front door, absolute and with no trailing slash.
+   *  The landing's "Learn more" line, for a reader who wants the long version
+   *  of what this is. Built server-side from config.marketingBaseUrl, like
+   *  waitlist_url above, so no client hardcodes the host. */
+  marketing_url?: string;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

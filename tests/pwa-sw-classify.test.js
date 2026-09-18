@@ -173,6 +173,12 @@ test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
   assert.equal(classify('GET', '/icons/icon-192.png'), 'shell');
+  // The signed-out landing's illustration. It goes the OTHER way from the
+  // challenge artwork below, and the difference is the fallback: a challenge
+  // card draws its kind icon when the picture fails, so caching buys nothing,
+  // while the landing has nothing to put in its place and is the first screen
+  // a visitor who has never signed in reaches — on a precached document.
+  assert.equal(classify('GET', '/brand/people.png'), 'shell');
 });
 
 test('content-addressed images are cache-first', () => {

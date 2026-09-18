@@ -243,7 +243,17 @@
 // bundle and omitted the cache retirement required by v10. Existing clients
 // therefore kept drawing the pre-fix Anthropic default even though production
 // was running the merged commit. Retire that stale shell now.
-const SW_VERSION = 'v31';
+//
+// v32 (logged-out screens): the signed-out landing and the sign-in steps are
+// redrawn in the shell's own language, and the header chip names the platform
+// with the logotype. All of that lives in /shell/assets/shell.js plus the
+// prerendered /index.html — both precached here — so per v10 the retirement
+// belongs in this same proposal, or an installed PWA and the native app keep
+// drawing the app grid and the "Log in" pill against a server that no longer
+// serves them. The new /brand/people.png joins SHELL_ASSETS in the same
+// change; an entry alone would be install bandwidth nothing ever reads, so
+// classifyRequest gains the matching /brand/ rule below.
+const SW_VERSION = 'v32';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -569,6 +579,13 @@ const SHELL_ASSETS = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
+  // The signed-out landing's illustration. Unlike the challenge artwork that
+  // deliberately stays on the network (see the classify tests), this one has no
+  // fallback to draw in its place, and it is the first thing a visitor who has
+  // never signed in sees — on a document that is itself precached. An offline
+  // first run would otherwise render the new landing around a broken image.
+  // Provenance and export settings in public/brand/README.md.
+  '/brand/people.png',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the
@@ -724,6 +741,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
   if (p.startsWith('/icons/')) return 'shell';
+  // The brand assets the shell itself draws, precached above. Without this rule
+  // the SHELL_ASSETS entry would fill the cache on install and never be read.
+  if (p.startsWith('/brand/')) return 'shell';
 
   // Everything else (e.g. the /health connectivity probe) goes straight
   // to the network so it always reflects real reachability.

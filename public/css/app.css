@@ -2229,6 +2229,45 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: var(--home-wallpaper);
 }
 
+/* ── THE LANDING'S ACTIVITY RAIL LOOPS ─────────────────────────────────
+   The signed-out landing draws four chips wider than a phone
+   (frontend/src/features/auth/landing.tsx). The overflow is the point — it
+   says more goes on here than fits — but a strip that only overflows reads
+   as a row somebody forgot to finish. Looping it says the same thing on
+   purpose.
+
+   The track holds the four chips TWICE and travels exactly half its own
+   width, so the second copy arrives where the first began and the seam
+   never shows. Half is exact only because each chip carries its 8px as a
+   right MARGIN rather than the row carrying `gap`: with `gap` the track is
+   eight chips plus seven gaps, and half of that lands mid-gap and stutters
+   once per cycle. The second copy is aria-hidden in the markup, so a reader
+   hears the four lines once.
+
+   34s is a deliberate amble — about 25px a second. Fast enough to be
+   clearly alive on a screen somebody looks at for a few seconds, slow
+   enough not to pull the eye off the heading, which is the thing this
+   screen is actually for.
+
+   The transform runs on the compositor (translate3d, will-change) because
+   this is the one thing animating on a screen that also decodes a 90KB
+   illustration on first paint. */
+.landing-rail-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  animation: landing-rail-loop 34s linear infinite;
+}
+@keyframes landing-rail-loop {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+/* Decoration, so it STOPS rather than slows: a reader who asked for less
+   motion still gets the whole row, still overflowing, simply still. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-rail-track { animation: none; }
+}
+
 /* ── App cards ─────────────────────────────────────────── */
 
 .app-card { transition: background-color 150ms; }

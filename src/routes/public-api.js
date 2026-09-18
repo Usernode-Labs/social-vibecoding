@@ -45,7 +45,7 @@ const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { inviteUrl } = require('../services/marketing-links');
+const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 
@@ -158,8 +158,28 @@ function publicApiRoutes(config) {
   // (option keys + labels, countries, limits). The SPA renders both
   // waitlist forms from this so client and server validation can't
   // drift; the payload is static per process.
+  //
+  // It also carries two MARKETING-site links, so no client hardcodes the
+  // host: `marketing_url`, the site's front door, which the landing's
+  // "Learn more" line points at for somebody deciding whether to join; and
+  // `waitlist_url`: the MARKETING site's /waitlist page,
+  // so no client has to hardcode the host. The logged-out landing's
+  // primary pill is that URL with target="_blank", which the native
+  // shell hands to the bridge's openExternal (public/js/nav-link.js) —
+  // and the host is configurable per deployment (MARKETING_BASE_URL), so
+  // the frontend cannot know it. Same origin and path the shared invite
+  // link uses (src/services/marketing-links.js), decided in one place.
+  //
+  // Composed HERE rather than inside publicOptions(), because `config`
+  // lives in this closure and that service deliberately takes none. The
+  // spread makes a fresh object: publicOptions() returns REFERENCES to
+  // the module's option constants, which must never be mutated.
   router.get('/api/public/waitlist/options', (_req, res) => {
-    res.json(questions.publicOptions());
+    res.json({
+      ...questions.publicOptions(),
+      waitlist_url: waitlistUrl(config),
+      marketing_url: siteUrl(config),
+    });
   });
 
   // POST /api/public/waitlist — platform waitlist join (onboarding flow

@@ -205,7 +205,7 @@ export function RegisterScreen() {
           <p className="mt-3">
             <a href="#login" className={PILL_LINK}>
               {'Already have an account? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Log in</span>
+              <span className="ml-1 text-violet-700 dark:text-violet-400">Sign in</span>
             </a>
           </p>
         </div>

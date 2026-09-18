@@ -573,7 +573,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "Apps built here",
+      "expectText": "Come build the next version with us.",
       "allowConsoleErrors": true
     },
     {
@@ -1538,9 +1538,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing keeps its compact CTA and account-required apps carry locks (#1522)",
+      "name": "Landing sends joining to the marketing site, with no app grid (#1522)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "body:has(#landing-apps .app-card[data-gated=\"true\"] [title=\"Account required\"]) #landing-waitlist a[href=\"#waitlist\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden) #landing-waitlist-link:not(.hidden)[target=\"_blank\"][href^=\"https://\"]",
+      "expectText": "Join the waitlist",
       "allowConsoleErrors": true
     },
     {
@@ -4120,8 +4121,8 @@
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
       "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #login-form .rounded-2xl #login-username",
-      "expectText": "Log in",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:has(.rounded-2xl #login-username) button[type=\"submit\"].bg-violet-600",
+      "expectText": "Sign in",
       "allowConsoleErrors": true
     },
     {
