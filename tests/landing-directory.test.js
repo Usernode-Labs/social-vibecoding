@@ -157,6 +157,33 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   );
 });
 
+// A local named after one of this file's own imports shadows it for the whole
+// component, and the call site that still wants the IMPORT then gets the local.
+// That is not hypothetical: `const waitlistOptions = useWaitlistOptions()` once
+// shadowed the memoised `waitlistOptions` fetch this file imports, so
+// landingOnShow's `void waitlistOptions()` called an object. It threw inside
+// AuthScreens.show(), which aborted before revealing the screen, and every
+// declared check on #landing failed against a root that stayed hidden. No unit
+// test caught it, because none of them runs the on-show hook in a browser, and
+// tsc did not either.
+test('no local in the landing shadows one of its own imports', () => {
+  const tsx = read(LANDING_TSX);
+  const imported = new Set();
+  for (const m of tsx.matchAll(/^import\s*\{([^}]*)\}\s*from\s*'[^']+';/gm)) {
+    for (const part of m[1].split(',')) {
+      const name = part.replace(/\btype\b/, '').split(/\s+as\s+/).pop().trim();
+      if (name) imported.add(name);
+    }
+  }
+  assert.ok(imported.size > 5, 'the import scan found nothing, so it is not checking anything');
+  const shadowed = [...imported].filter((name) =>
+    new RegExp(`\\b(?:const|let|var|function)\\s+${name}\\b`).test(tsx));
+  assert.deepEqual(shadowed, [],
+    'a declaration reuses an imported name; every call to that name inside the '
+    + 'component then resolves to the local, which is how the landing stopped '
+    + 'being revealed at all');
+});
+
 test('the join pill is the marketing URL, from the server, opened externally', () => {
   const tsx = read(LANDING_TSX);
   // NO HOST IN THE FRONTEND. The URL is platform configuration
@@ -170,11 +197,11 @@ test('the join pill is the marketing URL, from the server, opened externally', (
   // fetches in an effect, so neither is computed during render — a value read
   // at render time would differ between the prerender and the client and
   // console.error, and a console error on any route fails the proposal checks.
-  assert.match(tsx, /const waitlistOptions = useWaitlistOptions\(\)/,
+  assert.match(tsx, /const waitlistPayload = useWaitlistOptions\(\)/,
     '…through the hook, i.e. in an effect — never during render (hydration)');
-  assert.match(tsx, /const waitlistUrl = marketingWaitlistUrl\(waitlistOptions\)/,
+  assert.match(tsx, /const waitlistUrl = marketingWaitlistUrl\(waitlistPayload\)/,
     'the join pill derives from that one call');
-  assert.match(tsx, /const siteUrl = marketingSiteUrl\(waitlistOptions\)/,
+  assert.match(tsx, /const siteUrl = marketingSiteUrl\(waitlistPayload\)/,
     'and so does the Learn more line — same hook, same effect, same tick');
 
   // href, target and rel arrive TOGETHER or not at all. An anchor with no

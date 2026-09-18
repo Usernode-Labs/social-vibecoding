@@ -484,9 +484,9 @@ export function LandingScreen() {
   // interior's first commit identical to the empty root the prerender ships
   // (a hydration mismatch is a console error, and a console error on any
   // route fails the proposal checks).
-  const waitlistOptions = useWaitlistOptions();
-  const waitlistUrl = marketingWaitlistUrl(waitlistOptions);
-  const siteUrl = marketingSiteUrl(waitlistOptions);
+  const waitlistPayload = useWaitlistOptions();
+  const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
+  const siteUrl = marketingSiteUrl(waitlistPayload);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
