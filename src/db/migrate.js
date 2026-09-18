@@ -12005,14 +12005,21 @@ async function seedStagingTopochain(pool, config) {
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, VIEWER_WALLET, VIEWER_PUBKEY, SEASON_ID]
       );
+      // The third row puts the viewer in the ARCHIVE season too (issue
+      // #2495). The Leaderboard screen shows its event picker to admins and
+      // to members with a season to go back to. usernode-capture, the
+      // identity every screenshot signs as, is a member, so without this
+      // row no capture of that screen would ever show the picker; the
+      // checks identity is an admin and sees it by role.
       await pool.query(
         `INSERT INTO user_enrollments
            (id, user_id, season_id, season_event_id, created_at, updated_at)
          VALUES
            (${base},     $1, $2, NULL, NOW(), NOW()),
-           (${base + 1}, $1, $2, $3,   NOW(), NOW())
+           (${base + 1}, $1, $2, $3,   NOW(), NOW()),
+           (${base + 2}, $1, $4, $5,   NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
-        [viewerId, SEASON_ID, EVENT_REGULAR_ID]
+        [viewerId, SEASON_ID, EVENT_REGULAR_ID, SEASON_CLOSED_ID, EVENT_ARCHIVE_ID]
       );
       // Two completed challenges → the profile's "completed" list and its
       // points header both have content.
