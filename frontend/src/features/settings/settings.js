@@ -260,6 +260,7 @@
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
+      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can

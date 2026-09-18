@@ -702,6 +702,9 @@ const ADDED_IDS = {
   'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
   'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
+  // ── #2377: Global Chat (experimental) ───────────────────────────
+  'global-chat-screen': '#2377: the React-owned full-application conversational surface. It ships hidden and Classic remains the startup mode; the authenticated parity gate decides whether the header may expose its mode switch.',
+  'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

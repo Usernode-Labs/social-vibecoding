@@ -48,6 +48,7 @@ const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-fil
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
+const { globalChatRoutes } = require('./src/routes/global-chat');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -575,6 +576,7 @@ app.use(socialIdentityRoutes(config));
 app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(credentialRoutes(config));
+app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
 app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
