@@ -254,9 +254,15 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
 // `detail` so the drawer can tell an admin override apart from a vote that
 // carried, which are the same event with very different meanings to the
 // person who wrote the change.
-async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false }) {
+// #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
+// for a merge the vote carried — it rides in `detail`, which a force merge
+// uses for its own marker, so the two never meet.
+async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false, credits = null }) {
   if (!userId || !sessionId) return [];
   if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) return [];
+  const detail = forced
+    ? 'forced'
+    : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
      SELECT $1, $2, $3, NULL, 'pr_merged', $4
@@ -265,7 +271,42 @@ async function createPrMergedNotification(pool, { userId, appId, sessionId, forc
         WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [userId, appId, sessionId, forced ? 'forced' : null]
+    [userId, appId, sessionId, detail]
+  );
+  return rows;
+}
+
+// #1688: a proposal this person had said yes to got a new version from its
+// author, and their yes no longer counts until they look again. One row per
+// (voter, session, epoch) — `detail` carries the epoch, so a second push
+// asks again and a resumed tail does not. The author is never asked to
+// re-confirm their own update, and a voter who muted the category is left
+// alone: the roster on the proposal's page still names them.
+async function createRevisionRecheckNotifications(pool, { appId, sessionId, authorId, voterIds, epoch }) {
+  const ids = [...new Set((voterIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== Number(authorId)))];
+  if (!ids.length || !sessionId) return [];
+  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'revision_recheck',
+  });
+  if (!allowed.length) return [];
+  const detail = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const values = [];
+  const params = [appId, sessionId, authorId || null, detail];
+  allowed.forEach((userId) => {
+    params.push(userId);
+    values.push(`($${params.length}, $1, $2, $3, 'revision_recheck', $4)`);
+  });
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.detail
+       FROM (VALUES ${values.join(', ')}) AS v (user_id, app_id, session_id, source_user_id, kind, detail)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = v.user_id AND n.session_id = v.session_id
+           AND n.kind = 'revision_recheck' AND n.detail = v.detail
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    params
   );
   return rows;
 }
@@ -590,7 +631,8 @@ async function hydrateAndPush(pool, row) {
               n.conversation_message_id,
               conversation_message.content AS conversation_message_content,
               su.username AS source_username,
-              n.detail
+              n.detail,
+              pv.reason AS vote_reason
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -599,6 +641,7 @@ async function hydrateAndPush(pool, row) {
        LEFT JOIN conversation_messages conversation_message
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
+       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
        WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL}`,
       [row.id]
     );
@@ -917,7 +960,8 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
             su.username AS source_username,
-            n.detail
+            n.detail,
+            pv.reason AS vote_reason
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -926,6 +970,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN conversation_messages conversation_message
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
+     LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
      ${cursorClause}
      ${kindClause}
@@ -953,7 +998,8 @@ async function getForUser(pool, userId, id) {
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
             su.username AS source_username,
-            n.detail
+            n.detail,
+            pv.reason AS vote_reason
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -962,6 +1008,7 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN conversation_messages conversation_message
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
+       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
       WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL}`,
     [id, userId]
   );
@@ -1001,7 +1048,9 @@ async function countUnread(pool, userId) {
 // hardcoded table, never from request input, so there is no
 // SQL-injection surface in markReadForAction's interpolation.
 const ACTION_COMPLETIONS = {
-  vote_cast: { kinds: ['pr_proposed', 'stale_pr'], scope: 'session_id' },
+  // #1688: a vote also answers the re-confirm ask for that proposal — the
+  // row's "Still yes" is a vote, and so is a plain Yes or No on the card.
+  vote_cast: { kinds: ['pr_proposed', 'stale_pr', 'revision_recheck'], scope: 'session_id' },
   message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
@@ -1203,6 +1252,11 @@ function serialize(row) {
     branchName: isConversation ? null : row.branch_name,
     sourceUsername: row.source_username,
     detail: row.detail,
+    // #1688: the line the voter left with their vote, read LIVE off their
+    // row (a vote's notification is one per voter per proposal, so a later
+    // edit of the line shows here without a second notification). Only the
+    // vote row has a voter to read it from.
+    voteReason: row.kind === 'proposal_vote' ? (row.vote_reason || null) : null,
   };
 }
 
@@ -1216,6 +1270,7 @@ module.exports = {
   createIssueOpenedNotifications,
   createPrMergedNotification,
   createProposalVoteNotification,
+  createRevisionRecheckNotifications,
   createAppHealthNotification,
   createCheckFailedNotification,
   createSessionDoneNotification,

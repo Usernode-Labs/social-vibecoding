@@ -5706,6 +5706,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
+/* #1688: the kudos slot spelled out on a fresh proposal — "Thank evan for
+   putting this up" — accent-tinted so it reads as the invitation it is,
+   until the viewer votes or thanks and it becomes the count pill again. */
+.gc-vote-btn.dev-thanks-pill {
+  gap: 5px;
+  padding: 0 11px;
+  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.gc-vote-btn.dev-thanks-pill:hover { background: var(--accent-wash); color: var(--accent-wash-ink); }
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
 .gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
 .gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
@@ -6171,18 +6183,25 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-count-attention { color: var(--state-attention); }
 .gc-vote-count-blocked { color: var(--state-blocked); }
 .gc-vote-count-ok { color: var(--state-ok); }
-/* Proportional fill stripes: top = Yes share, bottom = No share, each a
-   fraction of majority, filling left→right behind the label. */
+/* Proportional fill bars: Yes grows from the LEFT, No from the RIGHT, both
+   the pill's full height, so the gap between them is what is still
+   undecided. They used to be half-height lanes stacked one above the other
+   (Yes top, No bottom), which reads correctly only when both sides have
+   votes — and most of the time only one does, so a lone Yes rendered as a
+   bar covering half the pill's height and looked like a fault rather than a
+   tally. Facing each other, one side alone is simply a shorter bar.
+   The widths are computed so the two can meet but never overlap; see
+   voteFillWidths in public/js/app-view.js. */
 .gc-vote-fill {
   position: absolute;
-  left: 0;
-  height: 50%;
+  top: 0;
+  height: 100%;
   pointer-events: none;
 }
-.gc-vote-fill-yes { top: 0; background: var(--state-ok-fill); }
-.gc-vote-fill-no { bottom: 0; background: var(--state-blocked-fill); }
+.gc-vote-fill-yes { left: 0; background: var(--state-ok-fill); }
+.gc-vote-fill-no { right: 0; background: var(--state-blocked-fill); }
 /* Finalized: one side hit majority, so the whole pill fills with its color. */
-.gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
+.gc-vote-fill-full { left: 0; top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: var(--state-ok-fill); }
 .gc-vote-fill-full-no { background: var(--state-blocked-fill); }
 /* text-primary because a vote pill's fill stripes sweep UNDER the label,
@@ -6707,6 +6726,28 @@ span.gc-vote-btn-icon { cursor: default; }
 a.gc-event-box { cursor: pointer; }
 a.gc-event-box:hover { text-decoration: none; }
 a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
+/* #1688: after a named merge's sentence, the number and the tally, quieter. */
+.gc-event-text > .gc-event-tail { color: var(--text-muted); font-weight: 400; }
+/* #1688: the Friday card — the event box's surface, holding lines. */
+.gc-event-box.gc-event-weekly {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 14px;
+  max-width: min(100%, 640px);
+}
+.gc-weekly-title { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.gc-weekly-section { display: flex; flex-direction: column; gap: 3px; }
+.gc-weekly-head { font-weight: 600; }
+.gc-weekly-head-live { color: var(--state-ok); }
+.gc-weekly-head-open { color: var(--accent); }
+.gc-weekly-line { padding-left: 12px; line-height: 1.45; }
+.gc-weekly-line-title { color: var(--text-primary); }
+.gc-weekly-line-who { color: var(--text-muted); }
+.gc-weekly-more { padding-left: 12px; color: var(--text-muted); font-size: 12.5px; }
+.gc-weekly-door { align-self: flex-start; font-size: 12.5px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.gc-weekly-door:hover { text-decoration: underline; }
 a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gc-event-box > .dev-card-icon {
   flex: none; width: 20px; height: 20px;
@@ -11593,9 +11634,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-pop {
   position: fixed;
   z-index: 2000;
-  min-width: 168px;
-  padding: 4px;
-  border-radius: 14px;
+  width: 312px;
+  box-sizing: border-box;
+  padding: 10px 10px 8px;
+  border-radius: 16px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
@@ -11603,32 +11645,136 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   flex-direction: column;
   gap: 2px;
 }
-.dev-vote-opt {
+/* The picker's top: a "Your vote" header, then one two-way switch across
+   its width, the chosen half filled — accent for Yes, the blocked tint for
+   No — each carrying its tally. Yes is on when the picker opens (the
+   viewer's own vote when they have one), so a Yes is one click from here.
+   The header is the twin of the label over the box (same size, weight and
+   ink), 2px further in because that label sits inside the reason block's
+   own inset, so the two line up. */
+.dev-vote-switch-label {
+  display: block;
+  padding: 0 6px 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.dev-vote-switch {
   display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+}
+.dev-vote-switch-opt {
+  flex: 1 1 0;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 36px;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
   padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9999px;
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
-  text-align: left;
+  line-height: 1;
   cursor: pointer;
 }
-.dev-vote-opt svg { width: 15px; height: 15px; }
-.dev-vote-opt .dev-vote-n {
-  margin-left: auto;
+.dev-vote-switch-opt svg { width: 14px; height: 14px; }
+.dev-vote-switch-opt .dev-vote-n {
+  font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.dev-vote-opt:hover { background: var(--bg-tertiary); }
-.dev-vote-opt[aria-checked="true"] { background: var(--accent-tint); color: var(--accent); }
-.dev-vote-opt-no[aria-checked="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-switch-opt:not([aria-pressed="true"]):hover { background: var(--bg-primary); }
+.dev-vote-switch-yes[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n { color: var(--accent-ink); opacity: 0.75; }
+.dev-vote-switch-no[aria-pressed="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-switch-no[aria-pressed="true"] .dev-vote-n { color: var(--state-blocked); }
+
+/* ── #1688: the line under the switch ──
+   Always there, never a second step: the label above the box says what to
+   write for the side that is on, the box holds a sentence, and Cancel sits
+   beside the one button that sends the vote — "Vote yes" or "Vote no" with
+   the switch. A No's button stays dim until there is a line, so nothing has
+   to say "required". */
+.dev-vote-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 0 2px;
+}
+.dev-vote-reason-label {
+  display: block;
+  padding: 0 4px 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.dev-vote-reason-box {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.dev-vote-reason-box:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dev-vote-reason-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 8px 0 0;
+}
+.dev-vote-reason-cancel, .dev-vote-reason-send {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dev-vote-reason-cancel { background: transparent; color: var(--text-muted); }
+.dev-vote-reason-cancel:hover { background: var(--bg-tertiary); }
+.dev-vote-reason-send-yes { background: var(--accent); color: var(--accent-ink); }
+.dev-vote-reason-send-no { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-reason-send:disabled { opacity: 0.5; cursor: default; }
+/* The same picker as a kit bottom sheet on touch (#1688 follow-up): the two
+   rows at tap-target size and the line box INLINE under them, in the one
+   sheet — not a native action sheet followed by a second prompt card. The
+   box is 16px so iOS does not zoom on focus; the kit's `--un-kb-inset`
+   lifts the sheet above the keyboard. */
+.dev-vote-sheet { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; }
+.dev-vote-sheet .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
+.dev-vote-sheet .dev-vote-switch-opt svg { width: 16px; height: 16px; }
+.dev-vote-sheet .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
+.dev-vote-sheet .dev-vote-switch-label { padding: 0 4px 4px; font-size: 14px; }
+.dev-vote-sheet .dev-vote-reason { margin-top: 10px; gap: 6px; }
+.dev-vote-sheet .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
+.dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
+.dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
+.dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
+/* "Still yes?": the viewer's Yes was on an earlier version of the proposal
+   (#1688). Amber, because it is a question the card is asking them. */
+.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
+/* The roster's lines (#1688): each voter's sentence under the names, and the
+   earlier-version note under those. */
+.dev-ledger-reason { display: block; padding-left: 12px; font-size: 12.5px; color: var(--text-muted); }
+.dev-ledger-earlier { display: block; font-size: 12.5px; color: var(--state-attention); }
 
 /* ── The facts, as one line ──
    Linked issue · priority · assignee · category · 💬 N — the chips' own

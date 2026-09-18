@@ -384,3 +384,61 @@ test('#1808: the issue comment thread stamps a day and a time, in the reader\'s 
     else process.env.TZ = before;
   }
 });
+
+test('#1808: both Activity lists stamp through the helper, not a raw toLocaleString', () => {
+  // A change's Activity is rendered twice, on mutually exclusive paths: the
+  // tab inside the conversation card (topic/conversation.tsx) and, when that
+  // card is not shown, the <details> in TopicBodySections — `ChangeDetail`
+  // empties `activity` before handing the body to the sections, which is
+  // what makes them exclusive. Both printed `new Date(at).toLocaleString()`,
+  // "6/16/2025, 2:41:00 PM": a fourth spelling of an instant, carrying
+  // seconds nobody reads, on the same page as `messageStamp`'s.
+  const CONVERSATION = 'frontend/src/features/dev-board/topic/conversation.tsx';
+  const HEAD = 'frontend/src/features/dev-board/topic/topic-head.tsx';
+
+  for (const rel of [CONVERSATION, HEAD]) {
+    const src = read(rel);
+    assert.match(src, /import \{ messageStamp \} from '\.\.\/\.\.\/\.\.\/lib\/timestamp';/,
+      `${rel} takes the stamp from the shared rule`);
+    assert.doesNotMatch(src, /toLocaleString/, `${rel} keeps no formatter of its own`);
+  }
+  assert.match(read(HEAD), /conversation \? \{ \.\.\.body, transcript: null, activity: \[\] \}/,
+    'the two lists stay exclusive: the conversation card takes the activity away from the sections');
+
+  const at = '2025-06-16T14:41:00Z';
+  const activity = [{ label: 'Session opened', at }];
+  const previousTz = process.env.TZ;
+  const hadWindow = Object.hasOwn(globalThis, 'window');
+  const previousWindow = globalThis.window;
+  try {
+    process.env.TZ = 'UTC';
+    delete globalThis.window;
+    const expected = messageStamp(at);
+    assert.ok(expected.text, 'the fixture instant stamps to something');
+    assert.match(expected.text, /2025/, 'an earlier year keeps its year, so this is not today-dependent');
+
+    const html = [
+      renderComponent(CONVERSATION, 'ChangeConversation', {
+        item: { id: 7, status: 'promoted' },
+        body: { changeId: 7, discussion: 'This workspace stays private.', activity },
+      }),
+      renderComponent(HEAD, 'TopicBodySections', { body: { activity } }),
+    ];
+    for (const rendered of html) {
+      const tag = rendered.match(/<time[^>]*>([^<]*)<\/time>/i);
+      assert.ok(tag, 'the row renders a <time>');
+      assert.equal(tag[1], expected.text, 'the visible stamp is the helper’s');
+      assert.ok(tag[0].includes(`title="${expected.title}"`), 'with the unelided form on title');
+      assert.match(tag[0], /datetime="2025-06-16T14:41:00Z"/i,
+        'and the machine-readable instant is still the raw one');
+      // The regression itself: the browser's default spelling prints
+      // seconds and a numeric date, and the helper never does either.
+      assert.doesNotMatch(tag[1], /:\d\d:\d\d/, 'no seconds in a stamp a person reads');
+      assert.notEqual(tag[1], new Date(at).toLocaleString());
+    }
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+    if (hadWindow) globalThis.window = previousWindow;
+  }
+});

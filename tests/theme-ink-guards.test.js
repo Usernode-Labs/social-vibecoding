@@ -170,6 +170,44 @@ test('no unpaired zinc-400 ink outside the always-dark chrome', () => {
     + `text-zinc-500 dark:text-zinc-400:\n  ${bad.slice(0, 8).join('\n  ')}`);
 });
 
+// ── 2b-mirror. The themed pair, spelled on chrome that never themes ─────
+//
+// Rule 2b's fix is `text-zinc-500 dark:text-zinc-400`, and the pairing pass
+// that applied it read string literals without asking what surface each one
+// was drawn on. On the three ALWAYS_DARK sources it wrote the pair anyway —
+// thirteen times, on the staging dock's chrome bar, the visual-compare header
+// and the developer terminal — where it is not a no-op but a REGRESSION: all
+// three roots are a hard `bg-zinc-950` in both themes, so a light-theme reader
+// got zinc-500 (#68686c) on #0b0b0c, 3.55:1, a WCAG AA fail, while a
+// dark-theme reader got the `dark:` half, zinc-400 on the identical pixels, at
+// 6.74:1. The same surface, legible or not depending on a preference that does
+// not reach it.
+//
+// So the exemption above cuts both ways, and this is the half that says so: on
+// chrome that is dark in both themes the correct ink is a BARE `text-zinc-400`,
+// and a `dark:` variant beside a zinc-500 is the tell that somebody applied the
+// themed rule to a surface that does not theme. Anchored to the very list that
+// grants the exemption, so retiring or adding a file there moves both halves at
+// once and they cannot drift apart.
+
+test('no themed zinc ink pair inside the always-dark chrome', () => {
+  const alwaysDark = SOURCES.filter((s) => !themed(s));
+  assert.ok(alwaysDark.length >= ALWAYS_DARK.length,
+    `ALWAYS_DARK names ${ALWAYS_DARK.length} sources but only ${alwaysDark.length} resolved — `
+    + 'a renamed or moved file makes this exemption silently match nothing');
+  const bad = [];
+  for (const s of alwaysDark) {
+    const src = code(s.text);
+    for (const m of src.matchAll(/["'`]([^"'`\n]*\btext-zinc-500\b[^"'`\n]*)["'`]/g)) {
+      if (!/\bdark:text-zinc-400\b/.test(m[1])) continue;
+      bad.push(`${s.path}:${src.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  assert.deepStrictEqual(bad, [],
+    'this chrome is bg-zinc-950 in BOTH themes, so the light half of the pair renders '
+    + `zinc-500 on near-black at 3.55:1. Use a bare text-zinc-400:\n  ${bad.slice(0, 8).join('\n  ')}`);
+});
+
 // ── 2b-bis. A FILL that is the page ground, on the page ground ──────────
 //
 // The same failure as rule 1, one property along: `bg-zinc-100` is #eaeaea in

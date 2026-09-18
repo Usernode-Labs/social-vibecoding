@@ -101,6 +101,28 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     defaultEnabled: true,
     kinds: Object.freeze(['proposal_vote']),
   }),
+  // #1688: the re-confirm ask. Somebody pushed a new version of a proposal
+  // this person had said yes to; their yes was on the old version and one
+  // tap carries it onto the new one. ON: it is their own vote being asked
+  // about, and silence would quietly cost the proposal its support.
+  Object.freeze({
+    key: 'revision_recheck',
+    label: 'Proposals you backed change',
+    description: 'A proposal you said yes to gets a new version and needs another look.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['revision_recheck']),
+  }),
+  // #1688: the Friday card. Once a week per app, what went live and who
+  // made it, and what is waiting on votes; nothing at all on a quiet week.
+  // The card itself lands in the app's chat regardless — this gates the
+  // notification and push that point at it.
+  Object.freeze({
+    key: 'weekly_digest',
+    label: 'Weekly summary of what shipped',
+    description: 'One card a week in the app’s chat: what went live and who made it, and what is waiting on votes. Nothing on a quiet week.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['weekly_digest']),
+  }),
   Object.freeze({
     key: 'app_health',
     label: 'App health',

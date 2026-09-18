@@ -999,9 +999,35 @@ const Improve = {
    */
   reloadApp() {
     improveStore.set({ appUpdateReady: false });
-    Promise.resolve(Improve.close()).then(() => {
-      window.AppView?.reloadAppFrame?.();
-    });
+    Promise.resolve(Improve.close())
+      .then(() => Improve._showAppTab())
+      .then(() => { window.AppView?.reloadAppFrame?.(); });
+  },
+
+  /**
+   * Put the app itself on screen, if it is not already.
+   *
+   * The offer is made from every screen the panel opens over, the Dev ones
+   * included — the Workshop, the board, a topic. On those the app's frame is
+   * behind another surface or not mounted at all, so a reload there reloads
+   * nothing the viewer can see: the panel closed, the offer was withdrawn,
+   * and as far as the screen was concerned the click did nothing. Taking the
+   * offer means "show me the new version", so go to the app first.
+   *
+   * Answers switchTab's promise so the reload waits for the destination to
+   * render — renderAppTab mounts the frame and sets its src synchronously,
+   * so by then reloadAppFrame has a frame to work on. A render that mounted
+   * the frame fresh has already started one load and the reload adds its
+   * usual two; a third load of a document the app's own cache is serving is
+   * cheap, and cutting it would mean this function knowing which branch
+   * renderAppTab took.
+   *
+   * On the app tab already: nothing, rather than a re-render.
+   */
+  _showAppTab() {
+    const app = window.App;
+    if (!app || app.currentTab === 'app' || typeof app.switchTab !== 'function') return null;
+    return app.switchTab('app');
   },
 
   /** The retired `#drawer-row-share`, as a row. */

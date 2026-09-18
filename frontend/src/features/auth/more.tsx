@@ -61,6 +61,9 @@ import { flushSync } from 'react-dom';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -74,6 +77,11 @@ import {
   options as optionList,
   markSurveyAnswered,
   StatusPill,
+  SURVEY_FIELD,
+  SURVEY_HINT,
+  SURVEY_HINT_WIDE,
+  SURVEY_LABEL,
+  SURVEY_SELECT,
   toggleChip,
   waitlistOptions,
   WaitlistOptions,
@@ -721,14 +729,23 @@ export function MoreScreen() {
             </p>
             <label
               htmlFor="more-made-url"
-              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+              className={SURVEY_LABEL}
             >
               Link something you&rsquo;ve made
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className={SURVEY_HINT}>
               A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
             </p>
-            <input
+            {/*
+                Every field on this screen and on `#waitlist` spreads
+                SURVEY_FIELD — the `authWhite` box, the dialogs' placeholder
+                colour and the `bordered` focus treatment — rather than writing
+                the box out (#2437). The note on that constant says why these
+                screens take that box and not sign-in's box-less `card` one:
+                four questions deep on a scrolling page, the field's own edge
+                is the only thing showing where an answer goes.
+            */}
+            <Input
               ref={madeUrl}
               id="more-made-url"
               type="text"
@@ -739,15 +756,16 @@ export function MoreScreen() {
               maxLength={2000}
               placeholder="https://"
               onBlur={normalizeMadeUrlInput}
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+              {...SURVEY_FIELD}
             />
-            <input
+            <Input
               ref={madeNote}
               id="more-made-note"
               type="text"
               maxLength={140}
               placeholder="What is it, in one line? (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+              {...SURVEY_FIELD}
+              spacing="mt2"
             />
           </div>
           {/* 5 · The group */}
@@ -755,41 +773,41 @@ export function MoreScreen() {
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
               Question 2 of 4
             </p>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label className={SURVEY_LABEL}>
               Tell us about a group you&rsquo;re part of that could use its own app.
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className={SURVEY_HINT_WIDE}>
               A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one, a real group you&rsquo;re actually in.
             </p>
-            <input
+            <Input
               ref={groupName}
               id="more-group-name"
               type="text"
               maxLength={255}
               placeholder="A 200-person Discord for indie game devs in Lagos"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+              {...SURVEY_FIELD}
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <select
+              <Select
                 ref={groupSize}
                 id="more-group-size"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_SELECT}
               >
                 <option value="">
                   Roughly how many people?
                 </option>
                 {optionList(opts?.group_sizes)}
-              </select>
-              <select
+              </Select>
+              <Select
                 ref={groupRole}
                 id="more-group-role"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_SELECT}
               >
                 <option value="">
                   Your role in it
                 </option>
                 {optionList(opts?.group_roles)}
-              </select>
+              </Select>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
               What does it run on today? (pick any)
@@ -800,26 +818,26 @@ export function MoreScreen() {
               value={tools}
               onToggle={toggleTool}
             />
-            <textarea
+            <Textarea
               ref={groupNeed}
               id="more-group-need"
               rows={3}
               onInput={(e) => autoGrow(e.currentTarget)}
               maxLength={800}
               placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
-              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
-            >
-            </textarea>
+              {...SURVEY_FIELD}
+              spacing="mt3"
+            />
           </div>
           {/* 6 · The loss */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
               Question 3 of 4
             </p>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label className={SURVEY_LABEL}>
               Ever had a tool you relied on get killed, paywalled, or ruined?
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className={SURVEY_HINT_WIDE}>
               An app, a platform, a service, a game, a community. The kind of thing that made you look for something like this in the first place.
             </p>
             <ChipRow
@@ -832,13 +850,13 @@ export function MoreScreen() {
               id="more-loss-detail"
               className={hiddenFirst(lossDetailHidden, 'mt-3 space-y-2')}
             >
-              <input
+              <Input
                 ref={lossProduct}
                 id="more-loss-product"
                 type="text"
                 maxLength={255}
                 placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_FIELD}
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
                 What happened? (pick any)
@@ -849,16 +867,15 @@ export function MoreScreen() {
                 value={lossKinds}
                 onToggle={toggleLossKind}
               />
-              <textarea
+              <Textarea
                 ref={lossStory}
                 id="more-loss-story"
                 rows={3}
                 onInput={(e) => autoGrow(e.currentTarget)}
                 maxLength={800}
                 placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
-              >
-              </textarea>
+                {...SURVEY_FIELD}
+              />
             </div>
           </div>
           {/* 7 · Handles */}
@@ -866,10 +883,10 @@ export function MoreScreen() {
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
               Question 4 of 4
             </p>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label className={SURVEY_LABEL}>
               Where else are you?
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className={SURVEY_HINT_WIDE}>
               Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
             </p>
             {/*
@@ -938,37 +955,37 @@ export function MoreScreen() {
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input
+              <Input
                 ref={farcaster}
                 id="more-handle-farcaster"
                 type="text"
                 maxLength={255}
                 placeholder="Farcaster (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_FIELD}
               />
-              <input
+              <Input
                 ref={discord}
                 id="more-handle-discord"
                 type="text"
                 maxLength={255}
                 placeholder="Discord (username)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_FIELD}
               />
-              <input
+              <Input
                 ref={telegram}
                 id="more-handle-telegram"
                 type="text"
                 maxLength={255}
                 placeholder="Telegram (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_FIELD}
               />
-              <input
+              <Input
                 ref={other}
                 id="more-handle-other"
                 type="text"
                 maxLength={255}
                 placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                {...SURVEY_FIELD}
               />
             </div>
             {/*
@@ -1032,11 +1049,11 @@ export function MoreScreen() {
             </p>
             <label
               htmlFor="more-invite-url"
-              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+              className={SURVEY_LABEL}
             >
               Bring someone you&rsquo;d build with
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className={SURVEY_HINT_WIDE}>
               We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
             </p>
             <div className="flex gap-2">

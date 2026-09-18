@@ -93,7 +93,17 @@ export interface StatusPillState {
  */
 export interface ActionRef {
   fn: string;
-  args?: (string | number | boolean | null)[];
+  args?: (string | number | boolean | null | VoteOptions)[];
+}
+
+/**
+ * #1688: `castVote`'s fourth argument. `reason` is the line to send with the
+ * vote; null sends none without asking (a re-confirmed Yes carries its
+ * earlier line server-side). The model never holds one — the vote button
+ * appends it at the click.
+ */
+export interface VoteOptions {
+  reason: string | null;
 }
 
 /** The icon Preview affordance, in its three states. */
@@ -128,6 +138,13 @@ export interface ActionSpec {
   preview?: PreviewSpec;
   /** #313/#827 — "Explore in dev chat", claimed by a delegated handler. */
   explore?: number;
+  /**
+   * #1688: on the Yes spec, the viewer's vote on an EARLIER version of the
+   * proposal — still on their row, no longer counted. The vote button then
+   * asks "Still yes?" and a Yes carries their earlier line onto this version
+   * without asking for it again.
+   */
+  prior?: 'yes' | 'no';
 }
 
 /** Everything that can appear in the status band, as a tagged union. */

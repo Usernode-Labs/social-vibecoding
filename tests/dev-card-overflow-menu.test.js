@@ -241,7 +241,11 @@ test('proposal, foreign, plain collaborator', () => {
   assert.ok(labels.some((l) => /Explore in dev chat/.test(l)), 'offered from ⋯');
   assert.ok(!proposalCardHtml(AppView, PR()).includes('gc-explore-chat-btn'),
     '…and nowhere on the face');
-  assert.ok(labels.some((l) => /kudos/i.test(l)));
+  // Kudos went the other way (#1688): the slot is the band's one pill —
+  // "Thank <author> for putting this up" until the viewer votes or thanks —
+  // so ⋯ no longer offers a second way to give the same kudos.
+  assert.ok(!labels.some((l) => /kudos/i.test(l)), 'kudos is on the face, not in ⋯');
+  assert.match(proposalCardHtml(AppView, PR()), /gc-card-actions[^>]*><span class="contents" data-kudos-host=/);
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });
 

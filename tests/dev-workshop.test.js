@@ -139,6 +139,16 @@ const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 // deepStrictEqual — round-trip through JSON before comparing.
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
+// The board's own routing, over the seeded module state — used to show the
+// mine strip ADDS a place an issue appears without MOVING it.
+function bucketsUnderwayIssue(AppView, number) {
+  return AppView._bucketDevItems({
+    issues: AppView._ghIssues || [], proposals: AppView._proposals || [],
+    gov: AppView._govProposals || [], merged: AppView._merged || [],
+    mySessions: AppView._mySessions || [], sharedSessions: AppView._sharedSessions || [],
+  }).inProgress.some((e) => e.kind === 'issue' && e.item.number === number);
+}
+
 /** A loaded board: two issues, a proposal awaiting the viewer's vote, a merge. */
 function seed(AppView) {
   AppView._ghIssues = [
@@ -1923,6 +1933,77 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // would hide the one thing on this screen you cannot find another way.
   AppView._kanbanFilters = { ...AppView._kanbanFilters, q: 'nothing matches this' };
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
+});
+
+test('#2496: an issue you are working on joins "What you are working on"', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // Issue 12 carries a live claim by the viewer; issue 13 somebody else's.
+  // Both shapes are what GET /github-issues composes: `mine` is the
+  // server's per-viewer answer, `target` rides along on real payloads.
+  AppView._ghIssues[0].in_progress = {
+    count: 0, users: [], peopleTotal: 1, mine: true, sessions: [],
+    claims: [{ username: 'me', userId: 1, mine: true,
+      claimedAt: at(1), expiresAt: at(1 + 7 * 24) }],
+    target: null,
+  };
+  AppView._ghIssues[1].in_progress = {
+    count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
+    claims: [{ username: 'erin', userId: 9, mine: false,
+      claimedAt: at(2), expiresAt: at(2 + 7 * 24) }],
+    target: null,
+  };
+  const v = AppView._workshopView();
+  const mineKeys = plain(v.mine.rows).map((r) => r.key);
+  assert.ok(mineKeys.includes('mine:issue:12'), 'your claimed issue is in the strip');
+  assert.ok(!mineKeys.includes('mine:issue:13'), 'a claim by somebody else is not');
+  // It did not vanish from where it already lived: the bucket still routes
+  // it to Underway, so the issue is drawn exactly once per surface.
+  assert.ok(bucketsUnderwayIssue(AppView, 12), 'still on the board, Underway');
+  assert.ok(bucketsUnderwayIssue(AppView, 13), 'theirs is underway on the board all the same — the strip adds a place, it moves nothing');
+
+  // Rendered, keyed apart from the same card elsewhere in the pane.
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-row="mine:issue:12"/);
+});
+
+test('#2496: the mine-ness predicate reads every live mark the board writes', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // A live session of yours against the issue (the automatic half of
+  // issue-progress), with `mine` composed per session.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'me', mine: true, status: 'active' },
+    ], claims: [] },
+  }), true, 'your live session counts');
+  // Paused counts too — it is still your work, which is what the strip says.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'me', mine: true, status: 'paused' },
+    ], claims: [] },
+  }), true, 'a paused session of yours still counts');
+  // A claim fixture without the per-claim `mine` flag (an older cache)
+  // still names you by username.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { claims: [{ username: 'me', mine: false }] },
+  }), true, 'a claim naming you counts even without the flag');
+  // The boolean alone, on a payload that carries no detail lists.
+  assert.equal(AppView._issueIsMine({ in_progress: { mine: true } }), true);
+  // The board's "assigned to you" reading: the community assignee chip.
+  assert.equal(AppView._issueIsMine({ assignee: { top: 'me' } }), true);
+  // And the negatives: somebody else's claim, their assignee mark, nothing.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'erin', mine: false, status: 'active' },
+    ], claims: [] },
+  }), false, 'somebody else\u2019s session is not yours');
+  assert.equal(AppView._issueIsMine({ assignee: { top: 'erin' } }), false);
+  assert.equal(AppView._issueIsMine({}), false);
+  // A guest has no self to match, so nothing is mine — the same answer the
+  // quick filters give (`_viewerUsername` is null signed out).
+  const guest = makeAppView({ App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  assert.equal(guest._issueIsMine({ assignee: { top: 'me' } }), false);
 });
 
 test('#1887: a card about your own session opens the CARD, with the session a link inside it', () => {
@@ -4859,4 +4940,37 @@ test('the ear re-measures on every render, or a grouping switch leaves it stale'
   // The two things it reads to place the ear are both POSITIONS, which is why
   // a size-only observer is not enough on its own.
   assert.match(body, /t\.right - p\.left \+ EAR_GAP_PX/);
+});
+
+test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
+  // A REAL BUG (#2475). This file carried a private `swatchFor` over seven
+  // stock hues hashed with `h * 31`, under a comment claiming it followed
+  // feed-thread's rule. It did not: feed-thread imports
+  // features/messages/format.tsx, which is six PRODUCT swatches hashed with
+  // FNV-1a. So the same person's initial was one colour on a Workshop row
+  // and a different one in that row's own Comments sheet — which renders
+  // <FeedThread /> a few lines below, from the same name.
+  //
+  // Three call sites read it (the faces strip, a theme's letter tile, an
+  // item's byline avatar) and all three take a name and get a colour back,
+  // so the shared function drops in unchanged.
+  assert.match(WORKSHOP, /^import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';$/m,
+    'the Workshop imports the shared swatch');
+  assert.ok(!/(?:function|const)\s+swatchFor\b/.test(WORKSHOP),
+    'and defines no local copy — a second palette is the bug this fixes');
+
+  // The old palette, named so a re-introduction of any of it is loud. None of
+  // these seven is in the product's vocabulary.
+  for (const hex of ['#8e44ad', '#1f8a4c', '#b4620a', '#c0392b', '#0e7c86', '#6d4c41']) {
+    assert.ok(!WORKSHOP.includes(hex), `${hex} is a stock hue the Workshop no longer paints with`);
+  }
+
+  // The row and the sheet under it now agree, which is the visible fix.
+  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  assert.equal(swatchFor('ada'), swatchFor('ada'));
+  assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
+    'and the colour comes from the shared six');
+  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
+    /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
+    'the sheet reads the same module — that is what makes the two match');
 });

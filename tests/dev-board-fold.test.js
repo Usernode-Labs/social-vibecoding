@@ -777,6 +777,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #2423 extends the existing Done-column check above rather than consuming
   // the final reserved slot: the same fixture now covers the completed
   // change's in-app Closed-issue chip too.
+  //
+  // #1688 does the same with the In-review vote-button check: its column
+  // must now also hold a card whose button asks "Still yes?" (a Yes cast on
+  // an earlier version) and a fresh card whose kudos slot offers thanks by
+  // name — one check, no slot consumed.
   assert.equal(DAPP.tests.length, 690);
 });
 

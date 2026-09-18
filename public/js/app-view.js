@@ -2960,6 +2960,13 @@ const AppView = {
 
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
+      // #2487: a cold topic deep link starts with the display-only header
+      // snapshot from whichever app this browser visited last. Unlike the
+      // forum, chat and owner-session branches, this branch never replaced
+      // that snapshot after the current app's metadata loaded, so the whole
+      // topic could keep naming another app indefinitely. The topic card
+      // names the inner destination; the chip names the app, with no subtitle.
+      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
       await AppView._renderTopicSubView(content, ref);
       return;
     }
@@ -4786,11 +4793,20 @@ const AppView = {
     const scope = root || document;
     if (!window.Kudos) return;
     scope.querySelectorAll('[data-kudos-host]').forEach((host) => {
-      if (host.firstElementChild) return;
       const id = parseInt(host.getAttribute('data-kudos-host'), 10);
       const pr = (AppView._merged || []).find((m) => m.id === id)
         || (AppView._proposals || []).find((p) => p.id === id)
         || { id };
+      // #1688: the slot has two faces (Kudos.thanksVariant), and the host is
+      // React's, reused across repaints — so a host that already holds a
+      // button is re-filled only when its face should change (the viewer
+      // voted, or thanked), never on every publish.
+      const wrap = host.firstElementChild;
+      if (wrap) {
+        const want = typeof Kudos.thanksVariant === 'function' && Kudos.thanksVariant(pr) ? 'thanks' : 'count';
+        const have = wrap.getAttribute('data-kudos-variant') || 'count';
+        if (want === have) return;
+      }
       host.innerHTML = Kudos.renderButton(pr, { compact: true });
     });
     Kudos.attach(scope);
@@ -7297,6 +7313,19 @@ const AppView = {
       ...mineOf(buckets.inReview, (x) => x.kind === 'gov' && meId != null
         && String(x.item.created_by) === String(meId))
         .map((x) => ({ kind: 'gov', item: x.item })),
+      // #2496: an issue you are working on — a claim of yours, a live
+      // session of yours against it, an assignee mark naming you — is your
+      // work in flight in the same sense, and it used to appear only inside
+      // a theme, under that theme's heading. `_bucketDevItems` has already
+      // routed every issue with live work (a claim, a session, an open
+      // promoted proposal) out of the open lane, so the candidates are read
+      // from there rather than re-deriving the predicate; whether one is
+      // YOURS is the board's own mine-ness test, shared with the kanban's
+      // "Assigned to you" filter. An issue somebody ELSE claimed or is
+      // working stays out of the strip: it is still on the board, in the
+      // Underway column and in its theme, exactly as before.
+      ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
+        .map((e) => ({ kind: 'issue', item: e.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
@@ -7312,7 +7341,9 @@ const AppView = {
           ? AppView._mySessionCardModel(item)
           : kind === 'gov'
             ? AppView._govCardModel(item)
-            : AppView._proposalCardModel(item);
+            : kind === 'issue'
+              ? AppView._issueCardModel(item)
+              : AppView._proposalCardModel(item);
         if (!card) return null;
         return AppView._attachRowConversation(
           { t: 'card', key: `mine:${card.key}`, card }, kind, item,
@@ -8457,6 +8488,41 @@ const AppView = {
   _devCardIsMine(kind, item) {
     const me = AppView._viewerUsername();
     return !!me && AppView._devCardAuthor(kind, item) === me;
+  },
+  // #2496: whether the viewer is one of the people an issue's live work
+  // marks name. Shared by the Workshop's "What you are working on" strip
+  // (which lists the issue there) — and deliberately NOT part of
+  // `_devCardMatches`, which reads the same fields for the "Assigned to
+  // you" filter with a narrower, assignee-only contract (#1935).
+  //
+  // Four live marks, any one of which means yes:
+  //   claims[]    — a hand-set claim. The server composes `mine` per
+  //                 viewer (composeInProgress in routes/issues.js), so it
+  //                 is authoritative; a payload without the flag (a test
+  //                 fixture, an older cache) is read as "one of the named
+  //                 claimers is me".
+  //   sessions[]  — a linked dev session, per-session `mine` from the same
+  //                 composition. Paused and in-review sessions count: both
+  //                 are still yours, which is exactly what the strip says.
+  //   the boolean — the server's own OR of the two above, on payloads that
+  //                 carry it and none of the detail lists.
+  //   assignee    — the board's "assigned to you" reading: the community-
+  //                 voted assignee chip names you. Covers an issue handed
+  //                 to you without a claim row under it.
+  _issueIsMine(issue) {
+    const it = issue || {};
+    const me = AppView._viewerUsername();
+    const ip = it.in_progress || null;
+    if (ip) {
+      if (Array.isArray(ip.claims) && ip.claims.length) {
+        if (ip.claims.some((c) => c && (c.mine || (me && c.username === me)))) return true;
+      }
+      if (Array.isArray(ip.sessions) && ip.sessions.length) {
+        if (ip.sessions.some((s) => s && (s.mine || (me && s.username === me)))) return true;
+      }
+      if (ip.mine) return true;
+    }
+    return !!(me && it.assignee && it.assignee.top === me);
   },
   // ── WHERE THE TWO QUICK FILTERS LIVE ────────────────────────────────
   //
@@ -10381,9 +10447,25 @@ const AppView = {
     // Telling it the face carries none is the whole change, and the detail
     // head is untouched — it has room, spells the pill out in full, and has
     // no ⋯ for a menu row to live in.
-    const actions = (isMerged || AppView.readOnly) ? [] : [...AppView._cardVoteButtonSpecs(pr)];
+    // #1688: the kudos slot joins the live card's band — the one pill there,
+    // since the vote moved up beside the bar. On a fresh proposal it reads
+    // "Thank <author> for putting this up" and on one the viewer has voted
+    // on or thanked it is the count (Kudos.thanksVariant decides;
+    // _fillKudosHosts writes it in). The detail head lists the slot in its
+    // own action list below the header (_detailActionsView), so its card
+    // carries none, and a merged card has always had one (_mergedRowModel).
+    const bandKudos = !isMerged && !AppView.readOnly && !noNav && window.Kudos
+      ? [{ key: 'kudos', label: '', kudos: pr.id }]
+      : [];
+    const actions = (isMerged || AppView.readOnly)
+      ? []
+      : [...AppView._cardVoteButtonSpecs(pr), ...bandKudos];
+    // With the slot on the face, ⋯ drops its "Give kudos" row — the same
+    // rule the merged card has always applied (two ways to give one kudos
+    // on one card is one too many).
     const menu = AppView._proposalMenuItems(pr, {
       mine, imported, isMerged, isMerging, noNav, exploreOnFace: false,
+      kudosOnFace: bandKudos.length > 0,
     });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
@@ -10612,12 +10694,18 @@ const AppView = {
     const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
+    // #1688: a vote of the viewer's on an EARLIER version of this proposal —
+    // still on their row, no longer counted (see the /promoted subquery).
+    // The button then asks "Still yes?" instead of "Vote".
+    const prior = pr.my_vote == null && (pr.my_prior_vote === 'yes' || pr.my_prior_vote === 'no')
+      ? { prior: pr.my_prior_vote } : {};
     return [
       {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
         title: yesT.tip, label: `Yes (${yesT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
+        ...prior,
       },
       {
         key: 'no',
@@ -12993,11 +13081,26 @@ const AppView = {
         : (data.approvers
           ? ` · only invited approvers' (✓) votes count`
           : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
+      // #1688: each voter's own line, under the names, and the people whose
+      // vote was on an earlier version of the proposal.
+      const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
+        .filter((q) => q && q.username && q.reason)
+        .map((q) => ({ who: '@' + q.username, vote: q.vote === 'no' ? 'no' : 'yes', text: String(q.reason) }));
+      const earlierYes = Array.isArray(data.earlier?.yes) ? data.earlier.yes : [];
+      const earlierNo = Array.isArray(data.earlier?.no) ? data.earlier.no : [];
+      const earlierParts = [];
+      if (earlierYes.length) earlierParts.push(`${earlierYes.map((u) => '@' + u).join(', ')} said yes`);
+      if (earlierNo.length) earlierParts.push(`${earlierNo.map((u) => '@' + u).join(', ')} said no`);
+      const earlier = earlierParts.length
+        ? `Earlier version: ${earlierParts.join('; ')}. Not counted until they take another look.`
+        : null;
       publish({
         phase: 'ready',
         yes: { label: `Yes ${rosterCount(data.yes)}`, names: fmt(data.yes) },
         no: { label: `No ${rosterCount(data.no)}`, names: fmt(data.no) },
         needs,
+        reasons,
+        earlier,
       });
     } catch {
       publish({ phase: 'hidden' });
@@ -15995,6 +16098,35 @@ const AppView = {
     return out;
   },
 
+  // How wide each side's bar is, as a percentage of the pill.
+  //
+  // Yes grows from the left, No from the right (app.css), both full height,
+  // so the gap between them is what is still undecided. Each side is its
+  // share of the majority threshold — and where those two shares would
+  // CROSS, both are scaled by the same factor so the bars meet instead of
+  // overlapping. Scaling rather than truncating keeps the ratio between them
+  // true: an overlap would simply paint the later bar over the earlier one
+  // and make whichever is drawn first look smaller than its share.
+  //
+  // Reachable: a contested tally is exactly the case where both sides have
+  // votes and neither has reached the threshold (5 active, 3 needed, 2 yes
+  // and 2 no is 133% between them).
+  //
+  // Transcribed into frontend/src/features/dev-board/card/dev-card.tsx,
+  // which cannot import a classic script; tests/dev-status-pill.test.js
+  // reads both ends.
+  voteFillWidths(yes, no, majority) {
+    const maj = majority > 0 ? majority : 1;
+    let y = Math.min(100, (Math.max(yes, 0) / maj) * 100);
+    let n = Math.min(100, (Math.max(no, 0) / maj) * 100);
+    const total = y + n;
+    if (total > 100) {
+      y = (y / total) * 100;
+      n = (n / total) * 100;
+    }
+    return { yes: y, no: n };
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -16164,7 +16296,7 @@ const AppView = {
         : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
       const fills = reached
         ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${Math.min(100, (yes / n) * 100)}%"></span>`;
+        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${AppView.voteFillWidths(yes, 0, n).yes}%"></span>`;
       return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
         + fills
         + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
@@ -16236,12 +16368,11 @@ const AppView = {
       // the winning side's color (green = Yes, red = No).
       fills = `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-${state}"></span>`;
     } else {
-      // In progress: top stripe = Yes share, bottom stripe = No share, each a
-      // fraction of the majority threshold, filling left→right.
-      const yesPct = Math.min(100, (yes / maj) * 100);
-      const noPct = Math.min(100, (no / maj) * 100);
-      fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${yesPct}%"></span>`
-        + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${noPct}%"></span>`;
+      // In progress: Yes from the left, No from the right, each its share of
+      // the majority threshold, meeting rather than overlapping.
+      const w = AppView.voteFillWidths(yes, no, maj);
+      fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${w.yes}%"></span>`
+        + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${w.no}%"></span>`;
     }
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
@@ -17431,13 +17562,63 @@ const AppView = {
   // first, so an impatient second click re-sent the same stale stamp and
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
-  async castVote(sessionId, vote, expectedEpoch = null) {
+  // #1688: the line behind a vote, asked for through the kit's prompt card.
+  // A No needs one (the server refuses a No without it); a Yes may skip.
+  // Resolves the line to send (a string), null for "none", or false when
+  // the voter backed out — a cancelled No casts nothing.
+  async _askVoteReason(vote) {
+    const no = vote === 'no';
+    const pu = window.PlatformUI;
+    if (!pu || typeof pu.prompt !== 'function') return null;
+    const answer = await pu.prompt({
+      title: no ? 'What’s not working for you?' : 'Add a line for the group?',
+      message: no
+        ? 'One line is plenty. It goes to the proposer with your vote.'
+        : 'Optional. It shows beside your vote.',
+      placeholder: no ? 'What would you want to change?' : 'What do you like about it?',
+      confirmLabel: no ? 'Vote No' : 'Vote Yes',
+      cancelLabel: no ? 'Cancel' : 'Skip',
+    });
+    if (answer === null) return no ? false : null;
+    const line = String(answer).replace(/\s+/g, ' ').trim();
+    if (no && !line) {
+      pu.toast('A No comes with a line: what is not working for you?');
+      return false;
+    }
+    return line || null;
+  },
+  // The options bag's `reason` key: a string is sent as the line, null sends
+  // none without asking (a re-confirm of an earlier Yes carries its old
+  // line server-side), and an absent key asks first.
+  async _resolveVoteReason(vote, opts) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (Object.prototype.hasOwnProperty.call(o, 'reason')) {
+      const r = o.reason;
+      if (r == null) return null;
+      const line = String(r).replace(/\s+/g, ' ').trim();
+      return line || null;
+    }
+    return AppView._askVoteReason(vote);
+  },
+  async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
     // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
+    // #1688: the line, before anything is painted — a cancelled No must
+    // leave the card exactly as it was.
+    let reason = null;
+    try {
+      reason = await AppView._resolveVoteReason(vote, opts);
+    } catch {
+      reason = null;
+    }
+    if (reason === false) {
+      AppView._voteInFlight.delete(key);
+      return;
+    }
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -17463,7 +17644,7 @@ const AppView = {
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedEpoch: epoch }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -17477,7 +17658,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
-        PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
+        // #1688: a No the server would not take without its line says so in
+        // the server's own words rather than as an opaque failure.
+        PlatformUI.toast((data.error === 'reason_required' && data.message)
+          || data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
       AppView._seenEpoch.delete(sessionId);
