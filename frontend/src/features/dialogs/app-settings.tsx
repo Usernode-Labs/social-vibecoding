@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -224,14 +225,16 @@ export function AppSettingsDialog() {
     <DialogCard size="sm">
       <h2 className="text-lg font-bold mb-1">App settings</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">{app?.name}</p>
-      {app?.demo_mode ? <p
+      {app?.demo_mode ? <Alert
         id="app-demo-mode-notice"
         role="status"
-        className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200"
+        variant="notice"
+        density="compact"
+        className="mb-4"
       >
         This app is in demo mode. Proposals and votes from <b>@{app.demo_partner || 'its demo partner'}</b> are
         synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.
-      </p> : null}
+      </Alert> : null}
       {loading ? <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Loading app settings…</p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mb-4">{error}</p> : null}
       {!loading && !app && error ? <Button onClick={() => void load(slug.current)}>Retry</Button> : null}

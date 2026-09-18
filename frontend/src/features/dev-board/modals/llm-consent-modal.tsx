@@ -20,6 +20,7 @@
 
 import type { ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DialogCard } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -46,7 +47,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
       ) : null}
       <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
       {view.capacity.t === 'blocked' ? (
-        <div className="rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
+        <Alert variant="notice" density="compact">
           {view.capacity.eligibilityUnavailable
             ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
             : (
@@ -58,7 +59,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
                 {'.'}
               </>
             )}
-        </div>
+        </Alert>
       ) : (
         <>
           <Label htmlFor="llm-consent-cap" className="mb-1">

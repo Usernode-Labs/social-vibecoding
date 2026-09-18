@@ -35,6 +35,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 
+import { alertVariants } from '@/components/ui/alert';
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
@@ -54,6 +55,17 @@ import { TileSkeleton } from '../apps/tile-skeleton';
 import { waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
+
+/**
+ * The offline explanation's box (#2443) — the Alert primitive's `notice`
+ * variant, spread rather than rendered as `<Alert>` so that `.offline-only`
+ * stays at the FRONT of the class attribute: the prerendered markup is probed
+ * for the literal `class="offline-only` (tests/offline-session-boot.test.js,
+ * tests/pwa-shell-wiring.test.js) and the component appends `className` after
+ * its variants. Spelled as a module constant for the same reason login.tsx
+ * does; see the longer note there.
+ */
+const OFFLINE_NOTICE = `offline-only mb-10 ${alertVariants({ variant: 'notice', density: 'roomy' })}`;
 
 /** Directory-load outcome. `loading` is what the prerendered markup ships. */
 type AppsState =
@@ -852,7 +864,7 @@ export function LandingScreen() {
               given — and both header CTAs lead to screens that cannot
               complete. Say so once, here.
           */}
-          <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>

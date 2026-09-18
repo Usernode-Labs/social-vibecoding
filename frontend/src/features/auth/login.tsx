@@ -50,6 +50,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { alertVariants } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
@@ -127,6 +128,26 @@ const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-chil
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
+
+/**
+ * The offline explanation's box (#2443). The SPELLING is the Alert primitive's
+ * `notice` variant — one caution box for the whole shell — but it is spread
+ * here rather than rendered as `<Alert>` for two reasons, both about the
+ * rendered class attribute:
+ *
+ *   * `.offline-only` has to stay at the FRONT of it. `dapp.json` selects
+ *     `body.is-offline #auth-login-screen:not(.hidden) .offline-only`, and the
+ *     prerendered markup is probed for the literal `class="offline-only` by
+ *     tests/offline-session-boot.test.js and tests/pwa-shell-wiring.test.js.
+ *     `<Alert>` appends `className` AFTER its variants.
+ *   * a module constant, not an inline template, because
+ *     tests/signup-invite-link.test.js bans a computed `className={`…`}` in
+ *     this file. Nothing here is computed in the sense that rule is about:
+ *     every class in `alertVariants` is a complete literal in alert.tsx, which
+ *     Tailwind scans, and `offline-only` is an app.css rule rather than a
+ *     utility.
+ */
+const OFFLINE_NOTICE = `offline-only mb-8 ${alertVariants({ variant: 'notice', density: 'roomy' })}`;
 
 /**
  * The terminal email-reset result. It lives on the login form, not beside the
@@ -1107,7 +1128,7 @@ export function LoginScreen() {
               below carry data-offline-disabled so it's obvious which parts
               are the ones that can't work.
           */}
-          <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>

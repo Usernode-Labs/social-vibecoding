@@ -123,6 +123,53 @@ const ALLOWED_BUTTON_FILES = new Set([
   'improve/improve-button.tsx',
 ]);
 
+/**
+ * The caution box's slot, from alertVariants' `notice` variant (#2443).
+ *
+ * ── Why this is three co-occurring utilities and not a colour scan ─────
+ *
+ * Amber is used for plenty of things that are NOT a notice box and must not
+ * be dragged into the primitive: the settings health dot
+ * (`w-1.5 h-1.5 rounded-full shrink-0 bg-amber-500`), an icon tint, a heading
+ * ink, a `hover:` state. A file-wide "no amber outside the primitive" rule
+ * would flag every one of them, and the allow-list needed to quiet it would be
+ * long enough that nobody would read it.
+ *
+ * So the anchor is the SHAPE of the slot rather than the hue: a class string
+ * is a notice box when it has all three of
+ *
+ *   * a BARE amber background — unprefixed, so `hover:bg-amber-500/10` on the
+ *     auth screens' "Try again" button and a lone `dark:bg-amber-950/40` are
+ *     not it;
+ *   * a `rounded-*` — which is what separates a panel from a full-bleed strip.
+ *     The two dev-chat banners and `#view-as-non-admin-banner` are `border-b`
+ *     with square corners: they are banners, and `banner` is the variant for
+ *     those;
+ *   * a padding utility — a tinted dot or a swatch has none.
+ *
+ * A dot, an ink, an icon and a hover each fail at least one. All eight boxes
+ * the audit found pass all three.
+ */
+const NOTICE_FILL = /(^|\s)bg-amber-\d+(\/\d+)?(\s|$)/;
+const NOTICE_ROUNDED = /(^|\s)rounded(-[a-z0-9]+)?(\s|$)/;
+const NOTICE_PADDING = /(^|\s)(p|px|py)-[\d.]+(\s|$)/;
+
+/** See the header: an entry here is a decision, not a fix. */
+const ALLOWED_NOTICE_FILES = new Set([
+  // One of THREE borderless tint chips in StakingCard — amber, sky, violet —
+  // spelled identically but for the hue. `notice` carries a border and is
+  // amber-only, so the other two cannot follow the amber one through it, and
+  // moving one chip of three is how a matched set stops matching. The note at
+  // the call site carries the same reasoning.
+  'header/wallet-sheet-body.tsx',
+  // NOTICE_TONE, which is already one spelling in three tones (warn / ok /
+  // plain) and is internally consistent. Routing only `warn` would split a
+  // table whose whole point is that its three rows match; routing all three
+  // needs an emerald and a fill-less neutral variant nothing else asks for.
+  // See the comment above the table.
+  'settings/sections/usernode.tsx',
+]);
+
 // Empty, and worth keeping empty: every field box in the tree now comes from
 // the primitive. The two remaining literal occurrences of the string are on
 // `<div>`s — the header's theme-toggle groups reuse the field box as a
@@ -235,6 +282,74 @@ test('no hand-written field box survives outside the allow-list', () => {
     offenders,
     [],
     'route these through <Input> / <Textarea>:\n' + offenders.join('\n'),
+  );
+});
+
+/**
+ * Strip block, line and JSX comments. These files explain the very spellings
+ * the rule below bans — the two allow-listed call sites quote their own class
+ * strings in prose — and prose about a class is not a class.
+ */
+function withoutComments(text) {
+  return text
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
+
+/** Every quoted or backticked run in `src`, comments already removed. */
+function* stringLiterals(src) {
+  for (const m of src.matchAll(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g)) yield m[0];
+}
+
+test('no hand-written amber notice box survives outside the allow-list', () => {
+  const offenders = [];
+  for (const [rel, abs] of files) {
+    if (ALLOWED_NOTICE_FILES.has(rel)) continue;
+    const src = withoutComments(fs.readFileSync(abs, 'utf8'));
+    for (const literal of stringLiterals(src)) {
+      if (
+        NOTICE_FILL.test(literal)
+        && NOTICE_ROUNDED.test(literal)
+        && NOTICE_PADDING.test(literal)
+      ) {
+        offenders.push(`${rel}: ${literal.replace(/\s+/g, ' ').slice(0, 160)}`);
+      }
+    }
+  }
+  assert.deepStrictEqual(
+    offenders,
+    [],
+    'route these through <Alert variant="notice" density="…"> (see '
+      + 'frontend/@/components/ui/alert.tsx) rather than writing the box '
+      + 'literally:\n' + offenders.join('\n'),
+  );
+});
+
+test('the notice slot is anchored tightly enough to leave real amber alone', () => {
+  // The four spellings an earlier, hue-wide version of this rule flagged by
+  // mistake. Each is amber and none is a notice box; if any starts failing,
+  // the anchor has been loosened and the allow-list is about to grow for the
+  // wrong reason.
+  const innocent = [
+    'w-1.5 h-1.5 rounded-full shrink-0 bg-amber-500',                     // a status dot
+    'mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium '
+      + 'text-amber-800 dark:text-amber-300 hover:bg-amber-500/10',       // the "Try again" button
+    'flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 '
+      + 'border-b border-amber-200 text-xs',                              // a full-bleed strip
+    'text-sm font-semibold text-amber-800 dark:text-amber-400',           // a heading ink
+  ];
+  for (const s of innocent) {
+    assert.ok(
+      !(NOTICE_FILL.test(s) && NOTICE_ROUNDED.test(s) && NOTICE_PADDING.test(s)),
+      `over-broad: this is not a notice box — ${s}`,
+    );
+  }
+  // …and the slot it IS meant to catch.
+  const box = 'mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm';
+  assert.ok(
+    NOTICE_FILL.test(box) && NOTICE_ROUNDED.test(box) && NOTICE_PADDING.test(box),
+    'the rule no longer matches a hand-written notice box',
   );
 });
 

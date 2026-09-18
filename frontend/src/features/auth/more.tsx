@@ -59,6 +59,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
@@ -671,12 +672,19 @@ export function MoreScreen() {
         pick the next group, and you can come back and add to them any time.
         </p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
-        <div
+        {/*
+            `startHidden` rather than `hiddenFirst`: both put `hidden` at the
+            front of the class string, and the variant is the primitive's own
+            way of doing it (see the header of @/components/ui/alert.tsx).
+            Nothing outside React writes to this node — `status` is React
+            state — so the class may be re-rendered.
+        */}
+        <Alert
           id="more-invalid"
-          className={hiddenFirst(
-            status !== 'invalid' && status !== 'throttled',
-            'mt-6 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300',
-          )}
+          variant="notice"
+          density="roomy"
+          startHidden={status !== 'invalid' && status !== 'throttled'}
+          className="mt-6"
         >
           {status === 'throttled' ? (
             <>
@@ -693,7 +701,7 @@ export function MoreScreen() {
               {' first.'}
             </>
           )}
-        </div>
+        </Alert>
         <form
           id="more-form"
           className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}

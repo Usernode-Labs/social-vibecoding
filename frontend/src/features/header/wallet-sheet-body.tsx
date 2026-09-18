@@ -54,6 +54,16 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
       <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400">
         Block production
       </div>
+      {/*
+          #2443 looked at this box and left it alone. It is not a caution box
+          on its own: it is one of a set of three BORDERLESS tint chips this
+          card draws — amber here, sky immediately below, violet for the
+          delegated state further down — all `rounded-lg bg-<hue>-500/10 px-3
+          py-2 text-sm font-medium`. `Alert`'s `notice` variant carries a
+          border, and the other two are not cautions, so they cannot follow it
+          there; routing only the amber one would give one chip of three a rule
+          its siblings lack. The set moves together or not at all.
+      */}
       <div className="my-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 dark:text-amber-300">
         When delegated, you receive half the points you would earn by producing blocks directly from your phone.
       </div>

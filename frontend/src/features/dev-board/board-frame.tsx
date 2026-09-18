@@ -67,6 +67,7 @@ import {
   PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 import { DevActionsRow } from './actions-row';
@@ -229,8 +230,9 @@ function MainPauseNotice(): ReactNode {
     window.AppView?.resumeMainMerges?.(s.slug, btnRef.current);
   };
   return (
-    <div
-      className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+    <Alert
+      variant="notice"
+      density="compact"
       data-main-pause={s.confirming ? 'confirming' : 'paused'}
     >
       <div className="flex items-start gap-3">
@@ -249,7 +251,7 @@ function MainPauseNotice(): ReactNode {
           </Button>
         ) : null}
       </div>
-    </div>
+    </Alert>
   );
 }
 
