@@ -2,7 +2,7 @@
 
 Issue: [#2377 — Make chats global and use MCP for interface](https://github.com/Usernode-Labs/social-vibecoding/issues/2377)
 
-Base commit: `05f9b82ea47bf9c9021ff804169e385ce8fa4b08`
+Base commit: `043ab7a8887c085a547c732295fa82c0adefc5a1`
 
 Working branch: `codex/issue-2377-global-chat-experimental`
 
@@ -180,9 +180,9 @@ same underlying OpenRouter credential.
 ```text
 Global chat profile
   backend: openrouter
-  default model: deepseek/deepseek-v4-flash-0731
-  default reasoning effort: low
-  recommended reasoning effort: low
+  default model: z-ai/glm-5.3-flash
+  default reasoning effort: minimal
+  recommended reasoning effort: minimal
   temperature: 0.1
   max output tokens: 800
 
@@ -192,14 +192,13 @@ Development profile
   no value copied automatically from Global chat
 ```
 
-The September 2026 default is based on the live OpenRouter catalog: DeepSeek V4
-Flash 0731 advertises tool choice, structured outputs, parallel tool calls, and
-reasoning effort, with list pricing around $0.06/M input and $0.12/M output at
-the time of implementation. GLM 5.3 Flash is the first approved fallback for a
-provider/model outage, not the silent default, and its use is recorded on the
-turn. Sources:
+The September 2026 default is based on the live OpenRouter catalog: GLM 5.3
+Flash advertises tool calling, structured outputs, reasoning effort, a large
+context window, and low Flash-tier pricing. DeepSeek V4 Flash 0731 is the first
+approved operational fallback for a provider/model outage, not the silent
+default, and fallback use is recorded on the turn. Sources:
 
-- https://openrouter.ai/deepseek/deepseek-v4-flash-0731
+- https://openrouter.ai/z-ai/glm-5.3-flash
 - https://openrouter.ai/collections/tool-calling-models
 
 Both defaults are configuration values, not permanent literals. On startup the
@@ -211,7 +210,7 @@ route a product action through an unvalidated model.
 Settings expose, separately:
 
 - Global chat model
-- Global chat reasoning effort, defaulting and recommended to `low`
+- Global chat reasoning effort, defaulting and recommended to `minimal`
 - Global-chat spend and optional personal cap
 - Development backend/model
 - Development reasoning effort
@@ -313,8 +312,8 @@ call. Missing optional values are `null`; unknown values are never guessed.
   },
   "globalChatProfile": {
     "backend": "openrouter",
-    "model": "deepseek/deepseek-v4-flash-0731",
-    "reasoningEffort": "low"
+    "model": "z-ai/glm-5.3-flash",
+    "reasoningEffort": "minimal"
   },
   "developmentProfile": {
     "backend": "configured backend",
@@ -339,7 +338,7 @@ Metadata is server-authored and sent separately from user/tool content.
 Default provider invocation:
 
 ```text
-reasoning effort   low
+reasoning effort   minimal
 tool choice        auto
 temperature        0.1 when supported
 max output tokens  800 (200 for More suggestions)
@@ -548,7 +547,7 @@ product releases.
 - Reach zero unexplained gaps for normal, collaborator, creator, admin,
   read-only-admin, and native-only roles.
 - Run targeted suites with `npm run test:changed -- --base
-  05f9b82ea47bf9c9021ff804169e385ce8fa4b08`; run the full suite only if the
+  043ab7a8887c085a547c732295fa82c0adefc5a1`; run the full suite only if the
   repository's changed-test mapping cannot see affected shared code.
 - Run deterministic desktop and mobile UI paths and accessibility checks.
 - Expose `Chat (experimental)` to all signed-in users in the completed release.
@@ -637,7 +636,7 @@ read-only mode, and transcript deletion.
   now `parityReady: true`; this exposes the experimental switch to every
   signed-in user without changing Classic startup behavior.
 - [x] OpenRouter streaming/tool transport with strict structured output,
-  low-effort reasoning, bounded SSE parsing, live provider usage, and sanitized
+  minimal-effort reasoning, bounded SSE parsing, live provider usage, and sanitized
   failures.
 - [x] Atomic pre-call reservations enforce both the live overall allowance and
   UTC monthly Global Chat cap before every model attempt/retry; settlement
@@ -662,8 +661,8 @@ read-only mode, and transcript deletion.
 - [x] Focused Global Chat suite: 89 tests passed, 0 failed, including the
   signed-out/member/collaborator/creator/read-only-admin/full-admin/native
   matrix and the release-gate contract.
-- [x] Repository changed-test gate against the exact base commit: 8,541 tests,
-  8,516 passed, 25 skipped, 0 failed.
+- [x] Repository changed-test gate against the exact base commit: 8,552 tests,
+  8,527 passed, 25 skipped, 0 failed.
 - [x] Transcript summary/compaction and explicit development-session handoff
   contract using the separately configured development profile.
 - [x] Responsive web/native screen, compact allowlisted renderers, mode switch,
@@ -675,8 +674,10 @@ read-only mode, and transcript deletion.
 - [x] Protected actions render exact server-owned confirmation previews and
   preserve their `Open in Classic` destination before and after execution.
 - [x] Production shell build, generated-inventory check, diff check, changed
-  regression gate, and full repository suite: 14,127 tests, 14,092 passed,
+  regression gate, and full repository suite: 14,191 tests, 14,156 passed,
   35 environment-dependent skips, 0 failed.
-- [ ] PR/proposal creation, deployed-environment verification, and the
+- [x] Branch rebased onto the current `origin/main` and locally verified for
+  ready-for-review PR submission.
+- [ ] Usernode proposal import, deployed-environment verification, and the
   non-closing issue comment remain intentionally unperformed until explicitly
   requested.

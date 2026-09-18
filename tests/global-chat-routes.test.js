@@ -90,7 +90,7 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
   const { globalChatRoutes } = require(routePath);
   const { server, base } = await listen(globalChatRoutes({
     openrouterDefaultGlobalChatModel: 'cheap/default',
-    openrouterDefaultGlobalChatReasoning: 'low',
+    openrouterDefaultGlobalChatReasoning: 'minimal',
     openrouterGlobalChatFallbackModels: ['fallback/valid'],
     openrouterApiBase: 'https://openrouter.ai/api/v1',
     openrouterOrigin: 'https://usernode.dev',
@@ -109,7 +109,7 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
   return { base, state, writes };
 }
 
-test('Global Chat settings default to Classic startup and low effort', async (t) => {
+test('Global Chat settings default to Classic startup and minimal effort', async (t) => {
   const { base } = await mount(t);
   const response = await fetch(`${base}/api/me/global-chat`);
   assert.equal(response.status, 200);
@@ -118,7 +118,7 @@ test('Global Chat settings default to Classic startup and low effort', async (t)
   assert.equal(body.experimental, true);
   assert.equal(body.startupMode, 'classic');
   assert.equal(body.profile.model, 'cheap/default');
-  assert.equal(body.profile.reasoningEffort, 'low');
+  assert.equal(body.profile.reasoningEffort, 'minimal');
   assert.equal(body.profile.saved, false);
   assert.equal(body.usage.spentUsd, '0.08');
 });

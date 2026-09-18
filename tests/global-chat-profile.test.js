@@ -10,7 +10,7 @@ const profile = require('../src/services/global-chat/profile');
 
 const config = {
   openrouterDefaultGlobalChatModel: 'cheap/default',
-  openrouterDefaultGlobalChatReasoning: 'low',
+  openrouterDefaultGlobalChatReasoning: 'minimal',
   openrouterGlobalChatFallbackModels: ['fallback/valid'],
 };
 
@@ -18,7 +18,7 @@ test('global-chat profile validation keeps cheap defaults separate and money exa
   assert.deepEqual(profile.defaults(config), {
     backend: 'openrouter',
     model: 'cheap/default',
-    reasoningEffort: 'low',
+    reasoningEffort: 'minimal',
     spendCapUsd: null,
   });
   assert.throws(
@@ -67,7 +67,7 @@ test('global chat catalog includes only models that meet tools, schema, and effo
     models: [
       {
         id: 'fallback/valid', supportsTools: true, supportsStructuredOutputs: true,
-        supportsReasoningEffort: true, reasoningEfforts: ['low', 'high'],
+        supportsReasoningEffort: true, reasoningEfforts: ['minimal', 'low'],
       },
       {
         id: 'cheap/default', supportsTools: true, supportsStructuredOutputs: true,
@@ -78,7 +78,7 @@ test('global chat catalog includes only models that meet tools, schema, and effo
         supportsReasoningEffort: true,
       },
     ],
-  }, config, 'low');
+  }, config, 'minimal');
 
   assert.deepEqual(catalog.models.map((model) => model.id), ['fallback/valid']);
   assert.equal(catalog.recommendedModelId, 'fallback/valid');
@@ -86,7 +86,7 @@ test('global chat catalog includes only models that meet tools, schema, and effo
   assert.deepEqual(catalog.requiredCapabilities, {
     tools: true,
     structuredOutputs: true,
-    reasoningEffort: 'low',
+    reasoningEffort: 'minimal',
   });
 });
 

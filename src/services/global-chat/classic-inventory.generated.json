@@ -7134,7 +7134,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 161,
+      "line": 177,
       "method": "GET",
       "path": "/api/public/waitlist/options",
       "expression": null,
@@ -7143,7 +7143,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 208,
+      "line": 228,
       "method": "POST",
       "path": "/api/public/waitlist",
       "expression": null,
@@ -7152,7 +7152,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 402,
+      "line": 422,
       "method": "POST",
       "path": "/api/public/waitlist/resend",
       "expression": null,
@@ -7161,7 +7161,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 453,
+      "line": 473,
       "method": "POST",
       "path": "/api/public/waitlist/status",
       "expression": null,
@@ -7170,7 +7170,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 495,
+      "line": 515,
       "method": "GET",
       "path": "/api/public/waitlist/confirm/:token",
       "expression": null,
@@ -7179,7 +7179,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 532,
+      "line": 552,
       "method": "POST",
       "path": "/api/public/waitlist/confirm",
       "expression": null,
@@ -7188,7 +7188,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 565,
+      "line": 585,
       "method": "GET",
       "path": "/api/public/waitlist/more/:token",
       "expression": null,
@@ -7197,7 +7197,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 636,
+      "line": 656,
       "method": "POST",
       "path": "/api/public/waitlist/more/:token",
       "expression": null,
@@ -7206,7 +7206,7 @@
     },
     {
       "source": "src/routes/public-api.js",
-      "line": 665,
+      "line": 685,
       "method": "GET",
       "path": "/api/public/mobile-app",
       "expression": null,

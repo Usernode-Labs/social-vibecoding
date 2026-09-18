@@ -333,12 +333,12 @@ function load() {
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // Global Chat is a separate profile from repository development. Its
-    // inexpensive, low-effort defaults never rewrite the coding-agent choice.
+    // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
     openrouterDefaultGlobalChatModel:
       process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL || DEFAULT_GLOBAL_CHAT_MODEL,
     openrouterDefaultGlobalChatReasoning: globalChatDefaultReasoningEffort,
     openrouterGlobalChatFallbackModels:
-      (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'z-ai/glm-5.3-flash')
+      (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'deepseek/deepseek-v4-flash-0731')
         .split(',').map((s) => s.trim()).filter(Boolean),
     // Curated badges in the model picker. Exact ids keep the recommendation
     // deliberate: adding a provider prefix here would label dozens of old,

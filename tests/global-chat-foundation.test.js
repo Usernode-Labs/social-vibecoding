@@ -92,7 +92,7 @@ function runtimeInput(overrides = {}) {
     globalChatProfile: {
       backend: 'openrouter',
       model: DEFAULT_MODEL,
-      reasoningEffort: 'low',
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
       apiKey: 'must-not-pass',
     },
     developmentProfile: {
@@ -127,7 +127,7 @@ test('the versioned system prompt pins full parity, discovery, safety, and compa
   assert.match(SYSTEM_PROMPT, /Open-in-Classic links.*added by Homeroom/i);
 });
 
-test('runtime metadata is allowlisted, deterministic, and defaults global chat to low effort', () => {
+test('runtime metadata is allowlisted, deterministic, and defaults global chat to minimal effort', () => {
   const now = new Date('2026-09-18T12:00:00.000Z');
   const metadata = buildRuntimeMetadata(runtimeInput(), { now });
 

@@ -88,7 +88,7 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
   assert.match(settings, /Global Chat model/);
-  assert.match(settings, /Low · recommended/);
+  assert.match(settings, /Minimal · recommended/);
   assert.match(settings, /Monthly Chat cap in USD/);
   assert.match(settings, /Global Chat this month/);
   assert.match(settings, /Overall OpenRouter remaining/);

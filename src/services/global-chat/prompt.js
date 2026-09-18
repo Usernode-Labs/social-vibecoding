@@ -9,8 +9,8 @@
 
 const PROMPT_VERSION = 'global-chat-system-v2';
 const METADATA_SCHEMA_VERSION = 1;
-const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash-0731';
-const DEFAULT_REASONING_EFFORT = 'low';
+const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+const DEFAULT_REASONING_EFFORT = 'minimal';
 
 const REQUEST_KINDS = new Set([
   'user_turn',
