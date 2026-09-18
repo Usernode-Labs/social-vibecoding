@@ -11682,6 +11682,19 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-reason-send-yes { background: var(--accent); color: var(--accent-ink); }
 .dev-vote-reason-send-no { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-vote-reason-send:disabled { opacity: 0.5; cursor: default; }
+/* The same picker as a kit bottom sheet on touch (#1688 follow-up): the two
+   rows at tap-target size and the line box INLINE under them, in the one
+   sheet — not a native action sheet followed by a second prompt card. The
+   box is 16px so iOS does not zoom on focus; the kit's `--un-kb-inset`
+   lifts the sheet above the keyboard. */
+.dev-vote-sheet { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; }
+.dev-vote-sheet .dev-vote-opt { height: 48px; padding: 0 14px; border-radius: 12px; font-size: 16px; }
+.dev-vote-sheet .dev-vote-opt svg { width: 18px; height: 18px; }
+.dev-vote-sheet .dev-vote-reason { margin-top: 8px; padding-top: 10px; gap: 6px; }
+.dev-vote-sheet .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
+.dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
+.dev-vote-sheet .dev-vote-reason-actions { padding-top: 6px; gap: 8px; }
+.dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
 .dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
