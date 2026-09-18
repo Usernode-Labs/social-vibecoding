@@ -400,33 +400,38 @@ export const BADGE_MAX = 4;
  * pills a card could show, on every open proposal, whether or not the reader
  * meant to vote. They are one button now: "Vote ▾" until the viewer has cast
  * one, then "✓ Yes ▾" (filled accent) or "✕ No ▾" (blocked tint), and the
- * caret says it can always be changed. Pressing it opens a two-row picker;
- * the rows are the SAME two ActionSpecs the pills were (`castVote` /
- * `castIssueVote`, with the reviewed revision in their args), so the server's
- * head-revision guard and the tally in each label are untouched.
+ * caret says it can always be changed. Pressing it opens the picker: ONE
+ * panel (`VotePicker`) — a two-way switch across its top with Yes on by
+ * default, the line box under it, and Cancel beside one button that reads
+ * "Vote yes" or "Vote no" with the switch. The two sides are the SAME two
+ * ActionSpecs the pills were (`castVote` / `castIssueVote`, with the
+ * reviewed revision in their args), so the server's head-revision guard and
+ * the tally in each label are untouched. A Yes is one click once the picker
+ * is open, and nothing appears as a second step: the box is there from the
+ * start, optional on a Yes and required on a No.
  *
  * The picker is portalled to `document.body` and positioned fixed from the
  * button's rect, exactly as `_toggleCardMenu` places the ⋯ menu: the kanban
  * columns scroll sideways, so anything left inside a card would be clipped
  * by its own column.
  *
- * On touch the SAME picker is a kit bottom sheet (#1688 follow-up): the two
- * rows at tap-target size and, once a side is picked, the line box inline
- * under them — one place, not a native action sheet followed by the kit's
- * prompt card. The kit keeps a sheet above the on-screen keyboard
- * (`--un-kb-inset`), which is what makes a box inside one usable. The action
- * sheet + prompt-card path survives only as the fallback where no sheet can
- * be presented (the kit missing), and desktop is untouched.
+ * On touch the SAME panel is a kit bottom sheet (#1688 follow-up): the
+ * switch at tap-target size and the box inline under it — one place, not a
+ * native action sheet followed by the kit's prompt card. The kit keeps a
+ * sheet above the on-screen keyboard (`--un-kb-inset`), which is what makes
+ * a box inside one usable. The action sheet + prompt-card path survives
+ * only as the fallback where no sheet can be presented (the kit missing),
+ * and desktop is untouched.
  */
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<{ top: number; bottom: number; right: number } | null>(null);
-  // #1688: the reason step. Null while the picker shows its two rows; a side
-  // once one is picked, when the picker grows a one-line box under them.
-  const [asking, setAsking] = useState<'yes' | 'no' | null>(null);
+  // The switch's side while the picker is up: Yes by default, the viewer's
+  // own vote when they have one, so changing a No starts from No.
+  const [side, setSide] = useState<'yes' | 'no'>('yes');
   const [line, setLine] = useState('');
   // The touch picker: the kit sheet's content element while it is up, and
-  // the handle that takes it down. `sheetEl` is what the rows portal into.
+  // the handle that takes it down. `sheetEl` is what the panel portals into.
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
   const sheetRef = useRef<{ dismiss: () => void } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -436,8 +441,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     ? 'yes'
     : (/\bgc-vote-active\b/.test(no.cls || '') ? 'no' : null);
   // #1688: the viewer's Yes was on an EARLIER version of the proposal. The
-  // face asks "Still yes?", and a Yes goes straight through — the server
-  // carries their earlier line onto this version, so nothing is asked.
+  // face asks "Still yes?", the switch reads "Still yes" / "Not this time",
+  // and a Yes sent without a line keeps the earlier one — the server carries
+  // it onto this version.
   const prior: 'yes' | 'no' | null = !mine && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
   // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
   const tally = (a: ActionSpec) => {
@@ -445,10 +451,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     return m ? m[1] : '';
   };
   const reasonId = `dev-vote-reason-${String(yes.act?.args?.[0] ?? 'x')}`;
+  // A governance vote carries no line: the panel is the switch and the
+  // button, and the call is the spec's own.
   const isVote = yes.act?.fn === 'castVote';
+  const startSide = (): 'yes' | 'no' => (mine === 'no' ? 'no' : 'yes');
   const shut = () => {
     setOpen(false);
-    setAsking(null);
     setLine('');
     // The kit tears the sheet down with a spring and then calls onDismiss,
     // which is where the sheet state is cleared — once, whichever side
@@ -465,16 +473,10 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const send = (a: ActionSpec, reason: string | null) => {
     shut();
     if (!a.act) return;
+    if (!isVote) { call(a.act); return; }
     const args = [...(a.act.args || [])];
     while (args.length < 3) args.push(null);
     call({ fn: a.act.fn, args: [...args, { reason }] });
-  };
-  const pick = (a: ActionSpec, side: 'yes' | 'no') => {
-    // A governance vote has no line; a re-confirmed Yes brings its own.
-    if (!isVote) { shut(); call(a.act); return; }
-    if (side === 'yes' && prior === 'yes') { send(a, null); return; }
-    setAsking(side);
-    setLine('');
   };
   // The fallback's rows are the native action sheet's, and the line is then
   // asked for by castVote itself through the kit's prompt card — the one
@@ -484,10 +486,10 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     shut();
     call(a.act);
   };
-  // The touch picker: a kit bottom sheet holding the same rows and, once a
-  // side is picked, the same line box, inline. The element handed to the kit
-  // is the portal's target; the kit reparents it into its sheet body and
-  // hands back the dismiss handle. False when there is no sheet to be had.
+  // The touch picker: a kit bottom sheet holding the same panel. The element
+  // handed to the kit is the portal's target; the kit reparents it into its
+  // sheet body and hands back the dismiss handle. False when there is no
+  // sheet to be had.
   const openSheet = (pu: any): boolean => {
     if (typeof pu.sheet !== 'function' || typeof document === 'undefined') return false;
     const panel = document.createElement('div');
@@ -497,7 +499,6 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       onDismiss: () => {
         sheetRef.current = null;
         setSheetEl(null);
-        setAsking(null);
         setLine('');
       },
     });
@@ -509,6 +510,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const toggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (open || sheetRef.current) { shut(); return; }
+    setSide(startSide());
+    setLine('');
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch()) {
       if (openSheet(pu)) return;
@@ -553,12 +556,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const sheet = sheetRef.current;
     if (sheet) { sheetRef.current = null; sheet.dismiss(); }
   }, []);
-  // The box takes focus the moment it appears, so the picker's tap is the
-  // last one before typing. A layout effect, so on touch the focus still
-  // counts as part of that tap and raises the keyboard.
+  // The box takes focus when the popover opens, and in either home the
+  // moment the switch lands on No — the side that needs a line. A layout
+  // effect, so on touch the focus still counts as part of that tap and
+  // raises the keyboard. Not on a sheet opening on Yes: a keyboard rising
+  // over a one-tap "Vote yes" would be in the way.
   useIsoLayoutEffect(() => {
-    if (asking) boxRef.current?.focus();
-  }, [asking]);
+    if (open || (sheetEl && side === 'no')) boxRef.current?.focus();
+  }, [open, sheetEl, side]);
   const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
@@ -568,52 +573,58 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     : prior === 'yes'
       ? `You said yes to an earlier version. One tap carries it onto this one.`
       : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
-  // The popover's frame follows what it holds: two rows, or two rows and the
-  // line box. Placed from the button's rect each render, exactly as
+  // The popover's frame: the switch, the box and the buttons (no box on a
+  // governance vote). Placed from the button's rect each render, exactly as
   // `_toggleCardMenu` places the ⋯ menu.
-  const w = asking ? 268 : 168;
-  const h = asking ? 226 : 84;
+  const w = 312;
+  const h = isVote ? 190 : 100;
   const pos = rect ? (() => {
     const left = Math.min(Math.max(8, rect.right - w), window.innerWidth - w - 8);
     let top = rect.bottom + 6;
     if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 6);
     return { top: Math.round(top), left: Math.round(left) };
   })() : null;
-  const askingSpec = asking === 'yes' ? yes : no;
+  const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
+  // A No needs its line; a Yes may go without one.
+  const canSend = !isVote || side === 'yes' || !!trimmed;
+  const submit = () => {
+    if (!canSend) return;
+    send(spec, isVote ? (trimmed || null) : null);
+  };
   const onBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
     if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
-      if (asking === 'no' && !trimmed) return;
-      send(askingSpec, trimmed || null);
+      submit();
     }
   };
-  // The rows and the box, drawn once for both homes: the anchored popover
-  // on desktop, the kit sheet on touch.
+  // The panel, drawn once for both homes: the anchored popover on desktop,
+  // the kit sheet on touch.
   const picker = (
     <VotePicker
       yes={yes}
       no={no}
-      mine={mine}
       prior={prior}
-      asking={asking}
+      side={side}
       line={line}
       reasonId={reasonId}
       boxRef={boxRef}
       tally={tally}
-      onPick={pick}
+      withLine={isVote}
+      onSide={setSide}
       onLine={setLine}
       onBoxKey={onBoxKey}
-      onCancel={() => (asking === 'yes' ? send(yes, null) : shut())}
-      onSend={() => send(askingSpec, trimmed || null)}
+      onCancel={shut}
+      onSend={submit}
     />
   );
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}
       className="dev-vote-pop"
-      role="menu"
-      data-asking={asking || undefined}
+      role="dialog"
+      aria-label="Your vote"
+      data-side={side}
       style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
       onClick={(ev) => ev.stopPropagation()}
     >
@@ -622,7 +633,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     document.body,
   ) : null;
   const sheet = sheetEl ? createPortal(
-    <div className="dev-vote-sheet" role="menu" data-vote-sheet="" data-asking={asking || undefined}>
+    <div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side={side}>
       {picker}
     </div>,
     sheetEl,
@@ -634,7 +645,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         type="button"
         className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
         data-vote-btn={mine || (prior === 'yes' ? 'prior-yes' : 'open')}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={title}
         disabled={disabled}
@@ -652,66 +663,69 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
 }
 
 /**
- * The picker's two rows and, once a side is picked, the line box under
- * them (#1688). One drawing for both of its homes — `VoteButton`'s anchored
- * popover on desktop and its kit bottom sheet on touch — so the wording, the
- * "Vote No stays off until there is a line" rule and the Skip on a Yes
- * cannot drift between the two. Exported for the tests that render it
- * directly; the state lives in `VoteButton`.
+ * The picker's one panel: the two-way switch across the top (Yes on by
+ * default, each half carrying its tally), the line box under it, and Cancel
+ * beside the one button that reads "Vote yes" or "Vote no" with the switch —
+ * off on a No until there is a line. One drawing for both of its homes,
+ * `VoteButton`'s anchored popover on desktop and its kit bottom sheet on
+ * touch, so the wording and the rules cannot drift between the two.
+ * `withLine` is false on a governance vote, which carries no line. Exported
+ * for the tests that render it directly; the state lives in `VoteButton`.
  */
 export function VotePicker({
-  yes, no, mine, prior, asking, line, reasonId, boxRef, tally, onPick, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, side, line, reasonId, boxRef, tally, withLine, onSide, onLine, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
-  mine: 'yes' | 'no' | null;
   prior: 'yes' | 'no' | null;
-  asking: 'yes' | 'no' | null;
+  side: 'yes' | 'no';
   line: string;
   reasonId: string;
   boxRef?: RefObject<HTMLTextAreaElement | null>;
   tally: (a: ActionSpec) => string;
-  onPick: (a: ActionSpec, side: 'yes' | 'no') => void;
+  withLine: boolean;
+  onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
   onCancel: () => void;
   onSend: () => void;
 }): ReactNode {
   const trimmed = line.replace(/\s+/g, ' ').trim();
+  const yesOn = side === 'yes';
   return (
     <>
-      <button
-        type="button"
-        role="menuitemradio"
-        aria-checked={asking ? asking === 'yes' : mine === 'yes'}
-        className="dev-vote-opt dev-vote-opt-yes"
-        title={yes.title}
-        data-act={yes.act?.fn}
-        onClick={() => onPick(yes, 'yes')}
-      >
-        <CheckIcon aria-hidden="true" />
-        {prior === 'yes' ? 'Still yes' : 'Yes'}
-        <span className="dev-vote-n">{tally(yes)}</span>
-      </button>
-      <button
-        type="button"
-        role="menuitemradio"
-        aria-checked={asking ? asking === 'no' : mine === 'no'}
-        className="dev-vote-opt dev-vote-opt-no"
-        title={no.title}
-        data-act={no.act?.fn}
-        onClick={() => onPick(no, 'no')}
-      >
-        <XIcon aria-hidden="true" />
-        {prior === 'yes' ? 'Not this time' : 'No'}
-        <span className="dev-vote-n">{tally(no)}</span>
-      </button>
-      {asking ? (
-        <div className="dev-vote-reason" data-vote-reason={asking}>
+      <div className="dev-vote-switch" role="group" aria-label="Yes or No">
+        <button
+          type="button"
+          className="dev-vote-switch-opt dev-vote-switch-yes"
+          aria-pressed={yesOn}
+          title={yes.title}
+          data-act={yes.act?.fn}
+          onClick={() => onSide('yes')}
+        >
+          <CheckIcon aria-hidden="true" />
+          {prior === 'yes' ? 'Still yes' : 'Yes'}
+          <span className="dev-vote-n">{tally(yes)}</span>
+        </button>
+        <button
+          type="button"
+          className="dev-vote-switch-opt dev-vote-switch-no"
+          aria-pressed={!yesOn}
+          title={no.title}
+          data-act={no.act?.fn}
+          onClick={() => onSide('no')}
+        >
+          <XIcon aria-hidden="true" />
+          {prior === 'yes' ? 'Not this time' : 'No'}
+          <span className="dev-vote-n">{tally(no)}</span>
+        </button>
+      </div>
+      {withLine ? (
+        <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
-            {asking === 'no'
-              ? 'What’s not working for you? One line is plenty.'
-              : 'Add a line for the group, if you like.'}
+            {yesOn
+              ? 'Add a line for the group, if you like.'
+              : 'What’s not working for you? One line is plenty.'}
           </label>
           <textarea
             id={reasonId}
@@ -719,30 +733,24 @@ export function VotePicker({
             className="dev-vote-reason-box"
             rows={2}
             maxLength={280}
-            placeholder={asking === 'no' ? 'What would you want to change?' : 'What do you like about it?'}
+            placeholder={yesOn ? 'What do you like about it?' : 'What would you want to change?'}
             value={line}
             onChange={(ev) => onLine(ev.target.value)}
             onKeyDown={onBoxKey}
           />
-          <div className="dev-vote-reason-actions">
-            <button
-              type="button"
-              className="dev-vote-reason-cancel"
-              onClick={onCancel}
-            >
-              {asking === 'yes' ? 'Skip' : 'Cancel'}
-            </button>
-            <button
-              type="button"
-              className={`dev-vote-reason-send dev-vote-reason-send-${asking}`}
-              disabled={asking === 'no' && !trimmed}
-              onClick={onSend}
-            >
-              {asking === 'yes' ? 'Vote Yes' : 'Vote No'}
-            </button>
-          </div>
         </div>
       ) : null}
+      <div className="dev-vote-reason-actions">
+        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>Cancel</button>
+        <button
+          type="button"
+          className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
+          disabled={withLine && !yesOn && !trimmed}
+          onClick={onSend}
+        >
+          {yesOn ? 'Vote yes' : 'Vote no'}
+        </button>
+      </div>
     </>
   );
 }
