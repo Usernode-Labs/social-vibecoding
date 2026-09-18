@@ -16,6 +16,7 @@
 import { type ReactNode } from 'react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
+import { SectionHeading } from '@/components/ui/field';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useStoreState } from '../../lib/use-store-state';
 import {
@@ -132,12 +133,15 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
       id="public-profile-controls"
       className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
     >
-      <h2 className="font-semibold text-base">Public profile</h2>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+      {/* Heading, blurb, then the controls they explain — the settings-section
+          shape, so it is @/components/ui/field's SectionHeading rather than a
+          fifth spelling of it. Not grouped-list's SectionHeader: this is a
+          form section inside one card, not a label over a group of cards. */}
+      <SectionHeading title="Public profile">
         Private by default. The public page includes only your username,
         display name, bio, Homeroom-hosted photo and verified social accounts,
         not unverified handles, wallet, email, roles, memberships or private activity.
-      </p>
+      </SectionHeading>
       <div className={`mt-3 text-sm font-medium ${controls.visibilityClass}`}>
         {controls.visibility}
       </div>
