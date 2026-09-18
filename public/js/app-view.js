@@ -7313,6 +7313,19 @@ const AppView = {
       ...mineOf(buckets.inReview, (x) => x.kind === 'gov' && meId != null
         && String(x.item.created_by) === String(meId))
         .map((x) => ({ kind: 'gov', item: x.item })),
+      // #2496: an issue you are working on — a claim of yours, a live
+      // session of yours against it, an assignee mark naming you — is your
+      // work in flight in the same sense, and it used to appear only inside
+      // a theme, under that theme's heading. `_bucketDevItems` has already
+      // routed every issue with live work (a claim, a session, an open
+      // promoted proposal) out of the open lane, so the candidates are read
+      // from there rather than re-deriving the predicate; whether one is
+      // YOURS is the board's own mine-ness test, shared with the kanban's
+      // "Assigned to you" filter. An issue somebody ELSE claimed or is
+      // working stays out of the strip: it is still on the board, in the
+      // Underway column and in its theme, exactly as before.
+      ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
+        .map((e) => ({ kind: 'issue', item: e.item })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
@@ -7328,7 +7341,9 @@ const AppView = {
           ? AppView._mySessionCardModel(item)
           : kind === 'gov'
             ? AppView._govCardModel(item)
-            : AppView._proposalCardModel(item);
+            : kind === 'issue'
+              ? AppView._issueCardModel(item)
+              : AppView._proposalCardModel(item);
         if (!card) return null;
         return AppView._attachRowConversation(
           { t: 'card', key: `mine:${card.key}`, card }, kind, item,
@@ -8473,6 +8488,41 @@ const AppView = {
   _devCardIsMine(kind, item) {
     const me = AppView._viewerUsername();
     return !!me && AppView._devCardAuthor(kind, item) === me;
+  },
+  // #2496: whether the viewer is one of the people an issue's live work
+  // marks name. Shared by the Workshop's "What you are working on" strip
+  // (which lists the issue there) — and deliberately NOT part of
+  // `_devCardMatches`, which reads the same fields for the "Assigned to
+  // you" filter with a narrower, assignee-only contract (#1935).
+  //
+  // Four live marks, any one of which means yes:
+  //   claims[]    — a hand-set claim. The server composes `mine` per
+  //                 viewer (composeInProgress in routes/issues.js), so it
+  //                 is authoritative; a payload without the flag (a test
+  //                 fixture, an older cache) is read as "one of the named
+  //                 claimers is me".
+  //   sessions[]  — a linked dev session, per-session `mine` from the same
+  //                 composition. Paused and in-review sessions count: both
+  //                 are still yours, which is exactly what the strip says.
+  //   the boolean — the server's own OR of the two above, on payloads that
+  //                 carry it and none of the detail lists.
+  //   assignee    — the board's "assigned to you" reading: the community-
+  //                 voted assignee chip names you. Covers an issue handed
+  //                 to you without a claim row under it.
+  _issueIsMine(issue) {
+    const it = issue || {};
+    const me = AppView._viewerUsername();
+    const ip = it.in_progress || null;
+    if (ip) {
+      if (Array.isArray(ip.claims) && ip.claims.length) {
+        if (ip.claims.some((c) => c && (c.mine || (me && c.username === me)))) return true;
+      }
+      if (Array.isArray(ip.sessions) && ip.sessions.length) {
+        if (ip.sessions.some((s) => s && (s.mine || (me && s.username === me)))) return true;
+      }
+      if (ip.mine) return true;
+    }
+    return !!(me && it.assignee && it.assignee.top === me);
   },
   // ── WHERE THE TWO QUICK FILTERS LIVE ────────────────────────────────
   //
