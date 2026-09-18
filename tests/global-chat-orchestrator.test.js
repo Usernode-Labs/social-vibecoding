@@ -140,6 +140,10 @@ function harness({
       if (typeof response === 'function') return response(input);
       return response;
     },
+    async recordTurnOutcome(_pool, input) {
+      calls.push({ type: 'turn.outcome', input });
+      return true;
+    },
   };
   const actions = {
     async prepareAction(_pool, input) {
@@ -176,6 +180,7 @@ function turnInput(overrides = {}) {
     },
     developmentProfile: { backend: 'codex', model: 'glm/dev', reasoningEffort: 'high' },
     budget: { globalChatSpent: '0.02', globalChatCap: '1' },
+    providerAllowance: { limitRemaining: 2 },
     model: {
       id: 'cheap/global', inputPricePerMillion: 0.1, outputPricePerMillion: 0.2,
     },
@@ -185,13 +190,16 @@ function turnInput(overrides = {}) {
   };
 }
 
-test('the bounded loop discovers a capability before executing and attaches only authoritative results', async () => {
+test('the first call preloads matching capabilities and auto-attaches authoritative results', async () => {
   const resultId = '00000000-0000-4000-8000-000000000001';
+  const compactPresentation = presentation();
+  compactPresentation.message = 'I found one issue.';
   const responses = [
-    providerResponse([call('search_1', 'search_capabilities', { query: 'issues', context: null })]),
     providerResponse([
       call('list_1', capabilityToolName('issues.list'), { query: 'open' }),
-      call('present_1', 'present_response', presentation([resultId])),
+    ]),
+    providerResponse([
+      call('present_1', 'present_response', compactPresentation),
     ]),
   ];
   const state = harness({ responses });
@@ -208,20 +216,63 @@ test('the bounded loop discovers a capability before executing and attaches only
 
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.equal(modelCalls.length, 2);
-  assert.deepEqual(
-    modelCalls[0].input.tools.map((tool) => tool.function.name),
-    ['search_capabilities', 'describe_capability', 'request_more_suggestions', 'present_response'],
-  );
-  assert.ok(modelCalls[1].input.tools.some(
+  assert.ok(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === capabilityToolName('issues.list'),
   ));
+  assert.equal(modelCalls[0].input.toolChoice, 'required');
+  assert.equal(modelCalls[0].input.tools.some(
+    (tool) => tool.function.name === 'present_response',
+  ), false);
+  assert.ok(modelCalls[1].input.tools.some(
+    (tool) => tool.function.name === 'present_response',
+  ));
+  assert.equal(modelCalls[0].input.tools.some(
+    (tool) => tool.function.name === 'request_more_suggestions',
+  ), false);
   assert.equal(modelCalls[0].input.reasoningEffort, 'low');
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
   assert.doesNotMatch(JSON.stringify(modelCalls[0].input.messages), /never-forwarded-outside-accounting/);
+  assert.deepEqual(modelCalls[0].input.providerAllowance, { limitRemaining: 2 });
   assert.ok(events.some((event) => event.type === 'result.attached'));
   assert.equal(events.at(-1).type, 'turn.completed');
   assert.ok(state.calls.some((entry) => entry.type === 'release'));
+  assert.equal(state.calls.find((entry) => entry.type === 'turn.outcome').input.outcome, 'success');
+});
+
+test('an incomplete platform request can ask for one missing value instead of looping', async () => {
+  const clarification = {
+    question: 'Which app should I search for issues in?',
+    suggestions: [
+      {
+        id: 'clarify.apps', label: 'List apps', prompt: 'List my apps so I can choose one.',
+        capabilityHint: 'apps.list',
+      },
+      {
+        id: 'clarify.active', label: 'Use demo', prompt: 'List open issues in the demo app.',
+        capabilityHint: 'issues.list',
+      },
+    ],
+  };
+  const state = harness({
+    responses: [providerResponse([
+      call('ask_1', 'ask_user_for_input', clarification),
+    ])],
+  });
+  const result = await state.orchestrator.runTurn(turnInput());
+
+  assert.equal(result.presentation.message, clarification.question);
+  assert.deepEqual(result.presentation.resultRefs, []);
+  assert.deepEqual(result.presentation.suggestions, clarification.suggestions);
+  assert.deepEqual(result.results, []);
+  const modelCall = state.calls.find((entry) => entry.type === 'model');
+  assert.equal(modelCall.input.toolChoice, 'required');
+  assert.ok(modelCall.input.tools.some(
+    (tool) => tool.function.name === 'ask_user_for_input',
+  ));
+  assert.equal(modelCall.input.tools.some(
+    (tool) => tool.function.name === 'present_response',
+  ), false);
 });
 
 test('protected writes prepare an exact one-use confirmation without executing the handler or exposing its token to the model', async () => {
@@ -243,10 +294,11 @@ test('protected writes prepare an exact one-use confirmation without executing t
   const state = harness({
     definitions: [close],
     responses: [
-      providerResponse([call('search_1', 'search_capabilities', { query: 'close issue', context: null })]),
       providerResponse([
         call('close_1', capabilityToolName('issues.close'), { number: 7 }),
-        call('present_1', 'present_response', presentation([resultId])),
+      ]),
+      providerResponse([
+        call('present_1', 'present_response', presentation()),
       ]),
     ],
   });
@@ -305,7 +357,7 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
       ]))]),
     ],
   });
-  const result = await state.orchestrator.runTurn(turnInput());
+  const result = await state.orchestrator.runTurn(turnInput({ text: 'Help me choose.' }));
   assert.deepEqual(
     result.presentation.suggestions.map((suggestion) => suggestion.id),
     ['issue.comment', 'issue.vote'],
@@ -323,7 +375,7 @@ test('one transient provider failure is accounted as a retry and free-form compl
       providerResponse([call('present_1', 'present_response', presentation())]),
     ],
   });
-  await retryState.orchestrator.runTurn(turnInput());
+  await retryState.orchestrator.runTurn(turnInput({ text: 'Hello.' }));
   assert.deepEqual(
     retryState.calls.filter((entry) => entry.type === 'model').map((entry) => entry.input.attemptNumber),
     [1, 2],
@@ -331,7 +383,7 @@ test('one transient provider failure is accounted as a retry and free-form compl
 
   const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
   await assert.rejects(
-    invalidState.orchestrator.runTurn(turnInput()),
+    invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' })),
     (error) => error instanceof GlobalChatOrchestrationError
       && error.code === 'presentation_required',
   );
@@ -351,6 +403,7 @@ test('runtime metadata uses only the server-owned compacted transcript summary',
     responses: [providerResponse([call('present_1', 'present_response', presentation())])],
   });
   await state.orchestrator.runTurn(turnInput({
+    text: 'Hello.',
     context: {
       locale: 'en-US',
       timezone: 'America/Montevideo',
@@ -362,4 +415,23 @@ test('runtime metadata uses only the server-owned compacted transcript summary',
   assert.match(metadata, /Server compacted context/);
   assert.doesNotMatch(metadata, /Browser says/);
   assert.ok(state.calls.some((entry) => entry.type === 'compact'));
+});
+
+test('More suggestions is one forced presentation call without a recursive More tool', async () => {
+  const state = harness({
+    responses: [providerResponse([call('present_1', 'present_response', presentation())])],
+  });
+  await state.orchestrator.runTurn(turnInput({
+    kind: 'more_suggestions',
+    text: 'Show more suggestions.',
+  }));
+  const modelCalls = state.calls.filter((entry) => entry.type === 'model');
+  assert.equal(modelCalls.length, 1);
+  assert.deepEqual(
+    modelCalls[0].input.tools.map((tool) => tool.function.name),
+    ['present_response'],
+  );
+  assert.deepEqual(modelCalls[0].input.toolChoice, {
+    type: 'function', function: { name: 'present_response' },
+  });
 });

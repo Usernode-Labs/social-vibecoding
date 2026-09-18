@@ -259,17 +259,32 @@ async function runTurn({ text, more = false, topic }: {
             ],
           }));
         } else if (event.type === 'turn.failed') {
+          completed = true;
           const message = typeof event.message === 'string' ? event.message : 'That request could not be completed.';
-          publish({ phase: 'error', activity: '', error: message });
+          publish((current) => ({
+            phase: 'error',
+            activity: '',
+            error: message,
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }));
         }
       },
     });
     if (!completed && !controller.signal.aborted) {
-      publish({ phase: 'error', activity: '', error: 'The response ended before it was complete.' });
+      publish((current) => ({
+        phase: 'error',
+        activity: '',
+        error: 'The response ended before it was complete.',
+        messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+      }));
     }
   } catch (error) {
-    if (controller.signal.aborted) publish({ phase: 'ready', activity: '' });
-    else publish({ phase: 'error', activity: '', error: errorText(error) });
+    publish((current) => ({
+      phase: controller.signal.aborted ? 'ready' : 'error',
+      activity: '',
+      ...(controller.signal.aborted ? {} : { error: errorText(error) }),
+      messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+    }));
   } finally {
     if (activeAbort === controller) activeAbort = null;
     void refreshGlobalChatUsage();

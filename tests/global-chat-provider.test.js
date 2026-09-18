@@ -37,13 +37,12 @@ function responseFromParts(parts, { status = 200 } = {}) {
   });
 }
 
-test('OpenRouter request pins tools, strict schema, low effort, usage, and required parameters', () => {
+test('OpenRouter request uses strict tools without conflicting response_format', () => {
   const request = provider.buildRequest({
     model: MODEL.id,
     reasoning: 'low',
     messages: [{ role: 'user', content: 'List my work' }],
     tools: [{ type: 'function', function: { name: 'search_capabilities', parameters: STRICT_SCHEMA } }],
-    schema: STRICT_SCHEMA,
     sessionId: 'thread_123',
   });
   assert.equal(request.model, MODEL.id);
@@ -53,9 +52,7 @@ test('OpenRouter request pins tools, strict schema, low effort, usage, and requi
   assert.equal(request.stream, true);
   assert.deepEqual(request.usage, { include: true });
   assert.deepEqual(request.provider, { require_parameters: true });
-  assert.equal(request.response_format.type, 'json_schema');
-  assert.equal(request.response_format.json_schema.strict, true);
-  assert.equal(request.response_format.json_schema.schema.additionalProperties, false);
+  assert.equal(Object.hasOwn(request, 'response_format'), false);
   assert.equal(request.parallel_tool_calls, true);
 });
 
@@ -65,13 +62,33 @@ test('unsupported optional model parameters are omitted instead of weakening req
     reasoning: 'low',
     messages: [],
     tools: [],
-    schema: STRICT_SCHEMA,
     temperature: null,
     parallelToolCalls: null,
   });
   assert.equal(Object.hasOwn(request, 'temperature'), false);
   assert.equal(Object.hasOwn(request, 'parallel_tool_calls'), false);
   assert.deepEqual(request.provider, { require_parameters: true });
+});
+
+test('a forced tool choice must name one of the tools in the request', () => {
+  const present = { type: 'function', function: { name: 'present_response', parameters: STRICT_SCHEMA } };
+  const request = provider.buildRequest({
+    model: MODEL.id,
+    reasoning: 'low',
+    messages: [],
+    tools: [present],
+    toolChoice: { type: 'function', function: { name: 'present_response' } },
+  });
+  assert.deepEqual(request.tool_choice, {
+    type: 'function', function: { name: 'present_response' },
+  });
+  assert.throws(() => provider.buildRequest({
+    model: MODEL.id,
+    reasoning: 'low',
+    messages: [],
+    tools: [present],
+    toolChoice: { type: 'function', function: { name: 'missing' } },
+  }), /available tool/);
 });
 
 test('OpenRouter SSE parser reconstructs split tool calls and provider-reported usage', async () => {
@@ -263,8 +280,8 @@ test('an accounted provider call settles tokens and provider-reported cost', asy
     spendCapUsd: '1',
     messages: [],
     tools: [],
-    schema: STRICT_SCHEMA,
-    validateKey: async () => ({ limitRemaining: 1 }),
+    providerAllowance: { limitRemaining: 1 },
+    validateKey: async () => { throw new Error('allowance must be reused'); },
     streamChat: async () => ({
       generationId: 'gen_test_1', servedModel: MODEL.id, provider: 'fast-provider',
       usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, reasoningTokens: 2, costUsd: 0.00003 },
@@ -280,6 +297,35 @@ test('an accounted provider call settles tokens and provider-reported cost', asy
   assert.equal(updates[0].params[10], 1);
 });
 
+test('logical turn outcome annotates the final invocation without storing content', async () => {
+  let query;
+  const updated = await accounting.recordTurnOutcome({
+    async query(sql, params) {
+      query = { sql, params };
+      return { rowCount: 1 };
+    },
+  }, {
+    userId: 7,
+    threadId: '95df0790-4873-43cc-9608-728f3349da50',
+    messageId: '19',
+    outcome: 'error',
+    errorCode: 'presentation_required',
+    durationMs: 1200,
+    invocationCount: 2,
+    resultCount: 0,
+  });
+  assert.equal(updated, true);
+  assert.match(query.sql, /ORDER BY created_at DESC/);
+  assert.deepEqual(JSON.parse(query.params[3]), {
+    turn_outcome: 'error',
+    turn_duration_ms: 1200,
+    turn_invocation_count: 2,
+    turn_result_count: 0,
+    turn_error_code: 'presentation_required',
+  });
+  assert.doesNotMatch(query.params[3], /prompt|output|text/i);
+});
+
 test('Global Chat usage participates in provider-neutral telemetry without content fields', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'services', 'llm-telemetry.js'),
@@ -289,5 +335,8 @@ test('Global Chat usage participates in provider-neutral telemetry without conte
   assert.match(source, /'global_chat' AS backend/);
   assert.match(source, /'global_chat' AS component/);
   assert.match(source, /g\.metadata \|\| jsonb_strip_nulls/);
+  assert.match(source, /'turn_duration_ms'/);
+  assert.match(source, /'turn_outcome'/);
+  assert.match(source, /'turn_error_code'/);
   assert.doesNotMatch(source, /g\.(plain_text|structured_payload|normalized_input)/);
 });

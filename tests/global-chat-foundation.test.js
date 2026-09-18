@@ -20,6 +20,10 @@ const {
   firstUsePresentation,
   validatePresentation,
 } = require('../src/services/global-chat/presentation');
+const {
+  BASE_TOOLS,
+  capabilityTool,
+} = require('../src/services/global-chat/tool-protocol');
 
 function objectSchema(properties = {}) {
   return {
@@ -113,21 +117,28 @@ function runtimeInput(overrides = {}) {
   };
 }
 
-test('the versioned system prompt pins full parity, discovery, safety, and compact suggestions', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v2');
-  assert.match(SYSTEM_PROMPT, /every capability.*Classic mode/i);
+test('the versioned system prompt gives weak models an exact platform workflow', () => {
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v4');
+  assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
+  assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
   assert.match(SYSTEM_PROMPT, /untrusted data/i);
-  assert.match(SYSTEM_PROMPT, /server-generated threadSummary/);
-  assert.match(SYSTEM_PROMPT, /development model and reasoning effort/i);
-  assert.match(SYSTEM_PROMPT, /Every authorized setting/i);
-  assert.match(SYSTEM_PROMPT, /Never emit HTML/i);
-  assert.match(SYSTEM_PROMPT, /exactly two short next-action labels/i);
-  assert.match(SYSTEM_PROMPT, /Earlier suggestions remain in the transcript/i);
-  assert.match(SYSTEM_PROMPT, /Open-in-Classic links.*added by Homeroom/i);
+  assert.match(SYSTEM_PROMPT, /threadSummary/);
+  assert.match(SYSTEM_PROMPT, /developmentProfile is the separate model profile/i);
+  assert.match(SYSTEM_PROMPT, /STEP 1 — IDENTIFY THE REQUEST TYPE/);
+  assert.match(SYSTEM_PROMPT, /STEP 2 — FIND THE EXACT CAPABILITY/);
+  assert.match(SYSTEM_PROMPT, /STEP 3 — COLLECT EVERY REQUIRED INPUT/);
+  assert.match(SYSTEM_PROMPT, /pathParameters: an object containing every named placeholder/);
+  assert.match(SYSTEM_PROMPT, /Never invent a missing slug, id, issue number/);
+  assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
+  assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
+  assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
+  assert.match(SYSTEM_PROMPT, /exactly two button options/i);
+  assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
+  assert.match(SYSTEM_PROMPT, /Open in Classic links/);
 });
 
-test('runtime metadata is allowlisted, deterministic, and defaults global chat to minimal effort', () => {
+test('runtime metadata is allowlisted, deterministic, and defaults GLM global chat to low effort', () => {
   const now = new Date('2026-09-18T12:00:00.000Z');
   const metadata = buildRuntimeMetadata(runtimeInput(), { now });
 
@@ -161,6 +172,33 @@ test('runtime metadata is allowlisted, deterministic, and defaults global chat t
   const escaped = serializeRuntimeMetadata(injection);
   assert.doesNotMatch(escaped, /<system>|<\/homeroom-runtime-metadata><system>/);
   assert.match(escaped, /\\u003csystem\\u003e/);
+});
+
+test('provider tool schemas repeat exact argument and presentation instructions', () => {
+  const names = BASE_TOOLS.map((tool) => tool.function.name);
+  assert.deepEqual(names, [
+    'search_capabilities', 'describe_capability', 'ask_user_for_input', 'present_response',
+  ]);
+
+  const search = BASE_TOOLS.find((tool) => tool.function.name === 'search_capabilities');
+  assert.match(search.function.description, /returned match contains an id and toolName/);
+  assert.match(search.function.parameters.properties.query.description, /action plus object/);
+
+  const present = BASE_TOOLS.find((tool) => tool.function.name === 'present_response');
+  assert.match(present.function.parameters.properties.resultRefs.description, /Use \[\] for results created in this turn/);
+  assert.match(present.function.parameters.properties.suggestions.description, /Exactly two relevant, new button options/);
+  assert.match(
+    present.function.parameters.properties.suggestions.items.properties.prompt.description,
+    /Complete next user instruction/,
+  );
+
+  const ask = BASE_TOOLS.find((tool) => tool.function.name === 'ask_user_for_input');
+  assert.match(ask.function.description, /one required input/);
+  assert.match(ask.function.parameters.properties.question.description, /End with a question mark/);
+
+  const dynamic = capabilityTool(capability());
+  assert.match(dynamic.function.description, /Supply every required parameter/);
+  assert.match(dynamic.function.description, /Never guess a value/);
 });
 
 test('runtime metadata rejects unsafe Classic paths and invalid money values', () => {
@@ -197,6 +235,16 @@ test('the capability registry is deterministic and hides unauthorized capabiliti
   assert.deepEqual(
     registryA.search('find bugs', { actor: { signedIn: true, admin: false } }).map((entry) => entry.id),
     ['issues.list'],
+  );
+  assert.deepEqual(
+    registryA.search('Please show me the current issues', {
+      actor: { signedIn: true, admin: false },
+    }).map((entry) => entry.id),
+    ['issues.list'],
+  );
+  assert.deepEqual(
+    registryA.search('What can I do?', { actor: { signedIn: true, admin: false } }),
+    [],
   );
   assert.throws(
     () => registryA.describe('settings.read', { actor: { signedIn: true, admin: false } }),

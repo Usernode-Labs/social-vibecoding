@@ -21,6 +21,15 @@ const settings = read('frontend', 'src', 'features', 'settings', 'sections', 'gl
 const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
 
+function sourceTree(...parts) {
+  const directory = path.join(ROOT, ...parts);
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) return sourceTree(...parts, entry.name);
+    return /\.(?:js|ts|tsx)$/.test(entry.name) ? [fs.readFileSync(target, 'utf8')] : [];
+  }).join('\n');
+}
+
 test('Global Chat ships as an experimental sibling while Classic remains the startup mode', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
@@ -37,6 +46,21 @@ test('Chat mode is memory-only and leaves every launch in Classic', () => {
   assert.match(store, /document\.body\.classList\.toggle\('global-chat-mode', open\)/);
   assert.match(store, /element\.inert = open/);
   assert.match(store, /setDocumentMode\(false\)/);
+});
+
+test('Global Chat stays isolated from developer and proposal chat implementations', () => {
+  for (const existingChat of [
+    sourceTree('frontend', 'src', 'features', 'dev-chat'),
+    sourceTree('frontend', 'src', 'features', 'group-chat'),
+  ]) {
+    assert.doesNotMatch(existingChat, /(?:from|import\s*\()\s*['"][^'"]*global-chat/i);
+    assert.doesNotMatch(existingChat, /\bglobalChat(?:Controller|Store)?\b/);
+  }
+});
+
+test('a streamed turn failure keeps its actionable error instead of being replaced by an incomplete-stream error', () => {
+  assert.match(store, /event\.type === 'turn\.failed'[\s\S]*?completed = true;/);
+  assert.match(store, /turn\.failed'[\s\S]*?pending \? \{ \.\.\.item, pending: false \}/);
 });
 
 test('suggestions stay compact, button-like, and append through a separate More control', () => {
@@ -88,7 +112,7 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
   assert.match(settings, /Global Chat model/);
-  assert.match(settings, /Minimal · recommended/);
+  assert.match(settings, /Low · recommended for GLM Flash/);
   assert.match(settings, /Monthly Chat cap in USD/);
   assert.match(settings, /Global Chat this month/);
   assert.match(settings, /Overall OpenRouter remaining/);

@@ -69,12 +69,12 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
         {
           id: 'cheap/default', name: 'Cheap', supportsTools: true,
           supportsStructuredOutputs: true, supportsReasoningEffort: true,
-          supportsParallelToolCalls: true, reasoningEfforts: ['minimal', 'low'],
+          supportsParallelToolCalls: true, reasoningEfforts: ['low'],
           averagePricePerMillion: 0.1,
         },
         {
-          id: 'vendor/no-schema', name: 'No schema', supportsTools: true,
-          supportsStructuredOutputs: false, supportsReasoningEffort: true,
+          id: 'vendor/no-tools', name: 'No tools', supportsTools: false,
+          supportsStructuredOutputs: true, supportsReasoningEffort: true,
           reasoningEfforts: ['low'], averagePricePerMillion: 0.01,
         },
       ],
@@ -90,7 +90,7 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
   const { globalChatRoutes } = require(routePath);
   const { server, base } = await listen(globalChatRoutes({
     openrouterDefaultGlobalChatModel: 'cheap/default',
-    openrouterDefaultGlobalChatReasoning: 'minimal',
+    openrouterDefaultGlobalChatReasoning: 'low',
     openrouterGlobalChatFallbackModels: ['fallback/valid'],
     openrouterApiBase: 'https://openrouter.ai/api/v1',
     openrouterOrigin: 'https://usernode.dev',
@@ -109,7 +109,7 @@ async function mount(t, { authenticated = true, configured = true } = {}) {
   return { base, state, writes };
 }
 
-test('Global Chat settings default to Classic startup and minimal effort', async (t) => {
+test('Global Chat settings default to Classic startup and GLM-compatible low effort', async (t) => {
   const { base } = await mount(t);
   const response = await fetch(`${base}/api/me/global-chat`);
   assert.equal(response.status, 200);
@@ -118,7 +118,7 @@ test('Global Chat settings default to Classic startup and minimal effort', async
   assert.equal(body.experimental, true);
   assert.equal(body.startupMode, 'classic');
   assert.equal(body.profile.model, 'cheap/default');
-  assert.equal(body.profile.reasoningEffort, 'minimal');
+  assert.equal(body.profile.reasoningEffort, 'low');
   assert.equal(body.profile.saved, false);
   assert.equal(body.usage.spentUsd, '0.08');
 });
@@ -151,18 +151,18 @@ test('model settings are restricted to the live capability-filtered catalog', as
   const rejected = await fetch(`${base}/api/me/global-chat`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'vendor/no-schema' }),
+    body: JSON.stringify({ model: 'vendor/no-tools' }),
   });
   assert.equal(rejected.status, 400);
-  assert.match((await rejected.json()).error, /tools, structured output/i);
+  assert.match((await rejected.json()).error, /tools and the selected reasoning effort/i);
 
   const accepted = await fetch(`${base}/api/me/global-chat`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'cheap/default', reasoningEffort: 'minimal' }),
+    body: JSON.stringify({ model: 'cheap/default', reasoningEffort: 'low' }),
   });
   assert.equal(accepted.status, 200);
-  assert.equal((await accepted.json()).profile.reasoningEffort, 'minimal');
+  assert.equal((await accepted.json()).profile.reasoningEffort, 'low');
 });
 
 test('usage combines Global Chat spend with live overall allowance without leaking the key', async (t) => {
