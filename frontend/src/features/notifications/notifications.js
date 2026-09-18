@@ -592,6 +592,23 @@ const Notifications = {
     Notifications._renderList();
   },
 
+  // #1688: a row's own button. 'still_yes' re-casts a Yes on the proposal a
+  // re-confirm ask names — the server carries the earlier line along, and
+  // the vote's auto-dismiss clears the row. Anything else opens the row.
+  async _onRowAction(id, key) {
+    const item = Notifications.items.find((n) => n.id === id);
+    if (!item) return false;
+    const sessionId = Number(item.sessionId);
+    if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
+        && window.AppView && typeof AppView.castVote === 'function') {
+      await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      Notifications._markOneRead(id);
+      if (typeof Notifications.refresh === 'function') Notifications.refresh();
+      return true;
+    }
+    return Notifications._onItemClick(id);
+  },
+
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return false;
@@ -770,9 +787,11 @@ const Notifications = {
       // digest carries no sessionId, so it lands on the board — which is
       // right, since its subject is "these several proposals" rather than
       // one of them.
+      // #1688: the re-confirm ask names one proposal and opens it; the
+      // weekly card is a chat message, so its row opens the chat it is in.
       const proposalKinds = new Set([
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
-        'pr_merged', 'proposal_vote', 'vote_digest',
+        'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck',
       ]);
       const toProposals = proposalKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
@@ -1747,13 +1766,18 @@ function rowView(n) {
   // a vote that carried, and the label says which: to the person who wrote
   // the change those are the same event with very different meanings.
   if (n.kind === 'pr_merged') {
+    const head = headline(
+      n.detail === 'forced' ? 'Merged by an admin' : 'Merged',
+      prLabel || n.sessionTitle || 'your proposal',
+    );
+    // #1688: on a merge the vote carried, `detail` names who backed and
+    // shaped it. An admin override's marker is not a sentence to show.
+    const credits = n.detail && n.detail !== 'forced' ? String(n.detail) : '';
     return {
       ...base,
       icon: '\u{1F389}',
-      ...headline(
-        n.detail === 'forced' ? 'Merged by an admin' : 'Merged',
-        prLabel || n.sessionTitle || 'your proposal',
-      ),
+      label: head.label,
+      segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
     };
   }
 
@@ -1761,14 +1785,54 @@ function rowView(n) {
   // because it is the part you want at a glance and the proposal title is
   // usually long enough to push it off the row.
   if (n.kind === 'proposal_vote') {
+    const head = headline(
+      n.detail === 'no' ? 'Voted no' : 'Voted yes',
+      prLabel || n.sessionTitle || 'your proposal',
+    );
+    // #1688: the voter's own line rides after the subject, quoted — the
+    // proposer's first sight of an objection is the sentence, not the thumb.
+    const reason = typeof n.voteReason === 'string' ? n.voteReason.trim() : '';
     return {
       ...base,
       by: n.sourceUsername || null,
       icon: n.detail === 'no' ? '\u{1F44E}' : '\u{1F44D}',
-      ...headline(
-        n.detail === 'no' ? 'Voted no' : 'Voted yes',
-        prLabel || n.sessionTitle || 'your proposal',
-      ),
+      label: head.label,
+      segments: reason
+        ? [...head.segments, { t: 'text', v: `“${reason}”` }]
+        : head.segments,
+    };
+  }
+
+  // #1688: the author pushed a new version of a proposal this person had
+  // said yes to. The row's own button re-casts the yes with one tap (the
+  // server carries their earlier line along); the row itself opens the
+  // proposal for another look. Once read — by either — the button goes.
+  if (n.kind === 'revision_recheck') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: '\u{1F501}',
+      ...headline('Still good?', prLabel || n.sessionTitle || 'a proposal you backed'),
+      actions: n.readAt ? [] : [{ key: 'still_yes', label: 'Still yes', primary: true }],
+    };
+  }
+
+  // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
+  // this week and what is waiting on votes; the card itself is in the chat.
+  if (n.kind === 'weekly_digest') {
+    const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
+    const merged = counts ? Number(counts[1]) : 0;
+    const open = counts ? Number(counts[2]) : 0;
+    const shipped = merged === 0
+      ? 'Nothing landed this week'
+      : `${merged} ${merged === 1 ? 'change' : 'changes'} went live`;
+    const waiting = open
+      ? `${open} ${open === 1 ? 'proposal is' : 'proposals are'} waiting for eyes`
+      : '';
+    return {
+      ...base,
+      icon: '\u{1F4F0}',
+      ...headline(`This week on ${n.appName || 'the app'}`, [shipped, waiting].filter(Boolean).join(' · ')),
     };
   }
 

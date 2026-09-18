@@ -49,7 +49,7 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon } from '../dev-board/card/dev-card';
 import { swatchFor } from './swatch';
-import type { TranscriptMessage } from './transcript-store';
+import type { ProposalEvent, TranscriptMessage } from './transcript-store';
 
 /**
  * "Proposed PR #12 for a vote: Custom tier colors", "PR #12 went live with
@@ -63,22 +63,122 @@ export function eventText(msg: TranscriptMessage): string {
   const title = ev.title ? `: ${ev.title}` : '';
   const votes = ev.votes ? ` with ${ev.votes} votes` : '';
   if (ev.type === 'submitted') return `Proposed ${pr} for a vote${title}`;
+  if (ev.type === 'weekly') return `This week on ${ev.weekly?.app || 'the app'}`;
   if (ev.force) return `Force-merged ${pr}${votes}${title}`;
+  // #1688: a merge that named its people reads as the sentence it was —
+  // the number and the tally move to the muted tail (see EventRow).
+  if (ev.credits) return `${ev.title || pr} is live. ${creditsSentence(ev.credits)}`;
   return `${pr} went live${votes}${title}`;
+}
+
+/** "alice", "alice and bob", "alice, bob and carol". */
+function nameList(names: string[]): string {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** "Built by evan, backed by alice and bob, shaped by carol." — the server's own shape (routes/votes.js creditsSentence). */
+export function creditsSentence(c: { author: string; backers: string[]; shapers: string[] }): string {
+  const parts: string[] = [];
+  if (c.author) parts.push(`Built by ${c.author}`);
+  if (c.backers.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(c.backers)}`);
+  if (c.shapers.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(c.shapers)}`);
+  return parts.length ? `${parts.join(', ')}.` : '';
+}
+
+/** The muted tail after a named merge: "PR #41 · 3/5 votes". */
+export function eventTail(msg: TranscriptMessage): string {
+  const ev = msg.event;
+  if (!ev || ev.type !== 'merged' || ev.force || !ev.credits) return '';
+  return [`PR #${ev.prNumber}`, ev.votes ? `${ev.votes} votes` : ''].filter(Boolean).join(' · ');
+}
+
+/**
+ * The Friday card (#1688): what went live this week and who made it, then
+ * what is waiting on votes, then the door to the Workshop. A message from
+ * the app itself, in the event box's surface, with the lines the card
+ * carries — never the whole week when it is long; the totals say the rest.
+ */
+function WeeklyBox({ w }: { w: NonNullable<ProposalEvent['weekly']> }) {
+  const moreMerged = w.mergedTotal - w.merged.length;
+  const moreOpen = w.openTotal - w.open.length;
+  return (
+    <div className="gc-event-box gc-event-weekly">
+      <div className="gc-weekly-title">{`This week on ${w.app}`}</div>
+      <div className="gc-weekly-section">
+        <div className="gc-weekly-head gc-weekly-head-live">
+          {w.mergedTotal === 0
+            ? 'Nothing landed this week'
+            : `${w.mergedTotal} ${w.mergedTotal === 1 ? 'change' : 'changes'} went live`}
+        </div>
+        {w.merged.map((m, i) => (
+          <div key={m.id ?? `m${i}`} className="gc-weekly-line" data-weekly="merged">
+            <span className="gc-weekly-line-title">{m.title}</span>
+            {m.author ? (
+              <span className="gc-weekly-line-who">
+                {` · ${m.author}${m.backers.length ? `, backed by ${nameList(m.backers)}` : ''}`}
+              </span>
+            ) : null}
+          </div>
+        ))}
+        {moreMerged > 0 ? <div className="gc-weekly-more">{`and ${moreMerged} more`}</div> : null}
+      </div>
+      {w.openTotal > 0 ? (
+        <div className="gc-weekly-section">
+          <div className="gc-weekly-head gc-weekly-head-open">
+            {w.openTotal === 1 ? 'One proposal is waiting for eyes' : `${w.openTotal} proposals are waiting for eyes`}
+          </div>
+          {w.open.map((o, i) => (
+            <div key={o.id ?? `o${i}`} className="gc-weekly-line" data-weekly="open">
+              <span className="gc-weekly-line-title">{o.title}</span>
+              {o.prNumber ? <span className="gc-weekly-line-who">{` · PR #${o.prNumber}`}</span> : null}
+            </div>
+          ))}
+          {moreOpen > 0 ? <div className="gc-weekly-more">{`and ${moreOpen} more`}</div> : null}
+        </div>
+      ) : null}
+      {w.slug ? (
+        <a className="gc-weekly-door" href={`#app/${w.slug}/dev`}>Open the Workshop ›</a>
+      ) : null}
+    </div>
+  );
 }
 
 export function EventRow({ msg }: { msg: TranscriptMessage }) {
   const ev = msg.event;
   if (!ev) return null;
+  if (ev.type === 'weekly' && ev.weekly) {
+    return (
+      <ChatMessageRow
+        className="gc-event"
+        from="them"
+        data-msg-id={msg.id ?? ''}
+        data-event="weekly"
+        avatar={(
+          <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
+            {ev.sender.charAt(0).toUpperCase()}
+          </Avatar>
+        )}
+        name={<span data-event-sender="">{ev.sender}</span>}
+        timestamp={<span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>}
+      >
+        <WeeklyBox w={ev.weekly} />
+      </ChatMessageRow>
+    );
+  }
   const href = msg.eventHref || null;
   const open = ev.type === 'submitted' && msg.votePhase !== 'settled';
   // The viewer's own event sits on the right, as their own messages do:
   // the row runs right to left, the box hugs the right edge, no avatar.
   const me = ev.mine;
+  const tail = eventTail(msg);
   const box = (
     <>
       {ev.icon ? <CardIcon spec={{ ...ev.icon, small: true }} /> : null}
-      <span className="gc-event-text">{eventText(msg)}</span>
+      <span className="gc-event-text">
+        {eventText(msg)}
+        {tail ? <span className="gc-event-tail">{` ${tail}`}</span> : null}
+      </span>
       {href ? (
         <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />
       ) : null}

@@ -405,7 +405,7 @@ const baseProposal = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('proposal card: the vote is ONE button beside the bar, and the band is empty', () => {
+test('proposal card: the vote is ONE button beside the bar, and the band holds only the kudos slot', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal());
   const html = cardHtml(model);
@@ -429,10 +429,20 @@ test('proposal card: the vote is ONE button beside the bar, and the band is empt
   const votedNo = cardHtml(AppView._proposalCardModel(baseProposal({ my_vote: 'no' })));
   assert.match(votedNo, /class="dev-vote-btn dev-vote-btn-no" data-vote-btn="no"/);
   // And Explore is back in ⋯ (#1787 round four), so the band on a live
-  // foreign proposal is the vote and nothing else.
+  // foreign proposal holds nothing but the kudos slot (#1688): the vote
+  // moved up beside the bar, and the one pill left is the controller host
+  // that _fillKudosHosts writes "Thank <author> for putting this up" or the
+  // count into. The band's other seats stay: Preview and the hamburger.
   assert.ok(!html.includes('gc-explore-chat-btn'), 'Explore is not a face pill');
   assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'it is a ⋯ row');
-  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+  assertCardActionContract(AppView, html, { primary: 1, menu: true });
+  assert.match(html, /<div class="gc-card-actions"[^>]*><span class="contents" data-kudos-host="7"><\/span>/,
+    'the kudos slot is the band\'s first and only pill');
+  assert.equal((html.match(/data-kudos-host=/g) || []).length, 1, 'once');
+  // The detail head lists the slot in its own action list below the header,
+  // so its card carries none — one 👏 per page, not two.
+  const head = cardHtml(AppView._proposalCardModel(baseProposal(), { noNav: true }));
+  assert.doesNotMatch(head, /data-kudos-host/, 'no slot on the detail head\'s card');
 });
 
 test('the detail head takes the same one vote button (topic page, round three)', () => {
@@ -462,12 +472,14 @@ test('proposal card (admin, not author): Admin merge / kudos stay in ⋯, Explor
   const model = AppView._proposalCardModel(baseProposal({ staging_url: 'https://stg.example' }));
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'swapToStagingForSession', 7), 'Preview present, as the pill');
-  // primary: 0 — the vote is a status-band button, Explore is a ⋯ row and
-  // the preview closes the facts line, so a proposal card's action band is
-  // empty and `.gc-card-actions:empty` collapses it.
-  assertCardActionContract(AppView, html, { primary: 0, menu: true, previewIcon: true });
+  // primary: 1 — the vote is a status-band button, Explore is a ⋯ row and
+  // the preview closes the facts line, so the one pill in a live proposal
+  // card's band is the kudos slot (#1688) — which is also why ⋯ no longer
+  // offers a kudos row: one way to give one kudos on one card.
+  assertCardActionContract(AppView, html, { primary: 1, menu: true, previewIcon: true });
   assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
-  assert.ok(menuHas(AppView, html, /kudos/i), 'kudos in ⋯');
+  assert.ok(!menuHas(AppView, html, /kudos/i), 'kudos is on the face, so not in ⋯');
+  assert.match(html, /data-kudos-host="7"/, 'the slot is the face');
   // One action, one place, and since #1787 round four that place is ⋯.
   assert.ok(!html.includes('gc-explore-chat-btn'), 'no Explore pill on the card face');
   assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore in ⋯');
@@ -481,7 +493,7 @@ test('proposal card (author): Open session + Withdraw move to ⋯', () => {
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
     'owners reach the Mayor via Open session, so no Explore row on their own PR');
-  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+  assertCardActionContract(AppView, html, { primary: 1, menu: true });
 });
 
 // #1045 was about the owner of an IMPORTED proposal: there is no in-app
@@ -501,8 +513,8 @@ test('proposal card (author of an imported PR): Withdraw and Explore in ⋯, no 
   assert.ok(menuHas(AppView, html, /Explore in dev chat/),
     'Explore in ⋯ — the owner\'s only AI affordance (#1045)');
   assert.ok(!html.includes('gc-explore-chat-btn'), 'one action, one place: not also a face pill');
-  assert.match(html, /gc-card-actions/, 'the reserved band is still emitted, and empty');
-  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+  assert.match(html, /gc-card-actions/, 'the reserved band is still emitted, holding the kudos slot');
+  assertCardActionContract(AppView, html, { primary: 1, menu: true });
 });
 
 // ── Governance card ──────────────────────────────────────────────────────

@@ -302,6 +302,13 @@ function Roster({ r }: { r: RosterView }): ReactNode {
           <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
           {` ${r.no!.names}`}
           <span className="dev-ledger-needs">{r.needs}</span>
+          {/* #1688: each voter's line under the names, in their own words. */}
+          {(r.reasons || []).map((q) => (
+            <span key={q.who} className="dev-ledger-reason" data-vote={q.vote}>
+              {`${q.who}: “${q.text}”`}
+            </span>
+          ))}
+          {r.earlier ? <span className="dev-ledger-earlier">{r.earlier}</span> : null}
         </>
       )}
     </span>

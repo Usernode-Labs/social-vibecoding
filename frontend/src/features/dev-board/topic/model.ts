@@ -270,6 +270,10 @@ export interface RosterView {
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
   needs?: string;
+  /** #1688: the line each counted vote carries, one entry per voter who left one. */
+  reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
+  /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
+  earlier?: string | null;
 }
 
 /** The shared-chat section: a disclosure whose BODY is another module's. */

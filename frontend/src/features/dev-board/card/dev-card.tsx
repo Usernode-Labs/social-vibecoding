@@ -412,46 +412,72 @@ export const BADGE_MAX = 4;
  */
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [rect, setRect] = useState<{ top: number; bottom: number; right: number } | null>(null);
+  // #1688: the reason step. Null while the picker shows its two rows; a side
+  // once one is picked, when the popover grows a one-line box under them.
+  const [asking, setAsking] = useState<'yes' | 'no' | null>(null);
+  const [line, setLine] = useState('');
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
   const mine: 'yes' | 'no' | null = /\bgc-vote-active\b/.test(yes.cls || '')
     ? 'yes'
     : (/\bgc-vote-active\b/.test(no.cls || '') ? 'no' : null);
+  // #1688: the viewer's Yes was on an EARLIER version of the proposal. The
+  // face asks "Still yes?", and a Yes goes straight through — the server
+  // carries their earlier line onto this version, so nothing is asked.
+  const prior: 'yes' | 'no' | null = !mine && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
   // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
   const tally = (a: ActionSpec) => {
     const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
     return m ? m[1] : '';
   };
-  const pick = (a: ActionSpec) => {
-    setOpen(false);
+  const reasonId = `dev-vote-reason-${String(yes.act?.args?.[0] ?? 'x')}`;
+  const isVote = yes.act?.fn === 'castVote';
+  const shut = () => { setOpen(false); setAsking(null); setLine(''); };
+  // castVote(sessionId, vote, expectedEpoch, { reason }): a string is the
+  // line to send, null sends none without asking. The epoch slot is filled
+  // in when the model left it out, so the options always land fourth.
+  const send = (a: ActionSpec, reason: string | null) => {
+    shut();
+    if (!a.act) return;
+    const args = [...(a.act.args || [])];
+    while (args.length < 3) args.push(null);
+    call({ fn: a.act.fn, args: [...args, { reason }] });
+  };
+  const pick = (a: ActionSpec, side: 'yes' | 'no') => {
+    // A governance vote has no line; a re-confirmed Yes brings its own.
+    if (!isVote) { shut(); call(a.act); return; }
+    if (side === 'yes' && prior === 'yes') { send(a, null); return; }
+    setAsking(side);
+    setLine('');
+  };
+  // On touch the rows are the native action sheet's, and the line is asked
+  // for by castVote itself through the kit's prompt card.
+  const pickTouch = (a: ActionSpec) => {
+    shut();
     call(a.act);
   };
   const toggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (open) { setOpen(false); return; }
+    if (open) { shut(); return; }
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
         actions: [
-          { label: `✓  Yes${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pick(yes) },
-          { label: `✕  No${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pick(no) },
+          { label: `✓  ${prior === 'yes' ? 'Still yes' : 'Yes'}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
+          { label: `✕  ${prior === 'yes' ? 'Not this time' : 'No'}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
         ],
       });
       return;
     }
     const r = e.currentTarget.getBoundingClientRect();
-    const w = 168;
-    const h = 84;
-    const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
-    let top = r.bottom + 6;
-    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
-    setPos({ top: Math.round(top), left: Math.round(left) });
+    setRect({ top: r.top, bottom: r.bottom, right: r.right });
     setOpen(true);
   };
   useEffect(() => {
     if (!open) return undefined;
-    const close = () => setOpen(false);
+    const close = () => shut();
     const onDoc = (ev: Event) => {
       const t = ev.target as Node | null;
       if (t && (btnRef.current?.contains(t) || popRef.current?.contains(t))) return;
@@ -469,47 +495,112 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       window.removeEventListener('resize', close);
     };
   }, [open]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : 'Vote');
+  // The box takes focus the moment it appears, so the picker's click is the
+  // last one before typing.
+  useEffect(() => {
+    if (asking) boxRef.current?.focus();
+  }, [asking]);
+  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
   const disabled = !!(yes.disabled || no.disabled);
   const title = disabled && yes.title ? yes.title : mine
     ? `You voted ${face}. Press to change your vote.`
-    : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+    : prior === 'yes'
+      ? `You said yes to an earlier version. One tap carries it onto this one.`
+      : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+  // The popover's frame follows what it holds: two rows, or two rows and the
+  // line box. Placed from the button's rect each render, exactly as
+  // `_toggleCardMenu` places the ⋯ menu.
+  const w = asking ? 268 : 168;
+  const h = asking ? 226 : 84;
+  const pos = rect ? (() => {
+    const left = Math.min(Math.max(8, rect.right - w), window.innerWidth - w - 8);
+    let top = rect.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 6);
+    return { top: Math.round(top), left: Math.round(left) };
+  })() : null;
+  const askingSpec = asking === 'yes' ? yes : no;
+  const trimmed = line.replace(/\s+/g, ' ').trim();
+  const onBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      if (asking === 'no' && !trimmed) return;
+      send(askingSpec, trimmed || null);
+    }
+  };
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}
       className="dev-vote-pop"
       role="menu"
+      data-asking={asking || undefined}
       style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
       onClick={(ev) => ev.stopPropagation()}
     >
       <button
         type="button"
         role="menuitemradio"
-        aria-checked={mine === 'yes'}
+        aria-checked={asking ? asking === 'yes' : mine === 'yes'}
         className="dev-vote-opt dev-vote-opt-yes"
         title={yes.title}
         data-act={yes.act?.fn}
-        onClick={() => pick(yes)}
+        onClick={() => pick(yes, 'yes')}
       >
         <CheckIcon aria-hidden="true" />
-        {'Yes'}
+        {prior === 'yes' ? 'Still yes' : 'Yes'}
         <span className="dev-vote-n">{tally(yes)}</span>
       </button>
       <button
         type="button"
         role="menuitemradio"
-        aria-checked={mine === 'no'}
+        aria-checked={asking ? asking === 'no' : mine === 'no'}
         className="dev-vote-opt dev-vote-opt-no"
         title={no.title}
         data-act={no.act?.fn}
-        onClick={() => pick(no)}
+        onClick={() => pick(no, 'no')}
       >
         <XIcon aria-hidden="true" />
-        {'No'}
+        {prior === 'yes' ? 'Not this time' : 'No'}
         <span className="dev-vote-n">{tally(no)}</span>
       </button>
+      {asking ? (
+        <div className="dev-vote-reason" data-vote-reason={asking}>
+          <label className="dev-vote-reason-label" htmlFor={reasonId}>
+            {asking === 'no'
+              ? 'What’s not working for you? One line is plenty.'
+              : 'Add a line for the group, if you like.'}
+          </label>
+          <textarea
+            id={reasonId}
+            ref={boxRef}
+            className="dev-vote-reason-box"
+            rows={2}
+            maxLength={280}
+            placeholder={asking === 'no' ? 'What would you want to change?' : 'What do you like about it?'}
+            value={line}
+            onChange={(ev) => setLine(ev.target.value)}
+            onKeyDown={onBoxKey}
+          />
+          <div className="dev-vote-reason-actions">
+            <button
+              type="button"
+              className="dev-vote-reason-cancel"
+              onClick={() => (asking === 'yes' ? send(yes, null) : shut())}
+            >
+              {asking === 'yes' ? 'Skip' : 'Cancel'}
+            </button>
+            <button
+              type="button"
+              className={`dev-vote-reason-send dev-vote-reason-send-${asking}`}
+              disabled={asking === 'no' && !trimmed}
+              onClick={() => send(askingSpec, trimmed || null)}
+            >
+              {asking === 'yes' ? 'Vote Yes' : 'Vote No'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>,
     document.body,
   ) : null;
@@ -518,8 +609,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       <button
         ref={btnRef}
         type="button"
-        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : ''}`}
-        data-vote-btn={mine || 'open'}
+        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
+        data-vote-btn={mine || (prior === 'yes' ? 'prior-yes' : 'open')}
         aria-haspopup="menu"
         aria-expanded={open ? 'true' : undefined}
         title={title}

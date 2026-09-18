@@ -32,6 +32,9 @@ const CURRENT_KINDS = [
   // services/notification-preferences.js decides whether the notification is
   // created at all, per user and per app, and two of these default off there.
   'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
+  // #1688's two, both proposal lifecycle: the re-confirm ask after a
+  // proposal you backed gets a new version, and the weekly card.
+  'revision_recheck', 'weekly_digest',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

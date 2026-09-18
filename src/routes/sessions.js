@@ -14915,12 +14915,12 @@ ${buildGuidance.testingGuidance}`;
 
         if (session.status === 'promoted') {
           // Tail milestone BEFORE the work, not after: the vote reset is
-          // the one tail step that is destructive and not idempotent (it
-          // DELETEs votes and announces it). A resumed tail must not
-          // re-announce a reset for a commit whose votes are already gone,
-          // so claim it up front — a crash between the stamp and the
-          // delete leaves at worst an unannounced reset, which the next
-          // push redoes anyway.
+          // the one tail step that is not idempotent in what it SAYS (it
+          // announces itself and asks people back). A resumed tail must not
+          // re-announce a reset for a commit whose votes are already retired,
+          // so claim it up front — a crash between the stamp and the retire
+          // leaves at worst an unannounced reset, which the next push redoes
+          // anyway.
           await worker.noteTailMilestone(
             session.id,
             { votesResetFor: commitHash },
@@ -14932,25 +14932,32 @@ ${buildGuidance.testingGuidance}`;
           // re-verified authoritatively in checkAndMerge.
           await require('../services/app-admins')
             .refreshExplicitApproval(pool, session, session);
-          const { rowCount } = await pool.query(
-            `DELETE FROM pr_votes WHERE session_id = $1`,
-            [session.id]
+          // #1688: the votes are RETIRED, not deleted — the session's approval
+          // epoch moves on and the rows stay as the record of who was on
+          // board, which is what asks the prior Yes voters back with one tap
+          // (services/vote-revision.js).
+          const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
+          const retired = await require('../services/vote-revision').retireAndRecheck(
+            pool, session, commitHash,
+            {
+              announce: async ({ retired: dropped }) => {
+                pushVoteUpdate({
+                  sessionId: session.id,
+                  appSlug: session.app_slug,
+                  merged: false,
+                });
+                const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
+                await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
+                // Dual-post into the proposal's thread (lifecycle in context).
+                await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+                  null, { type: 'session', ref: session.id }).catch(() => {});
+                log.info('sessions', 'Retired PR votes after new commit', {
+                  sessionId: session.id, commitHash: commitHash.substring(0, 8), votesRetired: dropped,
+                });
+              },
+            },
           );
-          if (rowCount > 0) {
-            const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
-            pushVoteUpdate({
-              sessionId: session.id,
-              appSlug: session.app_slug,
-              merged: false,
-            });
-            const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-            await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-            // Dual-post into the proposal's thread (lifecycle in context).
-            await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-              null, { type: 'session', ref: session.id }).catch(() => {});
-            log.info('sessions', 'Reset PR votes after new commit', {
-              sessionId: session.id, commitHash: commitHash.substring(0, 8), votesDropped: rowCount,
-            });
+          if (retired.retired > 0) {
             summaryParts.push('Group-chat votes were reset for the new commit.');
           }
         }

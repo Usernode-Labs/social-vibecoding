@@ -32,6 +32,9 @@ function recipientBinding({ installationId, userId, environment }) {
 const TITLE_MAX = 80;
 const BODY_MAX = 140;
 const EMBED_TITLE_MAX = 60;
+// #1688: a voter's one-line reason, quoted as the vote push's body. Two
+// characters short of BODY_MAX for the quotation marks around it.
+const VOTE_REASON_EMBED_MAX = 138;
 // Labels embedded in a TITLE get a tighter cap than body embeds, so the
 // actor and the ` · App` suffix survive the final 80-char truncation.
 const TITLE_EMBED_MAX = 40;
@@ -215,20 +218,57 @@ function buildCopy(kind, context, now) {
     case 'proposal_vote': {
       if (!actor) return null;
       const direction = detail === 'no' ? 'no' : 'yes';
+      // #1688: the voter's line IS the news. Quoted when they left one, so
+      // the proposer reads what to fix from the banner itself.
+      const voteReason = cleanText(context.voteReason);
       return {
         title: withApp(quotedTitle
           ? `@${actor} voted ${direction} on ${quotedTitle}`
           : `@${actor} voted ${direction} on your proposal`),
-        body: 'Open the proposal to review their vote',
+        body: voteReason
+          ? `“${truncate(voteReason, VOTE_REASON_EMBED_MAX)}”`
+          : 'Open the proposal to review their vote',
       };
     }
     case 'pr_merged':
+      // #1688: `detail` names the people on a merge the vote carried
+      // ("Backed by alice and bob, shaped by carol."); an admin override
+      // keeps its marker and its own line.
       return {
         title: withApp(quotedTitle ? `${quotedTitle} merged` : 'Your proposal merged'),
         body: detail === 'forced'
           ? 'An admin merged it. Your change is live'
-          : 'The vote carried. Your change is live',
+          : detail
+            ? `The vote carried. ${truncate(detail, 120)}`
+            : 'The vote carried. Your change is live',
       };
+    // #1688: the author pushed a new version of a proposal this person had
+    // backed. Their yes no longer counts until they look again; the row in
+    // the app carries the one tap that keeps it.
+    case 'revision_recheck':
+      return {
+        title: withApp(quotedTitle ? `Still good? ${quotedTitle} changed` : 'Still good? A proposal you backed changed'),
+        body: actor
+          ? `@${actor} pushed an update after your feedback. One tap keeps your yes`
+          : 'A new version was pushed after your feedback. One tap keeps your yes',
+      };
+    // #1688: the Friday card. `detail` is "<merged>:<open>" — how many
+    // changes went live this week and how many proposals are waiting.
+    case 'weekly_digest': {
+      const counts = /^(\d+):(\d+)$/.exec(detail || '');
+      const merged = counts ? Number(counts[1]) : 0;
+      const open = counts ? Number(counts[2]) : 0;
+      const shipped = merged === 0
+        ? 'Nothing landed this week.'
+        : `${merged} ${merged === 1 ? 'change' : 'changes'} went live.`;
+      const waiting = open === 0
+        ? ''
+        : ` ${open === 1 ? 'One proposal is' : `${open} proposals are`} waiting for eyes`;
+      return {
+        title: app ? `This week on ${app}` : 'This week',
+        body: `${shipped}${waiting}`.trim(),
+      };
+    }
     case 'issue_opened': {
       const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
       return {

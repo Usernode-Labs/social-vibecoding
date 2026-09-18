@@ -5667,6 +5667,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
+/* #1688: the kudos slot spelled out on a fresh proposal — "Thank evan for
+   putting this up" — accent-tinted so it reads as the invitation it is,
+   until the viewer votes or thanks and it becomes the count pill again. */
+.gc-vote-btn.dev-thanks-pill {
+  gap: 5px;
+  padding: 0 11px;
+  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.gc-vote-btn.dev-thanks-pill:hover { background: var(--accent-wash); color: var(--accent-wash-ink); }
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
 .gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
 .gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
@@ -6668,6 +6680,28 @@ span.gc-vote-btn-icon { cursor: default; }
 a.gc-event-box { cursor: pointer; }
 a.gc-event-box:hover { text-decoration: none; }
 a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
+/* #1688: after a named merge's sentence, the number and the tally, quieter. */
+.gc-event-text > .gc-event-tail { color: var(--text-muted); font-weight: 400; }
+/* #1688: the Friday card — the event box's surface, holding lines. */
+.gc-event-box.gc-event-weekly {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 14px;
+  max-width: min(100%, 640px);
+}
+.gc-weekly-title { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.gc-weekly-section { display: flex; flex-direction: column; gap: 3px; }
+.gc-weekly-head { font-weight: 600; }
+.gc-weekly-head-live { color: var(--state-ok); }
+.gc-weekly-head-open { color: var(--accent); }
+.gc-weekly-line { padding-left: 12px; line-height: 1.45; }
+.gc-weekly-line-title { color: var(--text-primary); }
+.gc-weekly-line-who { color: var(--text-muted); }
+.gc-weekly-more { padding-left: 12px; color: var(--text-muted); font-size: 12.5px; }
+.gc-weekly-door { align-self: flex-start; font-size: 12.5px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.gc-weekly-door:hover { text-decoration: underline; }
 a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gc-event-box > .dev-card-icon {
   flex: none; width: 20px; height: 20px;
@@ -11590,6 +11624,71 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-opt:hover { background: var(--bg-tertiary); }
 .dev-vote-opt[aria-checked="true"] { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-opt-no[aria-checked="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+
+/* ── #1688: the line under the rows ──
+   Picking a side grows the picker by a one-line box: the label above it says
+   what to write, the box holds a sentence, and the two buttons under it send
+   the vote — with the line, or for a Yes without one. A No's send button
+   stays dim until there is a line, so nothing has to say "required". */
+.dev-vote-pop[data-asking] { width: 268px; }
+.dev-vote-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 2px 0;
+  border-top: 1px solid var(--border-light);
+}
+.dev-vote-reason-label {
+  display: block;
+  padding: 0 6px 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.dev-vote-reason-box {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.dev-vote-reason-box:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dev-vote-reason-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 2px 2px 0;
+}
+.dev-vote-reason-cancel, .dev-vote-reason-send {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dev-vote-reason-cancel { background: transparent; color: var(--text-muted); }
+.dev-vote-reason-cancel:hover { background: var(--bg-tertiary); }
+.dev-vote-reason-send-yes { background: var(--accent); color: var(--accent-ink); }
+.dev-vote-reason-send-no { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-reason-send:disabled { opacity: 0.5; cursor: default; }
+/* "Still yes?": the viewer's Yes was on an earlier version of the proposal
+   (#1688). Amber, because it is a question the card is asking them. */
+.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
+/* The roster's lines (#1688): each voter's sentence under the names, and the
+   earlier-version note under those. */
+.dev-ledger-reason { display: block; padding-left: 12px; font-size: 12.5px; color: var(--text-muted); }
+.dev-ledger-earlier { display: block; font-size: 12.5px; color: var(--state-attention); }
 
 /* ── The facts, as one line ──
    Linked issue · priority · assignee · category · 💬 N — the chips' own

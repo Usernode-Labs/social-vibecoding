@@ -26,18 +26,34 @@ const log = require('./logger');
 const events = require('./events');
 const { weekStartUtc } = require('./leaderboard-users');
 
-// Weekly quota per giver, shared across PR kudos and issue bounties. Moving
-// this number is the whole of the "give users way more kudos" half of #964 —
-// every read site (the /api/me/kudos-budget badge, both 429 messages, the
-// `remaining` figure in four responses, the leaderboard's kudos_given clamp)
-// interpolates it rather than hardcoding a literal.
+// Weekly "thanks" allowance per giver: PR kudos. Moving this number is the
+// whole of the "give users way more kudos" half of #964 — every read site
+// (the /api/me/kudos-budget badge, the 429 message, the `remaining` figure in
+// the responses, the leaderboard's kudos_given clamp) interpolates it rather
+// than hardcoding a literal.
 const WEEKLY_KUDOS_LIMIT = 20;
 
-// The SHARED weekly "give" allowance: PR kudos + issue bounties draw from the
-// same WEEKLY_KUDOS_LIMIT pool, so a user can't exceed that many total
-// combined gives per week. Both the PR-kudos give endpoint and the two
-// bounty-creating surfaces gate on this combined figure. One round-trip across
-// both ledgers; uses idx_pr_kudos_giver_week + idx_issue_bounties_giver_week.
+// #1688: issue bounties draw from their OWN weekly allowance now. They used
+// to share WEEKLY_KUDOS_LIMIT with PR kudos, which was fine while kudos sat
+// behind a small count pill; with "Thank <author> for putting this up" the
+// first thing on every fresh proposal card, a shared pool would let thanks
+// drain the bounties. The number is the old shared one, so nobody's budget
+// shrank — a person who gave twenty of each now can.
+const WEEKLY_BOUNTY_LIMIT = 20;
+
+// This week's PR kudos by `userId` — what the give endpoint and the budget
+// badge gate on. Uses idx_pr_kudos_giver_week.
+async function countWeeklyKudosUsed(pool, userId, weekStart) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM pr_kudos
+      WHERE giver_user_id = $1 AND week_start = $2`,
+    [userId, weekStart]
+  );
+  return parseInt(rows[0]?.c, 10) || 0;
+}
+
+// This week's bounties by `userId` — what placeBounty gates on. Uses
+// idx_issue_bounties_giver_week.
 //
 // A pledged bounty normally keeps consuming its slot whatever its outcome
 // (open → awarded), but a VOIDED bounty is refunded: it no longer counts
@@ -46,6 +62,21 @@ const WEEKLY_KUDOS_LIMIT = 20;
 // pledged on an issue their own PR then closed. That void is a system-imposed
 // outcome the pledger can't avoid, so the slot is returned for them to spend
 // on someone else's PR. Hence the `status <> 'voided'` filter below.
+async function countWeeklyBountiesUsed(pool, userId, weekStart) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c
+       FROM issue_bounties
+      WHERE giver_user_id = $1 AND week_start = $2
+        AND status <> 'voided'`,
+    [userId, weekStart]
+  );
+  return parseInt(rows[0]?.c, 10) || 0;
+}
+
+// The two ledgers together — no longer what any gate reads (#1688 split
+// them), kept for the readers that want one figure: the leaderboard's
+// kudos_given clamp and the "how much have I given" surfaces. One
+// round-trip across both ledgers; the same voided-bounty refund as above.
 async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
   const { rows } = await pool.query(
     `SELECT
@@ -84,14 +115,16 @@ async function placeBounty(pool, { app, user, issueNumber }) {
   // most 1. Bounded, rare, not security-critical — same documented trade-off
   // as the PR-kudos give path, and the leaderboard's LEAST(COUNT(*), limit)
   // clamp hides it from the one place it would otherwise show.
-  const used = await countWeeklyAllowanceUsed(pool, user.id, weekStart);
-  if (used >= WEEKLY_KUDOS_LIMIT) {
+  // #1688: bounties have their own allowance, so a week of thanking people
+  // never leaves an issue with nothing to pledge.
+  const used = await countWeeklyBountiesUsed(pool, user.id, weekStart);
+  if (used >= WEEKLY_BOUNTY_LIMIT) {
     return {
       ok: false,
       code: 'quota',
-      error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
+      error: `Weekly bounty quota exceeded (${WEEKLY_BOUNTY_LIMIT}/week). Resets every Monday 00:00 UTC.`,
       remaining: 0,
-      limit: WEEKLY_KUDOS_LIMIT,
+      limit: WEEKLY_BOUNTY_LIMIT,
     };
   }
 
@@ -111,8 +144,8 @@ async function placeBounty(pool, { app, user, issueNumber }) {
         ok: false,
         code: 'duplicate',
         error: 'You already placed a bounty on this issue',
-        remaining: Math.max(0, WEEKLY_KUDOS_LIMIT - used),
-        limit: WEEKLY_KUDOS_LIMIT,
+        remaining: Math.max(0, WEEKLY_BOUNTY_LIMIT - used),
+        limit: WEEKLY_BOUNTY_LIMIT,
       };
     }
     throw err;
@@ -148,7 +181,7 @@ async function placeBounty(pool, { app, user, issueNumber }) {
     issueNumber, bountyCount,
   });
 
-  const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - (used + 1));
+  const remaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - (used + 1));
   log.info('bounties', 'Bounty created', {
     appId: app.id, issueNumber, giverId: user.id, remaining,
   });
@@ -157,12 +190,15 @@ async function placeBounty(pool, { app, user, issueNumber }) {
     bountyId: inserted.id,
     bountyCount,
     remaining,
-    limit: WEEKLY_KUDOS_LIMIT,
+    limit: WEEKLY_BOUNTY_LIMIT,
   };
 }
 
 module.exports = {
   WEEKLY_KUDOS_LIMIT,
+  WEEKLY_BOUNTY_LIMIT,
+  countWeeklyKudosUsed,
+  countWeeklyBountiesUsed,
   countWeeklyAllowanceUsed,
   placeBounty,
 };
