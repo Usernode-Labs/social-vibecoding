@@ -123,7 +123,7 @@ function runtimeInput(overrides = {}) {
 }
 
 test('the versioned system prompt gives weak models an exact platform workflow', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v5');
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v6');
   assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
   assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
@@ -135,14 +135,19 @@ test('the versioned system prompt gives weak models an exact platform workflow',
   assert.match(SYSTEM_PROMPT, /STEP 3 — COLLECT EVERY REQUIRED INPUT/);
   assert.match(SYSTEM_PROMPT, /pathParameters: an object containing every named placeholder/);
   assert.match(SYSTEM_PROMPT, /Never invent a missing slug, id, issue number/);
+  assert.match(SYSTEM_PROMPT, /Never invent choices from the user's wording/);
+  assert.match(SYSTEM_PROMPT, /Match only against records returned by that capability/);
   assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
   assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
   assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
   assert.match(SYSTEM_PROMPT, /exactly five button options/i);
+  assert.match(SYSTEM_PROMPT, /every object-specific prompt must name that object/i);
   assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
   assert.match(SYSTEM_PROMPT, /Open in Classic links/);
   assert.match(RESULT_FOLLOWUP_PROMPT, /Inspect the newest tool result/);
   assert.match(RESULT_FOLLOWUP_PROMPT, /exactly five new button suggestions/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /copy the exact visible name and canonical slug/i);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /Stay inside that exact topic/i);
   assert.match(MORE_SUGGESTIONS_PROMPT, /Do not search and do not call a platform capability/);
   assert.match(MORE_SUGGESTIONS_PROMPT, /exactly five relevant new button suggestions/);
 });

@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
+import { DevelopmentAISettingsEditor } from './development-settings-editor';
 
 import {
   clientAction,
@@ -9,7 +11,9 @@ import {
   confirmGlobalChatAction,
   dismissConfirmation,
   executeGlobalChatResultAction,
+  loadGlobalChatInlineResults,
   runGlobalChatClientAction,
+  sendGlobalChatMessage,
   useGlobalChatState,
 } from './store';
 import type { GlobalChatResult } from './types';
@@ -210,8 +214,20 @@ function identifier(item: JsonObject) {
 
 interface DirectItemAction {
   label: string;
+  requestLabel: string;
   actionId: string;
   parameters: Record<string, string>;
+  mode: 'inline' | 'turn';
+}
+
+function itemAction(
+  label: string,
+  requestLabel: string,
+  actionId: string,
+  parameters: Record<string, string>,
+  mode: 'inline' | 'turn',
+): DirectItemAction {
+  return { label, requestLabel, actionId, parameters, mode };
 }
 
 function resultAppSlug(result: GlobalChatResult, item: JsonObject) {
@@ -222,14 +238,18 @@ function resultAppSlug(result: GlobalChatResult, item: JsonObject) {
   try { return decodeURIComponent(encoded); } catch { return encoded; }
 }
 
-function directItemActions(result: GlobalChatResult, item: JsonObject): DirectItemAction[] {
+function directItemActions(
+  result: GlobalChatResult,
+  item: JsonObject,
+  targetLabel: string,
+): DirectItemAction[] {
   const slug = resultAppSlug(result, item);
   const payload = object(item.payload);
   if (result.renderer === 'app' && slug) {
     return [
-      { label: 'Details', actionId: 'apps.detail', parameters: { appSlug: slug } },
-      { label: 'Issues', actionId: 'issues.for_app', parameters: { appSlug: slug } },
-      { label: 'Discussions', actionId: 'messages.for_app', parameters: { appSlug: slug } },
+      itemAction('Details', `About ${targetLabel}`, 'apps.detail', { appSlug: slug }, 'inline'),
+      itemAction('Issues', `Issues for ${targetLabel}`, 'issues.for_app', { appSlug: slug }, 'turn'),
+      itemAction('Discussions', `Discussions in ${targetLabel}`, 'messages.for_app', { appSlug: slug }, 'turn'),
     ];
   }
   if (result.renderer === 'issue' && slug) {
@@ -242,70 +262,68 @@ function directItemActions(result: GlobalChatResult, item: JsonObject): DirectIt
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
     if (issueNumber && (githubIssueCapability || !text(item.kind, 80))) {
       return [
-        { label: 'Details', actionId: 'issue.detail', parameters: { appSlug: slug, issueNumber } },
-        { label: 'Comments', actionId: 'issue.comments', parameters: { appSlug: slug, issueNumber } },
+        itemAction('Details', `Open ${targetLabel}`, 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction('Comments', `Comments on ${targetLabel}`, 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
       ];
     }
     if (governanceId) {
-      return [{
-        label: 'Details',
-        actionId: 'governance.detail',
-        parameters: { appSlug: slug, governanceId },
-      }];
+      return [itemAction(
+        'Details', `Open ${targetLabel}`, 'governance.detail',
+        { appSlug: slug, governanceId }, 'inline',
+      )];
     }
   }
   if (result.renderer === 'proposal' && slug) {
     const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
     if (item.proposalType === 'governance' && governanceId) {
-      return [{
-        label: 'Details',
-        actionId: 'governance.detail',
-        parameters: { appSlug: slug, governanceId },
-      }];
+      return [itemAction(
+        'Details', `Open ${targetLabel}`, 'governance.detail',
+        { appSlug: slug, governanceId }, 'inline',
+      )];
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
     if (proposalId) return [
-      { label: 'Details', actionId: 'proposal.detail', parameters: { appSlug: slug, proposalId } },
-      { label: 'Evidence', actionId: 'proposal.evidence', parameters: { appSlug: slug, proposalId } },
+      itemAction('Details', `Open ${targetLabel}`, 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
+      itemAction('Evidence', `Evidence for ${targetLabel}`, 'proposal.evidence', { appSlug: slug, proposalId }, 'inline'),
     ];
   }
   if (result.renderer === 'session') {
     const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
     if (sessionId) return [
-      { label: 'Details', actionId: 'session.detail', parameters: { sessionId } },
-      { label: 'Checks', actionId: 'session.checks', parameters: { sessionId } },
+      itemAction('Details', `Details for ${targetLabel}`, 'session.detail', { sessionId }, 'inline'),
+      itemAction('Checks', `Checks for ${targetLabel}`, 'session.checks', { sessionId }, 'inline'),
     ];
   }
   if (result.renderer === 'conversation') {
     if (result.capabilityId === 'messages.for_app') return [];
     const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
-    if (conversationId) return [{
-      label: 'Details', actionId: 'conversation.detail', parameters: { conversationId },
-    }];
+    if (conversationId) return [itemAction(
+      'Details', `Open ${targetLabel}`, 'conversation.detail', { conversationId }, 'inline',
+    )];
   }
   if (result.renderer === 'notification') {
     const notificationId = first(item, ['notificationId', 'notification_id', 'id'], 80);
-    if (notificationId) return [{
-      label: 'Details', actionId: 'notification.detail', parameters: { notificationId },
-    }];
+    if (notificationId) return [itemAction(
+      'Details', `Open ${targetLabel}`, 'notification.detail', { notificationId }, 'inline',
+    )];
   }
   if (result.renderer === 'leaderboard') {
     const userId = first(item, ['userId', 'user_id', 'id'], 80);
     const username = text(item.username, 80);
     return [
-      ...(userId ? [{
-        label: 'Profile', actionId: 'leaderboard.profile', parameters: { userId },
-      }] : []),
-      ...(username ? [{
-        label: 'Merged work', actionId: 'leaderboard.prs', parameters: { username },
-      }] : []),
+      ...(userId ? [itemAction(
+        'Profile', `Profile for ${targetLabel}`, 'leaderboard.profile', { userId }, 'inline',
+      )] : []),
+      ...(username ? [itemAction(
+        'Merged work', `Merged work by ${targetLabel}`, 'leaderboard.prs', { username }, 'inline',
+      )] : []),
     ];
   }
-  if (result.renderer === 'setting') {
+  if (result.renderer === 'setting' && result.capabilityId === 'settings.catalog') {
     const group = text(item.id || item.group, 80);
-    if (group && text(item.classicPath, 300)) return [{
-      label: 'View', actionId: 'settings.inspect', parameters: { group },
-    }];
+    if (group && text(item.classicPath, 300)) return [itemAction(
+      'View', `Open ${targetLabel}`, 'settings.inspect', { group }, 'inline',
+    )];
   }
   return [];
 }
@@ -476,17 +494,106 @@ function displayFields(result: GlobalChatResult, item: JsonObject): DisplayField
   return fields.slice(0, 4);
 }
 
-function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }) {
+function actionTargetLabel(result: GlobalChatResult, item: JsonObject, title: string) {
+  const id = identifier(item)?.value;
+  if (!id || title.includes(id)) return title;
+  if (result.renderer === 'issue') return `${title} (#${id})`;
+  if (result.renderer === 'proposal') return `${title} (proposal #${id})`;
+  if (result.renderer === 'session') return `${title} (development #${id})`;
+  return title;
+}
+
+function SettingInstruction({ item, title }: { item: JsonObject; title: string }) {
+  const [editing, setEditing] = useState(false);
+  const [instruction, setInstruction] = useState('');
+  const group = text(item.group || item.id, 80);
+  if (!group || group === 'global-chat') return null;
+
+  function submit() {
+    const requested = instruction.trim();
+    if (!requested) return;
+    setInstruction('');
+    setEditing(false);
+    void sendGlobalChatMessage(
+      `In the "${title}" settings group (key: ${group}), ${requested}. `
+      + 'Preserve every value I did not ask to change, use only capabilities for this settings group, '
+      + 'and show the exact confirmation before saving.',
+    );
+  }
+
+  return editing ? (
+    <form
+      className="global-chat-setting-instruction"
+      onSubmit={(event) => { event.preventDefault(); submit(); }}
+    >
+      <input
+        value={instruction}
+        maxLength={500}
+        autoFocus
+        aria-label={`Change ${title}`}
+        placeholder={`What should change in ${title}?`}
+        onChange={(event) => setInstruction(event.target.value)}
+      />
+      <button type="submit" disabled={!instruction.trim()}>Continue</button>
+      <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+    </form>
+  ) : (
+    <button type="button" className="global-chat-setting-edit" onClick={() => setEditing(true)}>
+      Change these settings
+    </button>
+  );
+}
+
+function ItemRow({
+  result,
+  value,
+  nested = false,
+}: {
+  result: GlobalChatResult;
+  value: unknown;
+  nested?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(nested);
+  const [inlineResults, setInlineResults] = useState<Record<string, GlobalChatResult[]>>({});
+  const [inlineLoading, setInlineLoading] = useState<string | null>(null);
+  const [inlineError, setInlineError] = useState('');
   const item = object(value) || { value };
   const title = itemTitle(result, item);
+  const targetLabel = actionTargetLabel(result, item, title);
   const summary = itemSummary(result, item, title);
   const meta = compactMetadata(result, item, title);
   const classicPath = itemClassicPath(result, item);
   const fields = displayFields(result, item);
   const showAppIcon = result.renderer === 'app' && !!text(item.slug || item.app_slug, 255);
-  const directActions = directItemActions(result, item);
+  const directActions = nested ? [] : directItemActions(result, item, targetLabel);
+  const catalogView = directActions.find((action) => action.actionId === 'settings.inspect');
+
+  async function loadInline(action: DirectItemAction) {
+    if (inlineLoading || inlineResults[action.actionId]) return;
+    setInlineLoading(action.actionId);
+    setInlineError('');
+    try {
+      const loaded = await loadGlobalChatInlineResults(
+        action.actionId,
+        action.parameters,
+        targetLabel,
+      );
+      setInlineResults((current) => ({ ...current, [action.actionId]: loaded }));
+    } catch (reason) {
+      setInlineError(reason instanceof Error ? reason.message : 'Could not load those details.');
+    } finally {
+      setInlineLoading(null);
+    }
+  }
+
+  function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && catalogView) void loadInline(catalogView);
+  }
+
   return (
-    <article className="global-chat-item">
+    <article className="global-chat-item" data-expanded={expanded || undefined}>
       {showAppIcon ? (
         <div
           className="app-icon-tile h-10 w-10 shrink-0 overflow-hidden rounded-xl flex items-center justify-center text-lg font-bold"
@@ -496,30 +603,66 @@ function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }
         </div>
       ) : null}
       <div className="min-w-0 flex-1">
-        <div className="global-chat-item-title">{title}</div>
-        {meta ? <div className="global-chat-item-meta">{meta}</div> : null}
-        {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
-        {fields.length ? (
-          <div className="global-chat-item-meta">
-            {fields.map(({ label, value: fieldValue }) => `${label}: ${fieldValue}`).join(' · ')}
+        <button
+          type="button"
+          className="global-chat-item-toggle"
+          aria-expanded={expanded}
+          onClick={toggleExpanded}
+        >
+          <span className="min-w-0 flex-1 text-left">
+            <span className="global-chat-item-title">{title}</span>
+            {meta ? <span className="global-chat-item-meta">{meta}</span> : null}
+          </span>
+          <ChevronDownIcon className="global-chat-item-chevron" aria-hidden="true" />
+        </button>
+        {expanded ? (
+          <div className="global-chat-item-details">
+            {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
+            {fields.length ? (
+              <dl className="global-chat-item-fields">
+                {fields.map(({ label, value: fieldValue }) => (
+                  <div key={label}><dt>{label}</dt><dd>{fieldValue}</dd></div>
+                ))}
+              </dl>
+            ) : null}
+            {!nested ? (
+              <div className="global-chat-inline-actions">
+                {directActions.filter((action) => action.actionId !== 'settings.inspect').map((action) => (
+                  <button
+                    key={action.actionId}
+                    type="button"
+                    disabled={inlineLoading === action.actionId}
+                    onClick={() => action.mode === 'inline'
+                      ? void loadInline(action)
+                      : void executeGlobalChatResultAction(
+                        action.requestLabel,
+                        action.actionId,
+                        action.parameters,
+                        targetLabel,
+                      )}
+                  >
+                    {inlineLoading === action.actionId ? 'Loading…' : action.label}
+                  </button>
+                ))}
+                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
+              </div>
+            ) : classicPath ? (
+              <div className="global-chat-inline-actions">
+                <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button>
+              </div>
+            ) : null}
+            {inlineLoading === 'settings.inspect' ? (
+              <div className="global-chat-inline-loading">Loading current settings…</div>
+            ) : null}
+            {inlineError ? <div className="global-chat-inline-error" role="alert">{inlineError}</div> : null}
+            {Object.values(inlineResults).flat().map((loaded) => (
+              <GlobalChatResultBlock key={loaded.id} result={loaded} nested />
+            ))}
+            {result.renderer === 'setting' && result.capabilityId === 'settings.inspect'
+              ? <SettingInstruction item={item} title={title} />
+              : null}
           </div>
         ) : null}
-        <div className="global-chat-inline-actions">
-          {directActions.map((action) => (
-            <button
-              key={action.actionId}
-              type="button"
-              onClick={() => void executeGlobalChatResultAction(
-                action.label,
-                action.actionId,
-                action.parameters,
-              )}
-            >
-              {action.label}
-            </button>
-          ))}
-          {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
-        </div>
       </div>
     </article>
   );
@@ -592,21 +735,77 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
   );
 }
 
-export function GlobalChatResultBlock({ result }: { result: GlobalChatResult }) {
+export function GlobalChatResultBlock({
+  result,
+  nested = false,
+}: {
+  result: GlobalChatResult;
+  nested?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
   const items = useMemo(() => findItems(payload), [payload]);
   if (confirmation) return <ConfirmationResult result={result} payload={object(payload) || {}} />;
+  if (result.renderer === 'setting'
+      && result.capabilityId === 'settings.inspect'
+      && object(payload)?.group === 'global-chat') {
+    return (
+      <section
+        className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
+        data-renderer="setting"
+      >
+        <header className="global-chat-result-head"><span>Global Chat settings</span></header>
+        <GlobalChatSettingsEditor embedded />
+        {result.classicPath ? (
+          <div className="global-chat-inline-actions global-chat-client-action">
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+  if (result.renderer === 'setting'
+      && result.capabilityId === 'settings.inspect'
+      && object(payload)?.group === 'openrouter') {
+    return (
+      <section
+        className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
+        data-renderer="setting"
+      >
+        <header className="global-chat-result-head"><span>Development AI settings</span></header>
+        <DevelopmentAISettingsEditor />
+        {result.classicPath ? (
+          <div className="global-chat-inline-actions global-chat-client-action">
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   const visible = expanded ? items : items.slice(0, 3);
   const action = clientAction(result);
   return (
-    <section className="global-chat-result" data-renderer={result.renderer}>
+    <section
+      className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}`}
+      data-renderer={result.renderer}
+    >
       <header className="global-chat-result-head">
         <span>{resultLabel(result)}</span>
       </header>
-      {visible.length ? <div className="global-chat-result-items">{visible.map((item, index) => <ItemRow key={`${result.id}-${index}`} result={result} value={item} />)}</div> : null}
+      {visible.length ? (
+        <div className="global-chat-result-items">
+          {visible.map((item, index) => (
+            <ItemRow
+              key={`${result.id}-${index}`}
+              result={result}
+              value={item}
+              nested={nested}
+            />
+          ))}
+        </div>
+      ) : null}
       {items.length > visible.length ? (
         <button type="button" className="global-chat-expand" onClick={() => setExpanded(true)}>
           Show {items.length - visible.length} more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />

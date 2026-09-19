@@ -38,7 +38,8 @@ const CAPABILITY_REGISTRY = new CapabilityRegistry(classicCapabilityDefinitions(
 const TURN_BODY_FIELDS = new Set(['text', 'client', 'context']);
 const MORE_BODY_FIELDS = new Set(['topic', 'shownSuggestionIds', 'client', 'context']);
 const DIRECT_BODY_FIELDS = new Set([
-  'suggestionId', 'actionId', 'parameters', 'shownSuggestionIds', 'client', 'context',
+  'suggestionId', 'actionId', 'parameters', 'targetLabel',
+  'shownSuggestionIds', 'client', 'context',
 ]);
 const CONFIRM_BODY_FIELDS = new Set(['threadId', 'client']);
 const CLIENT_FIELDS = new Set(['surface', 'viewport', 'classicReturnPath']);
@@ -150,7 +151,7 @@ function turnRequestBody(value, { more = false } = {}) {
         : 'Show more suggestions.')
       : body.text.trim(),
     ...envelope,
-    suggestionContext: more && SUGGESTION_DOMAINS.has(body.topic?.trim())
+    suggestionContext: more && body.topic?.trim()
       ? body.topic.trim()
       : 'general',
     shownSuggestionIds: more ? suggestionIds(body.shownSuggestionIds) : [],
@@ -180,9 +181,19 @@ function directRequestBody(value) {
     throw new Error('parameters are too large.');
   }
   parameters = JSON.parse(parametersJson);
+  let targetLabel = null;
+  if (body.targetLabel != null) {
+    if (typeof body.targetLabel !== 'string' || !body.targetLabel.trim()
+        || body.targetLabel.length > 160
+        || /[\u0000-\u001f\u007f]/.test(body.targetLabel)) {
+      throw new Error('targetLabel must be a short single-line label.');
+    }
+    targetLabel = body.targetLabel.trim();
+  }
   return {
     ...(hasSuggestion ? { suggestionId: body.suggestionId } : { actionId: body.actionId }),
     parameters,
+    ...(targetLabel ? { targetLabel } : {}),
     shownSuggestionIds: suggestionIds(body.shownSuggestionIds),
     ...requestClientContext(body),
   };
@@ -582,7 +593,7 @@ function globalChatRoutes(config) {
       return res.status(400).json({ error: error.message });
     }
 
-    if (kind === 'more_suggestions') {
+    if (kind === 'more_suggestions' && SUGGESTION_DOMAINS.has(input.suggestionContext)) {
       try {
         const directPage = await getSuggestionExecutor().showSuggestionPage({
           userId: req.user.id,
@@ -904,6 +915,7 @@ function globalChatRoutes(config) {
         suggestionId: input.suggestionId,
         actionId: input.actionId,
         parameters: input.parameters,
+        targetLabel: input.targetLabel,
         excludedSuggestionIds: input.shownSuggestionIds,
         client: input.client,
         executionContext: executionContext(req, input.client, {
@@ -924,6 +936,49 @@ function globalChatRoutes(config) {
         error: status === 500
           ? directFailureMessage(error)
           : error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
+    }
+  });
+
+  router.post('/api/global-chat/threads/:id/inline-actions', chatLimiter, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    let input;
+    try {
+      input = directRequestBody(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (input.suggestionId) {
+      return res.status(400).json({ error: 'Inline actions require an exact actionId.' });
+    }
+    try {
+      const runtime = await directRuntime(req.user.id, {
+        includeAllowance: input.actionId === 'settings.spending',
+      });
+      const completed = await getSuggestionExecutor().executeInline({
+        userId: req.user.id,
+        threadId: req.params.id,
+        actionId: input.actionId,
+        parameters: input.parameters,
+        targetLabel: input.targetLabel,
+        executionContext: executionContext(req, input.client, {
+          ...runtime,
+          clientSettings: input.context.clientSettings,
+        }),
+      });
+      return res.json({ ok: true, ...completed });
+    } catch (error) {
+      log.warn('global-chat', 'inline action failed', {
+        userId: req.user.id,
+        threadId: req.params.id,
+        code: error.code,
+        err: error.message,
+      });
+      const status = requestErrorStatus(error);
+      return res.status(status).json({
+        error: status === 500 ? directFailureMessage(error) : error.message,
         ...(error.code ? { code: error.code } : {}),
       });
     }

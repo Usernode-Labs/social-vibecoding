@@ -21,6 +21,7 @@ type RetryRequest =
     suggestionId?: string;
     actionId?: string;
     parameters?: Record<string, string>;
+    targetLabel?: string;
   };
 
 export interface GlobalChatState {
@@ -600,11 +601,13 @@ async function runDirectAction({
   suggestionId,
   actionId,
   parameters,
+  targetLabel,
 }: {
   label: string;
   suggestionId?: string;
   actionId?: string;
   parameters?: Record<string, string>;
+  targetLabel?: string;
 }) {
   const boot = state.bootstrap || await initializeGlobalChat();
   if (!boot || state.phase === 'sending') return;
@@ -620,6 +623,7 @@ async function runDirectAction({
     ...(suggestionId ? { suggestionId } : {}),
     ...(actionId ? { actionId } : {}),
     ...(parameters ? { parameters } : {}),
+    ...(targetLabel ? { targetLabel } : {}),
   };
   appendOptimisticUser(label);
   const controller = new AbortController();
@@ -629,6 +633,7 @@ async function runDirectAction({
     const response = await api.executeDirectAction(thread.id, {
       ...(suggestionId ? { suggestionId } : { actionId }),
       parameters,
+      targetLabel,
       shownSuggestionIds: shownSuggestionIds(),
     }, controller.signal);
     publish((current) => current.bootstrap?.thread?.id === thread.id
@@ -685,7 +690,14 @@ async function runDirectAction({
 
 export async function selectGlobalChatSuggestion(suggestion: GlobalChatSuggestion) {
   if (suggestion.actionId) {
-    await runDirectAction({ label: suggestion.label, suggestionId: suggestion.id });
+    await runDirectAction(suggestion.parameters || suggestion.targetLabel
+      ? {
+        label: suggestion.label,
+        actionId: suggestion.actionId,
+        parameters: suggestion.parameters,
+        targetLabel: suggestion.targetLabel || undefined,
+      }
+      : { label: suggestion.label, suggestionId: suggestion.id });
     return;
   }
   await sendGlobalChatMessage(suggestion.prompt);
@@ -695,8 +707,24 @@ export async function executeGlobalChatResultAction(
   label: string,
   actionId: string,
   parameters: Record<string, string>,
+  targetLabel?: string,
 ) {
-  await runDirectAction({ label, actionId, parameters });
+  await runDirectAction({ label, actionId, parameters, targetLabel });
+}
+
+export async function loadGlobalChatInlineResults(
+  actionId: string,
+  parameters: Record<string, string>,
+  targetLabel?: string,
+) {
+  const threadId = state.bootstrap?.thread?.id;
+  if (!threadId) throw new Error('Open a Global Chat first.');
+  const response = await api.executeInlineAction(threadId, {
+    actionId,
+    parameters,
+    targetLabel,
+  });
+  return response.results;
 }
 
 export async function requestMoreSuggestions(topic?: string) {

@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 641,
+    "totalRoutes": 642,
     "mappedRoutes": 505,
-    "exemptRoutes": 136,
+    "exemptRoutes": 137,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 355,
+    "clientApiReferences": 356,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -4654,6 +4654,7 @@
       "classicPath": "#settings",
       "clientReferences": [
         "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -4680,6 +4681,7 @@
       "classicPath": "#settings",
       "clientReferences": [
         "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -4706,6 +4708,7 @@
       "classicPath": "#settings",
       "clientReferences": [
         "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js"
       ]
@@ -5358,7 +5361,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 711,
+      "line": 722,
       "method": "GET",
       "path": "/api/global-chat/bootstrap",
       "expression": null,
@@ -5367,7 +5370,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 767,
+      "line": 778,
       "method": "GET",
       "path": "/api/global-chat/threads/current",
       "expression": null,
@@ -5376,7 +5379,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 778,
+      "line": 789,
       "method": "GET",
       "path": "/api/global-chat/threads",
       "expression": null,
@@ -5385,7 +5388,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 792,
+      "line": 803,
       "method": "POST",
       "path": "/api/global-chat/threads",
       "expression": null,
@@ -5394,7 +5397,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 804,
+      "line": 815,
       "method": "GET",
       "path": "/api/global-chat/threads/:id",
       "expression": null,
@@ -5403,7 +5406,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 820,
+      "line": 831,
       "method": "GET",
       "path": "/api/global-chat/threads/:id/messages",
       "expression": null,
@@ -5412,7 +5415,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 856,
+      "line": 867,
       "method": "GET",
       "path": "/api/global-chat/threads/:id/turn-status",
       "expression": null,
@@ -5421,7 +5424,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 877,
+      "line": 888,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/cancel",
       "expression": null,
@@ -5430,7 +5433,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 886,
+      "line": 897,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/direct-actions",
       "expression": null,
@@ -5439,7 +5442,16 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 932,
+      "line": 944,
+      "method": "POST",
+      "path": "/api/global-chat/threads/:id/inline-actions",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 987,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/turns",
       "expression": null,
@@ -5448,7 +5460,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 936,
+      "line": 991,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/more-suggestions",
       "expression": null,
@@ -5457,7 +5469,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 940,
+      "line": 995,
       "method": "POST",
       "path": "/api/global-chat/actions/:token/confirm",
       "expression": null,
@@ -5466,7 +5478,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 1011,
+      "line": 1066,
       "method": "DELETE",
       "path": "/api/global-chat/threads/:id",
       "expression": null,
@@ -5475,7 +5487,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 1031,
+      "line": 1086,
       "method": "GET",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5484,7 +5496,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 1052,
+      "line": 1107,
       "method": "PATCH",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5493,7 +5505,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 1076,
+      "line": 1131,
       "method": "GET",
       "path": "/api/me/global-chat/models",
       "expression": null,
@@ -5502,7 +5514,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 1099,
+      "line": 1154,
       "method": "GET",
       "path": "/api/me/global-chat/usage",
       "expression": null,
@@ -11993,6 +12005,13 @@
     },
     {
       "path": "/api/global-chat/threads/:param/direct-actions",
+      "sources": [
+        "frontend/src/features/global-chat/api.ts"
+      ],
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "path": "/api/global-chat/threads/:param/inline-actions",
       "sources": [
         "frontend/src/features/global-chat/api.ts"
       ],
