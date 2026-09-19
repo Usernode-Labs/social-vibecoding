@@ -181,6 +181,16 @@ test('runtime metadata is allowlisted, deterministic, and defaults GLM global ch
   const escaped = serializeRuntimeMetadata(injection);
   assert.doesNotMatch(escaped, /<system>|<\/homeroom-runtime-metadata><system>/);
   assert.match(escaped, /\\u003csystem\\u003e/);
+
+  const providerPrecision = buildRuntimeMetadata(runtimeInput({
+    budget: {
+      overallRemaining: 279.980327348,
+      globalChatSpent: '0.02',
+      globalChatCap: '0.50',
+      resetAt: '2026-09-21T00:00:00.000Z',
+    },
+  }), { now });
+  assert.equal(providerPrecision.budget.overallRemaining, '279.98032735');
 });
 
 test('provider tool schemas repeat exact argument and presentation instructions', () => {

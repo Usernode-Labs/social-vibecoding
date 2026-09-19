@@ -15,6 +15,7 @@ import {
   loadOlderGlobalChatMessages,
   openGlobalChat,
   requestMoreSuggestions,
+  retryLastGlobalChatRequest,
   selectGlobalChatSuggestion,
   sendGlobalChatMessage,
   startNewGlobalChat,
@@ -352,7 +353,7 @@ export function GlobalChatScreen() {
           {snapshot.error ? (
             <div className="global-chat-error" role="alert">
               <span>{snapshot.error}</span>
-              <button type="button" onClick={() => void openGlobalChat()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
+              <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
             </div>
           ) : null}
         </div>

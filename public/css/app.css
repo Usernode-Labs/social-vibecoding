@@ -1587,7 +1587,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   align-items: center;
   gap: 5px;
   padding: 9px 12px 12px;
-  color: var(--state-ok);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 650;
 }

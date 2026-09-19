@@ -225,7 +225,16 @@ function decimalString(value, field, { required = false } = {}) {
     if (required) throw new Error(`global-chat metadata: ${field} is required`);
     return null;
   }
-  const normalized = typeof value === 'number' ? String(value) : String(value).trim();
+  // Provider allowance APIs return JavaScript numbers and may expose more
+  // precision than the eight decimal places used by Global Chat's money
+  // ledger. Normalize numeric provider metadata at this trust boundary
+  // instead of rejecting an otherwise valid turn before the model is called.
+  // String values still have to be exact ledger-compatible amounts.
+  const normalized = typeof value === 'number'
+    ? (Number.isFinite(value) && value >= 0
+      ? value.toFixed(8).replace(/\.?0+$/, '')
+      : String(value))
+    : String(value).trim();
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(normalized)) {
     throw new Error(`global-chat metadata: invalid ${field}`);
   }

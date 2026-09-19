@@ -293,6 +293,24 @@ test('fixed suggestions execute directly without invoking the Global Chat model'
   assert.equal(direct.input.suggestionId, 'next.general.apps');
   assert.deepEqual(direct.input.excludedSuggestionIds, ['next.general.apps']);
   assert.equal(direct.input.executionContext.client.surface, 'native_android');
+  assert.equal(calls.filter((entry) => entry.type === 'allowance').length, 0);
+});
+
+test('the direct spending option fetches allowance while other direct reads stay fast', async (t) => {
+  const { base, calls } = await mount(t);
+  const response = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/direct-actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      suggestionId: 'next.settings.budget',
+      client: { surface: 'web', viewport: 'regular' },
+    }),
+  });
+  assert.equal(response.status, 200);
+  await response.json();
+  assert.equal(calls.filter((entry) => entry.type === 'allowance').length, 1);
+  const direct = calls.find((entry) => entry.type === 'direct-action');
+  assert.equal(direct.input.executionContext.budget.overallRemaining, 1.25);
 });
 
 test('direct-action failures return a specific safe retry message', async (t) => {

@@ -99,6 +99,12 @@ test('Global Chat stays isolated from developer and proposal chat implementation
 test('a streamed turn failure keeps its actionable error instead of being replaced by an incomplete-stream error', () => {
   assert.match(store, /event\.type === 'turn\.failed'[\s\S]*?completed = true;/);
   assert.match(store, /turn\.failed'[\s\S]*?pending \? \{ \.\.\.item, pending: false \}/);
+  assert.match(store, /event\.assistantMessage as GlobalChatMessage/);
+  assert.match(store, /assistant\.payload\?\.kind === 'turn_error'/);
+  assert.match(store, /retryRequest: failed \? retryRequest : null/);
+  assert.match(store, /export async function retryLastGlobalChatRequest/);
+  assert.match(screen, /retryLastGlobalChatRequest\(\)/);
+  assert.doesNotMatch(screen, /onClick=\{\(\) => void openGlobalChat\(\)\}[\s\S]*Retry/);
 });
 
 test('suggestions stay compact, button-like, and append through a separate More control', () => {
@@ -146,8 +152,21 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /githubIssueCapability/);
   assert.match(renderers, /executeGlobalChatResultAction/);
   assert.match(renderers, /actionId: 'issues\.for_app'/);
+  assert.match(renderers, /actionId: 'messages\.for_app'/);
   assert.match(renderers, /actionId: 'issue\.comments'/);
   assert.match(renderers, /actionId: 'session\.checks'/);
+  assert.match(renderers, /actionId: 'notification\.detail'/);
+  assert.match(renderers, /actionId: 'leaderboard\.profile'/);
+  assert.ok(renderers.includes("|| /\\/dev\\/chat$/.test(base)"));
+  assert.match(renderers, /Platform issues/);
+  assert.match(renderers, /GitHub issues/);
+  assert.match(renderers, /Recent app activity/);
+  assert.match(renderers, /Messages \(7d\)/);
+  assert.match(renderers, /Active time \(7d\)/);
+  assert.match(renderers, /No current proposals\./);
+  assert.doesNotMatch(renderers, /sendGlobalChatMessage/);
+  assert.doesNotMatch(renderers, /function safeFields/);
+  assert.doesNotMatch(renderers, />\s*Done\s*</);
   assert.match(directItemActionSource, /proposalType === 'governance'[\s\S]*actionId: 'governance\.detail'/);
   assert.doesNotMatch(directItemActionSource, /return `#app\//);
   assert.match(classicPathSource, /proposalType === 'governance'[\s\S]*return `#app\/\$\{segment\(slug\)\}\/dev\/governance/);
