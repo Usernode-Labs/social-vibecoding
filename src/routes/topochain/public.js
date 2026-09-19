@@ -520,6 +520,52 @@ function topochainPublicRoutes(config) {
     }
   });
 
+  // ── Does this viewer get the season history? (issue #2495) ───────────
+  //
+  // The list below feeds the Leaderboard screen's event picker, and the
+  // picker exists to reach standings other than the ones the screen opens
+  // on. Once a season is the one on screen, a member enrolled fresh into it
+  // — with no trace anywhere before — has nothing else to reach, so the
+  // client draws neither the picker nor the event card for them; the same
+  // goes for anyone signed out. A member the platform can place in ANOTHER
+  // season gets the history: enrolled there, credited on its ledger, or on
+  // one of its boards. The first and the last are the participant predicate
+  // the profile routes below already use; the ledger is what the automatic
+  // scorer writes without an enrollment. Cheapest table first: EXISTS stops
+  // at the first branch that yields, and an enrollment is one indexed probe.
+  // An admin gets the history by role, whatever their own trace: they run
+  // the seasons and read every one of them.
+  //
+  // "Another season" is measured against the DEFAULT event's season, not
+  // against the calendar, because the default event is what the picker
+  // would otherwise be replacing: before a season starts the default is the
+  // previous season's aggregate, and someone whose data is all there has
+  // nowhere else to look until the new one begins. Internal events are
+  // never in the list, so a trace in one does not count.
+  const MEMBER_HISTORY_SQL = `
+    SELECT EXISTS (
+      SELECT 1 FROM user_enrollments e
+       WHERE e.user_id = $1 AND e.season_id IS DISTINCT FROM $2::bigint
+      UNION ALL
+      SELECT 1 FROM user_activities a
+        JOIN season_events se ON se.id = a.season_event_id
+       WHERE a.user_id = $1 AND se.internal = FALSE
+         AND se.season_id IS DISTINCT FROM $2::bigint
+      UNION ALL
+      SELECT 1 FROM leaderboard_snapshots s
+        JOIN season_events se ON se.id = s.season_event_id
+       WHERE s.user_id = $1 AND se.internal = FALSE
+         AND se.season_id IS DISTINCT FROM $2::bigint
+    ) AS has_history
+  `;
+  async function viewerHasHistory(user) {
+    if (user.isAdmin) return true;
+    const current = await resolveDefaultPublicEvent(pool);
+    const seasonId = current && current.season_id != null ? Number(current.season_id) : null;
+    const { rows } = await pool.query(MEMBER_HISTORY_SQL, [user.id, seasonId]);
+    return rows[0]?.has_history === true;
+  }
+
   // ── GET /season-events (SPEC 1112-1141, v1 /phases) ────────────────
   router.get('/api/v4/season-events', async (req, res) => {
     try {
@@ -560,7 +606,11 @@ function topochainPublicRoutes(config) {
         season_id: r.season_id != null ? Number(r.season_id) : null,
       }));
 
-      return ok(res, { data });
+      // Additive (issue #2495), see viewerHasHistory above. Null when
+      // nobody is signed in: the shape says "unknown", not "no".
+      const viewer = req.user?.id ? { history: await viewerHasHistory(req.user) } : null;
+
+      return ok(res, { data, viewer });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

@@ -38,6 +38,12 @@ import { createStore } from '../../lib/plain-store.js';
  * `#tc-ev-hero` was an empty div), then `loading` / `error` / `empty` /
  * `event`. Every branch of the old `_renderHero` is one tag, so the component
  * has no conditions of its own to get wrong.
+ *
+ * `history` is whether the viewer gets a bar at all (issue #2495). The
+ * picker reaches standings other than the ones on screen; the server says
+ * on the events list whether this viewer gets the season history — an
+ * admin, or a member with a trace in another season — and until it does,
+ * and for everyone it says no to, the component renders nothing.
  */
 export const eventBarStore = createStore({
   /** Flipped by `_renderShell()`, i.e. the first time an event section opens. */
@@ -50,6 +56,8 @@ export const eventBarStore = createStore({
   selectedId: null,
   /** See above — null renders an empty `#tc-ev-hero`. */
   hero: null,
+  /** The server's verdict on the viewer; false until the list lands. */
+  history: false,
 });
 
 // Published for the same reason its siblings are: ./topochain-event-context.js
