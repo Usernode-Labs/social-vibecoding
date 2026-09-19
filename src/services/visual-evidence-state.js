@@ -125,7 +125,7 @@ function missingIntentDetail({ headSha = null, reason = null } = {}) {
     claims: [],
     ...(headSha ? { headSha } : {}),
     reason: clip(reason, 1000)
-      || 'This proposal appears to change the UI but has no visual evidence declaration yet.',
+      || 'This proposal appears to change the UI but has no visual change preview declaration yet.',
   };
 }
 
@@ -195,7 +195,7 @@ async function recordIntentWithClient(client, sessionId, intent, detail, state, 
             END,
             failure_reason = CASE
               WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                THEN 'The author changed the visual evidence declaration.'
+                THEN 'The author changed the visual change preview declaration.'
               ELSE failure_reason
             END,
             completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
@@ -299,7 +299,7 @@ async function requireIntentForUiChange(pool, sessionId, options = {}) {
               END,
               failure_reason = CASE
                 WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'The UI change has no visual evidence declaration.'
+                  THEN 'The UI change has no visual change preview declaration.'
                 ELSE failure_reason
               END,
               completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
@@ -473,7 +473,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
       [runId]
     );
     const row = selected.rows[0];
-    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual evidence run not found.', 404);
+    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual change preview run not found.', 404);
     if (row.current_run_id !== row.id) {
       throw new VisualEvidenceStateError(
         'stale_evidence_operation',
@@ -534,7 +534,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
   });
 }
 
-async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer proposal revision superseded this evidence.') {
+async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer proposal revision superseded this visual change preview.') {
   if (!validSha(headSha)) throw new VisualEvidenceStateError('invalid_evidence_revision', 'A valid head SHA is required.', 400);
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
@@ -619,7 +619,7 @@ async function overrideRun(pool, runId, { userId, reason }) {
       [runId]
     );
     const row = selected.rows[0];
-    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual evidence run not found.', 404);
+    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual change preview run not found.', 404);
     if (row.current_run_id !== row.id) {
       throw new VisualEvidenceStateError('stale_evidence_operation', 'Only the proposal’s current evidence run can be overridden.');
     }
@@ -661,7 +661,7 @@ async function getRun(pool, runId, { forUpdate = false } = {}) {
       WHERE r.id = $1${forUpdate ? ' FOR UPDATE OF r, s' : ''}`,
     [runId]
   );
-  if (!result.rows[0]) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual evidence run not found.', 404);
+  if (!result.rows[0]) throw new VisualEvidenceStateError('evidence_run_not_found', 'Visual change preview run not found.', 404);
   return result.rows[0];
 }
 

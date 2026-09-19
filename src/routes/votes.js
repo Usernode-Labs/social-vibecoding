@@ -54,10 +54,10 @@ function visualEvidenceGateForSession(config, session) {
   }
   const allowed = exactHead && VISUAL_EVIDENCE_GATE_STATES.has(evidenceState);
   const reason = !exactHead
-    ? 'Visual evidence has not been verified for the proposal’s current commit.'
+    ? 'The visual change preview has not been verified for the proposal’s current commit.'
     : evidenceState === 'failed'
-      ? (detail.failureReason || 'Visual evidence failed and must be retried or overridden by an app administrator.')
-      : `Visual evidence is ${String(evidenceState).replace(/_/g, ' ')}.`;
+      ? (detail.failureReason || 'The visual change preview failed and must be retried or overridden by an app administrator.')
+      : `The visual change preview is ${String(evidenceState).replace(/_/g, ' ')}.`;
   return { applies: true, allowed, state: evidenceState, currentHead, recordedHead, reason };
 }
 

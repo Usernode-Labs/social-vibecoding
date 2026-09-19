@@ -54,7 +54,7 @@ test('verified cards are claim-first, escaped, authenticated, and never autoplay
 test('absence is labelled only when the author explicitly declared a new base state', () => {
   const withoutBase = evidence({ artifacts: evidence().artifacts.filter((a) => a.side !== 'base') });
   const ordinary = AppView.visualEvidenceHtml(withoutBase, { sessionId: 42 });
-  assert.match(ordinary, /Evidence image unavailable/);
+  assert.match(ordinary, /Preview image unavailable/);
   assert.doesNotMatch(ordinary, /Not present in base/);
 
   withoutBase.claims = [{ ...withoutBase.claims[0], baseState: 'not_present' }];
