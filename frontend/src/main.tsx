@@ -114,6 +114,14 @@ import './lib/wallpaper-scroll';
 import './features/dev-chat/mount';
 import './features/dev-chat/dev-chat.js';
 
+// #2563: the first-run "Choose your username" gate. Imported at the BROWSER
+// entry rather than from a Shell island for two reasons — it renders nothing
+// into the prerendered document (it lifts a kit modal, like the terms gate
+// it is sequenced with), and it must be listening for `sv:authed` on every
+// route, not only on one screen's first reveal. Its listener is guarded, so
+// an anonymous document costs it nothing.
+import './features/auth/username-first-run.js';
+
 // ── Every step below is wrapped, and hydration is the one that matters ──
 //
 // A throw anywhere in this file used to abort the entry module, and an entry

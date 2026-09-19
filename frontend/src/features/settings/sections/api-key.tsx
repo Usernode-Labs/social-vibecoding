@@ -15,10 +15,10 @@ export function ApiKeySection() {
   return (
     <div data-settings-section="api-key" className="hidden">
       <SectionHeading title="Anthropic API key">
-        Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.
+        Bring your own Anthropic API key to keep working past the weekly limit. Your platform weekly allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.
       </SectionHeading>
       {/*
-          The viewer's own daily AI allowance (#555), used vs. remaining.
+          The viewer's own weekly AI allowance (#555, #2571), used vs. remaining.
 
           THE UI OVERHAUL took this out of the hamburger drawer, where it was a
           status row nobody acts on from a menu. It landed HERE rather than
@@ -48,19 +48,21 @@ export function ApiKeySection() {
         </div>
       </div>
       {/*
-          #119 — daily spend breakdown for BYOK users. Filled by
+          #119 — spend breakdown for BYOK users. Filled by
           Settings._refreshSpend() on modal open; hidden while loading,
           on fetch failure, or when no key is saved. Rows are ordered
-          limit-first to match the billing order (#212).
+          limit-first to match the billing order (#212). #2571 moved both
+          figures to the allowance's own window: one card cannot state a
+          week's platform spend beside a day's own-key spend.
       */}
       <div id="settings-spend" className="hidden mb-3">
         <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
-          Today's spend
+          This week's spend
         </div>
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
             <span>
-              Platform daily limit
+              Platform weekly limit
             </span>
             <span id="settings-spend-platform" className="tabular-nums text-zinc-500 dark:text-zinc-400">
             </span>
@@ -73,7 +75,7 @@ export function ApiKeySection() {
             </span>
           </div>
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500">
-            Resets at midnight UTC.
+            Resets Monday 00:00 UTC.
           </div>
         </div>
       </div>

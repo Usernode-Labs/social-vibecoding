@@ -114,6 +114,24 @@ test('the in-flight merge stages read PROGRESS, freeing amber for warnings', () 
   assert.match(FE, /mergedBadgeHtml\(\) \{/);
 });
 
+test('#2585: the building preview pill is gray in BOTH themes, and not ghosted', () => {
+  // It says the same thing as .gc-checks-running-badge, so it says it in the
+  // same tokens — and every --state-* has a .dark counterpart (asserted
+  // above), which is what makes one rule cover light and dark.
+  const i = CSS.indexOf('\n.gc-vote-btn.gc-vote-btn-building,');
+  assert.ok(i >= 0, 'expected a .gc-vote-btn.gc-vote-btn-building rule in app.css');
+  const r = CSS.slice(i, CSS.indexOf('\n}', i));
+  assert.match(r, /color: var\(--state-neutral\)/);
+  assert.match(r, /background: var\(--state-neutral-bg\)/);
+  // .gc-vote-btn:disabled half-fades a control you could enable by acting.
+  // Nothing anyone clicks makes a staging build finish, so the pill stays
+  // solid — a ghosted one reads as broken rather than as busy.
+  assert.match(r, /opacity: 1/);
+  assert.match(r, /cursor: default/);
+  assert.ok(i > CSS.indexOf('\n.gc-vote-btn:disabled {'),
+    'it comes after :disabled and :hover, which both still match a disabled button');
+});
+
 test('an admin bypass is distinguished by SHAPE as well as hue', () => {
   // Amber alone would compete with the advisory warnings, so the force-merge
   // control carries a dashed outline too.

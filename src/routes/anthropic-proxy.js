@@ -7,6 +7,7 @@ const { anthropicProxyAuth } = require('../middleware/anthropic-proxy-auth');
 const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
 const anthropicStream = require('../services/anthropic-stream');
+const budgetLive = require('../services/budget-live');
 const log = require('../services/logger');
 
 // Worker → platform Anthropic-proxy.
@@ -606,6 +607,19 @@ function anthropicProxyRoutes(config) {
         // as well, so a mid-turn weekly crossing is visible to the next call.
         const liveWeekly = weeklyBudgetCache.get(userId);
         if (liveWeekly) liveWeekly.liveDeltaCents += result.costCents;
+        // #2598: and to the user. This call has RETURNED and been priced —
+        // the same figure the kill gate above would refuse the next one on —
+        // so the weekly meter can tick now rather than when the turn's ledger
+        // receipt is written. Every coding-agent call the platform key pays
+        // for passes through here, which is what makes "$x left this week"
+        // move every few seconds during a build. Sync turns bill the system
+        // bucket, which is nobody's meter, and a BYOK-switched call (handled
+        // far above) draws nothing from the pool.
+        budgetLive.notifySpend(pool, userId, {
+          liveWeeklySpentCents: liveWeekly
+            ? liveWeekly.totalAtCheckpointCents + liveWeekly.liveDeltaCents
+            : null,
+        });
       }
       if (!isSyncTurn && globalBudgetCache) {
         globalBudgetCache.liveDeltaCents += result.costCents;

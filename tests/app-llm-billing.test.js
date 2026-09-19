@@ -28,12 +28,13 @@ const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 // Same mock-pool shape as limits-resolve-billing-path.test.js, plus
 // app_llm_usage capture for the settlement tests.
 function makePool({
+  // The retained-but-unenforced daily column (#2571).
   userLimit = 2500,
   userSpent = 0,
-  // #1788: the weekly layer, defaulted OFF (0 = "this cap does not
-  // apply", per limits.resolveCaps) so every pre-existing case below
-  // still describes a daily-only account.
-  weeklyLimit = 0,
+  // #2571: the weekly cap is the account's only allowance, so it is what
+  // every case below is written against. $25 a week by default, matching
+  // the figures the pre-existing cases assume.
+  weeklyLimit = 2500,
   weeklySpent = 0,
   weeklyOverride = null,
   globalLimit = 20000,
@@ -59,7 +60,7 @@ function makePool({
       // Week-to-date for one user. Matched BEFORE the global sum below,
       // which is the same aggregate without the user predicate.
       if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
-        return { rows: [{ total: weeklySpent }] };
+        return { rows: [{ total: weeklySpent, byok: 0 }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
@@ -80,30 +81,30 @@ const GRANT_BYOK = { dailyCapCents: 100, allowByok: true };
 test.beforeEach(() => limits.invalidate());
 
 test('budget headroom → platform path, key never looked up', async () => {
-  const pool = makePool({ userSpent: 100, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 100, keyEnc: GOOD_KEY_ENC });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: false });
   assert.equal(pool.issued(/anthropic_key_enc/), false);
 });
 
 test('budget exhausted + allow_byok + key → BYOK path with the decrypted key', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: true, apiKey: USER_KEY });
 });
 
 test('budget exhausted + allow_byok=false → 429-shaped error, key never looked up', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
-  assert.match(r.error, /Daily limit reached/);
+  assert.match(r.error, /Weekly limit reached/);
   assert.equal(pool.issued(/anthropic_key_enc/), false,
     'an app the user did not opt into BYOK must never trigger a key lookup');
 });
 
 test('budget exhausted + allow_byok but no key on file → error', async () => {
-  const pool = makePool({ userSpent: 2500 });
+  const pool = makePool({ weeklySpent: 2500 });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
-  assert.match(r.error, /Daily limit reached/);
+  assert.match(r.error, /Weekly limit reached/);
 });
 
 test('global cap hit + allow_byok + key → BYOK path', async () => {
@@ -194,16 +195,23 @@ test('weekly headroom left → platform path, and the ledger read is the only ex
 });
 
 test('no weekly cap → the app proxy never queries the weekly ledger', async () => {
-  const pool = makePool({ userSpent: 100 });
+  const pool = makePool({ weeklyLimit: 0, weeklyOverride: 0 });
   await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
   assert.equal(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/), false);
 });
 
-test('both caps switched off → refused, pointing at the admin console', async () => {
+test('the weekly cap switched off → refused, pointing at the admin console', async () => {
   const pool = makePool({ userLimit: 0, weeklyLimit: 0, weeklyOverride: 0 });
   const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
   assert.match(payer.error, /No AI allowance is configured for this account/);
-  assert.match(payer.error, /admin can set a daily or weekly cap/);
+  assert.match(payer.error, /admin can set a weekly cap/);
+});
+
+// #2571: the daily window is gone, so a day spent far past the stored
+// per-user daily figure refuses nothing while the week has room.
+test('a spent day is not a refusal — only the week is', async () => {
+  const pool = makePool({ userLimit: 200, userSpent: 2400, weeklyLimit: 2500, weeklySpent: 2400 });
+  assert.deepEqual(await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK), { byok: false });
 });
 
 // The mid-stream kill is what stops a single long streamed response from

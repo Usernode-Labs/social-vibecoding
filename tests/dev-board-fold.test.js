@@ -794,7 +794,59 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the one-line failing check (9000093) — take the two slots that merging
   // freed, so the manifest keeps its 20 clear of the ceiling
   // (tests/improve-session-spinner.test.js, tests/proposal-tests-manifest.test.js).
-  assert.equal(DAPP.tests.length, 690);
+  //
+  // 690 → 690: the change page as a Needs-you item (task 497) repointed the
+  // checks the previous shape held — the sheet order, the About halves, the
+  // folded summary, the numbered ledger path, the state tags — at the hero
+  // and the steps sheet, in place. No slot moved either way.
+  //
+  // 690 → 693: the first-run "Choose your username" step (#2563) is a new
+  // user-visible screen, so it declares checks of its own — one visual
+  // claim for the modal with its suggestion already in the field, and two
+  // that pin the copy the step depends on (the Continue button, which is
+  // the only way out of it, and the sentence that states the rules). It
+  // found the manifest exactly ON the 20-slot floor, so the ceiling moved
+  // with it (services/app-manifest.js, 710 → 730).
+  //
+  // 693 → 695: the "Model costs" admin section (#2570) is a new screen in
+  // the admin console — the per-model table of notes, shown estimates and
+  // observed spend, with the override field — so it declares two checks of
+  // its own: one visual claim for the table at /#admin/model-costs, and one
+  // that pins the override control an admin with write access acts on. The
+  // manifest stays 35 clear of the ceiling.
+  //
+  // 693 → 695: independently on main, the welcome tour (#2255) replaced the
+  // one-line #home-welcome banner with an eight-step overlay, and declares
+  // two checks of its own — that Settings offers the way back into it, and
+  // that the overlay ships hidden on Home so nobody's first paint meets it.
+  //
+  // 695 → 697: the tallies above were computed on either side of this merge
+  // against the same shared 693 and do not reconcile through the comment
+  // trail alone. This branch's #2570 pair and main's #2255 pair are
+  // independent additions against that shared 693, so the merged manifest
+  // holds every one of them: 693 + 2 + 2 = 697. The ceiling is untouched:
+  // 697 leaves 33 slots against MAX_DECLARED_TESTS (730), clear of the
+  // 20-slot floor.
+  //
+  // 697 → 699: the comment clamp (#2556) declares one check per surface it
+  // can actually reach from a URL — the Workshop's inline recent comments
+  // (the ?shot=feed-comments route, which already unfolds an issue row) and
+  // an issue's Discussion. Both assert the REVEALED control rather than the
+  // clamp alone, because the control is what a measurement puts there and a
+  // clamp with no control is the bug, not the feature. The third surface,
+  // the card's own reply thread, gets no check: it would need a long reply
+  // POSTED to the app's thread, and seeding one would be a fixture that
+  // fabricates activity rather than data. 699 leaves 31 slots against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 699 → 701: the running row's heading (#2597) is two assertions about
+  // one seeded transcript, not one — the heading now says what is happening
+  // ("Coding agent is running") and a second line says where ("Homeroom ·
+  // Claude"), and a single check could only pin one of them. Both ride the
+  // 990412 dev-session fixture the coding-run card already uses, so neither
+  // adds a route. 701 leaves 29 slots against MAX_DECLARED_TESTS (730),
+  // clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 701);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

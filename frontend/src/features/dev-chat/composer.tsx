@@ -273,12 +273,14 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             <BudgetPillBar />
             {s.models ? (
               <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">
-                {/* One selector answers both questions the old split left in
-                    different places: which model, and which key pays for it.
-                    optgroups keep OpenRouter and Anthropic models distinct
-                    even when both groups contain a Claude model. The option
-                    labels repeat the key source because an optgroup label is
-                    not visible once the native control is closed. */}
+                {/* #2569: ONE FLAT LIST. The selector used to be two
+                    optgroups whose every label repeated its key source,
+                    which made "whose key pays?" the first question a
+                    builder had to answer. It is a plain list of models
+                    now, in DevChat._flatModelOptions' order; the key is a
+                    `title` on each option, available on hover and absent
+                    from the list. Option VALUES keep their provider
+                    prefixes — that is what the backend resolves. */}
                 <select
                   id="dc-model-select" className={MODEL_SELECT}
                   aria-label="Chat model and API key"
@@ -294,15 +296,12 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
                     controller()?._onModelPicked?.(value);
                   }}
                 >
-                  {s.models.groups.map((group) => (
-                    <optgroup key={group.id} label={group.label}>
-                      {group.options.map((option) => (
-                        <option
-                          key={option.value} value={option.value}
-                          disabled={option.disabled || undefined}
-                        >{option.label}</option>
-                      ))}
-                    </optgroup>
+                  {s.models.options.map((option) => (
+                    <option
+                      key={option.value} value={option.value}
+                      title={option.title || undefined}
+                      disabled={option.disabled || undefined}
+                    >{option.label}</option>
                   ))}
                 </select>
                 <ChevronDownIcon
@@ -313,6 +312,17 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             <span className="flex-1"></span>
             <SendButton send={s.send} />
           </div>
+          {/* #2570: the selected model's note, UNDER the control row rather
+              than in it. A closed native select shows one line, so the
+              option text carries the compact form and the sentence lives
+              here, where it has the width to be one. Its own block, because
+              `.dc-card-row` is a single non-wrapping flex line. */}
+          {s.models?.note ? (
+            <div
+              id="dc-model-note"
+              className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"
+            >{s.models.note}</div>
+          ) : null}
         </form>
       </div>
     </>

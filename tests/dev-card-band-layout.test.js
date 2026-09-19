@@ -535,6 +535,13 @@ test('the band\'s controls: Preview then the hamburger hold the right edge, and 
   const preview = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview');
   assert.match(preview, /margin-left: auto/);
   assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn'), /margin-left: 0/);
+  // #2585: the building state is that same pill in gray, so it holds the
+  // same edge by the same two rules — and at the pill's height, not the
+  // 28px the badge rule above it still hands .gc-checks-running-badge.
+  const building = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building');
+  assert.match(building, /margin-left: auto/);
+  assert.match(building, /height: 24px/, 'the Preview pill\'s own height, so the band cannot shift');
+  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn'), /margin-left: 0/);
   assert.doesNotMatch(CSS, /\.dev-card-rail\s*[{>]/, 'no rail rule remains');
   assert.match(CARD_TSX, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
     'the trigger is the icon pill variant, so it never outsizes a text pill');

@@ -82,7 +82,7 @@ const GATES = [
   },
   {
     key: 'visual_evidence',
-    label: 'Visual evidence is verified',
+    label: 'Visual change preview is verified',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
@@ -514,14 +514,14 @@ function provisional(session) {
     const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(evidenceState);
     out.push({
       key: 'visual_evidence',
-      label: 'Visual evidence is verified',
+      label: 'Visual change preview is verified',
       actor: 'author',
       state: accepted ? 'done' : evidenceState === 'failed' ? 'blocked' : 'active',
       detail: accepted
         ? { state: evidenceState }
         : { state: evidenceState, note: exactHead
-          ? (detail.failureReason || `visual evidence is ${String(evidenceState).replace(/_/g, ' ')}`)
-          : 'visual evidence has not been verified for the current commit' },
+          ? (detail.failureReason || `the visual change preview is ${String(evidenceState).replace(/_/g, ' ')}`)
+          : 'the visual change preview has not been verified for the current commit' },
     });
   }
 

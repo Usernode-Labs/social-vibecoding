@@ -113,8 +113,9 @@ test('GET /api/admin/limits returns the default weekly cap when none is stored',
   limits.invalidate();
   store.delete('user_weekly_limit_cents');
   const r = await fetch(`${base}/api/admin/limits`).then((x) => x.json());
-  assert.equal(r.user_weekly_limit_cents, 17500,
-    'seven days of the $25 daily default, so an untouched deployment gains no new refusals');
+  assert.equal(r.user_weekly_limit_cents, limits.DEFAULT_WEEKLY_LIMIT_CENTS,
+    'the code default, which #2571 set to $50 a week');
+  assert.equal(r.user_weekly_limit_cents, 5000);
 });
 
 test('PUT /api/admin/limits persists weekly and re-reads it (cache invalidated)', async () => {

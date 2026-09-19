@@ -45,6 +45,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
+import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
   BallotIcon,
@@ -64,6 +65,8 @@ import {
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
+import { Improve } from '../../improve/improve-controller.js';
+import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
 import { CardIcon, Chevron, metaLineNodes } from '../card/dev-card';
@@ -421,6 +424,68 @@ function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: bo
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * #2573 — the start-here prompt, at the very top of Current status.
+ *
+ * ── When it is up ───────────────────────────────────────────────────────
+ *
+ * One state only: nothing open AND nothing ever landed. Both halves are
+ * needed, and neither alone is this state. An app with no open items that
+ * has shipped a hundred changes is FINISHED, not unstarted, and offering it
+ * a "start working on this app" prompt reads as though the page had not
+ * looked; an app with nothing shipped but a full board has already been
+ * started, by whoever filed those. `everShipped` is the whole Done column,
+ * not `shippedWeek` — see the model — because a quiet week on a busy app
+ * zeroes the week count and would otherwise put this banner on it.
+ *
+ * `meta.filtered` is the third condition and it is not about the app at all:
+ * `dashboard.open` counts the entries that survived the shared filter bar,
+ * so a search matching nothing reads as "no open items" on a board that has
+ * plenty. The prompt is a claim about the APP, so it stands down while the
+ * viewer is looking through a filter rather than at everything.
+ *
+ * ── Why the button is not a second "New change" ─────────────────────────
+ *
+ * It is `Improve.startSession()`, the one the Improve panel's own New change
+ * row calls — imported, not re-implemented, so the navigate-then-create
+ * sequence that entry point owns (features/improve/improve-controller.js)
+ * can never drift from this copy of it. The gate is the same store field the
+ * panel gates that row on, for the same reason: a viewer who may not start a
+ * change from the panel must not be offered one here. They still get the
+ * heading and the line, which say what the app's state IS — that part is not
+ * a write action.
+ *
+ * The surface is `.dev-ws-strip` and its heading classes, unchanged, so the
+ * prompt is another pane of this tab rather than a second visual language;
+ * both themes come from the tokens every strip beside it already reads. The
+ * action is the shell's own primary Button, which is the violet accent in
+ * light and dark alike.
+ */
+function StartHereBanner(): ReactNode {
+  const readOnly = useStoreState(improveStore).readOnly;
+  return (
+    <section className="dev-ws-strip" data-ws-start-here="">
+      <div className="dev-ws-head">
+        <span className="dev-ws-head-title">Start working on this app</span>
+      </div>
+      <p className="dev-ws-strip-text">
+        Nothing is open and nothing has shipped yet. The first change is yours to start.
+      </p>
+      {readOnly ? null : (
+        <Button
+          type="button"
+          data-ws-start-here-btn=""
+          size="sm"
+          className="self-start"
+          onClick={() => Improve.startSession()}
+        >
+          New change
+        </Button>
+      )}
+    </section>
   );
 }
 
@@ -2769,6 +2834,14 @@ export function DevWorkshop(): ReactNode {
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
+      {/* #2573: ABOVE the empty note, because the two answer different
+          questions on the same screen. The note says what the board holds
+          and points at the "+"; this says what to do about an app nobody
+          has started on, and the product decision put it at the top of the
+          tab. See StartHereBanner for the three conditions. */}
+      {v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped && !v.meta.filtered ? (
+        <StartHereBanner />
+      ) : null}
       {v.emptyNote ? (
         <EmptyNote filtered={!!v.emptyNote.filtered} loadFailed={v.emptyNote.loadFailed} />
       ) : null}

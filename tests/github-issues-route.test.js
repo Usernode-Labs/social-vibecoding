@@ -522,7 +522,9 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
     // Three rows of its own, over the three-row stamp ladder every mock
     // thread now opens with (#1808): an earlier year, six weeks back, a few
     // days back, so the three branches the stamp formats are all on screen.
-    assert.strictEqual(body.comments.length, 6, 'mock 900001 thread has 6 comments');
+    // Plus the long reply every thread closes with (#2556), which is what
+    // gives the comment clamp something to hide in a preview.
+    assert.strictEqual(body.comments.length, 7, 'mock 900001 thread has 7 comments');
     assert.ok(body.comments.some((c) => c.author === 'usernode-bot'), 'includes a bot-authored comment');
     assert.strictEqual(body.comments[0].createdAt, '2024-03-05T09:15:00Z',
       'the ladder leads with a fixed earlier year, so that branch stays reachable');
@@ -606,6 +608,15 @@ test('staging substitutes a thread for a REAL issue number too, with dated comme
     // Oldest-first, the order fetchIssueComments returns.
     const times = body.comments.map((c) => Date.parse(c.createdAt));
     assert.deepStrictEqual(times, [...times].sort((a, b) => a - b), 'oldest first');
+    // #2556: the thread ends with a deliberately LONG reply, so the clamp
+    // and its "Show more" have something to hide in a preview. It is LAST
+    // because the Workshop's inline slot renders only the final two
+    // comments — a long row further up would be invisible on the surface
+    // the clamp matters most on.
+    const last = body.comments[body.comments.length - 1];
+    assert.ok(last.body.length > 600,
+      'the stand-in thread carries a comment long enough to be clamped');
+    assert.ok(/^\[Mock\]/.test(last.body), 'and it is marked like every other row');
   } finally {
     global.fetch = baselineFetch;
     server.close();

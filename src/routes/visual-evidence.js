@@ -37,7 +37,7 @@ function sendError(res, err) {
   const status = Number(err?.status) || (err?.code === 'invalid_visual_evidence' ? 400 : 409);
   return res.status(status).json({
     error: err?.code || 'visual_evidence_error',
-    message: String(err?.message || 'Visual evidence could not be updated.').slice(0, 2000),
+    message: String(err?.message || 'The visual change preview could not be updated.').slice(0, 2000),
   });
 }
 
@@ -163,7 +163,7 @@ function visualEvidenceRoutes(config) {
       } else if (!ctx.session.visual_evidence_detail?.intent) {
         return res.status(409).json({
           error: 'missing_visual_evidence_intent',
-          message: 'Add a visual evidence claim and user flow before rerunning evidence.',
+          message: 'Add a visual change preview claim and user flow before rerunning it.',
         });
       }
       const scheduled = await orchestrator.scheduleForSession(config, {
@@ -191,7 +191,7 @@ function visualEvidenceRoutes(config) {
         return res.status(404).json({ error: 'Proposal not found' });
       }
       if (!ctx.session.visual_evidence_run_id) {
-        return res.status(409).json({ error: 'visual_evidence_run_missing', message: 'There is no current evidence run to override.' });
+        return res.status(409).json({ error: 'visual_evidence_run_missing', message: 'There is no current visual change preview run to override.' });
       }
       const run = await state.overrideRun(pool, ctx.session.visual_evidence_run_id, {
         userId: req.user.id,

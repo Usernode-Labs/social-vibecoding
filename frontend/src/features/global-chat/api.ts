@@ -93,6 +93,7 @@ export async function executeDirectAction(
     suggestionId?: string;
     actionId?: string;
     parameters?: Record<string, string>;
+    targetLabel?: string;
     shownSuggestionIds?: string[];
   },
   signal?: AbortSignal,
@@ -105,6 +106,33 @@ export async function executeDirectAction(
   modelInvocations: 0;
 }> {
   return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}/direct-actions`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...action,
+      client: clientMetadata(),
+      context: runtimeContext(),
+    }),
+    signal,
+  }));
+}
+
+export async function executeInlineAction(
+  threadId: string,
+  action: {
+    actionId: string;
+    parameters?: Record<string, string>;
+    targetLabel?: string;
+  },
+  signal?: AbortSignal,
+): Promise<{
+  ok: true;
+  results: GlobalChatResult[];
+  modelInvocations: 0;
+}> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}/inline-actions`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',

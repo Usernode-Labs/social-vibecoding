@@ -52,7 +52,7 @@ function exactSha(value, label = 'revision') {
 
 function repoParts(repoUrl) {
   const match = String(repoUrl || '').match(/^https:\/\/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) throw new VisualEvidenceEnvironmentError('invalid_evidence_repository', 'Visual evidence requires an HTTPS GitHub repository.');
+  if (!match) throw new VisualEvidenceEnvironmentError('invalid_evidence_repository', 'The visual change preview requires an HTTPS GitHub repository.');
   return { owner: match[1], repo: match[2] };
 }
 

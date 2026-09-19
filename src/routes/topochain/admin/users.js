@@ -23,6 +23,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const { computeStandings } = require('../../../services/topochain/standings');
 const { adminWriteGate } = require('./auth');
+const managedOpenRouter = require('../../../services/openrouter-managed-keys');
 const { toIntId, toBool } = require('./util');
 const {
   ok, fail, iso, paginate, meta, csvField, ValidationError,
@@ -364,6 +365,19 @@ function usersAdminRoutes(config) {
           );
         }
         await client.query('COMMIT');
+
+        // #2568: an admin-created account gets its included OpenRouter key
+        // like any other, once its row has committed. Best effort by
+        // construction — ensureIncludedKey never throws — so creating the
+        // account cannot fail because OpenRouter's management API did.
+        // The BULK IMPORT below deliberately does NOT do this: those rows
+        // are enrollment records for people who have not signed up, and a
+        // company-funded key per imported row is not what that spreadsheet
+        // asked for. Anyone who does sign in gets one from the lazy path in
+        // GET /api/me/coding-agent.
+        await managedOpenRouter.ensureIncludedKey({
+          pool, userId: user.id, config, reason: 'admin_created',
+        });
 
         const { eventsByUser } = await loadRelations(pool, [user.id]);
         return res.status(201).json({
