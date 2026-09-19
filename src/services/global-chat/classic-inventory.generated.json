@@ -5488,7 +5488,7 @@
     },
     {
       "source": "src/routes/home-panels.js",
-      "line": 676,
+      "line": 760,
       "method": "GET",
       "path": "/api/home-panels",
       "expression": null,
