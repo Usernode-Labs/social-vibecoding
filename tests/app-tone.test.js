@@ -254,3 +254,66 @@ test('dapp.json checks both tones, each under the opposite shell', () => {
   assert.match(light.expectSelector, /^html\.dark\[data-app-tone="light"\] body:has\(#app-frame-host:not\(\.hidden\)/);
   for (const t of [dark, light]) assert.match(t.expectSelector, /#app-iframe\) #platform-header$/);
 });
+
+// ── where the tone comes FROM: the app has to load the bridge (#2567) ─────
+//
+// The mechanism above is only as good as its one input. `toneForState` reads
+// `background`, `background` is only ever written by the #1581 report, and
+// that report is sent by public/usernode-bridge/v1/bridge.js — so an app that
+// does not LOAD the bridge has no tone at all and the bar keeps the viewer's
+// theme. That is what #2567 was: the scaffold every new app starts from paints
+// a dark page but shipped no bridge tag, so the newest, darkest app on the
+// platform was the one guaranteed to sit under a light bar. These tests pin
+// the whole chain for that scaffold, because fixing either end alone is silent.
+
+test('a report is the only way a tone is ever known', async () => {
+  const { toneForState } = await loadTone();
+  // Restating the contract from the consuming end: no report, no tone, at any
+  // page colour the app might actually be painting.
+  assert.equal(toneForState({ slug: 'demo', active: true, background: '' }), null);
+  const bridge = read('public/usernode-bridge/v1/bridge.js');
+  assert.match(bridge, /__usernode_background: "changed"/,
+    'the bridge is what posts the report');
+  // And the shell has no second source to fall back on: nothing but the
+  // frame-store background feeds the tone.
+  const tone = read('frontend/src/features/app-frame/app-tone.js');
+  assert.match(tone, /return toneOf\(state\.background\);/);
+});
+
+test('the scaffold every new app starts from loads the bridge', () => {
+  const { getTemplateFiles } = require('../src/services/template');
+  const files = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret');
+  const html = files.find((f) => f.path === 'public/index.html');
+  assert.ok(html, 'the scaffold ships public/index.html');
+  // Comments stripped: the scaffold documents the hosted Tailwind engine by
+  // showing its tag, and a commented tag loads nothing.
+  const live = html.content.replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(live.includes('<script src="/usernode-bridge/v1/bridge.js"></script>'),
+    'index.html must load the platform bridge by its relative path');
+  // Relative, never a hostname, and never a copy in the repository.
+  assert.doesNotMatch(live, /<script[^>]+src="https?:\/\/[^"]*usernode-bridge/,
+    'the bridge is loaded from the app\'s own origin, never a platform hostname');
+  assert.ok(!files.some((f) => f.path.includes('usernode-bridge')),
+    'the bridge is centrally hosted and must never be vendored into a new app');
+});
+
+test('the scaffold\'s own page colour resolves to the dark tone', async () => {
+  const { toneOf, toneForState, publishAppTone } = await loadTone();
+  const { getTemplateFiles } = require('../src/services/template');
+  const html = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret')
+    .find((f) => f.path === 'public/index.html').content;
+  // <html> paints nothing, so the bridge reads the body — the colour below is
+  // what `bg-zinc-950` compiles to, and the ground a new app actually shows.
+  assert.match(html, /<html lang="en" class="dark">/);
+  assert.match(html, /<body class="bg-zinc-950 /);
+  const GROUND = '#09090b'; // zinc-950
+  assert.equal(toneOf(GROUND), 'dark', 'the scaffold\'s page is a dark page');
+  // End to end through the real store shape and the real publisher: a viewer
+  // on the LIGHT shell opening a brand-new app gets a dark bar.
+  const state = { slug: 'my-app-123', active: true, background: GROUND };
+  assert.equal(toneForState(state), 'dark');
+  const doc = fakeDocument();
+  assert.equal(publishAppTone(doc, state, {}), 'dark');
+  assert.equal(doc.attrs.get('data-app-tone'), 'dark');
+  assert.equal(doc.metaAttrs.get('content'), '#0b0d1b');
+});
