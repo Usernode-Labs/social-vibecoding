@@ -113,6 +113,12 @@ export interface ComposerState {
   models: {
     groups: ModelGroupView[];
     selected: string;
+    /**
+     * #2570: the selected model's full note — what it is good for and what
+     * a change on it is expected to cost, labelled an estimate. '' while
+     * the platform's note table has not landed, which renders nothing.
+     */
+    note: string;
     changeDisabled: boolean;
   } | null;
   /** #798's saved drafts. `busy` disables each row's Send. */

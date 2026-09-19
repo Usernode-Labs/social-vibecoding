@@ -3490,6 +3490,18 @@
       "expectSelector": "#admin-credit-balance"
     },
     {
+      "name": "Model costs lists each model's note beside what its changes actually cost (#2570)",
+      "path": "/#admin/model-costs",
+      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5\"]",
+      "expectText": "general coding work"
+    },
+    {
+      "name": "Model costs says where its estimates come from (#2570)",
+      "path": "/#admin/model-costs",
+      "expectSelector": "#admin-model-costs-profile",
+      "expectText": "Estimates are per-token pricing times a typical change"
+    },
+    {
       "name": "Limits offers the default per-user WEEKLY cap beside the daily one (#1788)",
       "path": "/#admin/limits",
       "expectSelector": "#admin-limit-weekly",

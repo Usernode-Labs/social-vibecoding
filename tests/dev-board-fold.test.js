@@ -807,7 +807,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the only way out of it, and the sentence that states the rules). It
   // found the manifest exactly ON the 20-slot floor, so the ceiling moved
   // with it (services/app-manifest.js, 710 → 730).
-  assert.equal(DAPP.tests.length, 693);
+  //
+  // 693 → 695: the "Model costs" admin section (#2570) is a new screen in
+  // the admin console — the per-model table of notes, shown estimates and
+  // observed spend, with the override field — so it declares two checks of
+  // its own: one visual claim for the table at /#admin/model-costs, and one
+  // that pins the override control an admin with write access acts on. The
+  // manifest stays 35 clear of the ceiling.
+  assert.equal(DAPP.tests.length, 695);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

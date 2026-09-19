@@ -283,6 +283,82 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  // #2570: what each model is good for and what a change on it is expected
+  // to cost. One read per page, cached on the module: the payload is the
+  // platform's own editorial table plus a token profile, and neither moves
+  // inside a session. A failure leaves it null, which is the pre-#2570
+  // picker — a note nobody can fetch is not an error a builder has to see.
+  _modelNotes: null,
+  _modelNotesPromise: null,
+
+  async _ensureModelNotes() {
+    if (DevChat._modelNotes) return DevChat._modelNotes;
+    if (DevChat._modelNotesPromise) return DevChat._modelNotesPromise;
+    const request = (async () => {
+      try {
+        const res = await fetch('/api/model-notes', { credentials: 'same-origin' });
+        if (!res.ok) return null;
+        const body = await res.json();
+        return (body && typeof body === 'object' && body.models) ? body : null;
+      } catch {
+        return null;
+      }
+    })();
+    DevChat._modelNotesPromise = request;
+    const notes = await request;
+    if (notes) {
+      DevChat._modelNotes = notes;
+      DevChat._publishComposer();
+    }
+    DevChat._modelNotesPromise = null;
+    return notes;
+  },
+
+  /**
+   * #2570: the note and the estimated cost for one model, as the picker
+   * states them. ONE helper, because the same two facts appear in three
+   * places — the compact text beside an option, the full line under the
+   * selected one, and (through the same call) any later surface.
+   *
+   * `catalogModel` is the user's own OpenRouter catalogue entry when there
+   * is one. The server cannot read that catalogue (it holds no key), so a
+   * model the platform does not curate gets its estimate here instead:
+   * the catalogue's published per-token prices times the server's token
+   * profile for a typical change. Same arithmetic, same profile, either
+   * side of the wire.
+   */
+  _modelCostNote(modelId, catalogModel) {
+    const notes = DevChat._modelNotes;
+    const id = String(modelId || '').replace(/^openrouter:|^anthropic:/, '');
+    const entry = notes?.models?.[id] || null;
+    let note = entry?.note || '';
+    let cents = entry && entry.estimateCents != null ? Number(entry.estimateCents) : null;
+    if (cents == null && notes?.typicalChange && catalogModel) {
+      const input = Number(catalogModel.inputPricePerMillion);
+      const output = Number(catalogModel.outputPricePerMillion);
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
+          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
+        cents = Math.round(dollars * 100 * 100) / 100;
+      }
+    }
+    // Under a cent is "<$0.01" rather than "$0.00": a model that costs
+    // something must not read as free.
+    const money = cents == null ? ''
+      : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+    return {
+      note,
+      estimate: money,
+      // "about $1.55 a change (estimate)" — the one sentence, built once.
+      full: [
+        note,
+        money ? `about ${money} a change (estimate)` : '',
+      ].filter(Boolean).join(' · '),
+      // "· $1.55" — what fits beside a name in a closed native control.
+      compact: [note, money].filter(Boolean).join(' · '),
+    };
+  },
+
   /** Load the saved OpenRouter choice and its key-visible model shortlist. */
   async _ensureModelPickerData({ forceRefresh = false } = {}) {
     if (!DevChat.currentSession) return null;
@@ -293,6 +369,11 @@ const DevChat = {
       return DevChat._modelPickerDataPromise;
     }
 
+    // #2570: the notes ride along with the picker's own read. They are a
+    // separate endpoint because they are platform-wide rather than
+    // per-user, and not awaited here because the picker must paint whether
+    // or not they land.
+    DevChat._ensureModelNotes();
     const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
     DevChat._modelPickerDataPromise = request;
     try {
@@ -365,11 +446,15 @@ const DevChat = {
       addShortlistId(model.id);
     }
 
+    // #2570: every option carries its note and its estimated cost as
+    // compact secondary text, built by the one _modelCostNote helper so the
+    // option, the line under the picker and anything later cannot drift.
     const openRouterOptions = shortlistIds.map((id) => {
       const model = byId.get(id);
+      const cost = DevChat._modelCostNote(id, model);
       return {
         value: `${OPENROUTER_MODEL_PREFIX}${id}`,
-        label: `OpenRouter key · ${model?.name || id}`,
+        label: `OpenRouter key · ${model?.name || id}${cost.compact ? ` · ${cost.compact}` : ''}`,
       };
     });
     let selectedOpenRouterId = currentOpenRouterId || preferredId;
@@ -398,10 +483,13 @@ const DevChat = {
         ],
       });
     }
-    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-      value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-      label: `Anthropic key · ${(meta && meta.label) || id}`,
-    }));
+    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => {
+      const cost = DevChat._modelCostNote(id, null);
+      return {
+        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+        label: `Anthropic key · ${(meta && meta.label) || id}${cost.compact ? ` · ${cost.compact}` : ''}`,
+      };
+    });
     groups.push({ id: 'anthropic', label: 'Anthropic key', options: directOptions });
 
     const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
@@ -409,11 +497,19 @@ const DevChat = {
       : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
         ? DevChat._defaultModel
         : (Object.keys(DevChat.MODELS)[0] || ''));
+    // #2570: one line UNDER the picker with the full note for whichever
+    // model is selected. A native closed select shows one line of text, so
+    // the compact form above has to fit beside a name; this is where the
+    // sentence gets to be a sentence.
+    const selectedNote = openRouterSelected
+      ? DevChat._modelCostNote(selectedOpenRouterId, byId.get(selectedOpenRouterId))
+      : DevChat._modelCostNote(directId, null);
     return {
       groups,
       selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
+      note: selectedNote.full || '',
       changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
     };
   },
