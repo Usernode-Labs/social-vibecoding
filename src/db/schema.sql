@@ -8503,6 +8503,34 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS weekly_digest_at TIMESTAMPTZ;
 -- so an account that merely has a dotted handle is left alone.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- A merged commit of the platform's own app that has not become the running
+-- release (services/release-watch.js). The self-hosted row's main_sha is the
+-- RUNNING build (seedSelfApp writes GIT_SHA at boot), and GitHub's main is
+-- what should be running; everything between the two — the Actions image
+-- build, the Helm release, Argo CD, the rollout — is outside the platform,
+-- and when a link in it fails the merge reads "merged" here while production
+-- serves the previous commit. #2589 sat like that for half an hour because
+-- one registry connection dropped during the image build. The drift poller
+-- watches the gap and records here what it found, once, so the group chat,
+-- the admins' notifications and the board banner can say so.
+--
+-- NULL when the running build is at main (or ahead of a superseded record).
+-- Otherwise one JSON record:
+--   sha          the merged commit that has not been released
+--   prNumber     the PR that merged it, from the squash subject; may be null
+--   kind         'workflow_failed'  the release workflow concluded red
+--                'workflow_running' still running long past the normal time
+--                'rollout_missing'  the workflow published, nothing rolled
+--                'unknown'          past the grace with no workflow to read
+--   since        when main moved to the commit (ISO)
+--   detectedAt   when this record was written (ISO)
+--   running      the build that was serving when it was written
+--   runUrl       the workflow run on GitHub, when one was found
+--   runStatus / runConclusion   the run's own words, when found
+-- Only the self-hosted row ever carries one; a child app's merges deploy
+-- through rebuildProduction and record their failures on last_failure.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
+
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
 -- Keep this the LAST block in the file: tests/preview-lifecycle.test.js

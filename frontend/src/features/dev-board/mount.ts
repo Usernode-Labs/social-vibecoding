@@ -44,6 +44,7 @@ import { issueCommentsStore, type IssueCommentsState } from './issue-comments-st
 import { KanbanFilters } from './kanban-filters';
 import { lockedNoticeStore } from './locked-notice-store';
 import { mainPauseStore, type MainPauseState } from './main-pause-store';
+import { releaseStallStore, type ReleaseStallState } from './release-stall-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
@@ -100,6 +101,7 @@ export interface DevBoardBridge {
   publishCardMenu(rows: CardMenuRowView[]): void;
   publishLockedNotice(locked: boolean, inviteOnly?: boolean): void;
   publishMainPause(state: MainPauseState): void;
+  publishReleaseStall(state: ReleaseStallState): void;
   publishDiscussion(state: DiscussionState): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
@@ -254,6 +256,13 @@ export const devBoardBridge: DevBoardBridge = {
   // promoted list, beside the locked notice.
   publishMainPause(state) {
     mainPauseStore.set(state);
+  },
+
+  // A merged commit of the platform's own app that has not become the
+  // running release — see ./release-stall-store.ts. Published with the
+  // promoted list, beside the two notices above.
+  publishReleaseStall(state) {
+    releaseStallStore.set(state);
   },
 
   // Where the app's general chat is, and the last thing said in it — see

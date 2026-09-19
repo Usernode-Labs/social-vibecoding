@@ -1885,7 +1885,12 @@ function rowView(n) {
         ],
       };
     }
-    const APP_HEALTH_COPY = { deploy_failed: 'a deploy failed' };
+    // release_stalled: the platform's own app, a merged commit that has not
+    // become the running release (services/release-watch.js).
+    const APP_HEALTH_COPY = {
+      deploy_failed: 'a deploy failed',
+      release_stalled: 'a merged change has not gone live',
+    };
     return {
       ...base,
       wrap: true,
