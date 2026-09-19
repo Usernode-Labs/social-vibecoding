@@ -722,6 +722,19 @@ start().catch(err => { console.error(err); process.exit(1); });
        classes, swap this link for the platform-hosted engine instead:
        <script src="/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path (the
+       handler in server.js serves it under a plain "node server.js"; the
+       platform's edge answers it everywhere else). Never vendor it and never
+       write a hostname in front of it.
+       It is NOT conditional on this app calling a bridge API: it is also how
+       the app ANSWERS the shell, so a scaffold without it is invisible to
+       anything that asks the frame a question. Offline launch is one of those.
+       Another is the page's colour: the bridge reports this document's opaque
+       ground to the shell (#1581), which is what makes the platform bar above
+       the app take the app's tone instead of the viewer's theme (#1945). This
+       scaffold paints a dark page (bg-zinc-950 on the body element), so
+       without this tag a brand-new app sits under a light bar. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
   <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">

@@ -74,7 +74,11 @@ function LimitsSection() {
   const canWrite = !!console_()?.canWrite();
   const dis = !canWrite;
 
-  const [user, setUser] = useState('');
+  // #2571: there is no per-user DAILY field any more — that cap is switched
+  // off platform-wide (src/services/limits.js) and the weekly one is the
+  // account's only limit. The stored `user_daily_limit_cents` setting and
+  // the PUT field that writes it are retained so an operator's historical
+  // value is not destroyed; this page simply no longer offers it.
   const [weekly, setWeekly] = useState('');
   // #838: the two higher identity tiers. Blank means "same as the unverified
   // cap" (nothing stored), and saving a blank clears a stored value.
@@ -97,7 +101,6 @@ function LimitsSection() {
   }, []);
 
   const fillLimits = useCallback((data: any) => {
-    setUser(console_().centsToDollars(data.user_daily_limit_cents));
     setWeekly(console_().centsToDollars(data.user_weekly_limit_cents));
     setWeeklySocial(data.user_weekly_limit_social_cents == null
       ? '' : console_().centsToDollars(data.user_weekly_limit_social_cents));
@@ -144,7 +147,6 @@ function LimitsSection() {
     setLimitsStatus(null);
     const body: Record<string, number | null> = {};
     try {
-      const u = console_().parseDollarsToCents('Default per-user', user.trim());
       const w = console_().parseDollarsToCents('Weekly cap, unverified', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
       const s = console_().parseDollarsToCents('System tokens', system.trim());
@@ -152,7 +154,6 @@ function LimitsSection() {
       // value so that tier inherits the unverified cap again.
       const ws = console_().parseDollarsToCents('Weekly cap, GitHub and X', weeklySocial.trim());
       const wz = console_().parseDollarsToCents('Weekly cap, zkPassport', weeklyZk.trim());
-      if (u !== null) body.user = u;
       if (w !== null) body.weekly = w;
       body.weeklySocial = ws;
       body.weeklyZk = wz;
@@ -217,11 +218,9 @@ function LimitsSection() {
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · daily resets midnight UTC, weekly Monday 00:00 UTC</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · per-user cap resets Monday 00:00 UTC, platform caps midnight UTC</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-          <MoneyField id="admin-limit-user" label="Default per-user daily cap" placeholder="25.00"
-            value={user} onChange={setUser} disabled={dis} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
             value={global} onChange={setGlobal} disabled={dis} />
           <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
@@ -234,8 +233,8 @@ function LimitsSection() {
             declared check selects on it. The two others inherit it while
             blank. */}
         <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="175.00"
-            title="Enforced on top of the daily cap for accounts with no verified identity, and the value the other two tiers inherit while blank. Set either window to 0 to switch it off; with both at 0 the account has no allowance."
+          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
+            title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
             value={weekly} onChange={setWeekly} disabled={dis} />
           <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
             title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
@@ -246,11 +245,14 @@ function LimitsSection() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Per-user overrides live in the Users section; these are the platform defaults.
-            The weekly cap follows the account's identity tier: the default applies to
-            accounts with no verified identity, and the GitHub-and-X and zkPassport
-            tiers use the default while left blank. A cap set to 0 switches that window off. With both the
-            daily and the weekly cap at 0, the account has no AI allowance at all.
+            An account has ONE AI limit and it is weekly: the same pool covers work run on
+            the platform's own Claude key and work run on the account's included OpenRouter
+            key. Per-user overrides live in the Users section; these are the platform
+            defaults. The weekly cap follows the account's identity tier: the default
+            applies to accounts with no verified identity, and the GitHub-and-X and
+            zkPassport tiers use the default while left blank. A cap set to 0 means the
+            account has no AI allowance at all. The two daily caps above are the platform's
+            own safety limits, not a per-user one.
           </p>
           {canWrite ? (
             <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}

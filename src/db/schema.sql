@@ -2122,20 +2122,15 @@ INSERT INTO platform_settings (key, value) VALUES
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
--- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
--- whatever the daily default is at the moment this first runs, rather than
--- as a literal: on an existing deployment that is exactly what a user on
--- the default could already spend across a week, so the cap arrives
--- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
--- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
-INSERT INTO platform_settings (key, value)
-SELECT 'user_weekly_limit_cents',
-       (7 * COALESCE((
-         SELECT ps.value::int
-           FROM platform_settings ps
-          WHERE ps.key = 'user_daily_limit_cents'
-            AND ps.value ~ '^[0-9]+$'
-       ), 2500))::text
+-- #1788: the platform-default per-user WEEKLY cap. #2571 makes it the ONLY
+-- per-user cap (the daily one is switched off in src/services/limits.js) and
+-- sets the code default to $50 a week, seeded as a literal rather than as a
+-- multiple of the daily default. Still ON CONFLICT DO NOTHING, and still the
+-- only statement that writes this key on boot: an operator-set value — which
+-- is what production runs on, set from the admin Limits page — survives every
+-- deploy untouched. No migration rewrites it.
+INSERT INTO platform_settings (key, value) VALUES
+  ('user_weekly_limit_cents', '5000')
 ON CONFLICT (key) DO NOTHING;
 
 -- One-shot backfill of users.weekly_limit_cents for everyone who already
@@ -8490,6 +8485,23 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS conversation_prompted_epoch I
 -- apps.weekly_digest_at — when the "this week" card last went to the app's
 -- general chat (services/weekly-digest.js). NULL until the first one.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS weekly_digest_at TIMESTAMPTZ;
+
+-- #2563: users.needs_username_choice — this account has never picked the
+-- handle other members see, so the shell must ask before it lets them in.
+--
+-- SERVER STATE, deliberately. The alternative was for the client to look at
+-- the stored username and guess "that looks like an email address", which
+-- makes every surface that renders a handle a second implementation of the
+-- gate and gets a member called `ada.lovelace` wrong. One column, written
+-- where the account is created, read by /api/auth/me and cleared by
+-- POST /api/me/username/choose.
+--
+-- FALSE for everyone the column is added to, then the one-time backfill in
+-- src/db/migrate.js turns it on for the accounts email sign-up gave their
+-- own email address as a username. That backfill matches
+-- `lower(username) = lower(email)` — an exact identity, not a shape test —
+-- so an account that merely has a dotted handle is left alone.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --

@@ -31,7 +31,9 @@ test('declared checks do not require removed All Apps UI or write access from th
 });
 
 test('the out-of-credits check asserts the routes, not how many there are', () => {
-  const check = dapp.tests.find((entry) => entry.name.startsWith('Out of daily credits:'));
+  // #2571 renamed it: the allowance the card appears for is weekly now.
+  const check = dapp.tests.find((entry) => entry.name.startsWith('Out of weekly credits:')
+    && /ways to keep building/.test(entry.expectText || ''));
   assert.ok(check);
   // CreditOptions.introFor spells the count from the list it was handed, so
   // the number moves with the deployment's own gating (four here, five where

@@ -4750,11 +4750,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
       // OpenRouter sessions are a single-provider path: their selected model
-      // handles the whole turn directly, so an exhausted Anthropic allowance
-      // must neither block nor bill them. Claude sessions retain the existing
+      // handles the whole turn directly, so they never draw on an Anthropic
+      // key. #2571 splits them by WHOSE OpenRouter key it is. The included
+      // (company-funded) key is platform money and shares ONE weekly pool
+      // with Claude spend, so it is gated here by the same checkBudget —
+      // without resolveBillingPath, whose BYOK spill-over and "add your own
+      // Anthropic key" advice belong to the Claude path alone. A personal
+      // key the user pasted in is their own money: neither blocked nor
+      // billed, exactly as before. Claude sessions retain the existing
       // limit-first platform/BYOK contract.
       let billing = { apiKey: null };
-      if (!isOpenRouterSession) {
+      if (isOpenRouterSession) {
+        if (await managedOpenRouter.usesIncludedKey(pool, req.user.id)) {
+          const budget = await limits.checkBudget(pool, req.user.id);
+          if (budget.error) return res.status(429).json({
+            error: budget.error,
+            code: 'budget_exceeded',
+            reason: budget.reason || null,
+            verificationRequired: !!budget.verificationRequired,
+          });
+        }
+      } else {
         billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
         if (billing.error) return res.status(429).json({
           error: billing.error,
@@ -5261,7 +5277,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             // discards. It is also what feeds the composer's "this turn"
             // figure for an OpenRouter session (#2118).
             if (directCostCents != null) {
-              send('usage', { costCents: directCostCents, model: directModel, byok: true, estimated: true });
+              // #2571: an included-key turn is platform money and joins the
+              // shared weekly pool, exactly as the build and scout receipts
+              // below do. See sharedPoolCodexSpend.
+              const directPooled = await sharedPoolCodexSpend(
+                pool, req.user.id, directCostCents,
+              );
+              send('usage', { costCents: directCostCents, model: directModel, byok: !directPooled, estimated: true });
             }
             if (directPills) send('quick_replies', { replies: directPills });
           }
@@ -7483,65 +7505,28 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/budget', async (req, res) => {
     // Staging mock data: the out-of-credits state (red meter + the
     // three-route credits banner + the in-chat card) is unreachable on a
-    // staging preview without actually burning a real daily allowance, so
+    // staging preview without actually burning a real weekly allowance, so
     // a reviewer would only ever see the healthy state. ?demo=1 fabricates
     // an exhausted snapshot without touching the database — same idiom as
     // GET /api/me/ai-budget (routes/auth.js) and GET /api/me/cli-tokens.
     // Strictly a no-op in production. `demo: true` is what the client keys
     // its one-off card injection off (public/js/dev-chat.js).
-    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+    if (process.env.USERNODE_ENV === 'staging'
+        && (req.query.demo === '1' || req.query.demo === 'weekly-out')) {
+      // #2571: there is one allowance and one window now, so the two demo
+      // spellings answer with the same fixture — ?demo=weekly-out is kept
+      // only so existing review links and declared checks keep working.
       // The reset instant is computed inline rather than through the
-      // dailyResetAt() helper the real branch below uses: this branch must
+      // weeklyResetAt() helper the real branch below uses: this branch must
       // stay provably free of any service call (tests/budget-demo.test.js
-      // pins that), and midnight UTC is the same two lines either way.
-      const reset = new Date();
-      reset.setUTCHours(24, 0, 0, 0);
-      return res.json({
-        spentCents: 2000,
-        limitCents: 2000,
-        remainingCents: 0,
-        creditPolicy: 'legacy',
-        tier: 'legacy',
-        limitSource: 'default',
-        verificationRequired: false,
-        entitlementAvailable: true,
-        tierLimitCents: 1000,
-        globalSpentCents: 4000,
-        globalLimitCents: 100000,
-        byokSpentCents: 0,
-        aiEnabled: true,
-        resetsAt: reset.toISOString(),
-        lowBalancePct: 80,
-        // #1788: which window these three figures describe. The daily cap
-        // is the one that bound here, which is what ?demo=1 has always
-        // meant — stated explicitly now that it is not the only answer.
-        capWindow: 'daily',
-        windowLabel: 'Today',
-        resetLabel: 'midnight UTC',
-        dailyApplies: true,
-        dailyLimitCents: 2000,
-        dailySpentCents: 2000,
-        weeklyApplies: false,
-        weeklyLimitCents: 0,
-        weeklySpentCents: 0,
-        demo: true,
-      });
-    }
-    // #1788: the weekly sibling. A spent WEEKLY allowance is even less
-    // reachable on a preview than a spent daily one — it would take seven
-    // days of seeded spend — and its copy differs everywhere the boundary
-    // is named ("this week", "Resets Monday 00:00 UTC"), so it gets its own
-    // fixture rather than a flag on the one above. The daily cap still has
-    // headroom here, so the weekly cap is unambiguously the one binding.
-    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === 'weekly-out') {
-      // Next Monday 00:00 UTC, inline for the same reason as above: this
-      // branch stays provably free of any service call.
+      // pins that), and next Monday 00:00 UTC is the same two lines either
+      // way.
       const weekReset = new Date();
       weekReset.setUTCDate(weekReset.getUTCDate() + (((8 - weekReset.getUTCDay()) % 7) || 7));
       weekReset.setUTCHours(0, 0, 0, 0);
       return res.json({
-        spentCents: 17500,
-        limitCents: 17500,
+        spentCents: 5000,
+        limitCents: 5000,
         remainingCents: 0,
         creditPolicy: 'legacy',
         tier: 'legacy',
@@ -7555,15 +7540,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         aiEnabled: true,
         resetsAt: weekReset.toISOString(),
         lowBalancePct: 80,
+        // #1788 stated which window these three figures describe; #2571
+        // leaves only one answer.
         capWindow: 'weekly',
         windowLabel: 'This week',
         resetLabel: 'Monday 00:00 UTC',
-        dailyApplies: true,
-        dailyLimitCents: 2000,
+        dailyApplies: false,
+        dailyLimitCents: 2500,
         dailySpentCents: 900,
         weeklyApplies: true,
-        weeklyLimitCents: 17500,
-        weeklySpentCents: 17500,
+        weeklyLimitCents: 5000,
+        weeklySpentCents: 5000,
         demo: true,
       });
     }
@@ -12477,11 +12464,17 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // billing block produces no llm_usage row, spend settlement, or usage
     // event for that path.
     if (isCodexSession) {
-      // Codex/OpenRouter spend is billed to the user's OpenRouter account
-      // directly (review #3) — never written into the Anthropic llm_usage
-      // ledger. Recorded instead via completeCodexTurn on agent_turns.
+      // Codex/OpenRouter spend is recorded on agent_turns by
+      // completeCodexTurn either way. #2571: when the key is the INCLUDED
+      // (company-funded) one it is also debited into the shared `llm_usage`
+      // ledger, because that is the week-to-date total the one account-wide
+      // cap is measured against — Claude spend and included-key spend come
+      // out of the same pool. A personal key is the user's own OpenRouter
+      // account and stays out of the ledger entirely, as it always has.
       if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+        const cents = Math.round(result.costUsd * 100);
+        const pooled = await sharedPoolCodexSpend(pool, req.user.id, cents);
+        send('usage', { costCents: cents, model: `codex-openrouter/${turnModel}`, byok: !pooled });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -12604,6 +12597,21 @@ function describeMarkerlessExit(cause) {
 // row never disagree with agent_turns.
 function codexCostCents(usd) {
   return Math.round(usd * 1e6) / 1e4;
+}
+
+// #2571: debit an OpenRouter turn against the platform's shared weekly pool
+// when — and only when — it ran on the account's INCLUDED (company-funded)
+// key. That key is the company's money, so its spend belongs in the same
+// `llm_usage` week-to-date total limits.checkBudget measures the one
+// account-wide cap against; a personal key belongs to the user and is
+// metered by nobody here. Answers whether the debit happened, which is also
+// what the usage event's `byok` flag reports (pooled → billed to the
+// platform, not to the user's own account).
+async function sharedPoolCodexSpend(pool, userId, costCents) {
+  if (!userId || !(costCents > 0)) return false;
+  if (!await managedOpenRouter.usesIncludedKey(pool, userId)) return false;
+  await limits.recordSpend(pool, userId, costCents, { byok: false });
+  return true;
 }
 
 // ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
@@ -15052,10 +15060,15 @@ ${buildGuidance.testingGuidance}`;
       // and the client attaches a usage event to the bubble a status line
       // then discards.
       if (!directSessionTurn && codexEstimatedCostUsd != null && codexEstimatedCostUsd > 0) {
+        const cents = codexCostCents(codexEstimatedCostUsd);
+        // #2571: the included key's spend is platform money and joins the
+        // shared weekly pool; a personal key's does not. See
+        // sharedPoolCodexSpend.
+        const pooled = await sharedPoolCodexSpend(pool, req.user.id, cents);
         send('usage', {
-          costCents: codexCostCents(codexEstimatedCostUsd),
+          costCents: cents,
           model: `codex-openrouter/${turnModel}`,
-          byok: true,
+          byok: !pooled,
           estimated: true,
         });
       }

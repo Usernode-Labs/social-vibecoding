@@ -799,7 +799,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // checks the previous shape held — the sheet order, the About halves, the
   // folded summary, the numbered ledger path, the state tags — at the hero
   // and the steps sheet, in place. No slot moved either way.
-  assert.equal(DAPP.tests.length, 690);
+  //
+  // 690 → 693: the first-run "Choose your username" step (#2563) is a new
+  // user-visible screen, so it declares checks of its own — one visual
+  // claim for the modal with its suggestion already in the field, and two
+  // that pin the copy the step depends on (the Continue button, which is
+  // the only way out of it, and the sentence that states the rules). It
+  // found the manifest exactly ON the 20-slot floor, so the ceiling moved
+  // with it (services/app-manifest.js, 710 → 730).
+  assert.equal(DAPP.tests.length, 693);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

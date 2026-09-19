@@ -7861,6 +7861,15 @@ const AppView = {
       // than reporting a page as if it were the whole record. Server counts
       // (#1922) are never partial.
       partial: !serverShipped && !!AppView._mergedHasMore,
+      // #2573: has this app ever completed ANYTHING — over its whole
+      // history, not this week's window. `shippedWeek` cannot answer it: a
+      // zero there is equally "nothing has ever landed" and "a busy app had
+      // a quiet week", and the status tab's start-here prompt has to tell
+      // those two apart. `_mergedTotal` is the server's own COUNT over the
+      // whole Done column (#433), so it is exact whatever page is loaded;
+      // on an older server without `total` it falls back to the loaded
+      // page's length, which is still zero exactly when there is nothing.
+      everShipped: (Number(AppView._mergedTotal) || 0) > 0,
     };
 
     // ── The Needs-you queue ──

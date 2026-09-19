@@ -277,6 +277,8 @@ test('an account whose platform weekly allowance is zero gets no company key', a
   assert.deepEqual(await managed.resolveAllowance({}, 22),
     { cents: 17500, limitUsd: 175, limitReset: 'weekly' });
 
+  // An admin-set daily 0 is a weekly-only account, not a gate — which is
+  // now every account, since #2571 switched the daily cap off platform-wide.
   stubAllowance(t, { weeklyCents: 5000, dailyCents: 0, dailySource: 'admin_override' });
   assert.deepEqual(await managed.resolveAllowance({}, 23),
     { cents: 5000, limitUsd: 50, limitReset: 'weekly' });

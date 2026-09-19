@@ -14,12 +14,22 @@ const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 // issued earlier were daily; syncAllowance brings them up to this.
 const LIMIT_RESET = 'weekly';
 
+// The `metadata.source` provisioning stamps on a company-funded credential,
+// and the one value usesIncludedKey() below treats as company-funded.
+const MANAGED_SOURCE = 'usernode_managed';
+
 // #2119: the included key carries the platform's weekly allowance, the same
 // figure the Claude side enforces as its weekly cap (limits.resolveCaps: an
-// admin's per-user override, else the platform default). The two backends do
-// not share a pool (OpenRouter enforces the child key's own limit; Claude
-// spend is metered here); they share the NUMBER, so one place answers "how
-// much does the company give this account a week".
+// admin's per-user override, else the platform default).
+//
+// #2571 makes the two backends share one POOL, not just the number. The
+// platform's own accounting is what enforces it: a turn run on this key is
+// debited into the same `llm_usage` week-to-date total Claude spend lands in
+// (src/routes/sessions.js), and checkBudget refuses the next turn on either
+// backend once that total reaches the weekly cap. The remote limit set on
+// the child key stays at the same figure and reset cadence, where it is now
+// a provider-side BACKSTOP rather than a second allowance: it can only ever
+// bind after the platform's pooled gate already has.
 //
 // #2568 removed the identity gate this used to apply on top: every account
 // gets its included key when the account is created, so an account whose
@@ -32,6 +42,32 @@ async function resolveAllowance(pool, userId) {
     Number(await limits.getEffectiveUserWeeklyLimitCents(pool, userId)) || 0,
   ));
   return { cents, limitUsd: cents / 100, limitReset: LIMIT_RESET };
+}
+
+// #2571: is this account's OpenRouter coding-agent credential the COMPANY-
+// FUNDED one? Only that key draws on the platform's shared weekly pool — a
+// personal key the user pasted in is their own money and is metered by
+// nobody here, exactly as a BYOK Anthropic key is. Provisioning stamps
+// `source: 'usernode_managed'` on the credential's metadata (see
+// provisionKey below), which is the authority; a read failure answers false,
+// the non-punitive direction (no gate, no debit).
+async function usesIncludedKey(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'source' AS source
+         FROM credentials.user_ai_credentials
+        WHERE user_id = $1 AND provider = 'openrouter' AND purpose = 'coding_agent'
+          AND status = 'valid'`,
+      [userId],
+    );
+    return rows[0]?.source === MANAGED_SOURCE;
+  } catch (err) {
+    log.warn('openrouter-managed', 'included-key check failed; treating as personal', {
+      userId, err: err.message,
+    });
+    return false;
+  }
 }
 
 class ManagedOpenRouterError extends Error {
@@ -228,7 +264,7 @@ async function provision({ pool, userId, config }) {
         apiKey: remote.key,
         dataKey: config.dataEncryptionKey,
         metadata: {
-          source: 'usernode_managed',
+          source: MANAGED_SOURCE,
           managedKeyId: reservation.id,
           keyInfo: {
             label: remote.label,
@@ -497,6 +533,8 @@ module.exports = {
   provision,
   resolveAllowance,
   ensureIncludedKey,
+  usesIncludedKey,
+  MANAGED_SOURCE,
   syncAllowance,
   setDisabled,
   remove,

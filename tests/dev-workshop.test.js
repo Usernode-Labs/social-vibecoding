@@ -29,7 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
+const { workshopHtml, kanbanHtml, api: devCardApi } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // The pane's week walk opens CLOSED — every window, the live one included,
@@ -1364,6 +1364,122 @@ test('#1922: the loader keeps the server\'s week counts, and only well-formed on
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(src, /const shipped = mergedData\.shipped;\s*AppView\._mergedShipped = shipped\s*&& Number\.isFinite\(shipped\.week\) && Number\.isFinite\(shipped\.prevWeek\)/);
   assert.match(src, /partial: !serverShipped && !!AppView\._mergedHasMore,/);
+});
+
+// ── #2573: the prompt to start on an app nobody has started ──────────
+//
+// Two facts make that state, and it takes BOTH: nothing open, and nothing
+// ever landed. Each half alone is a different app — one that has finished
+// everything, or one whose board is full of work nobody has picked up — and
+// the banner is wrong on both.
+
+/** A loaded board with nothing on it and nothing behind it. */
+function seedUntouched(AppView) {
+  AppView._ghIssues = [];
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._devDataReady = true;
+}
+
+const ONE_ISSUE = {
+  number: 12, title: 'Dark mode resets', createdAt: at(2), updatedAt: at(1),
+  lastMessageAt: at(1), user: 'alice', htmlUrl: 'https://github.com/x/y/issues/12',
+};
+
+test('#2573: "ever shipped" is the whole Done column, not this week\'s window', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  assert.equal(AppView._workshopView().dashboard.everShipped, false);
+
+  // THE CASE `shippedWeek` CANNOT ANSWER: a busy app having a quiet week.
+  // Nothing merged inside either window, and the column is far from empty —
+  // so a banner keyed on the week count would land on an app with thirty-one
+  // changes behind it.
+  AppView._mergedTotal = 31;
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 0, 'nothing landed in this week\'s window');
+  assert.equal(d.everShipped, true, 'and the app has still shipped thirty-one things');
+});
+
+test('#2573: the status tab offers to start an app with nothing open and nothing shipped', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-start-here=""/, 'the banner is up');
+  assert.match(html, /Start working on this app/, 'with the heading the request names');
+  assert.match(html, /Nothing is open and nothing has shipped yet/, 'and one line saying why');
+  assert.match(html, /data-ws-start-here-btn=""[^>]*>New change</,
+    'and the action, labelled as the Improve panel labels it');
+
+  // AT THE TOP OF THE TAB, ahead of the no-items note and the dashboard
+  // pane. The note answers what the board HOLDS and points at the "+";
+  // this answers what to do about an app nobody has started.
+  const order = ['data-ws-start-here', 'data-ws-empty', 'data-ws-dashboard'].map((k) => html.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads');
+});
+
+test('#2573: the prompt stands down for an app with open work, or with a history', () => {
+  const withOpen = makeAppView();
+  seedUntouched(withOpen);
+  withOpen._ghIssues = [ONE_ISSUE];
+  assert.ok(!workshopHtml(withOpen).includes('data-ws-start-here'),
+    'somebody has already started it: there is something open');
+
+  const shipped = makeAppView();
+  seedUntouched(shipped);
+  shipped._mergedTotal = 4;
+  assert.ok(!workshopHtml(shipped).includes('data-ws-start-here'),
+    'an app with nothing left open but four changes behind it is finished, not unstarted');
+});
+
+test('#2573: a filter that hides everything is not an app nobody has started', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  AppView._ghIssues = [ONE_ISSUE];
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+  assert.equal(v.dashboard.open, 0, 'the tiles count what survived the filter');
+  assert.equal(v.meta.filtered, true);
+  assert.ok(!workshopHtml(AppView).includes('data-ws-start-here'),
+    'the prompt is a claim about the APP, so it waits for the filter to come off');
+});
+
+test('#2573: the button is offered on the gate the Improve panel offers New change on', () => {
+  const { improveStore } = devCardApi();
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  const before = improveStore.get().readOnly;
+  try {
+    // The same field, on the same store instance, that improve-panel.tsx
+    // reads to decide whether to draw `#improve-row-new-session` at all.
+    improveStore.set({ readOnly: true });
+    const html = workshopHtml(AppView);
+    assert.match(html, /data-ws-start-here=""/,
+      'a read-only viewer is still told what state the app is in');
+    assert.ok(!html.includes('data-ws-start-here-btn'),
+      'but is not offered a change they could not start from the panel either');
+  } finally {
+    improveStore.set({ readOnly: before });
+  }
+  assert.match(workshopHtml(AppView), /data-ws-start-here-btn=""/,
+    'and a collaborator gets it back');
+});
+
+// The entry point is BORROWED, not rebuilt: two copies of "navigate to the
+// app, then create a proposal" is the duplication this reuses away.
+test('#2573: the banner presses the Improve panel\'s own New change', () => {
+  assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
+  const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+  assert.match(PANEL, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the panel\'s row calls');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {

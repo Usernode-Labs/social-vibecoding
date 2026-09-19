@@ -770,15 +770,17 @@ function adminRoutes(config) {
   // ── LLM Spend Limits ───────────────────────────────────────
   //
   // Admin-tunable caps on LLM spend. Backed by the `platform_settings`
-  // table (default per-user daily + per-user weekly + global) plus the
-  // `users.daily_limit_cents` / `users.weekly_limit_cents` per-user
-  // overrides. Reads are cached for 10s in src/services/limits.js; PUTs
-  // invalidate that cache so the new value takes effect on the next
-  // request from any worker.
+  // table (default per-user weekly + global + system) plus the
+  // `users.weekly_limit_cents` per-user override. Reads are cached for 10s
+  // in src/services/limits.js; PUTs invalidate that cache so the new value
+  // takes effect on the next request from any worker.
   //
-  // #1788: the weekly cap layers on top of the daily one — a turn stops at
-  // whichever is exhausted first, and either set to 0 means that cap does
-  // not apply. limits.resolveCaps owns the full interaction.
+  // #2571: the per-user DAILY cap is switched off. `user_daily_limit_cents`
+  // and `users.daily_limit_cents` are still readable and still writable
+  // here — an operator's stored figures are not destroyed and the API shape
+  // does not break — but no gate consults them, the Limits page no longer
+  // offers the field, and the weekly cap is the account's only limit.
+  // limits.resolveCaps owns the interaction.
 
   // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
   // is the unverified tier (the base); the social and zkPassport keys are
