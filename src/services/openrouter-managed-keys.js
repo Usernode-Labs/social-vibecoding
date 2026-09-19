@@ -14,29 +14,65 @@ const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 // issued earlier were daily; syncAllowance brings them up to this.
 const LIMIT_RESET = 'weekly';
 
+// The `metadata.source` provisioning stamps on a company-funded credential,
+// and the one value usesIncludedKey() below treats as company-funded.
+const MANAGED_SOURCE = 'usernode_managed';
+
 // #2119: the included key carries the platform's weekly allowance, the same
 // figure the Claude side enforces as its weekly cap (limits.resolveCaps: an
-// admin's per-user override, else the platform default, else 17500 cents).
-// The two backends do not share a pool (OpenRouter enforces the child key's
-// own limit; Claude spend is metered here); they share the NUMBER, so one
-// place answers "how much does the company give this account a week".
+// admin's per-user override, else the account's identity tier, else the
+// platform default).
+//
+// #2571 makes the two backends share one POOL, not just the number. The
+// platform's own accounting is what enforces it: a turn run on this key is
+// debited into the same `llm_usage` week-to-date total Claude spend lands in
+// (src/routes/sessions.js), and checkBudget refuses the next turn on either
+// backend once that total reaches the weekly cap. The remote limit set on
+// the child key stays at the same figure and reset cadence, where it is now
+// a provider-side BACKSTOP rather than a second allowance: it can only ever
+// bind after the platform's pooled gate already has.
 //
 // Zero refuses a company key rather than minting an unlimited or zero-limit
 // one, and it is zero in two cases: an admin switched the weekly cap off, or
 // the identity tier grants the account nothing at all. The second is read
-// the way checkBudget reads it: an identity-derived daily 0 keeps applying
-// (tiered policy, unverified account), so the Claude side refuses every
-// platform-funded turn for that account, and the included key must not
-// become the way around that gate.
+// the way checkBudget reads it — limits.isIdentityGated, which #2571 split
+// out of the (now always false) `dailyApplies` so that switching the daily
+// cap off does not read as "this account is identity-gated" and refuse a key
+// to everybody.
 async function resolveAllowance(pool, userId) {
   const [weeklyCents, entitlement] = await Promise.all([
     limits.getEffectiveUserWeeklyLimitCents(pool, userId),
     limits.getUserCreditEntitlement(pool, userId),
   ]);
-  const caps = limits.resolveCaps(entitlement);
-  const identityGated = caps.dailyApplies && caps.dailyLimitCents <= 0;
+  const identityGated = limits.isIdentityGated(entitlement);
   const cents = identityGated ? 0 : Math.max(0, Math.round(Number(weeklyCents) || 0));
   return { cents, limitUsd: cents / 100, limitReset: LIMIT_RESET, identityGated };
+}
+
+// #2571: is this account's OpenRouter coding-agent credential the COMPANY-
+// FUNDED one? Only that key draws on the platform's shared weekly pool — a
+// personal key the user pasted in is their own money and is metered by
+// nobody here, exactly as a BYOK Anthropic key is. Provisioning stamps
+// `source: 'usernode_managed'` on the credential's metadata (see
+// provisionKey below), which is the authority; a read failure answers false,
+// the non-punitive direction (no gate, no debit).
+async function usesIncludedKey(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'source' AS source
+         FROM credentials.user_ai_credentials
+        WHERE user_id = $1 AND provider = 'openrouter' AND purpose = 'coding_agent'
+          AND status = 'valid'`,
+      [userId],
+    );
+    return rows[0]?.source === MANAGED_SOURCE;
+  } catch (err) {
+    log.warn('openrouter-managed', 'included-key check failed; treating as personal', {
+      userId, err: err.message,
+    });
+    return false;
+  }
 }
 
 class ManagedOpenRouterError extends Error {
@@ -250,7 +286,7 @@ async function provision({ pool, userId, config }) {
         apiKey: remote.key,
         dataKey: config.dataEncryptionKey,
         metadata: {
-          source: 'usernode_managed',
+          source: MANAGED_SOURCE,
           managedKeyId: reservation.id,
           keyInfo: {
             label: remote.label,
@@ -488,6 +524,8 @@ module.exports = {
   stateForUser,
   provision,
   resolveAllowance,
+  usesIncludedKey,
+  MANAGED_SOURCE,
   syncAllowance,
   setDisabled,
   remove,

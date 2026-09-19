@@ -1902,9 +1902,10 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: DevChat._creditWindow().weekly
-          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
-          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        // #2571: one allowance, one window. The fixture behind ?demo=1 is
+        // the weekly cap at its default, so the card names that.
+        error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.',
+        capWindow: 'weekly',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1946,11 +1947,13 @@ const DevChat = {
     return CO.resetSentence(state);
   },
 
-  // #1788: the allowance runs over two windows now (daily and weekly) and
-  // the server reports whichever one is BINDING in the legacy
-  // limit/spent/remaining fields. Every sentence that used to hardcode
-  // "today" / "daily" asks here instead, so the meter, its tooltip and the
-  // banner all name the window the numbers actually describe.
+  // #1788 gave the allowance two windows and reported whichever was
+  // BINDING in the legacy limit/spent/remaining fields; #2571 leaves one —
+  // the server always answers `capWindow: 'weekly'` now. Every sentence
+  // that used to hardcode "today" / "daily" still asks here, so the meter,
+  // its tooltip and the banner name the window the numbers describe, and
+  // the daily spellings below remain only as the fallback for a payload
+  // that carries no window at all.
   _creditWindow() {
     const b = DevChat.budget || {};
     const weekly = b.capWindow === 'weekly';
@@ -1960,7 +1963,7 @@ const DevChat = {
       label: b.windowLabel || (weekly ? 'This week' : 'Today'),
       // "…left today" / "…left this week"
       when: weekly ? 'this week' : 'today',
-      // "your $20.00 platform daily limit"
+      // "your $50.00 platform weekly limit"
       limitNoun: weekly ? 'weekly limit' : 'daily limit',
       // "your free daily AI credits"
       creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
@@ -2031,9 +2034,9 @@ const DevChat = {
   _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
-    // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it; what it shows instead is
-    // what is left on that key (#2118).
+    // An OpenRouter session's meter is the KEY's remaining figure, not the
+    // platform's (#2118) — see _openRouterAllowanceView on what that means
+    // for an included key now that #2571 pools its spend.
     if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
@@ -2151,13 +2154,23 @@ const DevChat = {
 
   // #2118: the OpenRouter session's half of the meter. A session on an
   // OpenRouter key never touches the platform's Anthropic allowance, so
-  // the daily meter has nothing to say about it; what the viewer wants to
-  // know instead is how much of the KEY's limit is left. OpenRouter
+  // the platform meter has nothing to say about it; what the viewer wants
+  // to know instead is how much of the KEY's limit is left. OpenRouter
   // reports that itself (GET /key: limit, limit_remaining, limit_reset),
   // so the figure is shown as reported rather than derived, in the window
   // the key's reset cadence names. A key with no limit draws nothing
   // rather than a guess, and the Claude meter's red/yellow thresholds
   // colour what is left.
+  //
+  // #2571 pooled the INCLUDED key's spend with Claude spend against one
+  // weekly cap, and this figure does not know about that half: OpenRouter
+  // only ever counts OpenRouter. So for an included key it is an upper
+  // bound on what is left, and the pooled gate can refuse a turn while it
+  // still shows headroom — the refusal card names the weekly cap and the
+  // figure it was measured against. Showing the pooled number here instead
+  // is a change to this meter's contract (and to the ?shot= fixture and
+  // declared checks behind it), so it is deliberately left for its own
+  // change rather than folded into this one.
   _openRouterAllowanceView() {
     const NONE = { title: null, parts: [] };
     const a = DevChat.openrouterAllowance;
@@ -2418,19 +2431,29 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
     if (shot !== 'credits-low' && shot !== 'credits-exhausted') return null;
+    // #2571: the allowance is weekly, so the fixture is 80% (or all) of the
+    // $50 weekly cap and names Monday 00:00 UTC as the boundary.
     const reset = new Date();
-    reset.setUTCHours(24, 0, 0, 0);
+    reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+    reset.setUTCHours(0, 0, 0, 0);
     const exhausted = shot === 'credits-exhausted';
     return {
-      spentCents: exhausted ? 2500 : 2000,
-      limitCents: 2500,
-      remainingCents: exhausted ? 0 : 500,
+      spentCents: exhausted ? 5000 : 4000,
+      limitCents: 5000,
+      remainingCents: exhausted ? 0 : 1000,
       globalSpentCents: 4000,
       globalLimitCents: 100000,
       byokSpentCents: 0,
       aiEnabled: true,
       resetsAt: reset.toISOString(),
       lowBalancePct: 80,
+      capWindow: 'weekly',
+      windowLabel: 'This week',
+      resetLabel: 'Monday 00:00 UTC',
+      dailyApplies: false,
+      weeklyApplies: true,
+      weeklyLimitCents: 5000,
+      weeklySpentCents: exhausted ? 5000 : 4000,
       shot: true,
     };
   },
@@ -4432,7 +4455,8 @@ const DevChat = {
             role: 'assistant',
             content: '',
             creditsCard: {
-              error: data.error || 'They reset at midnight UTC.',
+              error: data.error || 'They reset Monday 00:00 UTC.',
+              capWindow: (DevChat.budget || {}).capWindow || 'weekly',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
               verificationRequired: !!data.verificationRequired,

@@ -3538,16 +3538,16 @@
       "expectText": "You can leave this page and return anytime. Open Improve"
     },
     {
-      "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
+      "name": "Out of weekly credits: the chat offers every way to keep building (#967, #1049, #1086)",
       "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
       "expectText": "ways to keep building right now"
     },
     {
-      "name": "Out of daily credits: the banner says when the allowance comes back (#593)",
+      "name": "Out of weekly credits: the banner says when the allowance comes back (#593, #2571)",
       "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-credits-banner [data-credits-reset]",
-      "expectText": "reset at midnight UTC"
+      "expectText": "reset Monday 00:00 UTC"
     },
     {
       "name": "Out of credits: the routes anyone can follow render first (#1281)",
@@ -3633,7 +3633,7 @@
       "name": "The AI-credit row shows the remaining allowance (#555, #593)",
       "path": "/?demo=1#settings/api-key",
       "expectSelector": "#drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
-      "expectText": "$6.40 left"
+      "expectText": "$36.40 left"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",

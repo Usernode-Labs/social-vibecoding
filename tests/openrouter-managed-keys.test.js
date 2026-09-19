@@ -265,15 +265,17 @@ test('an account whose platform weekly allowance is zero cannot claim a company 
   assert.deepEqual(await managed.resolveAllowance({}, 21),
     { cents: 0, limitUsd: 0, limitReset: 'weekly', identityGated: false });
 
-  // The identity tier grants the account nothing: the Claude side keeps an
-  // identity-derived daily 0 applying, and so does the included key.
+  // The identity tier grants the account nothing: the Claude side refuses
+  // an identity-derived 0 before any window arithmetic, and so does the
+  // included key.
   stubAllowance(t, { weeklyCents: 17500, dailyCents: 0, dailySource: 'identity' });
   await assert.rejects(managed.provision({ pool: {}, userId: 22, config }),
     refused(/Connect GitHub or X/));
   assert.deepEqual(await managed.resolveAllowance({}, 22),
     { cents: 0, limitUsd: 0, limitReset: 'weekly', identityGated: true });
 
-  // An admin-set daily 0 is a weekly-only account, not a gate.
+  // An admin-set daily 0 is a weekly-only account, not a gate — which is
+  // now every account, since #2571 switched the daily cap off platform-wide.
   stubAllowance(t, { weeklyCents: 5000, dailyCents: 0, dailySource: 'admin_override' });
   assert.deepEqual(await managed.resolveAllowance({}, 23),
     { cents: 5000, limitUsd: 50, limitReset: 'weekly', identityGated: false });
@@ -748,7 +750,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     'the cadence is policy the service owns, not a client default');
   assert.match(managedSource, /limits\.getEffectiveUserWeeklyLimitCents\(pool, userId\)/,
     'the amount is the same weekly allowance the Claude gate resolves');
-  assert.match(managedSource, /limits\.resolveCaps\(/, 'and an identity-gated zero is honoured the same way');
+  assert.match(managedSource, /limits\.isIdentityGated\(entitlement\)/,
+    'and an identity-gated zero is honoured the same way — #2571 asks that '
+    + 'question directly, because the daily cap it used to be inferred from '
+    + 'no longer applies to anybody');
   assert.match(routes, /resolveAllowance\(pool, req\.user\.id\)/);
   assert.match(routes, /syncAllowance\(\{/);
   assert.match(admin, /users\/:id\/weekly-limit'[\s\S]*?syncAllowance\(\{/,

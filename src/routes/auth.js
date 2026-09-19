@@ -688,29 +688,29 @@ function authRoutes(config) {
     // (plus BYOK spillover) so a reviewer sees the real layout.
     if (IS_STAGING && req.query.demo === '1') {
       const reset = new Date();
-      reset.setUTCHours(24, 0, 0, 0);
+      reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+      reset.setUTCHours(0, 0, 0, 0);
       return res.json({
-        limitCents: 2000,
+        limitCents: 5000,
         spentCents: 1360,
-        remainingCents: 640,
+        remainingCents: 3640,
         byokCents: 450,
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
-        // #1788: the allowance has two windows now, and the row's copy
-        // follows whichever one is binding. The daily cap binds in this
-        // fixture — the weekly one still has room — so the reviewed row
-        // reads exactly as it did before, with the window now stated
-        // rather than assumed.
-        capWindow: 'daily',
-        windowLabel: 'Today',
-        resetLabel: 'midnight UTC',
-        dailyApplies: true,
-        dailyLimitCents: 2000,
-        dailySpentCents: 1360,
+        // #1788 stated which window the row's copy follows; #2571 leaves
+        // one: the account's single weekly allowance, reset Monday 00:00
+        // UTC. The daily figures below are the retained-but-unenforced
+        // setting and today's share of the same spend.
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: false,
+        dailyLimitCents: 2500,
+        dailySpentCents: 480,
         weeklyApplies: true,
-        weeklyLimitCents: 17500,
-        weeklySpentCents: 4820,
+        weeklyLimitCents: 5000,
+        weeklySpentCents: 1360,
         demo: true,
       });
     }
