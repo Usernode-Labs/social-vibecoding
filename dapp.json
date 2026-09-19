@@ -4408,10 +4408,10 @@
       "expectText": "Apps set differently"
     },
     {
-      "name": "#2241: New change opens a screen of its own and says nothing is created until you send",
+      "name": "#2241: New change opens a screen of its own, with the empty state that invites the first message",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state #dc-empty-unsent",
-      "expectText": "Nothing is created until you send"
+      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state",
+      "expectText": "What should this session change?"
     },
     {
       "name": "#2241: the unsent change has a live composer, and no controls for a session that does not exist",
