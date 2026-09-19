@@ -49,8 +49,26 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
   const sonnet = modelCosts.estimateCents(modelCosts.publishedPricing('claude-sonnet-5'));
   const fable = modelCosts.estimateCents(modelCosts.publishedPricing('claude-fable-5-1'));
   const glm = modelCosts.estimateCents(modelCosts.publishedPricing('z-ai/glm-5.3-flash'));
-  assert.ok(glm < sonnet && sonnet < opus && opus < fable,
-    `expected glm < sonnet < opus < fable, got ${glm} ${sonnet} ${opus} ${fable}`);
+  const deepseek = modelCosts.estimateCents(modelCosts.publishedPricing('deepseek/deepseek-v4.1-flash'));
+  assert.ok(deepseek < glm && glm < sonnet && sonnet < opus && opus < fable,
+    `expected deepseek < glm < sonnet < opus < fable, got ${deepseek} ${glm} ${sonnet} ${opus} ${fable}`);
+
+  // And the figures themselves, in cents. The derivation above cannot
+  // catch a wrong PROFILE, because it uses the same one; these are the
+  // numbers a person actually reads, so a change to either the profile or
+  // a published price has to be a deliberate edit here.
+  // estimateCents keeps two decimals of a cent so that a sub-cent model is
+  // not flattened to zero, so pin the figure as a PERSON reads it: rounded
+  // to the cent, in dollars. A change to the profile or to a published
+  // price has to be a deliberate edit here.
+  const shown = (c) => `$${(c / 100).toFixed(2)}`;
+  assert.deepEqual(
+    { deepseek: shown(deepseek), glm: shown(glm), sonnet: shown(sonnet),
+      opus: shown(opus), fable: shown(fable) },
+    { deepseek: '$0.21', glm: '$0.30', sonnet: '$6.20',
+      opus: '$15.50', fable: '$31.00' },
+    'at 2.5M in / 120k out, these are the five figures the picker states',
+  );
 });
 
 test('a model with no published price gets no estimate rather than a zero', () => {
@@ -174,7 +192,8 @@ test('an override replaces the shown estimate and clears back to the derived one
   assert.deepEqual(await modelCosts.readOverrides(pool), { 'claude-opus-5': 250 });
 
   const picker = await modelCosts.pickerPayload(pool);
-  assert.equal(picker.models['claude-opus-5'].estimateCents, 250);
+  assert.equal(picker.models['claude-opus-5'].estimateCents, 250,
+    'the override the admin typed, not the derived 1550');
   assert.equal(picker.models['claude-opus-5'].estimateSource, 'override');
   assert.equal(picker.models['claude-sonnet-5'].estimateSource, 'pricing',
     'the models nobody overrode keep their derived figure');
@@ -260,7 +279,7 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   // The one place the amount is formatted. A curated row carries its own
   // estimate; the client never re-derives one it was given.
   DevChat._modelNotes = {
-    typicalChange: { inputTokens: 250_000, outputTokens: 12_000, source: 'documented_constant' },
+    typicalChange: { inputTokens: 2_500_000, outputTokens: 120_000, source: 'documented_constant' },
     models: { 'z-ai/glm-5.3-flash': { note: 'quick, cheap changes', estimateCents: 40 } },
   };
 
@@ -295,6 +314,10 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
 
   // The admin table's cells are bare, so its headers carry the unit.
   const admin = read('frontend/src/features/admin/admin-model-costs.tsx');
+  // And the profile it prints reads as millions: a typical change is 2.5M
+  // input tokens, which "2500k" is a worse way to say.
+  assert.match(admin, /n >= 1_000_000/,
+    'the token formatter reaches for M before it reaches for k');
   for (const header of ['Shown estimate, per typical change',
     'Observed average, per typical change',
     'Observed median, per typical change']) {

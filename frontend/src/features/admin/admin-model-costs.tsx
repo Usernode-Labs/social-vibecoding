@@ -56,6 +56,9 @@ function money(cents: number | null | undefined): string {
 
 function tokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0';
+  // A typical change is measured in millions of input tokens now, and
+  // "2500k" is a worse way to say 2.5M. One decimal, no trailing ".0".
+  if (n >= 1_000_000) return `${String(Number((n / 1_000_000).toFixed(1)))}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
   return String(Math.round(n));
 }

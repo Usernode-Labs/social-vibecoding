@@ -34,13 +34,19 @@ const OVERRIDES_KEY = 'model_cost_estimate_overrides';
 // WHERE THE NUMBERS COME FROM: a coding-agent change is overwhelmingly
 // INPUT — the repository context, the conventions block and the turn's own
 // transcript are re-sent on every tool round-trip, and the model writes a
-// diff and a summary. 250k input / 12k output is the order of magnitude a
-// single-session change has been running at. It is one documented constant
-// on purpose: an estimate that nobody can point at the origin of is not an
-// estimate, it is a guess with a decimal point.
+// diff and a summary. 2.5M input / 120k output is the order of magnitude a
+// single-session change has been running at: dozens of tool round-trips,
+// each re-sending the context, is what makes the input figure that large.
+// It is one documented constant on purpose: an estimate that nobody can
+// point at the origin of is not an estimate, it is a guess with a decimal
+// point.
+//
+// At the prices in this file that profile puts a change at about $0.30 on
+// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5, $15.50 on
+// Opus 5 and $31.00 on Fable 5.1.
 const TYPICAL_CHANGE = Object.freeze({
-  inputTokens: 250_000,
-  outputTokens: 12_000,
+  inputTokens: 2_500_000,
+  outputTokens: 120_000,
   source: 'documented_constant',
 });
 
