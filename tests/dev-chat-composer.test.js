@@ -204,23 +204,26 @@ test('the four strips inside it lost their hosts, not their stores', () => {
   assert.doesNotMatch(DEV_CHAT_SRC, /classList\.toggle\('dc-(attach-strip|quick-replies)-active'/);
 });
 
-// ── 5. The grouped provider selector ───────────────────────────────────
+// ── 5. The flat model selector (#2569) ─────────────────────────────────
 
-test('both in-chat venues share one grouped selector, and off-platform venues get none', () => {
+test('both in-chat venues share one flat selector, and off-platform venues get none', () => {
   const { DevChat, view } = makeDevChat();
   DevChat.MODELS = { 'claude-opus-5': { label: 'Opus 5' } };
   DevChat.selectedModel = 'claude-opus-5';
+  // No catalog has landed in this harness, so the list is the Anthropic
+  // models plus the door to the full OpenRouter catalog. No headings, and
+  // no key source in any label.
   assert.deepEqual(view().models, {
-    groups: [
+    options: [
       {
-        id: 'openrouter', label: 'OpenRouter key',
-        options: [{
-          value: 'openrouter:__add_more__', label: 'Add more OpenRouter models…',
-        }],
+        value: 'anthropic:claude-opus-5',
+        label: 'Opus 5',
+        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
       },
       {
-        id: 'anthropic', label: 'Anthropic key',
-        options: [{ value: 'anthropic:claude-opus-5', label: 'Anthropic key · Opus 5' }],
+        value: 'openrouter:__add_more__',
+        label: 'Add more OpenRouter models…',
+        title: 'Browse every model your OpenRouter key can reach',
       },
     ],
     selected: 'anthropic:claude-opus-5',
@@ -236,8 +239,9 @@ test('both in-chat venues share one grouped selector, and off-platform venues ge
     id: 7, status: 'active', agent_backend: 'codex_openrouter', agent_model: 'x/y-flash',
   };
   assert.equal(view().models.selected, 'openrouter:x/y-flash');
-  assert.equal(view().models.groups[0].options[0].label, 'OpenRouter key · x/y-flash');
-  assert.equal(view().models.groups[1].options[0].label, 'Anthropic key · Opus 5');
+  const pinned = view().models.options.find((o) => o.value === 'openrouter:x/y-flash');
+  assert.equal(pinned.label, 'x/y-flash', 'an unknown model reads as its id, not as a key');
+  assert.equal(pinned.title, 'Runs on your OpenRouter key');
 
   DevChat._currentVenueId = () => 'own-tools-pr';
   assert.equal(view().models, null);
@@ -248,9 +252,10 @@ test('#800: an allowlist change reaches an open composer without losing the pick
   DevChat.MODELS = { a: { label: 'A' }, b: { label: 'B' } };
   DevChat.selectedModel = 'b';
   DevChat._refreshModelSelect();
-  assert.deepEqual(view().models.groups[1].options.map((o) => o.value), [
-    'anthropic:a', 'anthropic:b',
-  ]);
+  assert.deepEqual(
+    view().models.options.filter((o) => o.value.startsWith('anthropic:')).map((o) => o.value),
+    ['anthropic:a', 'anthropic:b'],
+  );
   assert.equal(view().models.selected, 'anthropic:b',
     'the selection is a field, so it cannot be lost');
 });

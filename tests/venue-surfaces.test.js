@@ -174,18 +174,24 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
     'no second writer on a node the component renders');
 });
 
-test('in-chat providers share one key-explicit selector, and other venues get none', () => {
+test('in-chat providers share one flat selector, and other venues get none', () => {
   assert.match(DEV_CHAT_SRC,
     /venue !== 'usernode-claude' && venue !== 'usernode-openrouter'\) return null;/,
-    'only in-chat venues receive the grouped selector');
+    'only in-chat venues receive the selector');
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
   assert.match(COMPOSER_TSX, /<select[\s\S]*id="dc-model-select"/,
     'the control is inside the composer');
-  assert.match(COMPOSER_TSX, /s\.models\.groups\.map/,
-    'provider provenance is rendered as native optgroups');
-  assert.match(DEV_CHAT_SRC, /label: 'OpenRouter key'[\s\S]*label: 'Anthropic key'/,
-    'OpenRouter is listed before Anthropic');
+  // #2569: ONE list. Provider provenance is a title, not a heading and not
+  // a label prefix.
+  assert.match(COMPOSER_TSX, /s\.models\.options\.map/,
+    'the selector renders one flat option list');
+  assert.doesNotMatch(COMPOSER_TSX, /<optgroup/,
+    'no native optgroups, so the closed control asks about models only');
+  assert.doesNotMatch(DEV_CHAT_SRC, /'OpenRouter key \u00b7 |'Anthropic key \u00b7 /,
+    'no option label names a provider');
+  assert.match(DEV_CHAT_SRC, /title: 'Runs on your OpenRouter key'/,
+    'which key pays survives as the option title');
   assert.match(DEV_CHAT_SRC, /Add more OpenRouter models/,
     'the full catalog is reachable from the selector');
   assert.match(

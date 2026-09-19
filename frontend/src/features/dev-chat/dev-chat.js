@@ -389,15 +389,74 @@ const DevChat = {
   },
 
   /**
-   * The one in-composer model picker, as grouped data. Null off-platform.
+   * ONE FLAT LIST (#2569). The picker used to be two optgroups — "OpenRouter
+   * key" and "Anthropic key" — with every option repeating its key source in
+   * its own label, and the OpenRouter models only reachable after "Add more
+   * OpenRouter models…". That made the first question "whose key pays?" when
+   * the question a builder is actually asking is "which model?".
    *
-   * OpenRouter comes first. Its shortlist is the user's saved model (or the
-   * server's recommended GLM when there is no saved choice), the model pinned
-   * to this session, and favorites added through the full catalog dialog.
-   * Anthropic's direct models come second. Every option repeats its key source
-   * because native optgroup headings disappear when a select is closed — this
-   * keeps an Anthropic-authored model reached through OpenRouter from looking
-   * like it will use the Anthropic key.
+   * So: no headings, no prefixes, one list. The order is
+   * `_flatModelOptions` below, and which key is charged survives as a `title`
+   * on each option — available on hover, absent from the label.
+   *
+   * The OPTION VALUES keep their `openrouter:` / `anthropic:` prefixes: they
+   * are what _onModelPicked dispatches on, and the backend resolves them.
+   */
+  _flatModelOptions({ data, byId, starterIds, extraIds }) {
+    const options = [];
+    const seen = new Set();
+    const pushOpenRouter = (id, { disabled = false, label = null } = {}) => {
+      if (!id || seen.has(`${OPENROUTER_MODEL_PREFIX}${id}`)) return;
+      seen.add(`${OPENROUTER_MODEL_PREFIX}${id}`);
+      const model = byId.get(id);
+      // #2570: the compact cost/note text rides beside the name so it is
+      // visible while the menu is open, not only once a model is picked.
+      const cost = disabled ? null : DevChat._modelCostNote(id, model);
+      options.push({
+        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
+        label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
+        // The secondary hint, not part of the label (#2569).
+        title: 'Runs on your OpenRouter key',
+        ...(disabled ? { disabled: true } : null),
+      });
+    };
+
+    // 1. The starting models: the platform's curated OpenRouter pair, in the
+    //    server's own order (GLM first, because it is the default).
+    for (const id of starterIds) pushOpenRouter(id);
+
+    // 2. The three Anthropic models, by their DevChat.MODELS labels.
+    for (const [id, meta] of Object.entries(DevChat.MODELS)) {
+      const cost = DevChat._modelCostNote(id, null);
+      const label = (meta && meta.label) || id;
+      options.push({
+        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+        label: cost.compact ? `${label} · ${cost.compact}` : label,
+        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+      });
+    }
+
+    // 3. Anything else this account is already using: favourites starred in
+    //    the full catalog dialog, the model pinned to this session, and the
+    //    saved default. De-duplicated against the pair above.
+    for (const entry of extraIds) {
+      if (typeof entry === 'string') pushOpenRouter(entry);
+      else pushOpenRouter(entry.id, entry);
+    }
+
+    // 4. The door to the full catalog, still last.
+    options.push({
+      value: OPENROUTER_MORE_VALUE,
+      label: 'Add more OpenRouter models…',
+      title: 'Browse every model your OpenRouter key can reach',
+    });
+    return options;
+  },
+
+  /**
+   * The one in-composer model picker, as a flat option list. Null
+   * off-platform. See _flatModelOptions for the order and why there are no
+   * provider headings any more.
    */
   _modelPickerView() {
     const venue = DevChat._currentVenueId();
@@ -446,51 +505,43 @@ const DevChat = {
       addShortlistId(model.id);
     }
 
-    // #2570: every option carries its note and its estimated cost as
-    // compact secondary text, built by the one _modelCostNote helper so the
-    // option, the line under the picker and anything later cannot drift.
-    const openRouterOptions = shortlistIds.map((id) => {
-      const model = byId.get(id);
-      const cost = DevChat._modelCostNote(id, model);
-      return {
-        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
-        label: `OpenRouter key · ${model?.name || id}${cost.compact ? ` · ${cost.compact}` : ''}`,
-      };
-    });
     let selectedOpenRouterId = currentOpenRouterId || preferredId;
+    const extraIds = [...shortlistIds];
     if (openRouterSelected && !selectedOpenRouterId) {
       // Old/incomplete rows should say that they are still loading rather
-      // than make the select visually fall into Anthropic's first option.
+      // than make the select visually fall into the first real option.
       selectedOpenRouterId = '__loading__';
-      openRouterOptions.unshift({
-        value: `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`,
-        label: 'OpenRouter key · Loading model',
-        disabled: true,
-      });
+      extraIds.unshift({ id: selectedOpenRouterId, label: 'Loading model', disabled: true });
     }
 
-    const groups = [];
+    // The two starting models are the server's curated pair
+    // (config.openrouterRecommendedModels), with its single recommendation
+    // first. A deployment that changes that list changes what a new account
+    // starts on; nothing here hardcodes a model id.
+    const starterIds = [];
+    const addStarter = (id) => {
+      if (id && byId.has(id) && !starterIds.includes(id)) starterIds.push(id);
+    };
+    addStarter(recommendedId);
+    for (const model of catalog) if (model?.isDefaultFavorite) addStarter(model.id);
+    for (const model of catalog) if (model?.isRecommended) addStarter(model.id);
+
     // Before the async read lands, keep the catalog door available. Once the
-    // capability response says OpenRouter is unavailable, omit a dead group
-    // unless this is an existing OpenRouter session that must remain visible.
-    if (!data || data.codexAvailable || data.loadError || openRouterSelected) {
-      groups.push({
-        id: 'openrouter',
-        label: 'OpenRouter key',
-        options: [
-          ...openRouterOptions,
-          { value: OPENROUTER_MORE_VALUE, label: 'Add more OpenRouter models…' },
-        ],
+    // capability response says OpenRouter is unavailable, drop the OpenRouter
+    // half of the list unless this is an existing OpenRouter session that
+    // must remain visible.
+    const openRouterUsable = !data || data.codexAvailable || data.loadError || openRouterSelected;
+    const options = openRouterUsable
+      ? DevChat._flatModelOptions({ data, byId, starterIds, extraIds })
+      : Object.entries(DevChat.MODELS).map(([id, meta]) => {
+        const cost = DevChat._modelCostNote(id, null);
+        const label = (meta && meta.label) || id;
+        return {
+          value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+          label: cost.compact ? `${label} · ${cost.compact}` : label,
+          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        };
       });
-    }
-    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => {
-      const cost = DevChat._modelCostNote(id, null);
-      return {
-        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-        label: `Anthropic key · ${(meta && meta.label) || id}${cost.compact ? ` · ${cost.compact}` : ''}`,
-      };
-    });
-    groups.push({ id: 'anthropic', label: 'Anthropic key', options: directOptions });
 
     const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
       ? DevChat.selectedModel
@@ -505,7 +556,7 @@ const DevChat = {
       ? DevChat._modelCostNote(selectedOpenRouterId, byId.get(selectedOpenRouterId))
       : DevChat._modelCostNote(directId, null);
     return {
-      groups,
+      options,
       selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
