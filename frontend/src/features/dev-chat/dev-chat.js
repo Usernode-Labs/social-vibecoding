@@ -2085,6 +2085,41 @@ const DevChat = {
     DevChat._maybeInjectDemoCreditsCard();
   },
 
+  // #2598: a model call's cost just landed against this user's weekly pool
+  // and the server pushed the new figures (services/budget-live.js) over the
+  // socket public/js/app.js already holds open. Re-render from them instead
+  // of refetching: a build makes a call every few seconds, and the whole
+  // point of the push is that the figure moves without a request per call.
+  //
+  // MERGED into the existing budget, never replacing it. The pushed payload
+  // is limits.getBudgetSnapshot — the shared snapshot — while GET /api/budget
+  // wraps that with three fields of its own (globalSpentCents,
+  // globalLimitCents, aiEnabled) and its own spelling of the BYOK figure.
+  // Replacing would blank all four, and the exhausted banner's shared-budget
+  // check reads two of them to decide whose budget it blames.
+  //
+  // renderBudget() repaints the composer's meter AND both credits banners, so
+  // an OpenRouter session — whose meter shows the KEY's allowance, not the
+  // pool (#2118) — still gets its low-balance and exhausted banners moved by
+  // the included key's pooled spend (#2571).
+  applyBudgetUpdate(budget) {
+    if (!budget || typeof budget !== 'object') return;
+    // ?demo= and ?shot= pages are showing a fixture on purpose. A real push
+    // arriving underneath would swap out the state a reviewer came to look
+    // at, which is the one thing those flags exist to prevent.
+    if (DevChat._budgetDemo() || DevChat._shotCreditsLowBudget()) return;
+    const previous = DevChat.budget || {};
+    const byokCents = Number(budget.byokCents);
+    DevChat.budget = {
+      ...previous,
+      ...budget,
+      // /api/budget's spelling of the same number, kept in step so the
+      // key-holder branch of the meter can't read a stale "your key $X".
+      byokSpentCents: Number.isFinite(byokCents) ? byokCents : previous.byokSpentCents,
+    };
+    DevChat.renderBudget();
+  },
+
   // Staging review aid: with ?demo=1 on a staging page whose demo budget
   // reports exhausted, drop ONE non-persisted credits card into the
   // transcript so the in-chat card (not just the banner) is reviewable.
