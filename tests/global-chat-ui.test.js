@@ -66,6 +66,9 @@ test('Improve separates resumable chats from coding changes and starts durable s
   assert.match(improveSection, /data-improve-row="chat"/);
   assert.match(improveSection, /Working/);
   assert.match(improveSection, /Current/);
+  assert.match(improveSection, /DraftTrashIcon/);
+  assert.match(improveSection, /Delete this chat\?/);
+  assert.match(improveSection, /removeGlobalChatThread\(thread\.id\)/);
   assert.match(newChatButton, /void startNewGlobalChat\(\)/);
   assert.match(store, /`#chat\/\$\{encodeURIComponent\(created\.thread\.id\)\}`/);
   assert.match(viewTabs, /active === 'chat' \? 'Chat' : 'Change'/);
@@ -79,6 +82,8 @@ test('chat navigation uses the shared screen router instead of a body-wide mode'
   assert.match(store, /api\.thread\(threadId\)/);
   assert.match(store, /api\.threads\(\)/);
   assert.match(store, /deactivateGlobalChat/);
+  assert.match(screen, /aria-label="Close chat"/);
+  assert.match(screen, /onClick=\{\(\) => closeGlobalChat\(\)\}/);
 });
 
 test('Global Chat stays isolated from developer and proposal chat implementations', () => {
@@ -169,9 +174,13 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(api, /\/turn-status/);
   assert.match(api, /\/cancel/);
   assert.match(api, /\/direct-actions/);
+  assert.match(api, /method:\s*'DELETE'/);
+  assert.match(api, /\/api\/global-chat\/threads\/\$\{encodeURIComponent\(threadId\)\}/);
   assert.match(store, /recoverInterruptedTurn/);
   assert.match(store, /Reconnecting…/);
   assert.match(store, /executeDirectAction/);
+  assert.match(store, /api\.deleteThread\(threadId\)/);
+  assert.match(store, /api\.cancelTurn\(threadId\)/);
   assert.match(api, /modelInvocations:\s*0/);
   assert.doesNotMatch(store, /The response ended before it was complete\./);
 });

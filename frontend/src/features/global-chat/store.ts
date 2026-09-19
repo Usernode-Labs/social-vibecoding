@@ -717,6 +717,54 @@ export async function startNewGlobalChat() {
   }
 }
 
+export async function removeGlobalChatThread(threadId: string) {
+  const target = state.threads.find((thread) => thread.id === threadId) || null;
+  const selected = state.bootstrap?.thread?.id === threadId;
+  const wasOpen = state.open;
+  const hadLocalTurn = selected && !!activeAbort;
+
+  if (selected) {
+    navigationVersion += 1;
+    activeAbort?.abort();
+    activeAbort = null;
+  }
+  if (target?.busy || hadLocalTurn) {
+    await api.cancelTurn(threadId).catch(() => {});
+  }
+  await api.deleteThread(threadId);
+
+  const remaining = state.threads.filter((thread) => thread.id !== threadId);
+  const nextThread = selected
+    ? remaining[0] || null
+    : state.bootstrap?.thread || remaining[0] || null;
+  if (loadedThreadId === threadId) loadedThreadId = null;
+  publish((current) => ({
+    threads: remaining,
+    ...(selected ? {
+      phase: wasOpen && nextThread ? 'loading' : 'ready',
+      messages: [],
+      results: {},
+      hasMoreHistory: false,
+      before: null,
+      activity: '',
+      error: '',
+      dismissedConfirmations: {},
+      consumedConfirmations: {},
+      clientActionStates: {},
+    } : {}),
+    bootstrap: current.bootstrap
+      ? { ...current.bootstrap, thread: nextThread, threads: remaining }
+      : current.bootstrap,
+  }));
+
+  if (!selected || !wasOpen) return;
+  if (!nextThread) {
+    closeGlobalChat();
+    return;
+  }
+  window.location.hash = `#chat/${encodeURIComponent(nextThread.id)}`;
+}
+
 export function dismissConfirmation(resultId: string) {
   publish((current) => ({
     dismissedConfirmations: { ...current.dismissedConfirmations, [resultId]: true },

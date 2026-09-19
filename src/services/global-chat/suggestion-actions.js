@@ -15,6 +15,7 @@ const ACTION_ID_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
 const APP_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const NUMERIC_ID_RE = /^[1-9]\d{0,18}$/;
 const SETTING_KEYS = new Set(inventory.settings.map((item) => item.key));
+const COMPACT_APP_QUERY = Object.freeze([{ name: 'view', value: 'global-chat' }]);
 
 class SuggestionActionError extends Error {
   constructor(code, message) {
@@ -97,26 +98,26 @@ const ACTIONS = Object.freeze({
     steps: [
       routeStep('GET', '/api/me/active-sessions'),
       manualStep('governance.mine'),
-      routeStep('GET', '/api/apps'),
+      routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY),
     ],
   }),
   'apps.list': fixed({
     label: 'Explore apps',
     message: 'Here are the apps you can access.',
     domain: 'apps',
-    steps: [routeStep('GET', '/api/apps')],
+    steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
   }),
   'apps.activity': fixed({
     label: 'Recent app activity',
     message: 'Here are your apps with their recent activity.',
     domain: 'apps',
-    steps: [routeStep('GET', '/api/apps')],
+    steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
   }),
   'issues.choose_app': fixed({
     label: 'Open issues',
     message: 'Choose an app to view its issues.',
     domain: 'issues',
-    steps: [routeStep('GET', '/api/apps')],
+    steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
   }),
   'development.active': fixed({
     label: 'Active development',
