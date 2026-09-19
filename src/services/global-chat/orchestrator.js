@@ -31,15 +31,14 @@ const MAX_EXPOSED_CAPABILITIES = 60;
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_TOOL_CONTENT_BYTES = 64 * 1024;
 const TURN_TIMEOUT_MS = 35_000;
-const PROVIDER_TIMEOUT_MS = 15_000;
-const TRANSIENT_PROVIDER_ERRORS = new Set([
-  'network',
-  'timeout',
-  'rate_limited',
-  'provider_unavailable',
-  'provider_error',
-  'stream_error',
-]);
+// OpenRouter now owns provider failover inside one latency-routed request.
+// Keep the application deadline short and never repeat the same model request
+// blindly: that old 15s + 15s retry was the source of the observed 30s turns.
+const PROVIDER_TIMEOUT_MS = 8_000;
+// OpenRouter uses session_id as a sticky provider key. Bump this routing-only
+// suffix whenever the routing policy changes so existing chats adopt it
+// automatically instead of remaining pinned to a previously slow endpoint.
+const PROVIDER_SESSION_REVISION = 'latency-v1';
 const SYNTHESIS_REQUEST_RE = /\b(?:analyse|analyze|compare|contrast|difference|explain|recommend|summari[sz]e|why|which\s+(?:is|are|should)|best)\b/i;
 const WRITE_REQUEST_RE = /\b(?:add|change|close|configure|continue|create|delete|edit|fork|install|merge|remove|rename|reply|redeploy|send|set|start|update|vote)\b/i;
 const MULTI_CLAUSE_REQUEST_RE = /\b(?:also|and|plus|then)\b|,/i;
@@ -634,69 +633,63 @@ function createGlobalChatOrchestrator({
             : null);
         const messages = invocationMessages(workflowPrompt, metadata, transcript, loopMessages);
 
-        let response;
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          await emitProgress(
-            attempt === 1 ? 'planning' : 'retrying',
-            attempt === 1
-              ? (iteration === 1 ? 'Planning the fastest safe path…' : 'Planning the next step…')
-              : 'The model response was interrupted. Retrying once…',
-            { attempt, iteration },
+        await emitProgress(
+          'planning',
+          iteration === 1 ? 'Planning the fastest safe path…' : 'Planning the next step…',
+          { attempt: 1, iteration },
+        );
+        const waitingTimer = setTimeout(() => {
+          void emitProgress(
+            'waiting_model',
+            `Waiting for ${model.name || model.id}…`,
+            { attempt: 1, iteration },
           );
-          let waitingTimer = null;
-          try {
-            waitingTimer = setTimeout(() => {
-              void emitProgress(
-                'waiting_model',
-                `Waiting for ${model.name || model.id}…`,
-                { attempt, iteration },
-              );
-            }, 4_000);
-            providerInvocationCount += 1;
-            response = await accounting.invokeAccounted({
-              pool,
-              config,
-              apiKey,
-              userId,
-              threadId,
-              messageId: userMessage.id,
-              model,
-              reasoningEffort: globalChatProfile.reasoningEffort,
-              spendCapUsd: globalChatProfile.spendCapUsd,
-              providerAllowance,
-              attemptNumber: attempt,
-              messages,
-              tools: currentToolSet.tools,
-              sessionId: threadId,
-              // Five or six compact suggestions plus a strict tool envelope fit
-              // comfortably inside the transport default. Keeping the full
-              // 800-token allowance avoids turning a provider-side length
-              // cutoff into an incomplete turn; the one-call read fast path
-              // is what removes latency, not an unsafe output cap.
-              maxOutputTokens: 800,
-              temperature: model.supportsTemperature === false ? null : 0.1,
-              parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
-              toolChoice: suggestionOnly
-                ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
-                : (mustUseCapability ? 'required' : 'auto'),
-              timeoutMs: Math.max(1_000, Math.min(
-                PROVIDER_TIMEOUT_MS,
-                deadlineAt - Date.now(),
-              )),
-              signal,
-            });
-            clearTimeout(waitingTimer);
-            break;
-          } catch (error) {
-            clearTimeout(waitingTimer);
-            if (Date.now() >= deadlineAt) {
-              throw new GlobalChatOrchestrationError(
-                'turn_timeout',
-                'Global Chat exceeded the turn deadline.',
-              );
-            }
-            if (attempt === 2 || !TRANSIENT_PROVIDER_ERRORS.has(error?.code)) throw error;
+        }, 4_000);
+        let response;
+        try {
+          providerInvocationCount += 1;
+          response = await accounting.invokeAccounted({
+            pool,
+            config,
+            apiKey,
+            userId,
+            threadId,
+            messageId: userMessage.id,
+            model,
+            reasoningEffort: globalChatProfile.reasoningEffort,
+            spendCapUsd: globalChatProfile.spendCapUsd,
+            providerAllowance,
+            attemptNumber: 1,
+            messages,
+            tools: currentToolSet.tools,
+            sessionId: `${threadId}:${PROVIDER_SESSION_REVISION}`,
+            // Five or six compact suggestions plus a strict tool envelope fit
+            // comfortably inside the transport default. Keeping the full
+            // 800-token allowance avoids turning a provider-side length
+            // cutoff into an incomplete turn; the one-call read fast path
+            // is what removes latency, not an unsafe output cap.
+            maxOutputTokens: 800,
+            temperature: model.supportsTemperature === false ? null : 0.1,
+            parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
+            toolChoice: suggestionOnly
+              ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
+              : (mustUseCapability ? 'required' : 'auto'),
+            timeoutMs: Math.max(1_000, Math.min(
+              PROVIDER_TIMEOUT_MS,
+              deadlineAt - Date.now(),
+            )),
+            signal,
+          });
+        } catch (error) {
+          if (Date.now() >= deadlineAt) {
+            throw new GlobalChatOrchestrationError(
+              'turn_timeout',
+              'Global Chat exceeded the turn deadline.',
+            );
           }
+          throw error;
+        } finally {
+          clearTimeout(waitingTimer);
         }
         servedModel = response.servedModel || servedModel;
         const rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
