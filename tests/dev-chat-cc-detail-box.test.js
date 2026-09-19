@@ -43,7 +43,11 @@ test('the open-card chevron rule reaches a chevron inside the head row', () => {
   // row, not as the summary's own child.
   const head = TRANSCRIPT.slice(TRANSCRIPT.indexOf('className="dc-cc-head"'));
   const chevronAt = head.indexOf('dc-cc-attached-chevron');
-  const headCloses = head.indexOf('</span>\n        <span className="dc-cc-chips"');
+  // The head's OWN closing tag, at the summary's indentation — not the tag
+  // of whatever happens to follow it. #2597 put the venue caption between
+  // the head and the chips, and an anchor that named the next sibling read
+  // that as the chevron having left the head row.
+  const headCloses = head.indexOf('\n        </span>');
   assert.ok(chevronAt > 0 && chevronAt < headCloses, 'chevron is drawn inside .dc-cc-head');
 
   // So the flip must be a DESCENDANT rule. The direct-child form is exactly

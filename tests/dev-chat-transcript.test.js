@@ -491,3 +491,87 @@ test('on a wide screen the new session’s composer comes up to meet the empty s
   // composer goes back to the bottom with no state of its own to clear.
   assert.doesNotMatch(block, /data-|\.dc-new-session/);
 });
+
+// ── #2597: the running row says the event, and the venue underneath ────
+
+test('the running row is headed "Coding agent is running", whatever ran it', () => {
+  const h = makeDevChat();
+
+  h.render([sys('Claude Code is running...', { id: 201, _active: true })]);
+  const claude = h.t.state().rows.at(-1);
+  assert.equal(claude.text, 'Coding agent is running...',
+    'the heading names the event, not the venue — and keeps the server’s ellipsis');
+  assert.equal(claude.caption, 'Homeroom · Claude', 'the venue moves under it');
+  assert.equal(claude.html, undefined,
+    'the heading is our own copy now, so nothing is left to render unescaped');
+
+  // The other venue, resolved from the content alone — the fallback older
+  // rows rely on, since they carry no `agentBackend`.
+  h.render([sys('OpenRouter is running...', { id: 202, _active: true })]);
+  assert.equal(h.t.state().rows.at(-1).text, 'Coding agent is running...', 'same heading');
+  assert.equal(h.t.state().rows.at(-1).caption, 'Homeroom · OpenRouter', 'and the other venue');
+
+  // …and from the metadata, which is what a Codex-worded row has.
+  h.render([sys('Codex is running...', { id: 203, agentBackend: 'codex_openrouter' })]);
+  assert.equal(h.t.state().rows.at(-1).caption, 'Homeroom · OpenRouter', 'metadata wins the same way');
+
+  // The caption renders in the muted second-line style, on its own line.
+  const html = transcriptHtml(h.t.state());
+  assert.match(html, /class="dc-status-line dc-status-line-captioned"/,
+    'the captioned row opts into the wrap; every other status row stays one line');
+  assert.match(html, /class="dc-status-venue">Homeroom · OpenRouter</, 'the caption is on screen');
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-status-line-captioned \{ flex-wrap: wrap; \}/);
+  assert.match(css, /\.dc-status-line-captioned > \.dc-status-venue \{\s*flex: 0 0 100%;/,
+    'and it takes a whole line rather than sitting beside the heading');
+});
+
+test('only "<venue> is running" is rewritten', () => {
+  const h = makeDevChat();
+  const untouched = [
+    'Claude Code is making changes...',
+    'Scout reading the codebase...',
+    'Syncing with main...',
+    'Building staging preview…',
+    'Claude Code finished',
+  ];
+  h.render(untouched.map((c, i) => sys(c, { id: 300 + i })));
+  const rows = h.t.state().rows;
+  assert.equal(rows.length, untouched.length, 'one row each');
+  rows.forEach((r, i) => {
+    assert.equal(r.text, untouched[i], `${untouched[i]} says what it says`);
+    assert.equal(r.caption, undefined, 'and grows no caption');
+  });
+});
+
+test('the run CARD gets the same heading and caption', () => {
+  const h = makeDevChat();
+  h.render([
+    sys('OpenRouter is running...', { id: 401, _active: true }),
+    sys('progress', { id: 402, progressLog: ['[claude (mode build)]', 'Editing src/a.js'] }),
+  ]);
+  const [row] = h.t.state().rows;
+  assert.equal(row.t, 'attached', 'still the summary of its log');
+  assert.equal(row.text, 'Coding agent is running...');
+  assert.equal(row.caption, 'Homeroom · OpenRouter');
+  // Under the head row, above the chips: a collapsed card shows the whole
+  // summary, so the caption is visible without opening anything.
+  const html = rowHtml(row);
+  const venueAt = html.indexOf('dc-status-venue');
+  assert.ok(venueAt > html.indexOf('dc-cc-head') && venueAt < html.indexOf('dc-cc-chips'),
+    'the caption sits between the head row and the chip row');
+});
+
+test('the pairing rules still read the text the server wrote', () => {
+  // The rewrite is a RENDER-time one. `_isLiveCcRun` and the pre-pass regex
+  // match `msg.content`, which is untouched — the day one of them is taught
+  // the new heading instead, every row already in the database stops pairing.
+  const h = makeDevChat();
+  const msgs = [
+    sys('Claude Code is running...', { id: 501, _active: true }),
+    sys('progress', { id: 502, progressLog: ['[claude (mode build)]'] }),
+  ];
+  h.render(msgs);
+  assert.equal(msgs[0].content, 'Claude Code is running...', 'the model keeps the stored sentence');
+  assert.ok(h.DevChat._isLiveCcRun(msgs[0]), 'and it is still recognised as a live coding run');
+});
