@@ -63,6 +63,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { AppsLoadError } from '../apps/load-error';
+import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
 
@@ -285,6 +286,42 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
   );
 }
 
+/**
+ * "Your apps" with nothing in it (#2564).
+ *
+ * The launcher had no empty state: a finished load with no apps rendered an
+ * empty `#app-list`, so the area under the "Your apps" label was blank and a
+ * first sign-in read as a screen that had failed to fill rather than one with
+ * nothing in it yet. This is the one line it says instead, and it is the SAME
+ * sentence the app-context sheet's switcher strip already used for the same
+ * empty set — see ../apps/no-apps-yet.ts for why that is a shared constant.
+ *
+ * It is NOT the other two empty answers this grid already had, and it must not
+ * replace either: a failed load is `AppsLoadError` with a Retry, and a search
+ * that matched nothing names the query. Both mean "something went wrong or is
+ * being hidden"; this one means "there is genuinely nothing here yet", which is
+ * why it points at Discover rather than offering an action of its own.
+ *
+ * `col-span-full` because the item has no placement of its own — every tile on
+ * this canvas is placed at an explicit cell and this note is not a tile, so it
+ * auto-places into the first row and spans the four columns. `flex
+ * items-center` centres it in that row: a grid item stretches to the row box,
+ * and in the grid view app.css sizes every row at a fixed `--home-cell-h`, so
+ * padding alone would sit the line hard against the top of a 116px row. The
+ * `py-8` is for the case where no auto-row height applies and the item is only
+ * as tall as its content.
+ */
+export function AppsEmptyNote() {
+  return (
+    <div
+      data-home-apps-empty=""
+      className="col-span-full flex items-center justify-center px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
+    >
+      {NO_APPS_YET}
+    </div>
+  );
+}
+
 export function AppGrid() {
   const state = useStoreState(gridStore);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -307,6 +344,22 @@ export function AppGrid() {
   // tail of _wireCards. Detach on unmount so a remount cannot leave two
   // recognizers fighting for the same gesture.
   const canDrag = state.view === 'grid' && state.ready;
+
+  // A FINISHED load of the launcher canvas that holds nothing.
+  //
+  // `state.ready` is the whole hydration contract here: the store's initial
+  // value is `ready: false` (grid-store.ts), the SSG pass renders that value,
+  // and so this branch is absent from the prerendered document — which is what
+  // it has to be, since the note is data-dependent and a first client render
+  // that disagreed with the prerender would `console.error` and fail the
+  // proposal checks. The other three conditions keep it out of the states that
+  // already answer for themselves: a load notice (offline, or the error card),
+  // a search that matched nothing, and the search view generally.
+  const empty = state.ready
+    && state.view === 'grid'
+    && !state.notice
+    && state.emptyQuery === null
+    && state.items.length === 0;
   useEffect(() => {
     const el = listRef.current;
     const N = controller();
@@ -369,6 +422,7 @@ export function AppGrid() {
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}
+      {empty ? <AppsEmptyNote /> : null}
       {state.items.map((item) => (
         <AppCardTile
           key={`card:${item.app.slug}`}
