@@ -434,6 +434,12 @@ export interface TopicBody {
   evidence?: {
     state: string;
     verified: boolean;
+    /**
+     * #2601/#2558: a 'planned' run whose timestamp has gone past the idle
+     * threshold — minted at submission and never picked up. It does not
+     * spin, and it keeps the panel so its reason and retry control show.
+     */
+    notStarted: boolean;
     label: string;
     sentence: string;
     claims: string[];

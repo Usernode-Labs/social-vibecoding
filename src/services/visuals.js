@@ -1899,15 +1899,30 @@ async function publishCaptureError(pool, sessionId, revision, err, send) {
 // deduplicates by session+head, and owns its own paired application state, so
 // no stale in-memory session metadata or mutable public preview is reused.
 function scheduleVisualEvidence(config, pool, sessionId, commitHash, trigger = 'preview-ready') {
-  if (!config.visualEvidence?.execute || !/^[0-9a-f]{40}$/.test(String(commitHash || ''))) return;
-  Promise.resolve().then(() => require('./visual-evidence-orchestrator').scheduleForSession(config, {
+  const orchestrator = require('./visual-evidence-orchestrator');
+  // #2601/#2558: the `execute` guard used to live here as well, so a
+  // deployment with execution switched off never reached the orchestrator
+  // and the reason was never written anywhere. scheduleForSession owns that
+  // refusal now — it records it on the proposal and returns 'disabled' — so
+  // this only screens out a commit it could not schedule against at all.
+  if (!/^[0-9a-f]{40}$/.test(String(commitHash || ''))) {
+    orchestrator.noteNotStarted(pool, Number(sessionId), 'no_revision')
+      .catch(() => { /* best-effort: nothing else to do on a bad commit */ });
+    return;
+  }
+  Promise.resolve().then(() => orchestrator.scheduleForSession(config, {
     pool,
     sessionId: Number(sessionId),
     headSha: String(commitHash).toLowerCase(),
     trigger,
-  })).catch((err) => log.warn('visuals', 'Visual evidence scheduling failed', {
-    sessionId: Number(sessionId), headSha: commitHash, err: err.message,
-  }));
+  })).catch((err) => {
+    log.warn('visuals', 'Visual evidence scheduling failed', {
+      sessionId: Number(sessionId), headSha: commitHash, err: err.message,
+    });
+    // A throw here is still a run that never started, and the reviewer
+    // surfaces have nothing else to go on.
+    return orchestrator.noteNotStarted(pool, Number(sessionId), 'no_revision').catch(() => {});
+  });
 }
 
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {

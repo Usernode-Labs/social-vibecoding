@@ -701,12 +701,45 @@ async function executeRun(config, options, injected = {}) {
   }
 }
 
+// #2601/#2558: the human sentence for each refusal, for the proposal to
+// carry and for the log line. `already_running` and `not_required` are not
+// here on purpose — neither is a run that failed to start, and a run with a
+// state of its own says more than any note could.
+const NOT_STARTED_REASONS = Object.freeze({
+  disabled: 'Visual change previews are not being run on this deployment, so nothing picked this one up.',
+  missing_intent: 'This proposal has no visual change preview claim recorded, so there was nothing to run.',
+  no_revision: 'The proposal revision to preview could not be resolved, so the run never started.',
+  no_staging_preview: 'No staging preview was built for this commit, so there was nothing to record a visual change preview against.',
+});
+
+// Store the refusal on the proposal and say so at info level. Both halves
+// are best-effort: a refusal that cannot be written down must not turn into
+// an exception on a fire-and-forget scheduling path.
+async function noteNotStarted(pool, sessionId, reason, injected = {}) {
+  const text = NOT_STARTED_REASONS[reason] || null;
+  log.info('visual-evidence', 'Visual evidence run not started', { sessionId, reason });
+  if (!text) return;
+  try {
+    await (injected.state || state).recordNotStarted(pool, sessionId, text);
+  } catch (error) {
+    log.warn('visual-evidence', 'Could not record why the visual evidence run did not start', {
+      sessionId, reason, error: error.message,
+    });
+  }
+}
+
 async function scheduleForSession(config, options, injected = {}) {
-  if (!config.visualEvidence?.execute) return { scheduled: false, reason: 'disabled' };
   const { pool, sessionId, headSha = null, trigger = 'preview-ready', onProgress = null } = options;
+  if (!config.visualEvidence?.execute) {
+    await noteNotStarted(pool, sessionId, 'disabled', injected);
+    return { scheduled: false, reason: 'disabled' };
+  }
   const session = await loadSession(pool, sessionId);
   const intent = intentForSession(session);
-  if (!intent) return { scheduled: false, reason: 'missing_intent' };
+  if (!intent) {
+    await noteNotStarted(pool, sessionId, 'missing_intent', injected);
+    return { scheduled: false, reason: 'missing_intent' };
+  }
   const revision = await resolveRevisionContext(session, headSha, injected.github || github);
   const key = `${sessionId}:${revision.headSha}`;
   if (inFlight.has(key)) return { scheduled: false, reason: 'already_running', promise: inFlight.get(key) };
@@ -733,6 +766,9 @@ async function scheduleForSession(config, options, injected = {}) {
     return { scheduled: false, reason: run.state, runId: run.id };
   }
   const { session: sessionValue, app } = publicSessionAndApp(session);
+  // The run is under way, so whatever an earlier attempt recorded about it
+  // not starting is no longer true (#2601/#2558).
+  await (injected.state || state).clearNotStarted(pool, sessionId).catch(() => {});
   const promise = executeRun(config, {
     pool,
     run,
@@ -784,5 +820,7 @@ module.exports = {
   failCurrentRun,
   executeRun,
   scheduleForSession,
+  noteNotStarted,
+  NOT_STARTED_REASONS,
   inFlightSnapshot,
 };
