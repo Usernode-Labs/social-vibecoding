@@ -340,17 +340,21 @@ function load() {
     openrouterGlobalChatFallbackModels:
       (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'deepseek/deepseek-v4-flash-0731')
         .split(',').map((s) => s.trim()).filter(Boolean),
-    // Curated badges in the model picker. Exact ids keep the recommendation
+    // Curated badges in the model picker, and — since #2569 — the OpenRouter
+    // models a new account STARTS with. Exact ids keep the recommendation
     // deliberate: adding a provider prefix here would label dozens of old,
     // batch, and specialist variants and make the badge meaningless.
+    //
+    // #2569 cut this from five to two. The picker is one flat list of five
+    // starting models now, and the other three are Anthropic's, so five
+    // curated OpenRouter ids made a list of eight that nobody asked for.
+    // GLM leads because openrouterDefaultCodexModel above is GLM; the list
+    // order is what the picker shows after it.
     openrouterRecommendedModels: (() => {
       const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
         ? [
-          'deepseek/deepseek-v4.1-flash',
           'z-ai/glm-5.3-flash',
-          'openai/gpt-6-astra',
-          'moonshotai/kimi-k3',
-          'anthropic/claude-opus-5',
+          'deepseek/deepseek-v4.1-flash',
         ].join(',')
         : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
       if (configured.trim().toLowerCase() === 'none') return [];

@@ -542,12 +542,11 @@ test('managed-key verification defaults off and can be enabled explicitly', () =
   const defaults = loadManagedVerificationConfig(undefined);
   assert.equal(defaults.openrouterManagedRequireVerifiedIdentity, false);
   assert.equal(defaults.openrouterDefaultCodexModel, 'z-ai/glm-5.3-flash');
+  // #2569 cut the curated list to the two OpenRouter models the flat
+  // picker starts with, GLM first because it is the platform default.
   assert.deepEqual(defaults.openrouterRecommendedModels, [
-    'deepseek/deepseek-v4.1-flash',
     'z-ai/glm-5.3-flash',
-    'openai/gpt-6-astra',
-    'moonshotai/kimi-k3',
-    'anthropic/claude-opus-5',
+    'deepseek/deepseek-v4.1-flash',
   ]);
   assert.deepEqual(loadManagedVerificationConfig(undefined, 'none').openrouterRecommendedModels, []);
   assert.deepEqual(
@@ -721,7 +720,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(deploy, /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
   assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
   assert.match(deploy, /OPENROUTER_RECOMMENDED_MODELS=/);
-  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=deepseek\/deepseek-v4\.1-flash/);
+  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=z-ai\/glm-5\.3-flash,deepseek\/deepseek-v4\.1-flash$/m);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
@@ -736,7 +735,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const recommendedDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_RECOMMENDED_MODELS',
   );
-  assert.match(recommendedDeclaration.default, /deepseek\/deepseek-v4\.1-flash/);
+  assert.equal(recommendedDeclaration.default, 'z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash');
   assert.match(routes, /verificationRequired/);
   assert.match(settings, /provisioning\.verificationRequired && !provisioning\.verified/);
 
