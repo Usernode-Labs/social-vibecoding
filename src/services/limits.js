@@ -2,6 +2,9 @@
 
 const log = require('./logger');
 const turnEffects = require('./turn-effects');
+// #2598: the weekly meter's live channel. It requires THIS module back —
+// lazily, inside its own functions — so the cycle never resolves at load.
+const budgetLive = require('./budget-live');
 // #1788: the weekly cap reuses the platform's existing week boundary
 // (Monday 00:00 UTC) rather than inventing a second one. This helper is
 // the same one the weekly kudos allowance and the leaderboard's "week"
@@ -777,7 +780,14 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
     );
   } catch (err) {
     log.warn('limits', 'Failed to record llm_usage spend', { userId, costCents, byok, err: err.message });
+    return;
   }
+  // #2598: the ledger moved, so the weekly meter is now stale in every tab
+  // this user has open. Tell them. This is the recording point the included
+  // OpenRouter key's spend arrives at (routes/sessions.js sharedPoolCodexSpend
+  // debits through here), as well as every Claude receipt that isn't durable.
+  // Deliberately not awaited — see notifySpend.
+  budgetLive.notifySpend(pool, userId);
 }
 
 async function recordSpendRequired(client, userId, costCents, { byok = false } = {}) {
@@ -881,6 +891,11 @@ async function settleTurnSpend(pool, userId, totalCents, {
         return split;
       },
     });
+    // #2598: the debit committed with its receipt — push the new weekly
+    // figure. The non-durable path below goes through recordSpend, which
+    // notifies for itself, so this is the one branch that would otherwise
+    // settle a whole Claude turn in silence.
+    budgetLive.notifySpend(pool, userId);
     return receipt.value || split;
   }
 
