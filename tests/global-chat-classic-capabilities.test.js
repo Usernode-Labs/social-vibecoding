@@ -38,7 +38,7 @@ test('the registry contains every mapped route, Settings section, and navigation
   const expected = inventory.summary.mappedRoutes
     + inventory.summary.settingsSections
     + inventory.summary.navigationSurfaces
-    + 3; // settings.inspect + Global Chat update + local browser settings
+    + 5; // settings inspect/catalog, current proposals, Global Chat update, local settings
   assert.equal(definitions.length, expected);
   assert.equal(registry.size, expected);
   for (const route of inventory.routes.filter((item) => item.status === 'mapped')) {

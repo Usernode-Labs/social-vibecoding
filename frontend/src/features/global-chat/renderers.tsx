@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 
 import { ArrowRightShortIcon, CheckIcon, ChevronDownIcon } from '@/components/ui/icons';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 
 import {
   clientAction,
   closeGlobalChat,
   confirmGlobalChatAction,
   dismissConfirmation,
+  executeGlobalChatResultAction,
   runGlobalChatClientAction,
   sendGlobalChatMessage,
   useGlobalChatState,
@@ -19,11 +21,13 @@ const ARRAY_KEYS = [
   'items', 'issues', 'proposals', 'apps', 'sessions', 'conversations',
   'notifications', 'results', 'rows', 'challenges', 'users', 'messages',
 ];
+const OBJECT_KEYS = ['app', 'issue', 'proposal', 'session', 'conversation', 'profile', 'notification'];
 const TITLE_KEYS = ['title', 'name', 'label', 'username', 'subject', 'displayName', 'appName'];
 const SUMMARY_KEYS = ['summary', 'description', 'body', 'content', 'message', 'statusText'];
 const ID_KEYS = [
-  'number', 'issueNumber', 'sessionId', 'conversationId', 'proposalId',
-  'challengeId', 'id', 'slug', 'username',
+  'number', 'issueNumber', 'issue_number', 'github_issue_number', 'sessionId', 'session_id',
+  'conversationId', 'conversation_id', 'proposalId', 'proposal_id',
+  'challengeId', 'challenge_id', 'id', 'slug', 'username',
 ];
 const PRIVATE_KEY = /(?:secret|password|token|credential|cookie|authorization|signature|private|cipher)/i;
 
@@ -52,6 +56,7 @@ function findItems(value: unknown): unknown[] {
   const root = object(value);
   if (!root) return [];
   for (const key of ARRAY_KEYS) if (Array.isArray(root[key])) return root[key] as unknown[];
+  for (const key of OBJECT_KEYS) if (object(root[key])) return [root[key]];
   for (const nested of Object.values(root)) {
     const child = object(nested);
     if (!child) continue;
@@ -105,6 +110,88 @@ function promptTarget(renderer: string, item: JsonObject) {
   return `${noun} ${prefix}${id.value}`;
 }
 
+interface DirectItemAction {
+  label: string;
+  actionId: string;
+  parameters: Record<string, string>;
+}
+
+function resultAppSlug(result: GlobalChatResult, item: JsonObject) {
+  const direct = text(item.appSlug || item.app_slug || item.slug, 128);
+  if (direct) return direct;
+  const encoded = /^#app\/([^/]+)/.exec(result.classicPath || '')?.[1];
+  if (!encoded) return '';
+  try { return decodeURIComponent(encoded); } catch { return encoded; }
+}
+
+function directItemActions(result: GlobalChatResult, item: JsonObject): DirectItemAction[] {
+  const slug = resultAppSlug(result, item);
+  const payload = object(item.payload);
+  if (result.renderer === 'app' && slug) {
+    return [
+      { label: 'Details', actionId: 'apps.detail', parameters: { appSlug: slug } },
+      { label: 'Issues', actionId: 'issues.for_app', parameters: { appSlug: slug } },
+    ];
+  }
+  if (result.renderer === 'issue' && slug) {
+    const issueNumber = text(
+      item.number || item.issueNumber || item.issue_number || item.github_issue_number
+        || payload?.issueNumber || payload?.issue_number || payload?.github_issue_number,
+      80,
+    );
+    const governanceId = text(item.id, 80);
+    const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
+    if (issueNumber && (githubIssueCapability || !text(item.kind, 80))) {
+      return [
+        { label: 'Details', actionId: 'issue.detail', parameters: { appSlug: slug, issueNumber } },
+        { label: 'Comments', actionId: 'issue.comments', parameters: { appSlug: slug, issueNumber } },
+      ];
+    }
+    if (governanceId) {
+      return [{
+        label: 'Details',
+        actionId: 'governance.detail',
+        parameters: { appSlug: slug, governanceId },
+      }];
+    }
+  }
+  if (result.renderer === 'proposal' && slug) {
+    const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
+    if (item.proposalType === 'governance' && governanceId) {
+      return [{
+        label: 'Details',
+        actionId: 'governance.detail',
+        parameters: { appSlug: slug, governanceId },
+      }];
+    }
+    const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
+    if (proposalId) return [
+      { label: 'Details', actionId: 'proposal.detail', parameters: { appSlug: slug, proposalId } },
+      { label: 'Evidence', actionId: 'proposal.evidence', parameters: { appSlug: slug, proposalId } },
+    ];
+  }
+  if (result.renderer === 'session') {
+    const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
+    if (sessionId) return [
+      { label: 'Details', actionId: 'session.detail', parameters: { sessionId } },
+      { label: 'Checks', actionId: 'session.checks', parameters: { sessionId } },
+    ];
+  }
+  if (result.renderer === 'conversation') {
+    const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
+    if (conversationId) return [{
+      label: 'Details', actionId: 'conversation.detail', parameters: { conversationId },
+    }];
+  }
+  if (result.renderer === 'setting') {
+    const group = text(item.id, 80);
+    if (group) return [{
+      label: 'View', actionId: 'settings.inspect', parameters: { group },
+    }];
+  }
+  return [];
+}
+
 function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
   const base = result.classicPath;
   if (!base) return null;
@@ -114,22 +201,50 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
 
   const slug = text(item.appSlug || item.app_slug || item.slug, 255)
     || (/^#app\/([^/]+)/.exec(base)?.[1] || '');
-  const id = identifier(item)?.value;
+  const payload = object(item.payload);
   const segment = (value: string) => {
     try { return encodeURIComponent(decodeURIComponent(value)); }
     catch { return encodeURIComponent(value); }
   };
-  if (result.renderer === 'issue' && slug && id) {
-    return `#app/${segment(slug)}/dev/issues/${encodeURIComponent(id)}`;
+  if (result.renderer === 'app' && slug) {
+    return `#apps/${segment(slug)}`;
   }
-  if (result.renderer === 'proposal' && slug && id) {
-    return `#app/${segment(slug)}/dev/proposals/${encodeURIComponent(id)}`;
+  if (result.renderer === 'issue' && slug) {
+    const governanceId = text(item.id, 80);
+    const governanceKind = text(item.kind, 80);
+    const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
+    if (governanceId && governanceKind && !githubIssueCapability) {
+      return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
+    }
+    const issueNumber = text(
+      item.number || item.issueNumber || item.issue_number || item.github_issue_number
+        || payload?.issueNumber || payload?.issue_number || payload?.github_issue_number,
+      80,
+    );
+    if (issueNumber) return `#app/${segment(slug)}/dev/issues/${segment(issueNumber)}`;
+    if (governanceId) return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
   }
-  if (result.renderer === 'session' && slug && id) {
-    return `#app/${segment(slug)}/dev/sessions/${encodeURIComponent(id)}`;
+  if (result.renderer === 'proposal' && slug) {
+    const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
+    if (item.proposalType === 'governance' && governanceId) {
+      return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
+    }
+    const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
+    if (proposalId) return `#app/${segment(slug)}/dev/proposals/${segment(proposalId)}`;
   }
-  if (result.renderer === 'conversation' && id && /^#messages/.test(base)) {
-    return `#messages/${encodeURIComponent(id)}`;
+  if (result.renderer === 'session' && slug) {
+    const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
+    if (sessionId) return `#app/${segment(slug)}/dev/sessions/${segment(sessionId)}`;
+  }
+  if (result.renderer === 'conversation' && /^#messages/.test(base)) {
+    const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
+    if (conversationId) return `#messages/${segment(conversationId)}`;
+  }
+  if (result.renderer === 'setting' && /^#settings(?:\/|$)/.test(base)) {
+    const group = first(item, ['id', 'group'], 80);
+    if (group && /^[a-z][a-z0-9-]{0,63}$/.test(group)) {
+      return `#settings/${segment(group)}`;
+    }
   }
   if (result.renderer === 'profile') {
     const username = text(item.username, 80);
@@ -163,17 +278,6 @@ function safeFields(item: JsonObject) {
   )).slice(0, 4);
 }
 
-function nextAction(renderer: string) {
-  const actions: Record<string, string> = {
-    app: 'Open', issue: 'Edit', proposal: 'Review', session: 'Continue',
-    conversation: 'Reply', notification: 'Open', profile: 'View',
-    leaderboard: 'Explore', challenge: 'View', wallet: 'Manage', staking: 'Manage',
-    setting: 'Change', admin_record: 'Inspect', form: 'Fill in', grouped_list: 'Refine',
-    status: 'What next?', error: 'Fix it',
-  };
-  return actions[renderer] || 'Use this';
-}
-
 function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }) {
   const item = object(value) || { value };
   const target = promptTarget(result.renderer, item);
@@ -183,8 +287,18 @@ function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }
   const meta = compactMetadata(item);
   const classicPath = itemClassicPath(result, item);
   const fields = safeFields(item);
+  const showAppIcon = result.renderer === 'app' && !!text(item.slug || item.app_slug, 255);
+  const directActions = directItemActions(result, item);
   return (
     <article className="global-chat-item">
+      {showAppIcon ? (
+        <div
+          className="app-icon-tile h-10 w-10 shrink-0 overflow-hidden rounded-xl flex items-center justify-center text-lg font-bold"
+          data-icon={appIconKind(item)}
+        >
+          <AppIconContent app={item} />
+        </div>
+      ) : null}
       <div className="min-w-0 flex-1">
         <div className="global-chat-item-title">{title}</div>
         {meta ? <div className="global-chat-item-meta">{meta}</div> : null}
@@ -195,8 +309,21 @@ function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }
           </div>
         ) : null}
         <div className="global-chat-inline-actions">
-          <button type="button" onClick={() => void sendGlobalChatMessage(`Show details for ${target}.`)}>Details</button>
-          <button type="button" onClick={() => void sendGlobalChatMessage(`${nextAction(result.renderer)} ${target}.`)}>{nextAction(result.renderer)}</button>
+          {directActions.length ? directActions.map((action) => (
+            <button
+              key={action.actionId}
+              type="button"
+              onClick={() => void executeGlobalChatResultAction(
+                action.label,
+                action.actionId,
+                action.parameters,
+              )}
+            >
+              {action.label}
+            </button>
+          )) : (
+            <button type="button" onClick={() => void sendGlobalChatMessage(`Show details for ${target}.`)}>Details</button>
+          )}
           {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
         </div>
       </div>
@@ -284,7 +411,7 @@ export function GlobalChatResultBlock({ result }: { result: GlobalChatResult }) 
     <section className="global-chat-result" data-renderer={result.renderer}>
       <header className="global-chat-result-head">
         <span>{rendererLabel(result.renderer)}</span>
-        {result.classicPath ? (
+        {result.classicPath && !items.length ? (
           <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>
             Open in Classic <ArrowRightShortIcon className="w-3.5 h-3.5" aria-hidden="true" />
           </button>

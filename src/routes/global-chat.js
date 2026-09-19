@@ -13,13 +13,18 @@ const openrouterClient = require('../services/openrouter-client');
 const agentModels = require('../services/agent-models');
 const profileService = require('../services/global-chat/profile');
 const globalChatStore = require('../services/global-chat/store');
-const { firstUsePresentation } = require('../services/global-chat/presentation');
+const {
+  enrichPresentation,
+  firstUsePresentation,
+  plainSuggestionsForContext,
+  validatePresentation,
+} = require('../services/global-chat/presentation');
 const { CapabilityRegistry } = require('../services/global-chat/capability-registry');
 const { classicCapabilityDefinitions } = require('../services/global-chat/classic-capabilities');
 const { ClassicApiClient } = require('../services/global-chat/classic-api-client');
 const { createGlobalChatOrchestrator } = require('../services/global-chat/orchestrator');
 const { createActionExecutor } = require('../services/global-chat/action-executor');
-const { validatePresentation } = require('../services/global-chat/presentation');
+const { createSuggestionExecutor } = require('../services/global-chat/suggestion-executor');
 const { PROMPT_VERSION } = require('../services/global-chat/prompt');
 const classicInventory = require('../services/global-chat/classic-inventory.generated.json');
 
@@ -27,7 +32,10 @@ const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agen
 const PATCH_FIELDS = new Set(['enabled', 'model', 'reasoningEffort', 'spendCapUsd']);
 const CAPABILITY_REGISTRY = new CapabilityRegistry(classicCapabilityDefinitions());
 const TURN_BODY_FIELDS = new Set(['text', 'client', 'context']);
-const MORE_BODY_FIELDS = new Set(['topic', 'client', 'context']);
+const MORE_BODY_FIELDS = new Set(['topic', 'shownSuggestionIds', 'client', 'context']);
+const DIRECT_BODY_FIELDS = new Set([
+  'suggestionId', 'actionId', 'parameters', 'shownSuggestionIds', 'client', 'context',
+]);
 const CONFIRM_BODY_FIELDS = new Set(['threadId', 'client']);
 const CLIENT_FIELDS = new Set(['surface', 'viewport', 'classicReturnPath']);
 const CONTEXT_FIELDS = new Set([
@@ -35,6 +43,13 @@ const CONTEXT_FIELDS = new Set([
 ]);
 const CLIENT_SETTING_FIELDS = new Set([
   'theme', 'devAlerts', 'devConsoleMode', 'adminPreview',
+]);
+const ALLOWANCE_CACHE_MS = 30_000;
+const TURN_CATALOG_CACHE_MS = 5 * 60_000;
+const SUGGESTION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const DIRECT_ACTION_ID_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
+const SUGGESTION_DOMAINS = new Set([
+  'general', 'apps', 'issues', 'governance', 'development', 'messages', 'settings',
 ]);
 
 function noStore(res) {
@@ -60,8 +75,7 @@ function exactObject(value, allowed, field) {
   return object;
 }
 
-function turnRequestBody(value, { more = false } = {}) {
-  const body = exactObject(value, more ? MORE_BODY_FIELDS : TURN_BODY_FIELDS, 'body');
+function requestClientContext(body) {
   const client = exactObject(body.client, CLIENT_FIELDS, 'client');
   const context = exactObject(body.context, CONTEXT_FIELDS, 'context');
   const suppliedClientSettings = Object.hasOwn(context, 'clientSettings');
@@ -86,6 +100,37 @@ function turnRequestBody(value, { more = false } = {}) {
       && typeof clientSettings.adminPreview !== 'boolean') {
     throw new Error('context.clientSettings.adminPreview is invalid.');
   }
+  return {
+    client,
+    context: {
+      ...context,
+      ...(suppliedClientSettings ? { clientSettings } : {}),
+    },
+  };
+}
+
+function suggestionIds(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new Error('shownSuggestionIds must contain at most 500 ids.');
+  }
+  const ids = [];
+  const seen = new Set();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || !SUGGESTION_ID_RE.test(entry)) {
+      throw new Error('shownSuggestionIds contains an invalid id.');
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      ids.push(entry);
+    }
+  }
+  return ids;
+}
+
+function turnRequestBody(value, { more = false } = {}) {
+  const body = exactObject(value, more ? MORE_BODY_FIELDS : TURN_BODY_FIELDS, 'body');
+  const envelope = requestClientContext(body);
   if (more) {
     if (body.topic != null && (typeof body.topic !== 'string' || body.topic.length > 240)) {
       throw new Error('topic must be a string up to 240 characters.');
@@ -100,11 +145,42 @@ function turnRequestBody(value, { more = false } = {}) {
         ? `Show more suggestions about ${body.topic.trim()}.`
         : 'Show more suggestions.')
       : body.text.trim(),
-    client,
-    context: {
-      ...context,
-      ...(suppliedClientSettings ? { clientSettings } : {}),
-    },
+    ...envelope,
+    suggestionContext: more && SUGGESTION_DOMAINS.has(body.topic?.trim())
+      ? body.topic.trim()
+      : 'general',
+    shownSuggestionIds: more ? suggestionIds(body.shownSuggestionIds) : [],
+  };
+}
+
+function directRequestBody(value) {
+  const body = exactObject(value, DIRECT_BODY_FIELDS, 'body');
+  const hasSuggestion = body.suggestionId != null;
+  const hasAction = body.actionId != null;
+  if (hasSuggestion === hasAction) {
+    throw new Error('Provide exactly one suggestionId or actionId.');
+  }
+  if (hasSuggestion && (typeof body.suggestionId !== 'string'
+      || !SUGGESTION_ID_RE.test(body.suggestionId))) {
+    throw new Error('suggestionId is invalid.');
+  }
+  if (hasAction && (typeof body.actionId !== 'string'
+      || !DIRECT_ACTION_ID_RE.test(body.actionId))) {
+    throw new Error('actionId is invalid.');
+  }
+  let parameters = body.parameters == null ? {} : body.parameters;
+  if (!plainObject(parameters)) throw new Error('parameters must be an object.');
+  let parametersJson;
+  try { parametersJson = JSON.stringify(parameters); } catch { parametersJson = null; }
+  if (!parametersJson || Buffer.byteLength(parametersJson, 'utf8') > 4 * 1024) {
+    throw new Error('parameters are too large.');
+  }
+  parameters = JSON.parse(parametersJson);
+  return {
+    ...(hasSuggestion ? { suggestionId: body.suggestionId } : { actionId: body.actionId }),
+    parameters,
+    shownSuggestionIds: suggestionIds(body.shownSuggestionIds),
+    ...requestClientContext(body),
   };
 }
 
@@ -137,12 +213,31 @@ function requestErrorStatus(error) {
   if ([
     'invalid_message', 'invalid_actor', 'invalid_model', 'invalid_reasoning',
     'invalid_spend_cap', 'credential_required', 'incompatible_model',
+    'invalid_direct_action',
   ].includes(error?.code)) return 400;
+  if (error?.code === 'direct_action_not_found') return 404;
   if (error?.code === 'turn_in_progress') return 409;
   if (['global_chat_cap_exceeded', 'overall_allowance_exhausted'].includes(error?.code)) return 402;
   if (['authentication', 'model_unavailable'].includes(error?.code)) return 503;
   if (['invalid_or_expired_action', 'stale_action'].includes(error?.code)) return 409;
   return 500;
+}
+
+function turnFailureEvent(error) {
+  const code = typeof error?.code === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(error.code)
+    ? error.code
+    : 'turn_failed';
+  const messages = {
+    turn_in_progress: 'Another Global Chat turn is already running.',
+    invalid_id: 'This Global Chat thread is unavailable.',
+    thread_not_found: 'This Global Chat thread is unavailable.',
+    cancelled: 'Global Chat was stopped.',
+  };
+  return {
+    type: 'turn.failed',
+    code,
+    message: messages[code] || 'Global Chat could not complete that request. Please try again.',
+  };
 }
 
 function pendingClientAction(result) {
@@ -164,6 +259,10 @@ function globalChatRoutes(config) {
   // platform server keeps that established test/boot contract.
   let orchestrator = null;
   let actionExecutor = null;
+  let suggestionExecutor = null;
+  const allowanceCache = new Map();
+  const turnCatalogCache = new Map();
+  const activeTurnControllers = new Map();
   function getOrchestrator() {
     orchestrator ||= createGlobalChatOrchestrator({
       pool,
@@ -180,6 +279,14 @@ function globalChatRoutes(config) {
     });
     return actionExecutor;
   }
+  function getSuggestionExecutor() {
+    suggestionExecutor ||= createSuggestionExecutor({
+      pool,
+      config,
+      registry: CAPABILITY_REGISTRY,
+    });
+    return suggestionExecutor;
+  }
 
   async function credentialForUser(userId) {
     const metadata = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
@@ -193,6 +300,34 @@ function globalChatRoutes(config) {
       dataKey: config.dataEncryptionKey,
     });
     return { configured: !!apiKey, metadata, apiKey: apiKey || null };
+  }
+
+  async function providerAllowance(userId, credential, { force = false } = {}) {
+    const key = String(userId);
+    const revision = credential.metadata?.revision ?? null;
+    const cached = allowanceCache.get(key);
+    if (!force && cached?.revision === revision && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+    if (!force && cached?.revision === revision && cached.promise) return cached.promise;
+    const promise = openrouterClient.validateKey(credential.apiKey, {
+      baseUrl: config.openrouterApiBase,
+      origin: config.openrouterOrigin,
+    });
+    allowanceCache.set(key, { revision, promise, value: null, expiresAt: 0 });
+    try {
+      const value = await promise;
+      allowanceCache.set(key, {
+        revision,
+        promise: null,
+        value,
+        expiresAt: Date.now() + ALLOWANCE_CACHE_MS,
+      });
+      return value;
+    } catch (error) {
+      if (allowanceCache.get(key)?.promise === promise) allowanceCache.delete(key);
+      throw error;
+    }
   }
 
   async function catalogForUser(userId, { forceRefresh = false, effort } = {}) {
@@ -215,6 +350,36 @@ function globalChatRoutes(config) {
       configured: true,
       catalog: profileService.globalChatCatalog(catalog, config, effort),
     };
+  }
+
+  async function turnCatalogForUser(userId, credential) {
+    const key = String(userId);
+    const revision = credential.metadata?.revision ?? null;
+    const cached = turnCatalogCache.get(key);
+    if (cached?.revision === revision && cached.expiresAt > Date.now()) return cached.value;
+    if (cached?.revision === revision && cached.promise) return cached.promise;
+    const promise = agentModels.listOpenRouterModels({
+      pool,
+      userId,
+      credentialRevision: revision,
+      apiKey: credential.apiKey,
+      config,
+      forceRefresh: false,
+    });
+    turnCatalogCache.set(key, { revision, promise, value: null, expiresAt: 0 });
+    try {
+      const value = await promise;
+      turnCatalogCache.set(key, {
+        revision,
+        promise: null,
+        value,
+        expiresAt: Date.now() + TURN_CATALOG_CACHE_MS,
+      });
+      return value;
+    } catch (error) {
+      if (turnCatalogCache.get(key)?.promise === promise) turnCatalogCache.delete(key);
+      throw error;
+    }
   }
 
   async function saveGlobalChatProfile(userId, patch) {
@@ -259,6 +424,12 @@ function globalChatRoutes(config) {
     }
 
     const profile = await profileService.writeProfile(pool, userId, next, config);
+    if (Object.hasOwn(patch, 'model') || Object.hasOwn(patch, 'reasoningEffort')) {
+      // A settings catalog refresh may have exposed a newly available model.
+      // Do not let the turn-only speed cache retain the older catalog after
+      // the user explicitly changes executable model configuration.
+      turnCatalogCache.delete(String(userId));
+    }
     const usage = await profileService.readMonthlyUsage(pool, userId, {
       spendCapUsd: profile.spendCapUsd,
     });
@@ -293,21 +464,11 @@ function globalChatRoutes(config) {
       throw error;
     }
     const [catalog, usage, allowance] = await Promise.all([
-      agentModels.listOpenRouterModels({
-        pool,
-        userId,
-        credentialRevision: credential.metadata.revision,
-        apiKey: credential.apiKey,
-        config,
-        forceRefresh: false,
-      }),
+      turnCatalogForUser(userId, credential),
       profileService.readMonthlyUsage(pool, userId, {
         spendCapUsd: profile.spendCapUsd,
       }),
-      openrouterClient.validateKey(credential.apiKey, {
-        baseUrl: config.openrouterApiBase,
-        origin: config.openrouterOrigin,
-      }),
+      providerAllowance(userId, credential),
     ]);
     const model = profileService.compatibleModels(catalog, profile.reasoningEffort)
       .find((candidate) => candidate.id === profile.model);
@@ -325,6 +486,27 @@ function globalChatRoutes(config) {
       providerAllowance: allowance,
       budget: {
         overallRemaining: cleanProviderNumber(allowance.limitRemaining),
+        globalChatSpent: usage.spentUsd,
+        globalChatCap: usage.capUsd,
+        resetAt: usage.resetAt,
+      },
+    };
+  }
+
+  async function directRuntime(userId) {
+    const [profile, development] = await Promise.all([
+      profileService.readProfile(pool, userId, config),
+      developmentProfile(userId),
+    ]);
+    const usage = await profileService.readMonthlyUsage(pool, userId, {
+      spendCapUsd: profile.spendCapUsd,
+    });
+    return {
+      profile,
+      development,
+      usage,
+      budget: {
+        overallRemaining: null,
         globalChatSpent: usage.spentUsd,
         globalChatCap: usage.capUsd,
         resetAt: usage.resetAt,
@@ -386,6 +568,47 @@ function globalChatRoutes(config) {
       return res.status(400).json({ error: error.message });
     }
 
+    if (kind === 'more_suggestions') {
+      try {
+        const directPage = await getSuggestionExecutor().showSuggestionPage({
+          userId: req.user.id,
+          threadId: req.params.id,
+          domain: input.suggestionContext,
+          excludedSuggestionIds: input.shownSuggestionIds,
+          client: input.client,
+        });
+        if (directPage) {
+          sseHeaders(res);
+          sseWrite(res, {
+            type: 'turn.started',
+            turnId: directPage.turnId,
+            threadId: req.params.id,
+            kind,
+          });
+          sseWrite(res, {
+            type: 'turn.completed',
+            turnId: directPage.turnId,
+            message: directPage.message,
+            presentation: directPage.presentation,
+          });
+          res.end();
+          return undefined;
+        }
+      } catch (error) {
+        log.warn('global-chat', 'predetermined suggestions failed', {
+          userId: req.user.id,
+          threadId: req.params.id,
+          code: error.code,
+          err: error.message,
+        });
+        const status = requestErrorStatus(error);
+        return res.status(status).json({
+          error: status === 500 ? 'Could not load more suggestions.' : error.message,
+          ...(error.code ? { code: error.code } : {}),
+        });
+      }
+    }
+
     let runtime;
     try {
       runtime = await turnRuntime(req.user.id);
@@ -403,11 +626,19 @@ function globalChatRoutes(config) {
 
     sseHeaders(res);
     const controller = new AbortController();
+    const activeKey = `${req.user.id}:${req.params.id}`;
+    const controllers = activeTurnControllers.get(activeKey) || new Set();
+    controllers.add(controller);
+    activeTurnControllers.set(activeKey, controllers);
     const heartbeat = setInterval(() => {
       if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
     }, 15_000);
+    let terminalSent = false;
     res.on('close', () => {
-      if (!res.writableEnded) controller.abort();
+      // A proxy or mobile connection can disappear while the server is still
+      // completing and persisting the answer. Keep that durable work alive;
+      // the client resumes it through turn-status/messages. The explicit
+      // cancel endpoint below remains the only user-requested cancellation.
       clearInterval(heartbeat);
     });
     try {
@@ -432,8 +663,15 @@ function globalChatRoutes(config) {
           ...runtime,
           clientSettings: input.context.clientSettings,
         }),
+        excludedSuggestionIds: input.shownSuggestionIds,
+        suggestionContext: input.suggestionContext,
         signal: controller.signal,
-        emit: async (event) => sseWrite(res, event),
+        emit: async (event) => {
+          if (event?.type === 'turn.completed' || event?.type === 'turn.failed') {
+            terminalSent = true;
+          }
+          sseWrite(res, event);
+        },
       });
     } catch (error) {
       log.warn('global-chat', 'turn failed', {
@@ -442,9 +680,14 @@ function globalChatRoutes(config) {
         code: error.code,
         err: error.message,
       });
-      // The orchestrator emitted a typed, sanitized failure after the stream
-      // opened. Never inject a second JSON response into the SSE body.
+      // Failures after claimTurn are normally emitted by the orchestrator.
+      // Pre-claim failures (notably a durable turn already in progress) have
+      // no turn id there, so finish this SSE with one typed terminal event
+      // instead of making the browser interpret a clean EOF as truncation.
+      if (!terminalSent) sseWrite(res, turnFailureEvent(error));
     } finally {
+      controllers.delete(controller);
+      if (!controllers.size) activeTurnControllers.delete(activeKey);
       clearInterval(heartbeat);
       if (!res.writableEnded && !res.destroyed) res.end();
     }
@@ -565,6 +808,78 @@ function globalChatRoutes(config) {
     }
   });
 
+  router.get('/api/global-chat/threads/:id/turn-status', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    try {
+      return res.json(await globalChatStore.turnState(pool, {
+        userId: req.user.id,
+        threadId: req.params.id,
+      }));
+    } catch (err) {
+      if (err instanceof globalChatStore.GlobalChatStoreError
+          && ['invalid_id', 'thread_not_found'].includes(err.code)) {
+        return res.status(err.code === 'thread_not_found' ? 404 : 400).json({
+          error: err.message,
+          code: err.code,
+        });
+      }
+      log.warn('global-chat', 'turn status failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Failed to read Global Chat turn status.' });
+    }
+  });
+
+  router.post('/api/global-chat/threads/:id/cancel', (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    const key = `${req.user.id}:${req.params.id}`;
+    const controllers = activeTurnControllers.get(key);
+    for (const controller of controllers || []) controller.abort();
+    return res.json({ ok: true, cancelled: !!controllers?.size });
+  });
+
+  router.post('/api/global-chat/threads/:id/direct-actions', chatLimiter, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    noStore(res);
+    let input;
+    try {
+      input = directRequestBody(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    try {
+      const runtime = await directRuntime(req.user.id);
+      const completed = await getSuggestionExecutor().execute({
+        userId: req.user.id,
+        threadId: req.params.id,
+        suggestionId: input.suggestionId,
+        actionId: input.actionId,
+        parameters: input.parameters,
+        excludedSuggestionIds: input.shownSuggestionIds,
+        client: input.client,
+        executionContext: executionContext(req, input.client, {
+          ...runtime,
+          clientSettings: input.context.clientSettings,
+        }),
+      });
+      return res.json({ ok: true, ...completed });
+    } catch (error) {
+      log.warn('global-chat', 'direct action failed', {
+        userId: req.user.id,
+        threadId: req.params.id,
+        code: error.code,
+        err: error.message,
+      });
+      const status = requestErrorStatus(error);
+      return res.status(status).json({
+        error: status === 500
+          ? 'That direct action could not be completed.'
+          : error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
+    }
+  });
+
   router.post('/api/global-chat/threads/:id/turns', chatLimiter, (req, res) => (
     streamTurn(req, res, 'user_turn')
   ));
@@ -592,7 +907,9 @@ function globalChatRoutes(config) {
       const result = completed.result;
       const pendingAction = pendingClientAction(result);
       const prefix = `confirmed.${result.id}`;
-      const presentation = validatePresentation({
+      const domain = String(result.capabilityId || '').split('.')[0];
+      const contextualSuggestions = plainSuggestionsForContext(domain).slice(0, 3);
+      const presentation = enrichPresentation(validatePresentation({
         message: pendingAction?.transport === 'development_handoff'
           ? 'Development session ready. Opening it now.'
           : pendingAction
@@ -608,12 +925,13 @@ function globalChatRoutes(config) {
           },
           {
             id: `${prefix}.next`,
-            label: 'What next?',
-            prompt: 'What can I do next with this item?',
+            label: 'Related work',
+            prompt: 'Show work related to this result.',
             capabilityHint: null,
           },
+          ...contextualSuggestions,
         ],
-      }, { availableResultIds: [result.id] });
+      }, { availableResultIds: [result.id] }), { context: domain });
       const message = await globalChatStore.insertMessage(pool, {
         userId: req.user.id,
         threadId: input.threadId,
@@ -714,6 +1032,7 @@ function globalChatRoutes(config) {
         forceRefresh: req.query.refresh === '1',
         effort,
       });
+      if (req.query.refresh === '1') turnCatalogCache.delete(String(req.user.id));
       res.json({ configured: result.configured, ...result.catalog });
     } catch (err) {
       if (err instanceof profileService.GlobalChatProfileError) {
@@ -736,10 +1055,7 @@ function globalChatRoutes(config) {
       if (!credential.configured) {
         return res.json({ globalChat, overallAllowance: { configured: false } });
       }
-      const info = await openrouterClient.validateKey(credential.apiKey, {
-        baseUrl: config.openrouterApiBase,
-        origin: config.openrouterOrigin,
-      });
+      const info = await providerAllowance(req.user.id, credential, { force: true });
       return res.json({
         globalChat,
         overallAllowance: {
@@ -759,4 +1075,9 @@ function globalChatRoutes(config) {
   return router;
 }
 
-module.exports = { globalChatRoutes, cleanProviderNumber };
+module.exports = {
+  ALLOWANCE_CACHE_MS,
+  TURN_CATALOG_CACHE_MS,
+  globalChatRoutes,
+  cleanProviderNumber,
+};

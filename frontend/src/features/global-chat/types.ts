@@ -3,11 +3,14 @@ export interface GlobalChatSuggestion {
   label: string;
   prompt: string;
   capabilityHint: string | null;
+  actionId?: string | null;
+  relatedSuggestions?: GlobalChatSuggestion[];
 }
 export interface GlobalChatPresentation {
   message: string;
   resultRefs: string[];
   suggestions: GlobalChatSuggestion[];
+  suggestionContext?: string;
 }
 
 export interface GlobalChatMessage {

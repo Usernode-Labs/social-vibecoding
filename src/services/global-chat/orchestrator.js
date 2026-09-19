@@ -1,12 +1,19 @@
 'use strict';
 
 const {
+  MORE_SUGGESTIONS_PROMPT,
   PROMPT_VERSION,
+  RESULT_FOLLOWUP_PROMPT,
   SYSTEM_PROMPT,
   buildRuntimeMetadata,
   serializeRuntimeMetadata,
 } = require('./prompt');
-const { MAX_RESULT_REFS, validatePresentation } = require('./presentation');
+const {
+  MAX_RESULT_REFS,
+  automaticPresentation,
+  enrichPresentation,
+  validatePresentation,
+} = require('./presentation');
 const { validateJsonSchema, JsonSchemaValidationError } = require('./json-schema');
 const {
   BASE_TOOL_NAMES,
@@ -33,6 +40,8 @@ const TRANSIENT_PROVIDER_ERRORS = new Set([
   'provider_error',
   'stream_error',
 ]);
+const SIMPLE_READ_START_RE = /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:show|list|find|search|view|check|get|open|what|which|where|who|how\s+many|tell\s+me|help\s+me\s+(?:find|search))\b/i;
+const MULTI_STEP_OR_WRITE_RE = /\b(?:and\s+then|then|after\s+that|create|add|edit|change|update|set|configure|rename|delete|remove|close|merge|vote|start|continue|send|reply|fork|redeploy|install)\b/i;
 
 class GlobalChatOrchestrationError extends Error {
   constructor(code, message, details = {}) {
@@ -139,9 +148,21 @@ function historyForModel(messages) {
   return messages.map((message) => {
     if (message.role === 'user') return { role: 'user', content: message.text };
     const presentation = message.payload?.presentation;
+    const modelPresentation = presentation ? {
+      message: presentation.message || '',
+      resultRefs: Array.isArray(presentation.resultRefs) ? presentation.resultRefs : [],
+      suggestions: Array.isArray(presentation.suggestions)
+        ? presentation.suggestions.map((suggestion) => ({
+          id: suggestion.id,
+          label: suggestion.label,
+          prompt: suggestion.prompt,
+          capabilityHint: suggestion.capabilityHint || null,
+        }))
+        : [],
+    } : null;
     return {
       role: 'assistant',
-      content: JSON.stringify(presentation || { message: message.text, resultRefs: [], suggestions: [] }),
+      content: JSON.stringify(modelPresentation || { message: message.text, resultRefs: [], suggestions: [] }),
     };
   });
 }
@@ -196,13 +217,23 @@ async function inBatches(items, size, worker) {
   return output;
 }
 
-function invocationMessages(metadata, transcript, loop) {
+function invocationMessages(systemPrompt, metadata, transcript, loop) {
   return [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'system', content: serializeRuntimeMetadata(metadata) },
     ...transcript,
     ...loop,
   ];
+}
+
+function canFastCompleteRead(messageText, capabilityCalls, outcomes) {
+  if (!SIMPLE_READ_START_RE.test(messageText) || MULTI_STEP_OR_WRITE_RE.test(messageText)) return false;
+  if (capabilityCalls.length !== 1 || capabilityCalls[0].definition?.risk !== 'read') return false;
+  const outcome = outcomes.get(capabilityCalls[0].call.id);
+  const classic = outcome?.data;
+  return outcome?.ok === true
+    && classic?.ok !== false
+    && (!Number.isInteger(classic?.status) || (classic.status >= 200 && classic.status < 300));
 }
 
 function createGlobalChatOrchestrator({
@@ -233,6 +264,8 @@ function createGlobalChatOrchestrator({
     model,
     apiKey,
     executionContext,
+    excludedSuggestionIds: requestedSuggestionIds = [],
+    suggestionContext = 'general',
     signal,
     emit: rawEmit,
   }) {
@@ -284,7 +317,10 @@ function createGlobalChatOrchestrator({
         dataKey: config.dataEncryptionKey,
       });
       const knownResultIds = new Set(priorResults.map((result) => result.id));
-      const excludedSuggestionIds = new Set(priorState.suggestionIds);
+      const excludedSuggestionIds = new Set([
+        ...priorState.suggestionIds,
+        ...requestedSuggestionIds,
+      ]);
 
       userMessage = await store.insertMessage(pool, {
         userId,
@@ -307,6 +343,7 @@ function createGlobalChatOrchestrator({
       const loopMessages = [];
       const exposed = new Map();
       const confirmationEvents = [];
+      let capabilityAttempted = false;
       let servedModel = model.id;
 
       async function exposeCapability(capabilityId) {
@@ -455,7 +492,7 @@ function createGlobalChatOrchestrator({
       // This removes an entire model round-trip for ordinary requests while
       // retaining search_capabilities for ambiguous or multi-step work.
       if (kind === 'user_turn') {
-        const initialMatches = registry.search(messageText, executionContext, { limit: 8 });
+        const initialMatches = registry.search(messageText, executionContext, { limit: 5 });
         for (const match of initialMatches) await exposeCapability(match.id);
       }
       for (let iteration = 1; iteration <= iterationLimit; iteration += 1) {
@@ -468,7 +505,8 @@ function createGlobalChatOrchestrator({
         const suggestionOnly = kind === 'more_suggestions';
         const mustUseCapability = kind === 'user_turn'
           && exposed.size > 0
-          && turnResultIds.length === 0;
+          && turnResultIds.length === 0
+          && !capabilityAttempted;
         const currentToolSet = toolSet(suggestionOnly ? [] : [...exposed.values()], {
           includeSearch: !suggestionOnly,
           includeDescribe: !suggestionOnly,
@@ -510,7 +548,12 @@ function createGlobalChatOrchestrator({
           budget,
           availableCapabilityIds: [...exposed.keys()],
         });
-        const messages = invocationMessages(metadata, transcript, loopMessages);
+        const systemPrompt = suggestionOnly
+          ? MORE_SUGGESTIONS_PROMPT
+          : (loopMessages.some((message) => message.role === 'tool')
+            ? RESULT_FOLLOWUP_PROMPT
+            : SYSTEM_PROMPT);
+        const messages = invocationMessages(systemPrompt, metadata, transcript, loopMessages);
 
         let response;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -531,7 +574,12 @@ function createGlobalChatOrchestrator({
               messages,
               tools: currentToolSet.tools,
               sessionId: threadId,
-              maxOutputTokens: kind === 'more_suggestions' ? 200 : 800,
+              // Five compact suggestions plus a strict tool envelope fit
+              // comfortably inside the transport default. Keeping the full
+              // 800-token allowance avoids turning a provider-side length
+              // cutoff into an incomplete turn; the one-call read fast path
+              // is what removes latency, not an unsafe output cap.
+              maxOutputTokens: 800,
               temperature: model.supportsTemperature === false ? null : 0.1,
               parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
               toolChoice: suggestionOnly
@@ -647,6 +695,7 @@ function createGlobalChatOrchestrator({
 
         const reads = capabilityCalls.filter(({ definition }) => definition.risk === 'read');
         const writes = capabilityCalls.filter(({ definition }) => definition.risk !== 'read');
+        if (capabilityCalls.length) capabilityAttempted = true;
         const readResults = await inBatches(reads, MAX_PARALLEL_READS, async (entry) => ({
           id: entry.call.id,
           result: await executeCapability(entry.call, entry.capabilityId),
@@ -671,15 +720,18 @@ function createGlobalChatOrchestrator({
             if (!presentationCall.clarification
                 && kind === 'user_turn'
                 && exposed.size > 0
-                && turnResultIds.length === 0) {
+                && turnResultIds.length === 0
+                && !capabilityAttempted) {
               throw new GlobalChatOrchestrationError(
                 'capability_required',
                 'Use an authoritative Homeroom capability before presenting platform facts.',
               );
             }
-            presentation = validatePresentation(presentationInput, {
+            presentation = enrichPresentation(validatePresentation(presentationInput, {
               availableResultIds: knownResultIds,
               excludedSuggestionIds,
+            }), {
+              context: capabilityCalls.at(-1)?.definition?.domain || suggestionContext,
             });
             outcomes.set(presentationCall.call.id, { ok: true, accepted: true });
           } catch (error) {
@@ -691,6 +743,26 @@ function createGlobalChatOrchestrator({
               'invalid_presentation',
               'Only one presentation may finish a turn.',
             )));
+          }
+        }
+
+        // A simple successful read already has everything the interface needs:
+        // an authoritative result and item-level actions. Finishing it here
+        // removes the second model round trip that made list/search requests
+        // feel frozen. Multi-step requests, writes, failed reads, and ambiguous
+        // requests stay in the full agent loop above.
+        if (!presentation && presentationCalls.length === 0
+            && canFastCompleteRead(messageText, capabilityCalls, outcomes)) {
+          try {
+            presentation = automaticPresentation({
+              domain: capabilityCalls[0].definition.domain,
+              resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
+              excludedSuggestionIds,
+            });
+          } catch {
+            // A long-lived thread can exhaust the deterministic option pool.
+            // In that rare case the normal model presentation loop remains the
+            // safe fallback and can generate genuinely new suggestions.
           }
         }
 
@@ -797,6 +869,7 @@ module.exports = {
   GlobalChatOrchestrationError,
   boundedToolContent,
   createGlobalChatOrchestrator,
+  canFastCompleteRead,
   historyForModel,
   parseArguments,
   transcriptState,

@@ -50,6 +50,32 @@ test('a concurrent turn is refused without silently stealing its lease', async (
   );
 });
 
+test('turn status is ownership-scoped and exposes only resumable lease metadata', async () => {
+  const pool = {
+    async query(sql, params) {
+      assert.match(sql, /WHERE id = \$1 AND user_id = \$2/);
+      assert.deepEqual(params, [THREAD, 7]);
+      return { rows: [{
+        active_turn_id: RUN,
+        active_turn_started_at: '2026-09-18T12:00:00Z',
+      }] };
+    },
+  };
+  assert.deepEqual(await store.turnState(pool, { userId: 7, threadId: THREAD }), {
+    active: true,
+    turnId: RUN,
+    startedAt: '2026-09-18T12:00:00.000Z',
+  });
+
+  await assert.rejects(
+    store.turnState({ async query() { return { rows: [] }; } }, {
+      userId: 7,
+      threadId: THREAD,
+    }),
+    (error) => error.code === 'thread_not_found',
+  );
+});
+
 test('tool-run storage seals both action input and authoritative result', async () => {
   const calls = [];
   const pool = {

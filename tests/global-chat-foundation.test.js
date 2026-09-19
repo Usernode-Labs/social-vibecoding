@@ -6,7 +6,9 @@ const test = require('node:test');
 const {
   DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
+  MORE_SUGGESTIONS_PROMPT,
   PROMPT_VERSION,
+  RESULT_FOLLOWUP_PROMPT,
   SYSTEM_PROMPT,
   buildRuntimeMetadata,
   serializeRuntimeMetadata,
@@ -16,8 +18,11 @@ const {
   CapabilityRegistryError,
 } = require('../src/services/global-chat/capability-registry');
 const {
+  automaticPresentation,
   PresentationError,
   firstUsePresentation,
+  nextPredeterminedPresentation,
+  suggestionsForContext,
   validatePresentation,
 } = require('../src/services/global-chat/presentation');
 const {
@@ -118,7 +123,7 @@ function runtimeInput(overrides = {}) {
 }
 
 test('the versioned system prompt gives weak models an exact platform workflow', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v4');
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v5');
   assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
   assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
@@ -133,9 +138,13 @@ test('the versioned system prompt gives weak models an exact platform workflow',
   assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
   assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
   assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
-  assert.match(SYSTEM_PROMPT, /exactly two button options/i);
+  assert.match(SYSTEM_PROMPT, /exactly five button options/i);
   assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
   assert.match(SYSTEM_PROMPT, /Open in Classic links/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /Inspect the newest tool result/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /exactly five new button suggestions/);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /Do not search and do not call a platform capability/);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /exactly five relevant new button suggestions/);
 });
 
 test('runtime metadata is allowlisted, deterministic, and defaults GLM global chat to low effort', () => {
@@ -186,7 +195,7 @@ test('provider tool schemas repeat exact argument and presentation instructions'
 
   const present = BASE_TOOLS.find((tool) => tool.function.name === 'present_response');
   assert.match(present.function.parameters.properties.resultRefs.description, /Use \[\] for results created in this turn/);
-  assert.match(present.function.parameters.properties.suggestions.description, /Exactly two relevant, new button options/);
+  assert.match(present.function.parameters.properties.suggestions.description, /Exactly five relevant, new button options/);
   assert.match(
     present.function.parameters.properties.suggestions.items.properties.prompt.description,
     /Complete next user instruction/,
@@ -307,7 +316,7 @@ test('the registry rejects destructive capabilities without confirmation and uns
   );
 });
 
-test('present_response accepts only two compact non-repeating suggestions and known results', () => {
+test('present_response accepts exactly five compact non-repeating suggestions and known results', () => {
   const value = validatePresentation({
     message: 'I found one issue.',
     resultRefs: ['result-1'],
@@ -324,19 +333,50 @@ test('present_response accepts only two compact non-repeating suggestions and kn
         prompt: 'Help me add a comment to issue 1.',
         capabilityHint: 'issues.comment',
       },
+      {
+        id: 'issue.vote',
+        label: 'Vote',
+        prompt: 'Vote on issue 1.',
+        capabilityHint: 'issues.vote',
+      },
+      {
+        id: 'issue.related',
+        label: 'Related work',
+        prompt: 'Show work related to issue 1.',
+        capabilityHint: null,
+      },
+      {
+        id: 'issue.develop',
+        label: 'Start development',
+        prompt: 'Start development work for issue 1.',
+        capabilityHint: 'development.start',
+      },
     ],
   }, { availableResultIds: ['result-1'] });
 
-  assert.equal(value.suggestions.length, 2);
+  assert.equal(value.suggestions.length, 5);
   assert.equal(value.suggestions[0].label, 'Open issue');
   assert.equal(Object.hasOwn(value.suggestions[0], 'description'), false);
 
   assert.throws(
     () => validatePresentation({
       ...value,
-      suggestions: [{ ...value.suggestions[0], description: 'Extra cognitive load' }, value.suggestions[1]],
+      suggestions: [
+        { ...value.suggestions[0], description: 'Extra cognitive load' },
+        ...value.suggestions.slice(1),
+      ],
     }, { availableResultIds: ['result-1'] }),
     /unsupported fields: description/,
+  );
+  assert.throws(
+    () => validatePresentation({
+      ...value,
+      suggestions: [
+        { ...value.suggestions[0], actionId: 'issues.delete' },
+        ...value.suggestions.slice(1),
+      ],
+    }, { availableResultIds: ['result-1'] }),
+    /unsupported fields: actionId/,
   );
   assert.throws(
     () => validatePresentation(value, {
@@ -356,11 +396,56 @@ test('present_response accepts only two compact non-repeating suggestions and kn
 
 test('the first-use state is instant, compact, and leaves More suggestions to the client', () => {
   const first = firstUsePresentation();
-  const validated = validatePresentation(first, { availableResultIds: [] });
 
-  assert.deepEqual(validated.suggestions.map((entry) => entry.label), [
+  assert.deepEqual(first.suggestions.map((entry) => entry.label), [
     'Show my work',
     'Explore apps',
+    'Find issues',
+    'Review proposals',
+    'Check messages',
   ]);
-  assert.equal(Object.hasOwn(validated, 'moreSuggestions'), false);
+  assert.equal(first.suggestionContext, 'general');
+  assert.ok(first.suggestions.every((entry) => entry.actionId));
+  assert.ok(first.suggestions.every((entry) => entry.relatedSuggestions.length === 5));
+  assert.equal(Object.hasOwn(first, 'moreSuggestions'), false);
+});
+
+test('predetermined More batches are direct until fewer than five options remain', () => {
+  const first = firstUsePresentation();
+  const second = nextPredeterminedPresentation({
+    domain: 'general',
+    excludedSuggestionIds: first.suggestions.map((entry) => entry.id),
+  });
+  assert.deepEqual(second.suggestions.map((entry) => entry.label), [
+    'Notifications',
+    'Development work',
+    'Open settings',
+    'View my profile',
+    'View leaderboard',
+  ]);
+  assert.equal(nextPredeterminedPresentation({
+    domain: 'general',
+    excludedSuggestionIds: [
+      ...first.suggestions.map((entry) => entry.id),
+      ...second.suggestions.map((entry) => entry.id),
+    ],
+  }), null);
+});
+
+test('automatic read presentations stay instant, contextual, and non-repeating', () => {
+  const excluded = ['next.issues.open'];
+  const presentation = automaticPresentation({
+    domain: 'issues',
+    resultRefs: ['result-1'],
+    excludedSuggestionIds: excluded,
+  });
+
+  assert.equal(presentation.message, 'Here’s what I found.');
+  assert.deepEqual(presentation.resultRefs, ['result-1']);
+  assert.equal(presentation.suggestions.length, 5);
+  assert.equal(presentation.suggestions.some(({ id }) => excluded.includes(id)), false);
+  assert.deepEqual(
+    presentation.suggestions,
+    suggestionsForContext('issues', excluded),
+  );
 });

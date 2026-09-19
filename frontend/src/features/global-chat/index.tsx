@@ -8,6 +8,7 @@ import {
   loadOlderGlobalChatMessages,
   openGlobalChat,
   requestMoreSuggestions,
+  selectGlobalChatSuggestion,
   sendGlobalChatMessage,
   startNewGlobalChat,
   stopGlobalChatTurn,
@@ -39,10 +40,42 @@ function BudgetLabel() {
 function Suggestions({
   suggestions,
   latest,
+  context,
 }: {
   suggestions: GlobalChatSuggestion[];
   latest: boolean;
+  context?: string;
 }) {
+  const [related, setRelated] = useState<GlobalChatSuggestion | null>(null);
+  const holdTimer = useRef<number | null>(null);
+  const held = useRef(false);
+
+  function clearHold() {
+    if (holdTimer.current != null) window.clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  }
+
+  function beginHold(suggestion: GlobalChatSuggestion) {
+    clearHold();
+    if (!suggestion.relatedSuggestions?.length) return;
+    held.current = false;
+    holdTimer.current = window.setTimeout(() => {
+      held.current = true;
+      setRelated(suggestion);
+      holdTimer.current = null;
+    }, 450);
+  }
+
+  function choose(suggestion: GlobalChatSuggestion) {
+    clearHold();
+    if (held.current) {
+      held.current = false;
+      return;
+    }
+    setRelated(null);
+    void selectGlobalChatSuggestion(suggestion);
+  }
+
   if (!suggestions.length && !latest) return null;
   return (
     <div className="global-chat-suggestions" aria-label="Suggested next steps">
@@ -50,7 +83,29 @@ function Suggestions({
         <button
           key={suggestion.id}
           type="button"
-          onClick={() => void sendGlobalChatMessage(suggestion.prompt)}
+          aria-haspopup={suggestion.relatedSuggestions?.length ? 'menu' : undefined}
+          aria-expanded={related?.id === suggestion.id || undefined}
+          title={suggestion.relatedSuggestions?.length ? 'Hold for related options' : undefined}
+          onPointerDown={(event) => {
+            if (event.button === 0) beginHold(suggestion);
+          }}
+          onPointerUp={clearHold}
+          onPointerCancel={clearHold}
+          onPointerLeave={clearHold}
+          onContextMenu={(event) => {
+            if (!suggestion.relatedSuggestions?.length) return;
+            event.preventDefault();
+            clearHold();
+            setRelated(suggestion);
+          }}
+          onKeyDown={(event) => {
+            if (!suggestion.relatedSuggestions?.length) return;
+            if (event.key === 'ArrowDown' || (event.shiftKey && event.key === 'F10')) {
+              event.preventDefault();
+              setRelated(suggestion);
+            }
+          }}
+          onClick={() => choose(suggestion)}
         >
           {suggestion.label}
         </button>
@@ -59,10 +114,28 @@ function Suggestions({
         <button
           type="button"
           className="global-chat-more-suggestions"
-          onClick={() => void requestMoreSuggestions()}
+          onClick={() => void requestMoreSuggestions(context)}
         >
           More suggestions
         </button>
+      ) : null}
+      {related?.relatedSuggestions?.length ? (
+        <div
+          className="global-chat-related-suggestions"
+          role="menu"
+          aria-label={`More options for ${related.label}`}
+        >
+          {related.relatedSuggestions.map((suggestion) => (
+            <button
+              key={`${related.id}:${suggestion.id}`}
+              type="button"
+              role="menuitem"
+              onClick={() => choose(suggestion)}
+            >
+              {suggestion.label}
+            </button>
+          ))}
+        </div>
       ) : null}
     </div>
   );
@@ -89,7 +162,11 @@ function AssistantTurn({
           </div>
         );
       })}
-      <Suggestions suggestions={presentation?.suggestions || []} latest={latest} />
+      <Suggestions
+        suggestions={presentation?.suggestions || []}
+        latest={latest}
+        context={presentation?.suggestionContext}
+      />
     </article>
   );
 }
@@ -98,7 +175,12 @@ function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
   return (
     <section className="global-chat-first-use">
       <h3>{presentation.message}</h3>
-      <Suggestions suggestions={presentation.suggestions} latest />
+      <p className="global-chat-suggestion-hint">Hold an option for related suggestions.</p>
+      <Suggestions
+        suggestions={presentation.suggestions}
+        latest
+        context={presentation.suggestionContext}
+      />
     </section>
   );
 }
@@ -158,8 +240,8 @@ function Composer() {
 function Unavailable() {
   return (
     <section className="global-chat-unavailable">
-      <h3>Connect OpenRouter to start</h3>
-      <p>Global Chat uses the separate low-cost model configured in Settings.</p>
+      <h3>Free-form chat needs OpenRouter</h3>
+      <p>The direct options below still work without it.</p>
       <div className="global-chat-suggestions">
         <button type="button" onClick={() => closeGlobalChat('#settings/openrouter')}>Open Settings</button>
         <button type="button" onClick={() => closeGlobalChat()}>Use Classic</button>
@@ -217,7 +299,7 @@ export function GlobalChatScreen() {
             <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}
           {snapshot.bootstrap && !snapshot.bootstrap.available ? <Unavailable /> : null}
-          {snapshot.bootstrap?.available && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
+          {snapshot.bootstrap && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
             <FirstUse presentation={snapshot.bootstrap.firstUse} />
           ) : null}
           {snapshot.messages.map((message) => message.role === 'user' ? (

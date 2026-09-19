@@ -50,6 +50,7 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     listMessages: globalChatStore.listMessages,
     loadToolResults: globalChatStore.loadToolResults,
     deleteThread: globalChatStore.deleteThread,
+    turnState: globalChatStore.turnState,
   };
 
   poolModule.getPool = () => pool;
@@ -107,6 +108,10 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     calls.push({ name: 'deleteThread', userId, threadId });
     return threadId === THREAD_ID;
   };
+  globalChatStore.turnState = async (_pool, options) => {
+    calls.push({ name: 'turnState', options });
+    return { active: true, turnId: NEXT_THREAD_ID, startedAt: '2026-09-18T12:00:00.000Z' };
+  };
 
   const routePath = require.resolve('../src/routes/global-chat');
   delete require.cache[routePath];
@@ -130,6 +135,7 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     globalChatStore.listMessages = originals.listMessages;
     globalChatStore.loadToolResults = originals.loadToolResults;
     globalChatStore.deleteThread = originals.deleteThread;
+    globalChatStore.turnState = originals.turnState;
     delete require.cache[routePath];
   });
   return { base, calls };
@@ -154,10 +160,10 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.deepEqual(body.profiles.development, {
     backend: 'codex', model: 'glm/dev', reasoningEffort: 'high',
   });
-  assert.equal(body.firstUse.suggestions.length, 2);
+  assert.equal(body.firstUse.suggestions.length, 5);
   assert.deepEqual(
     body.firstUse.suggestions.map(({ label }) => label),
-    ['Show my work', 'Explore apps'],
+    ['Show my work', 'Explore apps', 'Find issues', 'Review proposals', 'Check messages'],
   );
   assert.ok(body.firstUse.suggestions.every((suggestion) => !Object.hasOwn(suggestion, 'description')));
   assert.equal(JSON.stringify(body).includes('sk-or-private'), false);
@@ -191,7 +197,19 @@ test('thread endpoints use authenticated ownership and preserve append-only sugg
   assert.equal(created.status, 201);
   const createdBody = await created.json();
   assert.equal(createdBody.thread.id, NEXT_THREAD_ID);
-  assert.equal(createdBody.firstUse.suggestions.length, 2);
+  assert.equal(createdBody.firstUse.suggestions.length, 5);
+
+  const status = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turn-status`);
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), {
+    active: true,
+    turnId: NEXT_THREAD_ID,
+    startedAt: '2026-09-18T12:00:00.000Z',
+  });
+  assert.deepEqual(calls.find((call) => call.name === 'turnState').options, {
+    userId: 7,
+    threadId: THREAD_ID,
+  });
 
   const messages = await fetch(
     `${base}/api/global-chat/threads/${THREAD_ID}/messages?before=12&limit=7`,
@@ -230,7 +248,9 @@ test('thread APIs fail closed for unauthenticated requests', async (t) => {
     fetch(`${base}/api/global-chat/threads/current`),
     fetch(`${base}/api/global-chat/threads`, { method: 'POST' }),
     fetch(`${base}/api/global-chat/threads/${THREAD_ID}/messages`),
+    fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turn-status`),
+    fetch(`${base}/api/global-chat/threads/${THREAD_ID}/cancel`, { method: 'POST' }),
     fetch(`${base}/api/global-chat/threads/${THREAD_ID}`, { method: 'DELETE' }),
   ]);
-  assert.deepEqual(responses.map(({ status }) => status), [401, 401, 401, 401, 401]);
+  assert.deepEqual(responses.map(({ status }) => status), [401, 401, 401, 401, 401, 401, 401]);
 });

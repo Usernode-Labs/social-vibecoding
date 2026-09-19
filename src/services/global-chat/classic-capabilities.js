@@ -563,6 +563,87 @@ function settingInspectorDefinition() {
   };
 }
 
+function settingsCatalogDefinition() {
+  return {
+    id: 'settings.catalog',
+    domain: 'settings',
+    title: 'List settings groups',
+    summary: 'List the small authorized Settings groups that can be inspected from Global Chat.',
+    keywords: ['settings', 'preferences', 'configure', 'more settings', 'settings groups'],
+    inputSchema: {
+      type: 'object', additionalProperties: false, properties: {}, required: [],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'setting',
+    access: (context) => context?.actor?.signedIn === true,
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#settings',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (_input, context) => {
+      const items = inventory.settings
+        .filter((item) => item.key !== 'admin-preview' || context.actor?.admin === true)
+        .map((item) => ({
+          id: item.key,
+          name: item.label,
+          group: item.group,
+          classicPath: item.classicPath,
+        }));
+      const data = { items };
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#settings',
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
+function currentProposalsDefinition() {
+  const route = mappedRoute('GET', '/api/me/proposals');
+  if (!route) throw new Error('Global Chat current-proposals route is missing.');
+  return {
+    id: 'governance.mine',
+    domain: 'governance',
+    title: 'List my current proposals',
+    summary: 'List the signed-in user’s current proposals across authorized apps.',
+    keywords: ['my proposals', 'review proposals', 'current proposals', 'votes'],
+    inputSchema: {
+      type: 'object', additionalProperties: false, properties: {}, required: [],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'proposal',
+    access: (context) => actorCanUse(route, context),
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (_input, context) => {
+      const response = await context.classicApi.invoke(route.capabilityId, {
+        pathParameters: {}, query: [],
+      });
+      const source = response.authoritativeResult || {};
+      const sessions = Array.isArray(source.sessions) ? source.sessions : [];
+      const governance = Array.isArray(source.governance) ? source.governance : [];
+      const data = {
+        items: [
+          ...sessions.map((item) => ({ ...item, proposalType: 'development' })),
+          ...governance.map((item) => ({ ...item, proposalType: 'governance' })),
+        ],
+      };
+      return {
+        authoritativeResult: { ok: response.ok, status: response.status, data },
+        modelResult: { ok: response.ok, status: response.status, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
 function globalChatUpdateDefinition() {
   return {
     id: 'settings.global_chat.update',
@@ -782,6 +863,8 @@ function classicCapabilityDefinitions() {
     ...inventory.navigation.map(navigationDefinition),
     ...inventory.settings.map(settingDefinition),
     settingInspectorDefinition(),
+    settingsCatalogDefinition(),
+    currentProposalsDefinition(),
     globalChatUpdateDefinition(),
     localSettingUpdateDefinition(),
   ];
