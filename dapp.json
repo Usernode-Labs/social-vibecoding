@@ -4112,6 +4112,18 @@
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
     },
     {
+      "name": "#2597: the running row is headed \"Coding agent is running\" rather than named after the venue",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary > .dc-cc-head",
+      "expectText": "Coding agent is running"
+    },
+    {
+      "name": "#2597: and the venue is the muted caption under that heading",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary > .dc-cc-head + .dc-status-venue",
+      "expectText": "Homeroom · Claude"
+    },
+    {
       "name": "#1944: an open coding-run card keeps its chevron in the head row",
       "path": "/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "details.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-head > .dc-cc-attached-chevron"
