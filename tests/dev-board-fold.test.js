@@ -858,7 +858,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and main's #2597 pair are independent additions against the shared 699,
   // so the merged manifest holds all three: 699 + 2 + 1 = 702, which leaves
   // 28 slots against MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 702);
+  //
+  // 702 → 703: #2605 moved the build surface off a change's card page onto
+  // the dev session's own page. The four checks that pinned the Build sheet
+  // were retargeted rather than deleted — two now assert that a card page
+  // has NO build surface, one that an old `?conversation=workspace` link
+  // lands on the session page, one that a published chat renders read-only
+  // there — and ONE was added beside them: the old pair on the shared
+  // session's page asserted the transcript's body and its author
+  // attribution, and those now sit on two different pages, so the body
+  // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
+  // (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 703);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

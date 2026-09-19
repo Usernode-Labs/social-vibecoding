@@ -11197,6 +11197,28 @@ button.attr-chip { cursor: pointer; }
   overflow: hidden;
 }
 
+/* #2605: the dev session page in its READ-ONLY form. The Build door sends a
+   reader who does not own the session here, and what they get is the
+   published chat on the session's own page rather than a sheet folded under
+   a card's discussion. `#dev-section` is a fixed, overflow-hidden flex
+   column, so this — its only child — owns the scroll. */
+.dev-session-read {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 0;
+}
+.dev-session-read > .st-section { margin-top: 0; }
+.dev-session-read-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 .st-section-head {
   display: flex;
   align-items: center;
@@ -12668,10 +12690,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-change-issues { min-width: 0; }
 .dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
-/* The Discussion sheet, and the Build sheet under it (topic/conversation.tsx).
-   The tabs are gone: Activity was three timestamps the card's meta line
-   carries, and Build is the "Open build" / "Continue building" pill on the
-   card, which opens the sheet below the Discussion and scrolls to it. */
+/* The Discussion sheet (topic/conversation.tsx), and nothing under it. The
+   tabs went first — Activity was three timestamps the card's meta line
+   carries — and the Build sheet followed (#2605): the "Open build" /
+   "Continue building" / "Read the build" pill leaves this page for the
+   change's own dev session. */
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
 .dev-conversation-audience { margin: 0 4px 8px; }
 .dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
@@ -12681,18 +12704,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    whose pointer rested on the Discussion could not scroll the page even with
    the thread at its end. Let the scroll chain to the page. */
 .dev-conversation-chat #gc-thread-scroll { overscroll-behavior: auto; }
-.dev-conversation-build { min-width: 0; scroll-margin-top: 12px; }
-.dev-conversation-build[hidden] { display: none; }
-.dev-conversation-build-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.dev-conversation-build-head > .dev-topic-h { margin-bottom: 8px; }
-.dev-conversation-workspace {
-  display: flex;
-  flex-direction: column;
-  height: clamp(440px, 72dvh, 760px);
-  min-width: 0;
-  overflow: hidden;
-  border-radius: 18px;
-}
 .dev-conversation .dev-thread { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .dev-conversation .dev-thread::before, .dev-conversation .dev-thread::after { content: none; }
 #dev-topic-thread .dev-conversation #gc-thread-messages {

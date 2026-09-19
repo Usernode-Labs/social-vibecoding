@@ -3198,18 +3198,12 @@ const AppView = {
     // let the paint below re-read it once — returning to a topic shows the
     // roster it had while the new one loads, rather than a loading line.
     AppView._invalidateVoteRoster(ref.id);
-    // Arriving at a SESSION topic opens its shared transcript. The
-    // "Read chat" pill on the shared-session card used to set
-    // _transcriptOpen on its way here; that pill is gone (the card is
-    // one tap target now), so landing on this page IS the read-the-chat
-    // gesture and nothing else would ever set the flag. Here rather than
-    // in openTopic() because a deep link / reload reaches this view
-    // without going through openTopic — and once per navigation rather
-    // than per paint, so a reader who collapses the section (which nulls
-    // the flag) doesn't have it spring back open on the next WS repaint.
-    // A no-op when the owner hasn't published the chat:
-    // `_transcriptSectionView` returns null in that case.
-    if (ref.kind === 'session') AppView._transcriptOpen = ref.id;
+    // Arriving at a SESSION topic used to open its shared transcript here:
+    // the "Read chat" pill that once set `_transcriptOpen` on its way was
+    // gone, so landing on this page WAS the read-the-chat gesture. #2605
+    // moved the chat off this page entirely — it is the dev session page's
+    // now, behind the card's "Read the build" pill — so nothing pre-expands
+    // a section this page no longer draws.
     // #363: NOTHING is pinned here now. The topic card/body does not sit in
     // its own capped, separately scrolling box — it's painted into the mounted
     // thread's in-scroll header slot (#gc-thread-head) so the header and the
@@ -3268,6 +3262,12 @@ const AppView = {
       App.switchTab('dev');
       return;
     }
+    // #2605: a link that asked for this change's Build panel predates the
+    // move, and the panel is the dev session's own page now. Checked here,
+    // once the item has resolved, because whether the change HAS a build
+    // surface is what decides between redirecting and staying put.
+    if (['proposal', 'session'].includes(ref.kind)
+        && AppView._redirectLegacyBuildLink(AppView._findTopicItem())) return;
     // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
     // then paint the topic card/body into it.
     AppView._mountTopicThread();
@@ -4113,13 +4113,7 @@ const AppView = {
     }
     const votes = rows.find((r) => r.key === 'votes');
     if (votes) votes.label = 'Review';
-    // The Build door (topic/conversation.tsx): the owner's workspace, or the
-    // dev chat the owner published, opened by a pill on the card. Nothing
-    // for a private change somebody else is reading, or an imported one,
-    // which has no session behind it.
-    body.build = body.workspace
-      ? { kind: 'owner', label: underway ? 'Continue building' : 'Open build' }
-      : (body.transcript ? { kind: 'published', label: 'Read the build' } : null);
+    body.build = AppView._buildDoorView(item);
     // The evidence claims and state, for "What changes for you".
     body.evidence = AppView._evidenceView(item.visualEvidence);
     if (underway) {
@@ -4201,18 +4195,63 @@ const AppView = {
   },
 
   // The ⋯ row's call: the change page's DetailsSheet (topic-head.tsx)
-  // listens for its own change id, as the Build sheet does for
-  // `change-workspace-open`.
+  // listens for its own change id.
   openTechnicalDetails(id) {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
   },
 
-  openChangeWorkspace(id) {
-    if (document.querySelector(`[data-change-conversation="${Number(id)}"]`)) {
-      window.dispatchEvent(new CustomEvent('change-workspace-open', { detail: Number(id) }));
-      return;
+  /**
+   * The Build door for one change: whether there is a build surface to open
+   * at all, and what its pill says. 'owner' is the author's own dev session;
+   * 'published' is the read-only chat its owner published, for everybody
+   * else. Null when there is nothing behind the change — somebody else's
+   * private workspace, or an imported pull request, which never had a
+   * session.
+   *
+   * Derived from the ITEM alone, and the single rule for it: the pill on the
+   * card and the redirect that catches an old `?conversation=workspace` link
+   * both read this, so they cannot disagree about where a change's build
+   * surface is. `body.workspace` and `body.transcript` are the same two
+   * facts, which is what it was assembled from before #2605.
+   */
+  _buildDoorView(item) {
+    if (!item || item.source === 'imported') return null;
+    if (App.user && Number(item.user_id) === Number(App.user.id)) {
+      return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? 'Continue building' : 'Open build' };
     }
+    return (item.transcript_shared || item.transcript_shared_at)
+      ? { kind: 'published', label: 'Read the build' }
+      : null;
+  },
+
+  // The Build door. It used to do one of two things depending on where it
+  // was pressed: on a change's own page it opened the Build sheet IN PLACE
+  // (the `change-workspace-open` event), and anywhere else it navigated.
+  // #2605 removed that sheet — a dev session is a screen, not a fold under a
+  // discussion — so this always navigates, and the change page and the board
+  // card now send a reader to the same address. A reader who does not own
+  // the session lands on its read-only published chat (`renderDevChatTab`).
+  openChangeWorkspace(id) {
     AppView.openProposalSession(id);
+  },
+
+  /**
+   * An old link that asked for the Build panel — `?conversation=workspace`,
+   * and the `build` spelling that preceded it — arriving on a change's page.
+   * The panel is a page of its own now (#2605), so the link lands there
+   * rather than on a card page with nothing to open and no explanation.
+   *
+   * Returns true when it redirected, so the caller stops rendering this
+   * page. A change with no build surface (somebody else's private
+   * workspace, an imported pull request) keeps the card page: the link is
+   * stale, but the page it names is still the right one to read.
+   */
+  _redirectLegacyBuildLink(item) {
+    const requested = new URLSearchParams(window.location.search).get('conversation');
+    if (requested !== 'workspace' && requested !== 'build') return false;
+    if (!AppView._buildDoorView(item)) return false;
+    AppView.openChangeWorkspace(item.id);
+    return true;
   },
 
   _showExplorePill(pr) {
@@ -10478,6 +10517,71 @@ const AppView = {
     AppView._transcriptOpen = opening ? id : null;
     AppView._renderTopicHead();
     if (opening) AppView._loadSessionTranscript(id);
+  },
+
+  /**
+   * The dev session page in its READ-ONLY form (#2605): the chat a session's
+   * owner published, for everybody who does not own the session.
+   *
+   * The Build door used to open a sheet under the change's discussion; it
+   * navigates to the session's own page now, and GET /api/sessions/:id is
+   * owner-scoped, so `renderDevChatTab` reaches this with no workspace to
+   * show. GET /api/sessions/:id/transcript is the separate, side-effect-free
+   * route that serves a published chat to a reader, and this is the page it
+   * renders on.
+   *
+   * Returns false when there is no published chat to show — a private or
+   * archived session, or a bad id — which is the genuine miss the caller
+   * bounces to the board for. So the fetch happens BEFORE anything is
+   * painted: a page that cannot be filled is never put on screen.
+   *
+   * The section keeps the topic page's markup — `[data-transcript-section]`,
+   * `[data-transcript-body]`, session-transcript.js's own `dc-*` classes —
+   * with one difference: no disclosure. A reader who pressed "Read the
+   * build" came for the chat, so the page IS the chat rather than a line to
+   * press. `#dev-section` is a legacy-owned host (see session-frame.tsx),
+   * which is why this writes markup into it directly.
+   */
+  async _renderSessionTranscriptPage(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return false;
+    let data = AppView._transcripts[id];
+    if (!data) {
+      try {
+        const res = await fetch(`/api/sessions/${id}/transcript${AppView._demoQS()}`);
+        if (!res.ok) return false;
+        data = await res.json();
+      } catch {
+        return false;
+      }
+      if (!data || !data.session) return false;
+      AppView._transcripts[id] = data;
+    }
+    const content = AppView._devContainer();
+    if (!content) return false;
+    const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
+      ? SessionTranscript.headerText(data.session, { expanded: true })
+      : 'Dev chat';
+    content.innerHTML = `
+      <div class="dev-session-read">
+        <div class="st-section" data-transcript-section="${id}">
+          <p class="dev-session-read-head">${escapeHtml(label)}<span class="st-readonly-tag">read-only</span></p>
+          <div class="st-body" data-transcript-body="${id}"></div>
+        </div>
+      </div>`;
+    // The same delegate the topic page's section carried: "Fork this chat"
+    // is inside `_transcriptActionsHtml`'s string, so it cannot be a child's
+    // own handler.
+    content.querySelector(`[data-transcript-section="${id}"]`)?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-fork-chat]');
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      AppView.forkSharedChat(Number(button.dataset.forkChat), button);
+    });
+    // Paints straight from the cache the fetch above filled — the loader
+    // owns the body's contents on every surface that shows a transcript.
+    AppView._loadSessionTranscript(id);
+    return true;
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
@@ -18354,6 +18458,20 @@ const AppView = {
       return;
     }
 
+    // #2605: the Build door sends a READER to this page too, and the fetch
+    // below is owner-scoped — it 404s for them by design, and a 404 in the
+    // network log is a console error, which fails every declared check on
+    // the route. So when the Dev caches already say this change's build
+    // surface is a published CHAT rather than a workspace, go straight to
+    // it and never ask for the workspace. `_buildDoorView` is the same rule
+    // the pill that sent them here is drawn from.
+    //
+    // A change no cached list covers (a deep link past the cached pages)
+    // falls through and is answered by the server, as it always was.
+    const cached = AppView._findItem('session', Number(restoreSessionId));
+    if (AppView._buildDoorView(cached)?.kind === 'published'
+        && await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
+
     // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
     // session — from the drawer's completion row, the session list, a
     // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
@@ -18361,9 +18479,13 @@ const AppView = {
     // dev-chat.js deliberately do not.
     await DevChat.openSession(restoreSessionId, { userOpened: true });
 
-    // Archived / inaccessible session: fall back to the forum rather
-    // than stranding an empty view.
+    // Inaccessible as a WORKSPACE — which, since #2605, is the ordinary way
+    // a reader arrives: the Build door sends "Read the build" to this page,
+    // and GET /api/sessions/:id is owner-scoped. So try the published chat
+    // before giving up; only a session with none (archived, private, a bad
+    // link) falls back to the forum rather than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
+      if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
       return;
     }

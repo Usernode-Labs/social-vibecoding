@@ -1119,10 +1119,11 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
  * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
  * tags, the actions, the summary, the issues, the picture — then the merge
- * steps (StepsSheet), then, on its own page, the Discussion and the Build
- * sheet behind the hero's pill (./conversation.tsx); the technical half is
- * a sheet the ⋯ menu opens (DetailsSheet). An issue or a governance vote
- * keeps the card and `TopicBodySections`.
+ * steps (StepsSheet), then, on its own page, the Discussion
+ * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
+ * dev session (#2605). An issue or a governance vote keeps the card and
+ * `TopicBodySections`.
  */
 export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
@@ -1176,13 +1177,10 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
           {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
-          {/* Unfolded inline (the Workshop), a published chat keeps its
-              disclosure; on the page it is the Build sheet's. */}
-          {!conversation && !owner && body.transcript ? (
-            <section className="dev-topic-sheet dev-topic-transcript" data-topic-sheet="transcript">
-              <Transcript t={body.transcript} />
-            </section>
-          ) : null}
+          {/* #2605: a change's page carries NO build surface — not the Build
+              sheet, and not the published chat's disclosure that used to sit
+              beside it. Both are the dev session page's now, behind the
+              hero's pill. */}
           {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
           {/* The GitHub thread's host (issue-comments.tsx mounts into it):
               a body that carries one gets it whatever page it is on. */}
