@@ -24,7 +24,10 @@ const { classicCapabilityDefinitions } = require('../services/global-chat/classi
 const { ClassicApiClient } = require('../services/global-chat/classic-api-client');
 const { createGlobalChatOrchestrator } = require('../services/global-chat/orchestrator');
 const { createActionExecutor } = require('../services/global-chat/action-executor');
-const { createSuggestionExecutor } = require('../services/global-chat/suggestion-executor');
+const {
+  createSuggestionExecutor,
+  directFailureMessage,
+} = require('../services/global-chat/suggestion-executor');
 const { PROMPT_VERSION } = require('../services/global-chat/prompt');
 const classicInventory = require('../services/global-chat/classic-inventory.generated.json');
 
@@ -904,7 +907,7 @@ function globalChatRoutes(config) {
       const status = requestErrorStatus(error);
       return res.status(status).json({
         error: status === 500
-          ? 'That direct action could not be completed.'
+          ? directFailureMessage(error)
           : error.message,
         ...(error.code ? { code: error.code } : {}),
       });
@@ -994,6 +997,10 @@ function globalChatRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     try {
+      const key = `${req.user.id}:${req.params.id}`;
+      const controllers = activeTurnControllers.get(key);
+      for (const controller of controllers || []) controller.abort();
+      activeTurnControllers.delete(key);
       const deleted = await globalChatStore.deleteThread(pool, req.user.id, req.params.id);
       if (!deleted) return res.status(404).json({ error: 'Global Chat thread not found.' });
       return res.json({ ok: true });

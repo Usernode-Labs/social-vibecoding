@@ -65,6 +65,12 @@ export async function createThread(): Promise<{
   }));
 }
 
+export async function deleteThread(threadId: string): Promise<{ ok: true }> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}`, {
+    method: 'DELETE', credentials: 'same-origin', cache: 'no-store',
+  }));
+}
+
 export async function turnStatus(threadId: string, signal?: AbortSignal): Promise<{
   active: boolean;
   turnId: string | null;

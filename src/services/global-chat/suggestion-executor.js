@@ -19,6 +19,35 @@ class SuggestionExecutionError extends Error {
   }
 }
 
+function directFailureMessage(error) {
+  const messages = {
+    invalid_payload: 'That result was too large to display. Try a narrower option.',
+    response_too_large: 'That result was too large to display. Try a narrower option.',
+    classic_timeout: 'The platform took too long to load that result. Please try again.',
+    classic_unavailable: 'The platform data service is temporarily unavailable. Please try again.',
+    direct_action_failed: 'The platform could not complete that direct action. Please try again.',
+    result_unavailable: 'The result completed but could not be displayed. Please try again.',
+  };
+  return messages[error?.code]
+    || 'That direct action could not be completed. Please try again.';
+}
+
+function failurePresentation(action, excludedSuggestionIds, error) {
+  const options = {
+    domain: action.domain,
+    resultRefs: [],
+    excludedSuggestionIds,
+    message: directFailureMessage(error),
+  };
+  try {
+    return automaticPresentation(options);
+  } catch (presentationError) {
+    if (!(presentationError instanceof PresentationError)
+        || presentationError.code !== 'suggestions_exhausted') throw presentationError;
+    return automaticPresentation({ ...options, excludedSuggestionIds: [] });
+  }
+}
+
 function safeResult(result) {
   const authoritative = result?.authoritativeResult;
   return result
@@ -104,8 +133,9 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
   }) {
     const action = resolveAction({ suggestionId, actionId, parameters });
     const turnId = await store.claimTurn(pool, { userId, threadId });
+    let userMessage = null;
     try {
-      const userMessage = await store.insertMessage(pool, {
+      userMessage = await store.insertMessage(pool, {
         userId,
         threadId,
         role: 'user',
@@ -226,6 +256,22 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
         results,
         modelInvocations: 0,
       };
+    } catch (error) {
+      // A direct action has already become part of the transcript once its
+      // user row is stored. Always close that turn with a small, safe
+      // assistant answer so reload/recovery never leaves an unexplained
+      // dangling request. Preserve the original failure for the HTTP status.
+      if (userMessage) {
+        try {
+          await insertAssistant({
+            userId,
+            threadId,
+            presentation: failurePresentation(action, excludedSuggestionIds, error),
+            kind: 'direct_action_error',
+          });
+        } catch {}
+      }
+      throw error;
     } finally {
       await store.releaseTurn(pool, { userId, threadId, turnId }).catch(() => {});
     }
@@ -238,4 +284,5 @@ module.exports = {
   DIRECT_PROMPT_VERSION,
   SuggestionExecutionError,
   createSuggestionExecutor,
+  directFailureMessage,
 };

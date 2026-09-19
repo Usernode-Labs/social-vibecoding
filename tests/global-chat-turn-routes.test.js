@@ -30,7 +30,7 @@ async function listen(router) {
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
-async function mount(t, { failTurn = false, holdTurn = false } = {}) {
+async function mount(t, { failTurn = false, holdTurn = false, failDirect = false } = {}) {
   const calls = [];
   const pool = {
     async query(sql) {
@@ -143,6 +143,9 @@ async function mount(t, { failTurn = false, holdTurn = false } = {}) {
     },
     async execute(input) {
       calls.push({ type: 'direct-action', input });
+      if (failDirect) {
+        throw Object.assign(new Error('private persistence detail'), { code: 'invalid_payload' });
+      }
       const presentation = {
         message: 'Here are your apps.', resultRefs: [RESULT_ID], suggestions: [],
       };
@@ -290,6 +293,23 @@ test('fixed suggestions execute directly without invoking the Global Chat model'
   assert.equal(direct.input.suggestionId, 'next.general.apps');
   assert.deepEqual(direct.input.excludedSuggestionIds, ['next.general.apps']);
   assert.equal(direct.input.executionContext.client.surface, 'native_android');
+});
+
+test('direct-action failures return a specific safe retry message', async (t) => {
+  const { base } = await mount(t, { failDirect: true });
+  const response = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/direct-actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      suggestionId: 'next.general.apps',
+      client: { surface: 'web', viewport: 'regular' },
+    }),
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), {
+    error: 'That result was too large to display. Try a narrower option.',
+    code: 'invalid_payload',
+  });
 });
 
 test('an explicit Stop request aborts the active durable turn', async (t) => {

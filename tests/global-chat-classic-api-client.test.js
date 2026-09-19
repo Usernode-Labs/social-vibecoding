@@ -6,6 +6,8 @@ const test = require('node:test');
 const {
   ClassicApiClient,
   ClassicApiClientError,
+  MAX_MODEL_RESULT_BYTES,
+  boundedModelData,
   buildPath,
   sanitizeForModel,
 } = require('../src/services/global-chat/classic-api-client');
@@ -57,6 +59,7 @@ test('the Classic bridge derives method and path from its exact capability allow
   assert.equal(observed.init.headers.cookie, `session=${SESSION}`);
   assert.equal(observed.init.headers.origin, 'https://my.onhomeroom.com');
   assert.equal(observed.init.headers['sec-fetch-site'], 'same-origin');
+  assert.equal(observed.init.headers['x-global-chat-loopback'], '1');
   assert.deepEqual(result.authoritativeResult, { issue: { number: 17, title: 'Fix it' } });
 });
 
@@ -168,4 +171,24 @@ test('standalone model sanitization is depth, item, and key bounded', () => {
   let cursor = clean;
   for (let index = 0; index < 8; index += 1) cursor = cursor.next;
   assert.equal(cursor, '[nested data omitted]');
+});
+
+test('model data is byte-bounded below the durable tool-result limit', () => {
+  const value = {
+    apps: Array.from({ length: 60 }, (_, index) => ({
+      id: index + 1,
+      slug: `app-${index + 1}`,
+      name: `App ${index + 1}`,
+      description: 'd'.repeat(5_000),
+      manifest_snapshot: {
+        setup: 's'.repeat(5_000),
+        tests: 't'.repeat(5_000),
+        permissions: 'p'.repeat(5_000),
+      },
+    })),
+  };
+  const bounded = boundedModelData(value);
+  const bytes = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
+  assert.ok(bytes <= MAX_MODEL_RESULT_BYTES, `${bytes} exceeds ${MAX_MODEL_RESULT_BYTES}`);
+  assert.ok(bounded.apps.length < value.apps.length);
 });

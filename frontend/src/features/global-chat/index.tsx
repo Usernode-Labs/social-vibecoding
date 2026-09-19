@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
-import { ArrowPathIcon, ArrowUpIcon, PlusIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import {
+  ArrowPathIcon,
+  ArrowUpIcon,
+  PlusIcon,
+  SpinnerArcIcon,
+  XIcon,
+} from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { GlobalChatResultBlock } from './renderers';
@@ -295,6 +301,16 @@ export function GlobalChatScreen() {
             <p>Saved in Improve.</p>
           </div>
           <BudgetLabel />
+          <button
+            type="button"
+            className="global-chat-new"
+            onClick={() => closeGlobalChat()}
+            aria-label="Close chat"
+            title="Close chat"
+          >
+            <XIcon className="w-4 h-4" aria-hidden="true" />
+            <span>Close</span>
+          </button>
           <button
             type="button"
             className="global-chat-new"

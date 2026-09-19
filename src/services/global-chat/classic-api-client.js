@@ -14,11 +14,28 @@ const MAX_QUERY_ITEMS = 50;
 const MAX_QUERY_VALUE_CHARS = 8_000;
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+// global-chat/store.js accepts a 256 KiB JSON model result. Keep a deliberate
+// envelope margin for { ok, status, data } and future metadata instead of
+// letting a sanitised response fail persistence a few bytes over the line.
+const MAX_MODEL_RESULT_BYTES = 240 * 1024;
 const MAX_MODEL_STRING_CHARS = 4_000;
 const MAX_MODEL_ARRAY_ITEMS = 50;
 const MAX_MODEL_OBJECT_KEYS = 80;
 const MAX_MODEL_DEPTH = 8;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MODEL_SANITIZE_PROFILES = Object.freeze([
+  Object.freeze({
+    stringChars: MAX_MODEL_STRING_CHARS,
+    arrayItems: MAX_MODEL_ARRAY_ITEMS,
+    objectKeys: MAX_MODEL_OBJECT_KEYS,
+    depth: MAX_MODEL_DEPTH,
+  }),
+  Object.freeze({ stringChars: 2_000, arrayItems: 25, objectKeys: 60, depth: 7 }),
+  Object.freeze({ stringChars: 1_000, arrayItems: 12, objectKeys: 40, depth: 6 }),
+  Object.freeze({ stringChars: 500, arrayItems: 6, objectKeys: 24, depth: 5 }),
+  Object.freeze({ stringChars: 200, arrayItems: 3, objectKeys: 16, depth: 4 }),
+  Object.freeze({ stringChars: 80, arrayItems: 1, objectKeys: 8, depth: 3 }),
+]);
 
 class ClassicApiClientError extends Error {
   constructor(code, message, details = {}) {
@@ -141,28 +158,44 @@ async function boundedResponseText(response, maxBytes = MAX_RESPONSE_BYTES) {
   return text + decoder.decode();
 }
 
-function sanitizeForModel(value, depth = 0) {
+function sanitizeForModel(value, depth = 0, limits = MODEL_SANITIZE_PROFILES[0]) {
   if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
   if (typeof value === 'string') {
-    return value.length <= MAX_MODEL_STRING_CHARS
+    return value.length <= limits.stringChars
       ? value
-      : `${value.slice(0, MAX_MODEL_STRING_CHARS)}… [truncated]`;
+      : `${value.slice(0, limits.stringChars)}… [truncated]`;
   }
-  if (depth >= MAX_MODEL_DEPTH) return '[nested data omitted]';
+  if (depth >= limits.depth) return '[nested data omitted]';
   if (Array.isArray(value)) {
-    const result = value.slice(0, MAX_MODEL_ARRAY_ITEMS)
-      .map((item) => sanitizeForModel(item, depth + 1));
-    if (value.length > MAX_MODEL_ARRAY_ITEMS) result.push(`[${value.length - MAX_MODEL_ARRAY_ITEMS} more items]`);
+    const result = value.slice(0, limits.arrayItems)
+      .map((item) => sanitizeForModel(item, depth + 1, limits));
+    if (value.length > limits.arrayItems) {
+      result.push(`[${value.length - limits.arrayItems} more items]`);
+    }
     return result;
   }
-  if (!plainObject(value)) return String(value).slice(0, MAX_MODEL_STRING_CHARS);
+  if (!plainObject(value)) return String(value).slice(0, limits.stringChars);
   const result = {};
   const entries = Object.entries(value)
     .filter(([key]) => !sensitiveKey(key))
-    .slice(0, MAX_MODEL_OBJECT_KEYS);
-  for (const [key, child] of entries) result[key] = sanitizeForModel(child, depth + 1);
-  if (Object.keys(value).length > MAX_MODEL_OBJECT_KEYS) result._truncated = true;
+    .slice(0, limits.objectKeys);
+  for (const [key, child] of entries) {
+    result[key] = sanitizeForModel(child, depth + 1, limits);
+  }
+  if (Object.keys(value).length > limits.objectKeys) result._truncated = true;
   return result;
+}
+
+function boundedModelData(value, maxBytes = MAX_MODEL_RESULT_BYTES) {
+  const limit = Math.max(1024, Math.min(MAX_MODEL_RESULT_BYTES, Number(maxBytes) || 0));
+  for (const profile of MODEL_SANITIZE_PROFILES) {
+    const candidate = sanitizeForModel(value, 0, profile);
+    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= limit) return candidate;
+  }
+  return {
+    _truncated: true,
+    note: 'The platform result was too large to include in model context. Ask for a narrower result.',
+  };
 }
 
 function defaultRoutes() {
@@ -293,7 +326,7 @@ class ClassicApiClient {
         ok: response.ok,
         status: response.status,
         untrusted: true,
-        data: sanitizeForModel(parsed == null ? {} : parsed),
+        data: boundedModelData(parsed == null ? {} : parsed),
       },
     };
   }
@@ -302,9 +335,11 @@ class ClassicApiClient {
 module.exports = {
   MAX_REQUEST_BYTES,
   MAX_RESPONSE_BYTES,
+  MAX_MODEL_RESULT_BYTES,
   ClassicApiClient,
   ClassicApiClientError,
   appendQuery,
+  boundedModelData,
   boundedResponseText,
   buildPath,
   canonicalOrigin,

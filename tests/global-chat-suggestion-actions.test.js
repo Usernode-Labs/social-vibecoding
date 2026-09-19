@@ -15,7 +15,9 @@ test('fixed suggestions resolve only to server-owned read steps', () => {
   assert.equal(apps.steps.length, 1);
   assert.match(apps.steps[0].capabilityId, /^apps\.get\.apps\./);
   assert.deepEqual(apps.steps[0].input, {
-    pathParameters: {}, query: [], bodyJson: null,
+    pathParameters: {},
+    query: [{ name: 'view', value: 'global-chat' }],
+    bodyJson: null,
   });
 
   const issue = resolveAction({
@@ -111,5 +113,58 @@ test('a direct suggestion persists authoritative results with zero model invocat
   assert.equal(result.presentation.suggestions.length, 5);
   assert.ok(result.presentation.suggestions.some((item) => item.actionId));
   assert.equal(calls.filter((entry) => entry?.type === 'execute').length, 1);
+  assert.deepEqual(calls.slice(-1), ['release']);
+});
+
+test('a failed direct action persists a readable assistant answer and releases its turn', async () => {
+  const calls = [];
+  let messageId = 0;
+  const store = {
+    async claimTurn() { calls.push('claim'); return 'turn-1'; },
+    async releaseTurn() { calls.push('release'); return true; },
+    async insertMessage(_pool, value) {
+      messageId += 1;
+      calls.push({ type: 'message', value });
+      return { id: String(messageId), ...value };
+    },
+    async startToolRun() { calls.push('start'); return RESULT_ID; },
+    async finishToolRun(_pool, value) { calls.push({ type: 'finish', value }); return true; },
+  };
+  const failure = Object.assign(new Error('model result is invalid or too large'), {
+    code: 'invalid_payload',
+  });
+  const registry = {
+    get(id) {
+      return { id, risk: 'read', confirmation: 'never', access: () => true };
+    },
+    async execute() { throw failure; },
+  };
+  const executor = createSuggestionExecutor({
+    pool: {},
+    config: { dataEncryptionKey: 'test-key' },
+    registry,
+    store,
+  });
+
+  await assert.rejects(executor.execute({
+    userId: 7,
+    threadId: THREAD_ID,
+    suggestionId: 'next.general.apps',
+    parameters: {},
+    excludedSuggestionIds: ['next.general.apps'],
+    client: { surface: 'web', viewport: 'regular' },
+    executionContext: { actor: { signedIn: true } },
+  }), (error) => error === failure);
+
+  const messages = calls.filter((entry) => entry?.type === 'message');
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].value.role, 'user');
+  assert.equal(messages[1].value.role, 'assistant');
+  assert.equal(messages[1].value.payload.kind, 'direct_action_error');
+  assert.equal(
+    messages[1].value.text,
+    'That result was too large to display. Try a narrower option.',
+  );
+  assert.equal(messages[1].value.payload.presentation.suggestions.length, 5);
   assert.deepEqual(calls.slice(-1), ['release']);
 });
