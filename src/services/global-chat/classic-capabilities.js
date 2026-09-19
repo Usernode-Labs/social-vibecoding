@@ -966,6 +966,87 @@ function localSettingUpdateDefinition() {
   };
 }
 
+function historyInputSchema(noun) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    description: `Read the signed-in user's recent ${noun} across every authorized app.`,
+    properties: {
+      limit: {
+        type: 'integer', minimum: 1, maximum: 50,
+        description: 'Maximum number of newest results. Use 10 when the user did not request a count.',
+      },
+    },
+    required: ['limit'],
+  };
+}
+
+function closedIssuesHistoryDefinition() {
+  return {
+    id: 'issues.closed_by_me',
+    domain: 'issues',
+    title: 'List issues closed by my merged work',
+    summary: 'List the newest issues across all apps that were linked to development work merged by the signed-in user. No app slug is required.',
+    keywords: [
+      'closed issues', 'issues i closed', 'recent closed issues', 'last issues closed',
+      'completed issues', 'my issue history',
+    ],
+    searchRequires: ['close'],
+    inputSchema: historyInputSchema('issues closed by merged work'),
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'issue',
+    access: (context) => context?.actor?.signedIn === true
+      && typeof context.queryUserHistory === 'function',
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const data = await context.queryUserHistory('closed_issues', input);
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-activity-history.test.js'],
+  };
+}
+
+function mergedWorkHistoryDefinition() {
+  return {
+    id: 'governance.merged_by_me',
+    domain: 'governance',
+    title: 'List my recently merged work',
+    summary: 'List the newest development proposals merged by the signed-in user across all apps. No app slug is required.',
+    keywords: [
+      'merged work', 'what i merged', 'recent merges', 'last merged proposals',
+      'completed work', 'my merge history', 'issues linked to my merges',
+    ],
+    searchRequires: ['merge'],
+    inputSchema: historyInputSchema('merged development work'),
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'proposal',
+    access: (context) => context?.actor?.signedIn === true
+      && typeof context.queryUserHistory === 'function',
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const data = await context.queryUserHistory('merged_work', input);
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-activity-history.test.js'],
+  };
+}
+
 function routeDefinition(route) {
   if (route.method === 'POST' && route.path === DEVELOPMENT_START_PATH) {
     return developmentStartDefinition(route);
@@ -1070,6 +1151,8 @@ function classicCapabilityDefinitions() {
     globalChatSpendingDefinition(),
     globalChatUpdateDefinition(),
     localSettingUpdateDefinition(),
+    closedIssuesHistoryDefinition(),
+    mergedWorkHistoryDefinition(),
   ];
 }
 
