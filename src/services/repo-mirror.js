@@ -184,6 +184,23 @@ async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
  * `refs` names commits the caller is about to ask about (proposal heads), so
  * they are fetched in the same pass rather than one round trip each.
  *
+ * `fresh` is for the one caller shape single-flight gets WRONG: a caller that
+ * has just WRITTEN to this repository and is about to read the result back.
+ * Joining an in-flight fetch is normally free — several proposals on the same
+ * app want the same refs — but a fetch that started before the write resolves
+ * to a view that predates it, and the reader cannot tell. That is #2619:
+ * `proposal-update.js` pushes the new head, calls
+ * `reconcileNativeReviewedHead` immediately, and gets back the OLD branch tip,
+ * so the reconcile decides nothing moved and leaves the votes, the checks
+ * verdict and the preview describing the previous commit until a sweep
+ * notices minutes later.
+ *
+ * So `fresh` declines to join, and CHAINS instead of racing: two concurrent
+ * fetches into the same bare repo contend over the same refs for no gain, and
+ * the in-flight one is already most of the work. It also becomes the new
+ * in-flight entry, so callers arriving behind it coalesce onto the newer
+ * fetch rather than the one it superseded.
+ *
  * Throws if the repository cannot be cloned or fetched. Callers that must
  * degrade rather than fail (the measurement sweep, a read path a voter is
  * waiting on) catch and record the reason — see services/integration.js.
@@ -191,9 +208,15 @@ async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
 function ensureMirror(owner, repo, options = {}) {
   const key = `${owner}/${repo}`;
   const existing = _inFlight.get(key);
-  if (existing) return existing;
-  const p = ensureMirrorInner(owner, repo, options)
-    .finally(() => { _inFlight.delete(key); });
+  if (existing && !options.fresh) return existing;
+  const run = () => ensureMirrorInner(owner, repo, options);
+  // `.then(run, run)`: a failed fetch ahead of us is not a reason to skip
+  // ours, and it has already been reported to its own caller.
+  const p = (existing ? existing.then(run, run) : run())
+    // Identity-checked, because a later `fresh` call replaces this entry
+    // while this promise is still pending — an unconditional delete would
+    // evict ITS entry and send the next caller off on a third fetch.
+    .finally(() => { if (_inFlight.get(key) === p) _inFlight.delete(key); });
   _inFlight.set(key, p);
   return p;
 }

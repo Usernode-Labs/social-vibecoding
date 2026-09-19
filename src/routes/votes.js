@@ -1331,6 +1331,13 @@ function normalizedSha(value) {
 // does not touch it, so the approvals keep counting with nothing carried or
 // advanced. Anything authored bumps it, and every tally in the platform stops
 // counting the old votes in the same statement.
+//
+// `fresh` (#2619): this reads the branch tip out of the repo mirror, and the
+// mirror coalesces one fetch per repository. A caller that has just PUSHED and
+// is reading its own write back has to opt out of that, or it joins a fetch
+// older than the push and is told the head did not move. Pass it whenever the
+// push and this call are in the same request; leave it off for the sweeps and
+// read paths, which have nothing of their own to see.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
 }) {
@@ -1388,6 +1395,13 @@ async function reconcileNativeReviewedHead({
   try {
     dir = await mirror.ensureMirror(parsed.owner, parsed.repo, {
       refs: [oldHead, normalizedSha(session.checks_commit_sha)].filter(Boolean),
+      // #2619: `fresh` was accepted here and then never used — seven call
+      // sites asked for a re-read and silently got whatever fetch happened
+      // to be in flight. It is the callers that have just PUSHED who need
+      // it (proposal-update's two, merge-queue, cli-handoff-sync): without
+      // it their reconcile reads the pre-push tip, concludes the head did
+      // not move, and leaves the tally and the verdict on the old commit.
+      fresh,
     });
     mainSha = await mirror.defaultBranchSha(dir);
     liveHead = await mirror.resolveBranch(dir, session.branch_name);
