@@ -6230,6 +6230,27 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-color: rgba(90, 169, 255, 0.35);
 }
 .gc-vote-btn-preview:hover { background: rgba(90, 169, 255, 0.18); border-color: rgba(90, 169, 255, 0.5); color: var(--accent); }
+/* #2585: the preview's BUILDING state, as the SAME pill in gray. It used to
+   be a bare `.gc-checks-running-badge` span floating in the band, which made
+   the card jump the moment the build finished and the real Preview button
+   took its place. It composes with .gc-vote-btn, so height, radius and
+   padding are the Preview pill's; only the fill and the ink differ, in the
+   neutral state tokens .gc-checks-running-badge already speaks in (both have
+   a .dark counterpart, so this is light and dark at once).
+   It renders as <button disabled>, and .gc-vote-btn:disabled's ghosting is
+   deliberately undone here: that treatment is for a control the viewer could
+   enable by doing something, and nothing anyone clicks makes a staging build
+   finish sooner. A half-transparent pill would read as broken rather than as
+   busy. The higher specificity is what beats both :disabled and
+   .gc-vote-btn:hover, which still matches a disabled button. */
+.gc-vote-btn.gc-vote-btn-building,
+.gc-vote-btn.gc-vote-btn-building:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
+  border-color: transparent;
+}
 /* The ledger's one action (Re-run checks): the band's accent pill — the
    tinted fill Preview wears on the card — so the row's button reads as the
    same kind of control as the card's, not as a second neutral chip. */
@@ -12485,6 +12506,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   align-items: center;
   flex: none;
 }
+/* #2585: the building state is no longer one of those badges — it is the
+   Preview pill in gray — so it takes the PILL's band geometry instead, the
+   same block as .gc-vote-btn-preview above. The height is restated because
+   the rule right above still reaches it through .gc-checks-running-badge,
+   and 28px there against the pill's 24px is exactly the shift this removes.
+   The `+ .dev-card-menu-btn` line matters as much: without it the hamburger
+   keeps its own `margin-left: auto` and the two share the free space, which
+   is what left "Preview building…" floating mid-band. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building {
+  margin-left: auto;
+  gap: 5px;
+  padding: 0 10px 0 9px;
+  height: 24px;
+}
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn { margin-left: 0; }
 
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
