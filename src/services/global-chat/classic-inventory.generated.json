@@ -9,7 +9,7 @@
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 353,
     "unmatchedClientApiReferences": 0,
-    "settingsSections": 20,
+    "settingsSections": 21,
     "navigationSurfaces": 10
   },
   "navigation": [
@@ -100,6 +100,15 @@
       "gate": null,
       "capabilityId": "settings.open.alerts",
       "classicPath": "#settings/alerts",
+      "mobileSupported": true
+    },
+    {
+      "key": "tour",
+      "label": "Welcome tour",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.tour",
+      "classicPath": "#settings/tour",
       "mobileSupported": true
     },
     {

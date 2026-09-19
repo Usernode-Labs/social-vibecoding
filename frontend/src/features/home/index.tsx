@@ -88,7 +88,6 @@ import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
-import { WelcomeBanner } from './welcome-banner';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -179,12 +178,16 @@ export function HomeScreen() {
       */}
       <div id="home-body" className="home-column home-body-fill">
         {/*
-            #1561: the once-per-account explainer. Above everything, because
-            it is the thing a first-time viewer needs before the grid means
-            anything; always in the document and `hidden` until its effect
-            says otherwise, which is what keeps the prerender byte-identical.
+            #1561's once-per-account explainer stood here, above everything,
+            because it was the thing a first-time viewer needed before the
+            grid meant anything. #2255 replaced it with the eight-step
+            welcome tour, which says the same two things in its first step
+            and then goes on to POINT at the four places the banner could
+            only name. The tour is a fixed overlay mounted from Shell.tsx
+            (features/home/tour), not a block in this column, so nothing
+            takes its place here: with the tour finished or skipped, Home
+            opens on the widget strip and the grid.
         */}
-        <WelcomeBanner />
         {/*
             iOS in-app only: the "Homeroom widget" editing strip, mirroring
             the pinned grid the homescreen widget renders. It lives ABOVE the

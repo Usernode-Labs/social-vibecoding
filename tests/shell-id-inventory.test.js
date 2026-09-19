@@ -481,14 +481,48 @@ const ADDED_IDS = {
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
   'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
-  // #1561 — the once-per-account welcome on Home. A new account lands on a
-  // launcher grid of other people's apps with nothing on the screen saying
-  // what the place is, so the banner states it: the apps are changed by the
-  // people using them, and nothing ships without a group vote. Like the
-  // install strip above, it is always in the document and starts `hidden`,
-  // because the viewer is not known at prerender time.
-  'home-welcome': 'The dismissible first-login explainer at the top of #home-body (#1561).',
-  'home-welcome-dismiss': 'Dismisses it for good, per account: the answer is kept in localStorage under the viewer\'s user id.',
+  // #2255 — the eight-step welcome tour, and the two ids it took off the
+  // list. #1561's `#home-welcome` / `#home-welcome-dismiss` stood here: the
+  // once-per-account explainer at the top of #home-body. They are NOT in
+  // RETIRED_IDS, because that map is for ids the frozen baseline records and
+  // these two were added after it; a declared id that is no longer in the
+  // document is removed from THIS map, and the test below fails on a stale
+  // entry either way.
+  //
+  // The tour replaces the banner rather than joining it. The banner said the
+  // two things the launcher never says and then went for good; the tour says
+  // the same two things in its first step and then POINTS at the four places
+  // the banner could only name (Create app, Improve and what is behind it,
+  // Challenges, and the way back to Settings). Like the install strip above
+  // it is always in the document and starts `hidden`, because the viewer is
+  // not known at prerender time.
+  'home-tour': 'The welcome tour overlay, mounted from Shell.tsx and hidden until the first sign-in that reaches Home (#2255).',
+  // The dim is FOUR panels tiling the viewport minus the hole, not one
+  // box-shadow. A shadow paints but receives no pointer events, so it cannot
+  // block a click -- and the Improve step needs exactly that split: the
+  // cut-out passes the press through to the real #improve-btn while the
+  // dimmed area keeps swallowing clicks.
+  'home-tour-shade-top': 'The dim above the cut-out, and the whole screen on a step with nothing to point at.',
+  'home-tour-shade-right': 'The dim to the right of the cut-out.',
+  'home-tour-shade-bottom': 'The dim below the cut-out.',
+  'home-tour-shade-left': 'The dim to the left of the cut-out.',
+  'home-tour-spotlight': 'The cut-out\'s outline. It blocks the press on a step that only describes its target and passes it through on the Improve steps, which press real controls.',
+  'home-tour-card': 'The tooltip card, positioned against the cut-out and re-measured on resize and scroll.',
+  'home-tour-body': 'The card\'s step half. Hidden while the Skip question is up.',
+  'home-tour-counter': 'The "3 of 8" step counter.',
+  'home-tour-title': 'The step heading, and the card\'s accessible name.',
+  'home-tour-text': 'The step copy.',
+  'home-tour-skip': 'Skip, offered on every step.',
+  'home-tour-back': 'Back, disabled on step 1.',
+  'home-tour-next': 'Next, and Finish on the last step.',
+  'home-tour-confirm': 'The Skip question. Hidden until Skip or Escape.',
+  'home-tour-confirm-text': '"Are you sure? You can reopen this from Settings."',
+  'home-tour-confirm-cancel': 'The way back out of the question.',
+  'home-tour-confirm-skip': 'Confirms the skip, which records the tour as finished for this account.',
+  // The other half of the tour's promise: Settings -> Welcome tour.
+  'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
+  'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
+  'settings-tour-hint': 'The line under it saying where the tour starts.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
