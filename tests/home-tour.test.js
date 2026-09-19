@@ -11,8 +11,9 @@
 // What is pinned here, and why each one is worth a test:
 //
 //   - THE STEP TABLE. Eight steps in the product owner's order, with the
-//     copy they settled on. The order is the whole design, so a reshuffle
-//     should be a deliberate edit to this file too.
+//     copy they settled on, and the interaction flags that make the Improve
+//     arc real rather than illustrated. The order is the whole design, so a
+//     reshuffle should be a deliberate edit to this file too.
 //   - THE WALK. Next, Back, Finish and their clamps, over the pure helpers
 //     in tour-steps.ts, so the arithmetic is covered without a browser.
 //   - THE GEOMETRY. placeCard is the part that can silently put the card off
@@ -72,7 +73,7 @@ test('each step carries copy, and none of it is an em dash', () => {
   }
 });
 
-test('the steps point where the plan says they point', () => {
+test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Step 1 has nothing to point at: it says what the place is.
   assert.deepEqual([...byId.welcome.targets], []);
@@ -81,20 +82,90 @@ test('the steps point where the plan says they point', () => {
   // The way into Settings from Home is the header chip, whose menu carries
   // #switcher-row-settings.
   assert.deepEqual([...byId.settings.targets], ['#app-switcher-btn']);
-  // The four Improve steps prefer the real control in Home's header, and
-  // fall back to the viewer's grid (or the Discover lane behind it).
-  for (const id of ['improve', 'feedback', 'new-change', 'workshop']) {
-    assert.deepEqual(
-      [...byId[id].targets],
-      ['#improve-btn', '#home-apps-section', '#home-discover-section'],
-      `${id} anchors to the Improve control, then the grid`,
-    );
-    assert.ok(byId[id].mock, `${id} draws the inline Improve still life`);
+  // The Improve arc: the header control on Home, then the rows of the panel
+  // the viewer opens with it. No mock anywhere in the feature.
+  assert.deepEqual([...byId.improve.targets], ['#improve-btn']);
+  assert.deepEqual([...byId.feedback.targets], ['#improve-row-feedback']);
+  assert.deepEqual([...byId['new-change'].targets], ['#improve-row-new-session']);
+  assert.deepEqual([...byId.workshop.targets], ['#app-context-row-workshop']);
+  for (const src of [STEPS_SRC, OVERLAY_SRC]) {
+    assert.doesNotMatch(src, /\bmock\b/i, 'the inline still life is gone, not hidden');
   }
-  assert.deepEqual(
-    ['improve', 'feedback', 'new-change', 'workshop'].map((id) => byId[id].mock),
-    ['improve', 'feedback', 'new-change', 'workshop'],
-  );
+});
+
+test('the Improve step waits for the viewer, and has no Next to skip it with', () => {
+  const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
+  assert.equal(byId.improve.advanceOn, 'improve-open');
+  assert.equal(steps.hasNext(steps.IMPROVE_STEP_INDEX), false);
+  assert.equal(steps.IMPROVE_STEP_INDEX, 2);
+  // Every other step is driven by Next.
+  for (const [i, step] of steps.TOUR_STEPS.entries()) {
+    if (step.advanceOn) continue;
+    assert.equal(steps.hasNext(i), true, `${step.id} has a Next`);
+  }
+  // The click is watched, never intercepted: the overlay subscribes to the
+  // store and advances on the EDGE into open.
+  assert.match(OVERLAY_SRC, /improveStore\.subscribe\(/);
+  assert.match(OVERLAY_SRC, /if \(now && stepAt\(indexRef\.current\)\.advanceOn === 'improve-open'\)/);
+  assert.doesNotMatch(OVERLAY_SRC, /addEventListener\('click'/);
+});
+
+test('the cut-out passes the press through only where pressing is the point', () => {
+  const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
+  for (const id of ['improve', 'feedback', 'new-change', 'workshop']) {
+    assert.equal(byId[id].interactive, true, `${id} lets the real control be pressed`);
+  }
+  for (const id of ['welcome', 'create', 'challenges', 'settings']) {
+    assert.equal(byId[id].interactive, undefined, `${id} only describes its target`);
+  }
+  // The root blocks nothing; the four shades block everything around the
+  // hole. A box-shadow could not, which is why there are four of them.
+  assert.match(OVERLAY_SRC, /const ROOT = 'hidden fixed inset-0 z-\[9993\] overflow-hidden pointer-events-none'/);
+  assert.match(OVERLAY_SRC, /const SHADE = 'absolute bg-zinc-950\/60 dark:bg-zinc-950\/75 pointer-events-auto/);
+  assert.match(OVERLAY_SRC, /useClassToggle\(spotRef, 'pointer-events-auto', !step\.interactive\)/);
+});
+
+test('the three panel steps know they need the panel, and step 7 shuts it', () => {
+  const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
+  for (const id of ['feedback', 'new-change', 'workshop']) {
+    assert.equal(byId[id].needsPanel, true);
+  }
+  assert.equal(byId.improve.needsPanel, undefined, 'the Improve step stands on its own');
+  assert.equal(byId.challenges.closesPanel, true);
+  // Closed through the controller's own path, never by writing to the
+  // panel's DOM, which React owns.
+  assert.match(OVERLAY_SRC, /if \(!stepAt\(index\)\.closesPanel\) return;\s*\n\s*if \(!panelOpenNow\(\)\) return;\s*\n\s*void Improve\.close\(\);/);
+  assert.doesNotMatch(OVERLAY_SRC, /getElementById\('improve-panel'\)\.(?:classList|innerHTML|style)/);
+});
+
+test('the tour pauses for anything else on screen, and resumes where the rule says', () => {
+  // Paused is derived from the two things that mean "not on Home, alone":
+  // Home is not the visible screen, or the kit has presented something that
+  // is not the Improve panel.
+  assert.match(OVERLAY_SRC, /const paused = !homeVisible \|\| otherSurface;/);
+  assert.match(OVERLAY_SRC, /const live = open && !paused;/);
+  assert.match(OVERLAY_SRC, /useHiddenClass\(rootRef, !live\)/);
+  assert.match(OVERLAY_SRC, /const KIT_SURFACES = '\.un-modal, \.un-sheet, \.un-alert'/);
+  assert.match(OVERLAY_SRC, /new MutationObserver\(read\)/);
+  // A panel step with no panel resumes at the Improve step, and only once
+  // the flow that took the viewer away has finished (`live`, not `open`).
+  const fallback = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (!stepAt(index).needsPanel) return;'));
+  const body = fallback.slice(0, fallback.indexOf('}, ['));
+  assert.match(body, /if \(panelOpen\) return;/);
+  assert.match(body, /setIndex\(IMPROVE_STEP_INDEX\);/);
+  assert.match(OVERLAY_SRC, /\}, \[live, index, panelOpen\]\);/);
+});
+
+test('Back onto the Improve step shuts the panel, so the step always reads the same', () => {
+  // Arriving with the panel already up would be a dead end: the step ends on
+  // the panel OPENING and there is no edge left to wait for.
+  const guard = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf("if (stepAt(index).advanceOn !== 'improve-open') return;"));
+  const body = guard.slice(0, guard.indexOf('}, ['));
+  assert.match(body, /if \(!panelOpenNow\(\)\) return;/);
+  assert.match(body, /void Improve\.close\(\);/);
+  // Back itself is a plain step move; the effect above is what handles the
+  // panel, so it covers every way of landing there.
+  assert.match(OVERLAY_SRC, /const goBack = useCallback\(\(\) => setIndex\(clampIndex\(indexRef\.current - 1\)\), \[\]\);/);
 });
 
 test('Next, Back and Finish cannot walk off either end', () => {
@@ -146,6 +217,43 @@ test('the card is always inside the viewport, hole or no hole', () => {
 test('a narrow viewport shrinks the card rather than overflowing', () => {
   assert.equal(spotlight.cardWidth(320), 296);
   assert.equal(spotlight.cardWidth(1280), 340);
+});
+
+test('the four shades tile the viewport minus the hole', () => {
+  const viewport = { width: 1000, height: 800 };
+  const [top, right, bottom, left] = spotlight.shadeBoxes(viewport, {
+    top: 200, left: 300, width: 100, height: 50,
+  });
+  assert.deepEqual(top, { top: 0, left: 0, width: 1000, height: 200 });
+  assert.deepEqual(right, { top: 200, left: 400, width: 600, height: 50 });
+  assert.deepEqual(bottom, { top: 250, left: 0, width: 1000, height: 550 });
+  assert.deepEqual(left, { top: 200, left: 0, width: 300, height: 50 });
+  // Together they cover everything except the hole, which is what makes the
+  // cut-out clickable: the shades are the elements that take pointer events.
+  const covered = top.width * top.height + bottom.width * bottom.height
+    + right.width * right.height + left.width * left.height;
+  assert.equal(covered, 1000 * 800 - 100 * 50);
+});
+
+test('with nothing to point at, one shade covers the screen', () => {
+  const [top, right, bottom, left] = spotlight.shadeBoxes({ width: 640, height: 480 }, null);
+  assert.deepEqual(top, { top: 0, left: 0, width: 640, height: 480 });
+  for (const box of [right, bottom, left]) {
+    assert.equal(box.width * box.height, 0);
+  }
+});
+
+test('a target scrolled half off screen still produces sane shades', () => {
+  const viewport = { width: 500, height: 400 };
+  for (const hole of [
+    { top: -40, left: -30, width: 100, height: 60 },
+    { top: 380, left: 470, width: 100, height: 60 },
+  ]) {
+    for (const box of spotlight.shadeBoxes(viewport, hole)) {
+      assert.ok(box.width >= 0 && box.height >= 0, `no negative box for ${JSON.stringify(hole)}`);
+      assert.ok(box.top >= 0 && box.left >= 0);
+    }
+  }
 });
 
 test('the hole is the target plus breathing room', () => {
@@ -240,6 +348,9 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /class="hidden fixed inset-0/, 'hidden until an effect says otherwise');
   assert.match(html, /id="home-tour-card"/);
   assert.match(html, /id="home-tour-next"/);
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    assert.match(html, new RegExp(`id="home-tour-shade-${side}"`));
+  }
   // The Skip question ships in the document and starts hidden, like the card
   // itself: nothing is mounted on demand, so React never has to reorder
   // children of a node the kit may have written to.
@@ -266,10 +377,10 @@ test('visibility rides refs, never a rendered className', () => {
   // The same contract every island in the shell signs: constant class
   // strings, toggled through lib/legacy-dom.ts.
   for (const call of [
-    'useHiddenClass(rootRef, !open)',
-    'useHiddenClass(mockRef, !step.mock)',
+    'useHiddenClass(rootRef, !live)',
     'useHiddenClass(bodyRef, confirming)',
     'useHiddenClass(confirmRef, !confirming)',
+    'useHiddenClass(nextRef, !showsNext)',
   ]) {
     assert.ok(OVERLAY_SRC.includes(call), `${call} is how that node hides`);
   }
@@ -357,7 +468,7 @@ test('the replay request survives the chunk boundary between Settings and Home',
 });
 
 test('the tour never reads or writes the challenge-based onboarding gate', () => {
-  for (const src of [OVERLAY_SRC, STEPS_SRC, STORAGE_SRC, SETTINGS_SECTION_SRC]) {
+  for (const src of [STEPS_SRC, STORAGE_SRC, SETTINGS_SECTION_SRC]) {
     assert.doesNotMatch(src, /setupFinished/);
     assert.doesNotMatch(src, /HomePanels/);
   }

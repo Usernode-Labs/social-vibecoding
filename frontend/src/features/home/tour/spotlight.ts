@@ -110,3 +110,39 @@ export function placeCard(
     left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
   };
 }
+
+/**
+ * The four panels that make the dim, laid out around the hole.
+ *
+ * Returned in the order the overlay renders them: top, right, bottom, left.
+ * They tile the viewport minus the hole exactly, which is what makes the
+ * cut-out a real hole: they are the elements that receive pointer events, so
+ * what is not covered by one of them is genuinely clickable.
+ *
+ * With no hole the top panel takes the whole viewport and the other three
+ * collapse to nothing, so "dim everything" needs no separate element and no
+ * branch at the call site.
+ */
+export function shadeBoxes(
+  viewport: { width: number; height: number },
+  hole: Box | null,
+): [Box, Box, Box, Box] {
+  if (!hole) {
+    const full = { top: 0, left: 0, width: viewport.width, height: viewport.height };
+    const none = { top: 0, left: 0, width: 0, height: 0 };
+    return [full, { ...none }, { ...none }, { ...none }];
+  }
+  // Clamped to the viewport, because a target can be scrolled half off it and
+  // a negative width would paint the shade in the wrong place.
+  const top = Math.max(0, Math.min(hole.top, viewport.height));
+  const bottom = Math.max(top, Math.min(hole.top + hole.height, viewport.height));
+  const left = Math.max(0, Math.min(hole.left, viewport.width));
+  const right = Math.max(left, Math.min(hole.left + hole.width, viewport.width));
+  const band = bottom - top;
+  return [
+    { top: 0, left: 0, width: viewport.width, height: top },
+    { top, left: right, width: Math.max(0, viewport.width - right), height: band },
+    { top: bottom, left: 0, width: viewport.width, height: Math.max(0, viewport.height - bottom) },
+    { top, left: 0, width: left, height: band },
+  ];
+}

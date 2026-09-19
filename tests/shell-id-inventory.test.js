@@ -491,14 +491,21 @@ const ADDED_IDS = {
   // it is always in the document and starts `hidden`, because the viewer is
   // not known at prerender time.
   'home-tour': 'The welcome tour overlay, mounted from Shell.tsx and hidden until the first sign-in that reaches Home (#2255).',
-  'home-tour-dim': 'The whole-screen dim, used by a step with nothing to point at.',
-  'home-tour-spotlight': 'The cut-out around the step\'s target. Its box-shadow is what dims the rest of the screen when there IS one, so exactly one of these two is ever visible.',
+  // The dim is FOUR panels tiling the viewport minus the hole, not one
+  // box-shadow. A shadow paints but receives no pointer events, so it cannot
+  // block a click -- and the Improve step needs exactly that split: the
+  // cut-out passes the press through to the real #improve-btn while the
+  // dimmed area keeps swallowing clicks.
+  'home-tour-shade-top': 'The dim above the cut-out, and the whole screen on a step with nothing to point at.',
+  'home-tour-shade-right': 'The dim to the right of the cut-out.',
+  'home-tour-shade-bottom': 'The dim below the cut-out.',
+  'home-tour-shade-left': 'The dim to the left of the cut-out.',
+  'home-tour-spotlight': 'The cut-out\'s outline. It blocks the press on a step that only describes its target and passes it through on the Improve steps, which press real controls.',
   'home-tour-card': 'The tooltip card, positioned against the cut-out and re-measured on resize and scroll.',
   'home-tour-body': 'The card\'s step half. Hidden while the Skip question is up.',
   'home-tour-counter': 'The "3 of 8" step counter.',
   'home-tour-title': 'The step heading, and the card\'s accessible name.',
   'home-tour-text': 'The step copy.',
-  'home-tour-mock': 'The small still life of the Improve panel drawn inside the card for the four steps whose subject lives inside an app rather than on Home.',
   'home-tour-skip': 'Skip, offered on every step.',
   'home-tour-back': 'Back, disabled on step 1.',
   'home-tour-next': 'Next, and Finish on the last step.',
