@@ -875,20 +875,30 @@ function EvidenceStrip({ e }: { e: NonNullable<TopicBody['evidence']> }): ReactN
   );
 }
 
-/** The evidence states that are a run still going: the picture is coming. */
+/**
+ * The evidence states that are a run still going: the picture is coming.
+ * 'planned' is in this set only while it is FRESH — `evidence.notStarted`
+ * (AppView._evidenceNotStarted) marks the run that has sat there past the
+ * idle threshold, and that one is not going anywhere on its own.
+ */
 const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 
 /**
  * The before/after: the verified evidence card (or the legacy capture
  * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Evidence planned" in
- * a box read as a verdict. A run that failed, or was waived, keeps its
- * strip: that is a fact a voter weighs.
+ * own spinner — no panel and no state label, because "Visual preview in
+ * progress" in a box read as a verdict. A run that failed, or was waived,
+ * keeps its strip: that is a fact a voter weighs.
+ *
+ * #2601/#2558: a run that never started keeps the PANEL rather than the
+ * strip, because it is the one pending state with something for the reader
+ * to do — the panel carries the recorded reason and the retry control.
  */
 function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
   const ev = body.evidence || null;
-  if (tiles && (!ev || ev.verified)) {
+  const notStarted = !!(ev && ev.notStarted);
+  if (tiles && (!ev || ev.verified || notStarted)) {
     return (
       <div className="dev-topic-visuals" data-visuals-scope="1">
         {/* AppView.visualsTilesHtml's markup — four other surfaces still
@@ -898,7 +908,7 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     );
   }
   if (!ev || ev.verified) return null;
-  if (EVIDENCE_BUILDING.has(ev.state)) {
+  if (!notStarted && EVIDENCE_BUILDING.has(ev.state)) {
     return (
       <p className="dev-topic-hero-evidence" data-evidence-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>

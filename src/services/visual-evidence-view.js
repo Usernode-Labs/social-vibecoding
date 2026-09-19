@@ -69,6 +69,19 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
   }));
 }
 
+// #2601/#2558: why a run that is still 'planned' never got under way, as
+// `visual-evidence-orchestrator.noteNotStarted` recorded it on the proposal.
+// A sibling of `failureReason` rather than a reuse of it: a run that never
+// started has not failed, and the two words reach different copy. It is
+// dropped once the run has moved on, and on a superseded revision, where it
+// would describe a schedule attempt nobody is looking at any more.
+function notStartedReason(session, superseded) {
+  const detail = session?.visual_evidence_detail;
+  if (superseded || session?.visual_evidence_state !== 'planned') return null;
+  const value = detail && typeof detail === 'object' ? detail.notStartedReason : null;
+  return typeof value === 'string' && value.trim() ? value.slice(0, 300) : null;
+}
+
 function fromSnapshot(session, currentHead) {
   const detail = session?.visual_evidence_detail;
   if (!detail || typeof detail !== 'object') return null;
@@ -87,6 +100,7 @@ function fromSnapshot(session, currentHead) {
     failureReason: mismatched
       ? 'A newer proposal revision superseded this evidence.'
       : (typeof detail.failureReason === 'string' ? detail.failureReason.slice(0, 2000) : null),
+    notStartedReason: notStartedReason(session, mismatched),
     repairAvailable: detail.repairAvailable === true,
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     replayCount: Number.isInteger(detail.replayCount) ? Math.max(0, Math.min(2, detail.replayCount)) : null,
@@ -117,6 +131,7 @@ function serialize(run, session, slug, currentHead) {
     failureReason: matchesCurrent
       ? (run.failureReason || null)
       : 'A newer proposal revision superseded this evidence.',
+    notStartedReason: notStartedReason(session, !matchesCurrent),
     repairAvailable: matchesCurrent && run.repairAvailable === true,
     planHash: run.planHash || null,
     replayCount: Number.isInteger(run.replayCount) ? Math.max(0, Math.min(2, run.replayCount)) : null,
@@ -181,6 +196,7 @@ module.exports = {
   cleanClaims,
   cleanArtifacts,
   artifactUrl,
+  notStartedReason,
   fromSnapshot,
   serialize,
   getForSession,
