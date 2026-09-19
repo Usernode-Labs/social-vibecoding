@@ -807,7 +807,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the only way out of it, and the sentence that states the rules). It
   // found the manifest exactly ON the 20-slot floor, so the ceiling moved
   // with it (services/app-manifest.js, 710 → 730).
-  assert.equal(DAPP.tests.length, 693);
+  //
+  // 693 → 695: the welcome tour (#2255) replaced the one-line #home-welcome
+  // banner with an eight-step overlay, and declares two checks of its own —
+  // that Settings offers the way back into it, and that the overlay ships
+  // hidden on Home so nobody's first paint meets it. The ceiling is
+  // untouched: 695 leaves 35 slots against MAX_DECLARED_TESTS (730), which
+  // is clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 695);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

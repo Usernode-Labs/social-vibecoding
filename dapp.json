@@ -2655,6 +2655,17 @@
       "expectText": "Theme"
     },
     {
+      "name": "Settings offers the way back into the welcome tour (#2255)",
+      "path": "/#settings/tour",
+      "expectSelector": "#settings-section-content [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
+      "expectText": "Replay the tour"
+    },
+    {
+      "name": "The welcome tour ships hidden on Home and opens on nobody's first paint (#2255)",
+      "path": "/",
+      "expectSelector": "#home-tour.hidden #home-tour-card #home-tour-body #home-tour-next"
+    },
+    {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
       "path": "/#settings/about",
       "expectSelector": "#settings-about-section #drawer-row-platform-version ~ #drawer-row-native-app-version"

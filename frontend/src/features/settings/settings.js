@@ -250,6 +250,10 @@
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      // The replay control for Home's welcome tour (#2255). Last in
+      // Preferences: it configures nothing, it re-runs something, and the
+      // tour's own Skip promises this row exists.
+      { key: 'tour', label: 'Welcome tour', group: 'Preferences' },
       // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
       // Challenges and Create app FIXED SECTIONS of the home screen rather
       // than draggable, hideable widgets, so there is nothing left for the
