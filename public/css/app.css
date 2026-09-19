@@ -13049,6 +13049,150 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 999px;
 }
 #dev-issue-comments .dev-feed-msg { font-size: 13px; }
+
+/* ── The change page as the Workshop's Needs-you item ──────────────────
+   topic/topic-head.tsx ChangeHero, StepsSheet and DetailsSheet. The hero
+   borrows the item's pieces by class — the eyebrow, the title, the by-line
+   and its avatar, the chips — and adds only what a page needs that a swipe
+   card does not: no fixed height and no snap, the title unclamped, the
+   chips under the by-line rather than beside it, and the card's action
+   band under them. */
+.dev-topic-hero {
+  position: relative;
+  padding: 16px 20px 18px;
+  overflow: hidden;
+}
+.dev-topic-hero[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(244, 114, 182, .08)); }
+.dev-topic-hero[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
+.dark .dev-topic-hero[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
+.dark .dev-topic-hero[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+.dev-topic-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 20px; }
+.dev-topic-hero-eyebrow { display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-topic-hero-eyebrow > a { color: var(--accent); text-decoration: none; letter-spacing: 0; text-transform: none; font-weight: 700; }
+.dev-topic-hero-eyebrow > a:hover { text-decoration: underline; }
+/* The item's title, unclamped and at page size: a page has room for the
+   whole line, where the swipe card's three-line clamp hid the end of a
+   long one behind an ellipsis nobody could open. */
+.dev-topic-hero > .dev-topic-hero-title {
+  margin: 10px 0 0; max-width: none; display: block; -webkit-line-clamp: unset; overflow: visible;
+  font-size: 24px; line-height: 1.2; overflow-wrap: anywhere;
+}
+.dev-topic-hero > .dev-topic-hero-by { margin-top: 10px; max-width: none; }
+/* The card's tags in the Needs-you chip's shape. Each keeps the tint and
+   ink utilities it arrived with — the card's own colours — and those
+   outrank the chip's neutral fill because tailwind.css loads last. (The
+   selectors here are two classes deep on purpose: the item's own rules,
+   and its wide-layout ones further down, are one class, and the hero's
+   must win whichever comes later in the file.) */
+.dev-topic-hero > .dev-topic-hero-chips { margin-top: 10px; flex: none; justify-content: flex-start; }
+.dev-topic-hero-chips > .dev-badge { height: 24px; padding: 0 9px; gap: 6px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
+.dev-topic-hero-chips > .dev-badge.font-mono { font-size: 11.5px; }
+.dev-topic-hero-chips > .dev-badge .attr-avatar { width: 16px; height: 16px; font-size: 0.65rem; }
+/* The band wears the card's class for the band rules above — the one-line
+   fold into ⋯, the accent pills, Preview and the hamburger at the right;
+   the card's own box (its radius, padding and edge) comes off here. */
+.dev-topic-hero > div.dev-topic-hero-actions.dev-card-topic {
+  margin-top: 12px; padding: 0; border-radius: 0; box-shadow: none; background: none; --dev-edge-w: 0px;
+}
+.dev-topic-hero .gc-card-actions { margin-top: 0; }
+.dev-topic-hero .gc-card-actions > .dev-vote-btn { margin-right: 4px; }
+/* The summary at the item's reading size, the whole of it. */
+.dev-topic-hero-summary { margin: 14px 0 0; font-size: 17px; line-height: 1.45; color: var(--text-secondary); }
+.dev-topic-hero-summary > :first-child { margin-top: 0; }
+.dev-topic-hero-summary > :last-child { margin-bottom: 0; }
+/* "Addresses", then the issue as a chip: the number bold, the title after
+   it, ellipsised rather than wrapped; the owner's pencil at the line's end. */
+.dev-topic-hero-issues { margin-top: 12px; min-width: 0; }
+.dev-topic-hero-issues-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-issues-k { font-weight: 600; }
+.dev-topic-issue { max-width: 100%; height: auto; min-height: 24px; padding: 2px 10px 2px 8px; gap: 6px; text-decoration: none; }
+.dev-topic-issue:hover { text-decoration: none; filter: brightness(.96); }
+.dev-topic-issue > b { font-weight: 700; flex: none; }
+.dev-topic-issue > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.dev-topic-hero-issues-edit { margin-left: auto; }
+.dev-topic-hero-issues form { margin-top: 4px; }
+/* The picture, or the line that says it is coming. */
+.dev-topic-hero .dev-topic-visuals { margin-top: 14px; }
+.dev-topic-hero .dev-topic-evidence { margin-top: 12px; }
+.dev-topic-hero-evidence { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-evidence > .dc-status-spinner-arc { flex: none; margin: 0; }
+.dev-topic-hero > .dev-topic-note { margin-top: 12px; }
+
+/* ── The steps: the card's grey strip, expanded ──
+   The same panel as card/dev-card.tsx RequirementsRow — its tints ride in
+   as the same utilities — with room to say, under each gate, what the
+   ledger row for it said. */
+.dev-topic-steps { padding: 8px; }
+.dev-steps { overflow: hidden; }
+.dev-steps-head { display: flex; align-items: baseline; gap: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.35; color: var(--text-secondary); }
+.dev-steps-headline { font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.dev-steps-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.dev-steps-count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.dev-steps-list { list-style: none; margin: 0; padding: 4px 0; }
+.dev-step { display: grid; grid-template-columns: 22px 1fr auto; column-gap: 10px; align-items: baseline; padding: 9px 14px; font-size: 13.5px; line-height: 1.4; }
+.dev-step + .dev-step { border-top: 1px solid var(--app-sheet-line); }
+/* The mark: a ring, filled ok for a cleared step and blocked for a red one;
+   the step waiting on a person wears the attention tone, and the one in
+   flight spins the shell's arc. */
+.dev-step-mark {
+  display: inline-flex; align-items: center; justify-content: center; align-self: start; margin-top: 1px;
+  width: 20px; height: 20px; border-radius: 9999px; font-size: 11px; font-weight: 800;
+  box-shadow: inset 0 0 0 1.5px currentColor; color: var(--text-muted); background: transparent;
+}
+.dev-step-mark-done { background: var(--state-ok); color: #fff; box-shadow: none; }
+.dev-step-mark-blocked { background: var(--state-blocked); color: #fff; box-shadow: none; }
+.dev-step-mark-waiting { color: var(--state-attention); }
+.dev-step-mark-active { box-shadow: none; color: var(--accent); }
+.dev-step-mark-active > .dc-status-icon { margin: 0; }
+.dev-step-label { font-weight: 600; color: var(--text-primary); }
+.dev-step-done .dev-step-label { color: var(--text-secondary); }
+.dev-step-pending .dev-step-label { color: var(--text-muted); }
+.dev-step-actor { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.dev-step-body { grid-column: 2 / 4; display: flex; flex-direction: column; gap: 3px; margin-top: 2px; min-width: 0; font-size: 12.5px; color: var(--text-muted); }
+.dev-step-body .dev-ledger-text { color: var(--text-secondary); }
+.dev-step-blocked .dev-step-body .dev-ledger-text { color: var(--text-primary); }
+.dev-step-note { color: var(--text-muted); }
+.dev-step-when { color: var(--text-muted); }
+.dev-step-body .dev-ledger-fails { font-size: 12px; }
+.dev-step-body .dev-ledger-ops { margin-top: 4px; }
+.dev-step-body .dev-ledger-help { margin: 0; }
+/* The vote's line: the bar to the threshold, the card's pill, the counts. */
+.dev-step-vote { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.dev-step-vote-bar { flex: 0 0 160px; height: 8px; border-radius: 999px; background: var(--state-neutral-bg); overflow: hidden; }
+.dev-step-vote-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--state-ok); }
+.dev-step-vote-tally { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
+
+/* ── Technical details, as a sheet over the page ──
+   Opened from the ⋯ menu (DetailsSheet); body-mounted, so no frosted sheet
+   contains it. A bottom sheet on a phone, a centred card above 720px. */
+.dev-details-scrim {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(20, 20, 26, .28); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+.dev-details-card {
+  width: min(680px, 100%); max-height: 78vh; overflow: auto; box-sizing: border-box;
+  padding: 14px 18px 20px; border-radius: 22px 22px 0 0;
+  background: var(--bg-primary); color: var(--text-primary);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, .22);
+}
+@media (min-width: 720px) {
+  .dev-details-scrim { align-items: center; }
+  .dev-details-card { border-radius: 22px; }
+}
+.dev-details-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.dev-details-head > .dev-topic-h { margin: 0; }
+.dev-details-close {
+  display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+  border: 0; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;
+}
+.dev-details-card > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+@media (max-width: 480px) {
+  .dev-topic-hero { padding: 14px 14px 16px; }
+  .dev-topic-hero-title { font-size: 22px; }
+  .dev-topic-hero-summary { font-size: 16px; }
+  .dev-step-vote-bar { flex-basis: 120px; }
+}
 #dev-issue-comments .dev-feed-msg-text { font-size: 13px; }
 #dev-topic-thread #gc-thread-messages {
   margin: 4px 0 0;

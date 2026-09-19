@@ -794,6 +794,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the one-line failing check (9000093) — take the two slots that merging
   // freed, so the manifest keeps its 20 clear of the ceiling
   // (tests/improve-session-spinner.test.js, tests/proposal-tests-manifest.test.js).
+  //
+  // 690 → 690: the change page as a Needs-you item (task 497) repointed the
+  // checks the previous shape held — the sheet order, the About halves, the
+  // folded summary, the numbered ledger path, the state tags — at the hero
+  // and the steps sheet, in place. No slot moved either way.
   assert.equal(DAPP.tests.length, 690);
 });
 

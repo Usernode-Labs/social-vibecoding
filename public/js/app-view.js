@@ -3662,6 +3662,14 @@ const AppView = {
     // rides at the end of its meta line, its state is the bar (not the
     // capsule), and the detail actions join its one action line.
     AppView._topicCard(card, t.kind, item, body);
+    // A change page reads as the Workshop's Needs-you item: the hero (the
+    // eyebrow, the title, who, the tags, the actions, the summary) and the
+    // merge steps under it, built from the card model and the ledger rows
+    // the builders above already made (topic/topic-head.tsx draws them).
+    if (body.changeId) {
+      body.hero = AppView._topicHeroView(t.kind, item);
+      body.steps = AppView._topicStepsView(item, card, body);
+    }
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
   },
@@ -3791,6 +3799,17 @@ const AppView = {
         ...band,
       ];
     }
+    // The technical half — the pull request's description, or the spec a
+    // change under way is built from — is a ⋯ row that opens a sheet over
+    // the page (topic-head.tsx DetailsSheet). A voter reads the summary on
+    // the page; whoever reviews the code opens this.
+    if (body.changeId && body.proposalBody) {
+      menu.unshift({
+        label: 'Technical details', icon: 'details',
+        title: 'What changed and why, as the pull request describes it',
+        act: () => AppView.openTechnicalDetails(item.id),
+      });
+    }
     if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
       menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
@@ -3816,6 +3835,129 @@ const AppView = {
         act: { fn: 'openLiveApp', args: [AppView.appData?.slug || App.currentApp] } });
     }
     return card;
+  },
+
+  // ── The change page's hero ──────────────────────────────────────────
+  // The Needs-you item's words for one change (topic/model.ts HeroView):
+  // the eyebrow's three facts, the age, and the by-line. Everything else
+  // the hero draws — the title, the tags, the actions, the summary, the
+  // issues, the picture — it reads off the card model and the body.
+  _topicHeroView(kind, item) {
+    const underway = ['active', 'paused'].includes(item.status);
+    const n = parseInt(item.pr_number, 10) || 0;
+    const status = underway
+      ? (item.shared_at ? 'Visible to the group' : 'Private change')
+      : ({ promoted: 'In review', merging: 'Merging', merged: 'Merged', closed: 'Closed' }[item.status]
+        || String(item.status || ''));
+    const age = item.created_at ? AppView._agePart(item.created_at) : null;
+    const author = item.username || (kind === 'session' && App.user ? App.user.username : null) || null;
+    // The provenance words the meta line carried, as text: React escapes.
+    const bits = [];
+    if (item.source === 'imported') {
+      bits.push(item.imported_pr_author ? `imported from GitHub (${item.imported_pr_author})` : 'imported from GitHub');
+    }
+    const agent = AppView.externalAgentName(item.external_agent);
+    if (agent) bits.push(`built with ${agent}`);
+    if (item.source === 'maintenance') bits.push('platform maintenance');
+    return {
+      kind: kind === 'session' ? 'Change' : 'Proposal',
+      ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
+      status,
+      age: age ? { s: age.s, title: age.title } : null,
+      author,
+      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : 'proposed'),
+      provenance: bits.length ? bits.join(' · ') : null,
+      tint: Number(item.id) % 2 ? 'a' : 'b',
+    };
+  },
+
+  // ── The steps: the card's requirements strip, expanded ─────────────
+  // One row per merge gate, in the gate's order (requirementsSpec), each
+  // carrying the ledger row that explains it (_topicLedgerRows): the vote's
+  // roster under "Enough approvals", the checks' sentence, last run and
+  // failing rows under "Checks pass", the sync's remedy under "Merges
+  // cleanly with main". A ledger row no gate claims — a failed preview,
+  // console errors, the provenance notes, and every row before review, when
+  // there are no gates yet — draws in the same shape after the gates, with
+  // its tone as its mark. Row KEYS are the ledger's where a ledger row backs
+  // the step: dapp.json's declared checks address a fact by its data-note.
+  STEP_ACTORS: { auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group' },
+  // Which ledger rows say what each gate is about.
+  STEP_HOMES: {
+    approvals: ['votes'],
+    integration: ['mergeability', 'conflict', 'behind', 'sync', 'main'],
+    checks: ['checks'],
+    platform_env: ['env'],
+  },
+  _topicStepsView(item, card, body) {
+    const d = body.details || null;
+    const rows = d && Array.isArray(d.ledger) ? d.ledger.slice() : [];
+    const take = (keys) => {
+      for (const k of keys || []) {
+        const i = rows.findIndex((r) => r.key === k);
+        if (i >= 0) return rows.splice(i, 1)[0];
+      }
+      return null;
+    };
+    const stateOf = (r) => ({ bad: 'blocked', warn: 'waiting', vote: 'waiting', ok: 'done', progress: 'active' }[r.tone]
+      || (r.spinner ? 'active' : 'pending'));
+    const said = (r) => (r.text || []).map((t) => (typeof t === 'string' ? t : t.b)).join('').trim();
+    // A ledger row is worth more than the gate's note when it says something
+    // is happening or wrong, or carries a control, a roster or a list; a
+    // quiet "Up to date with main." yields to the gate's own words. The vote
+    // and the checks always keep their rows: the roster and the verdict are
+    // the two things this sheet exists to show in full.
+    const rich = (r) => !!r && (r.key === 'votes' || r.key === 'checks' || r.tone !== 'mute' || !!r.roster
+      || !!r.progress || !!(r.actions && r.actions.length) || !!(r.foot && r.foot.length) || !!(r.fails && r.fails.length));
+    const ctx = AppView._proposalsCtx || {};
+    const yes = item.qualified_yes_count != null
+      ? (parseInt(item.qualified_yes_count) || 0) : (parseInt(item.yes_count) || 0);
+    const no = item.qualified_no_count != null
+      ? (parseInt(item.qualified_no_count) || 0) : (parseInt(item.no_count) || 0);
+    const snap = parseInt(item.votes_required);
+    const majority = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
+    const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null };
+    // A provenance note — imported, built with an agent — is a fact about
+    // the change, not a step waiting on anyone: it wears the quiet ring
+    // whatever tone its words are set in.
+    const noteStep = (r) => ({
+      key: r.key, gate: null,
+      state: ['imported', 'agent'].includes(r.key) ? 'pending' : stateOf(r),
+      label: r.key === 'votes' ? 'Vote' : r.label, actor: null,
+      note: null, action: null, row: r, vote: r.key === 'votes' ? vote : null,
+    });
+
+    const req = (card.extra || []).find((x) => x && x.t === 'requirements') || null;
+    const out = [];
+    for (const g of (req ? req.gates : [])) {
+      const row = take(AppView.STEP_HOMES[g.key]);
+      const useRow = rich(row);
+      out.push({
+        key: useRow ? row.key : g.key,
+        gate: g.key,
+        state: g.state,
+        // The vote step says what it is; the gate's "Enough approvals" is
+        // what it needs, which the tally under it says in numbers.
+        label: g.key === 'approvals' ? 'Vote' : g.label,
+        actor: AppView.STEP_ACTORS[g.actor] || g.actor || null,
+        note: useRow ? null : (g.note || (row ? said(row) : null) || null),
+        action: g.action ? { key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act } : null,
+        row: useRow ? row : null,
+        vote: g.key === 'approvals' ? vote : null,
+      });
+      // What belongs beside the checks: a preview that failed, the console.
+      if (g.key === 'checks') for (const k of ['preview', 'console']) { const r = take([k]); if (r) out.push(noteStep(r)); }
+    }
+    for (const r of rows) out.push(noteStep(r));
+
+    const merged = item.status === 'merged';
+    return {
+      headline: req ? req.headline : (merged ? 'Merged' : 'Where it stands'),
+      detail: req ? (req.detail || null) : null,
+      done: req ? req.done : null,
+      total: req ? req.total : null,
+      rows: out,
+    };
   },
 
   // One detail model for a change before and after it enters review.
@@ -4054,6 +4196,13 @@ const AppView = {
       AppView._changeActions.delete(Number(id));
       repaint();
     }
+  },
+
+  // The ⋯ row's call: the change page's DetailsSheet (topic-head.tsx)
+  // listens for its own change id, as the Build sheet does for
+  // `change-workspace-open`.
+  openTechnicalDetails(id) {
+    window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
   },
 
   openChangeWorkspace(id) {
@@ -4437,6 +4586,7 @@ const AppView = {
     archive: '📦',    // 📦
     campaign: '📊',   // 📊
     open: '▢',             // ▢ the card on its own page
+    details: '≡',          // ≡ the technical half, as a sheet
     share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
@@ -11290,7 +11440,7 @@ const AppView = {
           : (afterVote
             ? ` ${moved}, and ${bothSides}. Homeroom resolves it once the group approves, then tries the merge again.`
             : ` ${moved}, and ${bothSides}. Homeroom resolves it automatically, then tries the merge again.`)]
-        : [{ b: 'Syncing.', tone: 'warn' }, ' Homeroom is bringing this proposal up to date with main automatically.'];
+        : [{ b: 'Syncing.', tone: 'warn' }, ` ${moved}; Homeroom is bringing this proposal up to date automatically.`];
     // The remedy sentence is the only foot line worth keeping from the box:
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own

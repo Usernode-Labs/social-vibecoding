@@ -754,22 +754,22 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page, round three: the card (with its bar), About, the ledger (checks, votes) and More about this change (accordion rows, collapsed) are sheets on the strip, in that order",
+      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with the pull request and its state, the age at its right, the title, the by-line, the tags, the band with the ⋯ last), then the steps sheet, then the Discussion",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has([data-edge] .dev-status-pill-block) + .dev-topic-about + .dev-topic-ledger:has([data-note=\"checks\"] ~ [data-note=\"votes\"]) + .dev-topic-more > .dev-topic-h + .dev-topic-acc > details:not([open]) > summary",
-      "expectText": "Technical details"
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(> .dev-topic-hero-top > .dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-topic-steps + .dev-conversation",
+      "expectText": "In review"
     },
     {
-      "name": "About this change sits under the card with What changes for you folded to a line (Show more), and Re-run checks is the Checks row's accent pill",
+      "name": "Vote opens the hero's band, ahead of Explore in dev chat; Re-run checks is the blocked Checks step's accent pill",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": ".dev-topic:has(.dev-topic-card + .dev-topic-about > .dev-topic-h + [data-topic-part=\"summary\"] > .dev-topic-part-h + .dev-topic-fold[data-folded] + .dev-topic-fold-more[aria-expanded=\"false\"]) .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
-      "expectText": "Show more"
+      "expectSelector": ".dev-topic:has(.dev-topic-hero .gc-card-actions > .dev-vote-btn:first-child + .gc-explore-chat-btn) .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
+      "expectText": "Re-run checks"
     },
     {
-      "name": "Addresses issue is the About sheet's second part, its rows in the Discussion's event-box language: the number where the glyph goes, the title, the chevron",
+      "name": "Addresses is one line under the summary: the label, then the issue as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
-      "expectSelector": "#gc-thread-head .dev-topic-about > .dev-topic-part[data-topic-part=\"summary\"] + .dev-change-issues:has(.dev-topic-part-h) a.gc-event-box.dev-issue-ref[href*=\"/dev/issues/900017\"] > svg:last-child",
-      "expectText": "Addresses issue"
+      "expectSelector": "#gc-thread-head .dev-topic-hero > .dev-topic-hero-summary + .dev-topic-hero-issues > .dev-topic-hero-issues-line > .dev-topic-hero-issues-k + a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
+      "expectText": "Addresses"
     },
     {
       "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
@@ -976,9 +976,10 @@
       "expectText": "Explore in dev chat"
     },
     {
-      "name": "A proposal opened by DIRECT URL has a working ⋯ menu (#1324)",
+      "name": "A proposal opened by DIRECT URL has a working ⋯ menu, with Technical details as a row of its own (#1324)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": ".dev-card-menu [data-menu-idx]"
+      "expectSelector": ".dev-card-menu [data-menu-idx]",
+      "expectText": "Technical details"
     },
     {
       "name": "Proposal cards can be shared directly to Messages from the hamburger menu (#1956)",
@@ -1912,7 +1913,7 @@
       "expectText": "You have no work going on."
     },
     {
-      "name": "Foreign proposal: Explore in dev chat is a pill on the card's band, which the ⋯ menu closes (#827); the Review row keeps its tally under the label, who approved on the line, and How voting works with its ? at the line's right end",
+      "name": "Foreign proposal: Explore in dev chat is a pill on the hero's band, which the ⋯ menu closes (#827); the Vote step keeps who approved on its line, and How voting works with its ? at the line's right end",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
       "expectSelector": ".dev-topic:has(.gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ [data-card-menu]:last-child) [data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-link + .voting-help-btn",
       "expectText": "Explore in dev chat"
@@ -2496,7 +2497,7 @@
     {
       "name": "Checks card names the fifth build step while the run waits behind an earlier one",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000028",
-      "expectSelector": ".dev-ledger-row[data-note=\"checks\"] .dev-ledger-progress-build[data-build-step=\"prepare_checks\"] .dev-ledger-build-bar[data-build-progress=\"4/5\"] > .dev-ledger-build-seg.is-now[data-step=\"prepare_checks\"]",
+      "expectSelector": ".dev-step[data-note=\"checks\"] .dev-ledger-progress-build[data-build-step=\"prepare_checks\"] .dev-ledger-build-bar[data-build-progress=\"4/5\"] > .dev-ledger-build-seg.is-now[data-step=\"prepare_checks\"]",
       "expectText": "prepare checks (waiting for an earlier run)"
     },
     {
@@ -3251,33 +3252,33 @@
       "expectText": "Main has moved 8 commits ahead, and 7 files changed on both sides"
     },
     {
-      "name": "A step that is already cleared draws a tick instead of its number",
+      "name": "A cleared step wears the filled tick in the ok tone, whatever the sheet around it is waiting on",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-ledger-row[data-note=\"checks\"][data-step-done] .dev-ledger-dot"
+      "expectSelector": ".dev-topic-steps .dev-step[data-req-gate=\"checks\"][data-req-state=\"done\"] > .dev-step-mark-done"
     },
     {
-      "name": "A blocked proposal reads as one ordered path: sync first, then checks, then the vote",
+      "name": "A blocked proposal reads as the strip's ordered steps: the vote, then merging cleanly with main (the sync), then the checks",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-topic-ledger .dev-ledger-row[data-note=\"mergeability\"] ~ .dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]",
-      "expectText": "Sync with main"
+      "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"][data-req-gate=\"approvals\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"] ~ .dev-step[data-note=\"checks\"][data-req-gate=\"checks\"]",
+      "expectText": "Merges cleanly with main"
     },
     {
-      "name": "Where it stands has no caption: the heading is followed by the numbered rows; a step the platform does itself names nobody under its label, and its sentence leads with the state in the row's tone",
+      "name": "The steps sheet leads with the strip's own headline and count; the sync step names the platform as its actor, and its sentence leads with the state in the row's tone",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-topic-ledger > .dev-topic-h + .dev-ledger > [data-note=\"mergeability\"][data-step=\"1\"]:not(:has(.dev-ledger-k small)):has(.dev-ledger-text > .dev-ledger-lead-warn:first-child) ~ [data-note=\"votes\"][data-step=\"3\"]",
+      "expectSelector": ".dev-topic-steps > .dev-steps > .dev-steps-head:has(> .dev-steps-headline ~ .dev-steps-count) + .dev-steps-list > [data-note=\"mergeability\"] > .dev-step-actor + .dev-step-body > .dev-ledger-text > .dev-ledger-lead-warn:first-child",
       "expectText": "Syncing."
     },
     {
-      "name": "A failing check is one line with a Why it failed door, on a Checks row washed in the blocked tint that says when it last ran and who has to act",
+      "name": "A failing check is one line with a Why it failed door, on a Checks step marked blocked whose sentence says who has to act and when it last ran",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-ledger-bad[data-note=\"checks\"]:has(.dev-ledger-k > small):has(.dev-ledger-text > .dev-ledger-lead-bad) .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"]:has(.dev-ledger-text > .dev-ledger-lead-bad + .dev-step-when) .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
       "expectText": "Why it failed"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal says so in a tag, and still shows its vote",
+      "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its vote still open above it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": "#gc-thread-head [data-status-tag=\"mergeability_conflict\"]",
-      "expectText": "Conflicts with main"
+      "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"]",
+      "expectText": "changed on both sides"
     },
     {
       "name": "Freshness (#1442): checks that passed on a superseded base are annotated, not contradicted",
@@ -3286,16 +3287,16 @@
       "expectText": "would no longer merge into"
     },
     {
-      "name": "Freshness (#1442): an unmeasured proposal renders with no conflict claim",
+      "name": "Freshness (#1442): an unmeasured proposal makes no conflict claim: its merge step says main has not been verified",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000036",
-      "expectSelector": "#gc-thread-head .gc-vote-count",
-      "expectText": "freshness not measured yet"
+      "expectSelector": ".dev-topic-steps:not(:has([data-note=\"mergeability\"])) .dev-step[data-req-gate=\"integration\"] > .dev-step-body > .dev-step-note",
+      "expectText": "has not been verified yet"
     },
     {
-      "name": "Freshness (#1442): behind-but-clean is an amber tag, and the bar counts down to merge",
+      "name": "Freshness (#1442): behind-but-clean syncs by itself: the merge step says how far main has moved, and the vote counts down to merge",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000033",
-      "expectSelector": "#gc-thread-head [data-status-tag=\"behind\"]",
-      "expectText": "Behind main · 8"
+      "expectSelector": ".dev-topic-steps:has([data-note=\"votes\"] .gc-merge-countdown) .dev-step[data-note=\"behind\"][data-req-gate=\"integration\"] .dev-ledger-text > .dev-ledger-lead-warn",
+      "expectText": "8 commits ahead"
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
@@ -4238,20 +4239,20 @@
     {
       "name": "#1771: a starved preview's checks card says it was not this change",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000045",
-      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectSelector": ".dev-step[data-note=\"checks\"]",
       "expectText": "Infrastructure problem, not this change"
     },
     {
       "name": "#1771: an error with no recorded reason still explains itself",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000009",
-      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectSelector": ".dev-step[data-note=\"checks\"]",
       "expectText": "The staging build or the test run itself broke"
     },
     {
       "name": "A change opens its full overview with a single action band",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "#dev-topic-thread .dev-topic-card .gc-card-actions [data-card-menu]",
-      "expectText": "Testing instructions"
+      "expectSelector": "#dev-topic-thread .dev-topic-hero .gc-card-actions [data-card-menu]",
+      "expectText": "Discussion"
     },
     {
       "name": "An underway workspace has a direct link and keeps access to its overview",
@@ -4262,13 +4263,13 @@
     {
       "name": "#2327: an author can edit an underway proposal title",
       "path": "/?demo=1&conversation=discussion#app/usernode-2d5619/dev/proposals/990101",
-      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectSelector": ".dev-topic-hero button[aria-label=\"Edit title\"]",
       "expectText": "Your in-progress session"
     },
     {
       "name": "#2327: an author can also edit a proposal title in review",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": ".dev-topic-card button[aria-label=\"Edit title\"]",
+      "expectSelector": ".dev-topic-hero button[aria-label=\"Edit title\"]",
       "expectText": "Staging demo: pills fall back after a build"
     },
     {
