@@ -2686,6 +2686,16 @@ const App = {
       // loses events until refresh. Only the SSE channels move the cursor.
     }
 
+    // #2599: live evidence outranks any snapshot that declared the turn over.
+    // A running-agent status, a progress line, a phase or a stop request on
+    // an idle transcript re-arms the turn (Stop button, live stream, poll)
+    // before the row paints — the report's spinning "OpenRouter is running…"
+    // row beside an enabled Send button was exactly this event landing after
+    // a stale not-busy /status answer. The helper is a no-op mid-turn.
+    if (typeof DevChat._noteLiveTurnEvent === 'function') {
+      DevChat._noteLiveTurnEvent({ ...data, type: data.event }, data.sessionId);
+    }
+
     switch (data.event) {
       case 'status': {
         DevChat._deactivateLastStatus();
@@ -2892,15 +2902,25 @@ const App = {
         break;
       }
       case 'done':
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
-        DevChat.renderMessages();
         // A 'done' arriving on the WS means the primary POST SSE never
         // finished this turn (its own 'done' would have been seq-deduped
         // first) — reconcile the timeline from the DB so anything that rode
         // only the dead stream (chips, pills, a late wrap-up) shows without
         // a manual refresh. See issue #446.
-        DevChat._reconcileAfterFallbackDone(data.sessionId);
+        // #2599: the WS carries every request's events for this session —
+        // a second send refused with "already running" ends in a `done`
+        // too — so the teardown asks /status first and stays up while the
+        // session is still busy.
+        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
+          DevChat._endTurnFromSharedChannel(data.sessionId).then((idle) => {
+            if (idle) DevChat._reconcileAfterFallbackDone(data.sessionId);
+          });
+        } else {
+          DevChat._deactivateLastStatus();
+          DevChat._finishStreaming();
+          DevChat.renderMessages();
+          DevChat._reconcileAfterFallbackDone(data.sessionId);
+        }
         break;
       case 'spec_updated':
         // Mayor's dispatch_scout updated the live draft.
@@ -2932,10 +2952,15 @@ const App = {
         break;
       case 'stopped':
         // The "Stopped by @user." status row was already persisted + emitted
-        // server-side via sendStatus, so just tear down the streaming UI.
-        DevChat._removeSpinner();
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
+        // server-side via sendStatus, so just tear down the streaming UI —
+        // once /status confirms the session is idle (#2599, as for 'done').
+        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
+          DevChat._endTurnFromSharedChannel(data.sessionId);
+        } else {
+          DevChat._removeSpinner();
+          DevChat._deactivateLastStatus();
+          DevChat._finishStreaming();
+        }
         break;
       case 'cc_estimate':
         // Experimental AI progress estimate (opt-in, server-gated).

@@ -8204,7 +8204,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6653,
+      "line": 6668,
       "method": "GET",
       "path": "/api/sessions/:id/spec",
       "expression": null,
@@ -8224,7 +8224,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6740,
+      "line": 6755,
       "method": "GET",
       "path": "/api/sessions/:id/specs/:version",
       "expression": null,
@@ -8244,7 +8244,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6789,
+      "line": 6804,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share",
       "expression": null,
@@ -8263,7 +8263,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6888,
+      "line": 6903,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share-user",
       "expression": null,
@@ -8282,7 +8282,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6999,
+      "line": 7014,
       "method": "GET",
       "path": "/api/sessions/:id/status",
       "expression": null,
@@ -8303,7 +8303,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7196,
+      "line": 7211,
       "method": "POST",
       "path": "/api/sessions/:id/stop",
       "expression": null,
@@ -8324,7 +8324,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7443,
+      "line": 7458,
       "method": "GET",
       "path": "/api/sessions/:id/events",
       "expression": null,
@@ -8345,7 +8345,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7505,
+      "line": 7520,
       "method": "GET",
       "path": "/api/budget",
       "expression": null,
@@ -8372,7 +8372,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7592,
+      "line": 7607,
       "method": "POST",
       "path": "/api/sessions/:id/deploy-staging",
       "expression": null,
@@ -8392,7 +8392,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7753,
+      "line": 7768,
       "method": "GET",
       "path": "/api/sessions/:id/preview-status",
       "expression": null,
@@ -8413,7 +8413,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7782,
+      "line": 7797,
       "method": "POST",
       "path": "/api/sessions/:id/ensure-staging",
       "expression": null,
@@ -8434,7 +8434,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7866,
+      "line": 7881,
       "method": "POST",
       "path": "/api/sessions/:id/recheck",
       "expression": null,

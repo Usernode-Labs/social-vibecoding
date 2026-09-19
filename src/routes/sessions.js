@@ -5210,6 +5210,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 });
               }
             }
+            // #2599: release the busy hold and the stop handle BEFORE the
+            // terminal events, as the Claude path does (its `finally` runs
+            // ahead of its send('done')). Both are idempotent, so the
+            // route's own `finally` re-running them is harmless.
+            if (releaseDispatchOperation) releaseDispatchOperation();
+            stopRegistry.deleteIf(session.id, stopHandle);
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -5303,6 +5309,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             }
           }
 
+          // #2599: `done` used to be emitted while this turn still held the
+          // session's busy operation and its stop handle — the reverse of
+          // the Claude path, whose `finally` runs before its send('done').
+          // A GET /status (or the coalesced session_state broadcast) that
+          // raced the event therefore still answered "running, stoppable"
+          // for a turn the client had just been told was over. Release
+          // first; the route's `finally` repeating both is a no-op.
+          if (releaseDispatchOperation) releaseDispatchOperation();
+          stopRegistry.deleteIf(session.id, stopHandle);
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
