@@ -3877,10 +3877,10 @@ const AppView = {
   // roster under "Enough approvals", the checks' sentence, last run and
   // failing rows under "Checks pass", the sync's remedy under "Merges
   // cleanly with main". A ledger row no gate claims — a failed preview,
-  // console errors, the provenance notes, and every row before review, when
-  // there are no gates yet — draws in the same shape after the gates, with
-  // its tone as its mark. Row KEYS are the ledger's where a ledger row backs
-  // the step: dapp.json's declared checks address a fact by its data-note.
+  // console errors, and every row before review, when there are no gates
+  // yet — draws in the same shape after the gates, with its tone as its
+  // mark. Row KEYS are the ledger's where a ledger row backs the step:
+  // dapp.json's declared checks address a fact by its data-note.
   STEP_ACTORS: { auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group' },
   // Which ledger rows say what each gate is about.
   STEP_HOMES: {
@@ -3917,12 +3917,14 @@ const AppView = {
     const snap = parseInt(item.votes_required);
     const majority = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
     const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null };
-    // A provenance note — imported, built with an agent — is a fact about
-    // the change, not a step waiting on anyone: it wears the quiet ring
-    // whatever tone its words are set in.
+    // #2588: the two rows this carve-out existed for — the imported note and
+    // the built-with note — are gone from the ledger, because neither was a
+    // step waiting on anyone and the hero above the card already says where
+    // the change came from. Every row that reaches here now IS a state of
+    // the change, so its tone is its mark, with no exceptions to make.
     const noteStep = (r) => ({
       key: r.key, gate: null,
-      state: ['imported', 'agent'].includes(r.key) ? 'pending' : stateOf(r),
+      state: stateOf(r),
       label: r.key === 'votes' ? 'Vote' : r.label, actor: null,
       note: null, action: null, row: r, vote: r.key === 'votes' ? vote : null,
     });
@@ -11103,40 +11105,17 @@ const AppView = {
     if (pr.created_at) meta.push({ parts: [relStamp(pr.created_at).text] });
 
     const notes = [];
-    // #687: imported proposals have no in-app dev session — the code is
-    // maintained on GitHub by its author, so there's no continue-in-dev-chat,
-    // sync-with-main, or in-app edit. Spell that out where those controls
-    // would otherwise be discovered.
-    const underway = pr.status === 'active' || pr.status === 'paused';
-    const IMPORTED_TAIL = "The code is maintained on GitHub; there's no in-app dev session for it. "
-      + (underway
-        ? 'Its checks and proposal details are available now; voting begins only after it is put up for vote.'
-        : 'Voting and checks work the same as any proposal.');
-    if (imported) {
-      notes.push({
-        key: 'imported',
-        tone: 'warn',
-        parts: pr.imported_pr_author
-          ? ['Imported pull request, authored by ', { b: pr.imported_pr_author }, `. ${IMPORTED_TAIL}`]
-          : [`Imported pull request. ${IMPORTED_TAIL}`],
-      });
-    }
-    // #967: for a connector-authored proposal, say plainly who wrote the
-    // code and on whose account — an imported proposal that arrived this
-    // way was built by the proposer's own agent, not by a stranger and not
-    // out of the platform's credits.
-    const agentName = AppView.externalAgentName(pr.external_agent);
-    if (agentName) {
-      notes.push({
-        key: 'agent',
-        tone: 'muted',
-        parts: [
-          'Built with ', { b: agentName },
-          ' by ', { b: pr.username || 'the proposer' },
-          ', on their own coding-agent subscription, from a branch in their GitHub fork.',
-        ],
-      });
-    }
+    // #2588: the provenance notes are GONE from here. "Imported pull
+    // request, authored by …" (#687) and "Built with … on their own
+    // coding-agent subscription" (#967) each became a row of the steps
+    // sheet, where every other row is a merge gate somebody still has to
+    // clear — and neither of them is one. They are facts about where the
+    // change came from, which the hero's own provenance line above the card
+    // already states in the words a reader wants there ("imported from
+    // GitHub (octo) · built with Claude Code", `_topicHeroView`). Saying
+    // them twice, the second time inside a progress indicator, is what this
+    // removes; the hero line is untouched, and so is the card meta line's
+    // copy of the same words (`_proposalProvenanceWords`).
     // #866: say in prose what the Preview slot says in a pill, so the detail
     // view explains why there's no Preview button yet (or why there won't be
     // one) instead of leaving a reviewer to guess.
@@ -11222,17 +11201,16 @@ const AppView = {
   // ── The "Where it stands" ledger ─────────────────────────────────────
   // One row per fact, built from the SAME material the four boxes used to
   // draw from — blockReasons, the checks verdict or its status note, the
-  // conflict / mergeability / platform-variable notes, the vote roster and
-  // the provenance notes — so nothing about what a state means moved; only
-  // where it is said. Each row's `key` is its data-note.
+  // conflict / mergeability / platform-variable notes and the vote roster —
+  // so nothing about what a state means moved; only where it is said. Each
+  // row's `key` is its data-note. (The provenance notes were in this list
+  // until #2588 took them off the ledger; the hero line says them instead.)
   TOPIC_LEDGER_LABELS: {
     conflict: 'Conflicts with main',
     mergeability: 'Conflicts with main',
     checks: 'Checks',
     env: 'Platform variables',
     console: 'Console errors',
-    imported: 'Imported',
-    agent: 'Built with',
     preview: 'Preview',
   },
   _topicLedgerRows(pr, d) {
