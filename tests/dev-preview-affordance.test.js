@@ -108,11 +108,15 @@ test('live: an interactive icon button wired to swapToStagingForSession (icon fo
   assert.doesNotMatch(html, />Preview</, 'no text label in the icon variant');
 });
 
-test('building: a NON-interactive span, not a disabled button', () => {
+// The ICON form only — the labelled one is a disabled pill since #2585, and
+// is pinned below. The icon form is already a pill (.gc-vote-btn-icon) and
+// carries its state as an image name, so it stayed a span.
+test('building (icon form): a NON-interactive span, not a disabled button', () => {
   const AppView = makeAppView();
   const html = previewHtml(AppView, { id: 7, staging_building: true }, { sessionId: 7 });
   assert.match(html, /^<span/, 'a span — there is nothing to click through to yet');
   assert.doesNotMatch(html, /<button/);
+  assert.match(html, /gc-vote-btn gc-vote-btn-icon/, 'and it already wears the pill box');
   assert.match(html, /dc-status-spinner-arc/);
   assert.match(html, /aria-label="Preview building"/);
   assert.match(html, /few minutes/, 'the tooltip says how long');
@@ -234,6 +238,31 @@ test('iconOnly:false gives the detail view a labelled affordance', () => {
   const err = previewHtml(AppView, { id: 7, staging_error: 'boom' },
     { sessionId: 7, iconOnly: false });
   assert.match(err, /Preview unavailable/);
+});
+
+// #2585. The building state used to render as a bare `.gc-checks-running-badge`
+// span with nothing around it, so it floated in the action band where the
+// Preview pill had been — and the card reflowed the moment the build finished.
+// It is the same pill now, in gray, and genuinely disabled.
+test('building (labelled): the Preview pill in its gray disabled form', () => {
+  const AppView = makeAppView();
+  const html = previewHtml(AppView, { id: 7, staging_building: true },
+    { sessionId: 7, iconOnly: false });
+  assert.match(html, /^<button/, 'a pill, not a floating badge');
+  assert.match(html, /\bdisabled\b/, 'the pointer and assistive tech both get "unavailable"');
+  assert.match(html, /class="gc-vote-btn gc-vote-btn-building gc-checks-running-badge"/,
+    'the Preview pill\'s own frame, the gray tone, and the class the other surfaces select on');
+  assert.match(html, /dc-status-spinner-arc/, 'the spinner stays, inside the pill');
+  assert.match(html, /Preview building…/);
+  assert.match(html, /few minutes/, 'the tooltip still says how long');
+  assert.doesNotMatch(html, /onclick|gc-vote-btn-preview/,
+    'nothing to click through to, and it is not wearing the live pill\'s accent');
+
+  // The frame it has to keep: the live state is the same slot, same box.
+  const live = previewHtml(AppView, { id: 7, staging_url: 'https://s' },
+    { sessionId: 7, iconOnly: false });
+  assert.match(live, /^<button [^>]*class="gc-vote-btn gc-vote-btn-preview"/,
+    'both states are a .gc-vote-btn, so the band does not shift when it flips');
 });
 
 test('each kind gets its own wording, and all four call sites use this helper', () => {

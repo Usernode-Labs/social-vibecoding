@@ -257,6 +257,12 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
  * it is what the board card shows now, at the right end of its action band,
  * because a 24px eye in the corner was the hardest thing on the card to hit.
  * The icon-only form is kept for the group-chat rows that still ask for it.
+ *
+ * #2585: the BUILDING state is the same pill as the live one, in gray and
+ * disabled, so the slot keeps its box and the card does not shift when the
+ * build finishes and the pill becomes the real Preview button. (The
+ * unavailable state is still a chip — it is a dead end, not a control that
+ * is about to arrive.)
  */
 export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
   if (spec.state === 'live') {
@@ -274,11 +280,25 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
   }
   if (spec.state === 'building') {
     if (!spec.iconOnly) {
+      // #2585: a PILL, not a bare badge floating in the band. It wears the
+      // Preview button's own frame (`gc-vote-btn`) so the band does not
+      // reflow when the build finishes and this very slot becomes that
+      // button — only the fill and the ink change — and it renders as a real
+      // disabled <button>, which is what stops the pointer AND tells
+      // assistive tech the control is there but not available yet. A <span>
+      // did neither. `gc-checks-running-badge` stays on it: it carries the
+      // neutral ink and the 4px spinner gap, and it is what the declared
+      // checks and the other surfaces select the building state by.
       return (
-        <span className="gc-checks-running-badge" title={spec.title}>
+        <button
+          type="button"
+          className="gc-vote-btn gc-vote-btn-building gc-checks-running-badge"
+          disabled
+          title={spec.title}
+        >
           <Spinner />
           {'Preview building…'}
-        </span>
+        </button>
       );
     }
     return (

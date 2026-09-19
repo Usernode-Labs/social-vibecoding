@@ -3269,8 +3269,9 @@
       "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel [role=progressbar]"
     },
     {
-      "name": "Imported proposal mid-build shows the Preview building pill (#866)",
+      "name": "Imported proposal mid-build shows the Preview building pill (#866, #2585)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000042",
+      "expectSelector": "button.gc-vote-btn.gc-vote-btn-building[disabled]",
       "expectText": "Preview building"
     },
     {
