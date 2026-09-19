@@ -7,7 +7,7 @@ const {
   PresentationError,
 } = require('./presentation');
 const { PROMPT_VERSION } = require('./prompt');
-const { resolveAction } = require('./suggestion-actions');
+const { contextualSuggestionSet, resolveAction } = require('./suggestion-actions');
 
 const DIRECT_PROMPT_VERSION = `${PROMPT_VERSION}:direct-v1`;
 
@@ -127,11 +127,12 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
     suggestionId = null,
     actionId = null,
     parameters = null,
+    targetLabel = null,
     excludedSuggestionIds = [],
     client = {},
     executionContext,
   }) {
-    const action = resolveAction({ suggestionId, actionId, parameters });
+    const action = resolveAction({ suggestionId, actionId, parameters, targetLabel });
     const turnId = await store.claimTurn(pool, { userId, threadId });
     let userMessage = null;
     try {
@@ -144,6 +145,7 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
           kind: 'direct_action',
           direct: true,
           actionId: action.id,
+          targetLabel: action.targetLabel,
           ...(suggestionId ? { suggestionId } : {}),
           client: {
             surface: client.surface || 'web',
@@ -230,6 +232,14 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
           message: action.message,
         });
       }
+      const contextual = contextualSuggestionSet(action);
+      if (contextual) {
+        presentation = {
+          ...presentation,
+          suggestions: contextual.suggestions,
+          suggestionContext: contextual.topic,
+        };
+      }
       const results = await store.loadToolResults(pool, {
         userId,
         threadId,
@@ -277,7 +287,86 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
     }
   }
 
-  return { execute, showSuggestionPage };
+  async function executeInline({
+    userId,
+    threadId,
+    actionId,
+    parameters = null,
+    targetLabel = null,
+    executionContext,
+  }) {
+    const action = resolveAction({ actionId, parameters, targetLabel });
+    const settled = await Promise.allSettled(action.steps.map(async (step) => {
+      const definition = registry.get(step.capabilityId);
+      if (!definition || definition.access(executionContext) !== true
+          || definition.risk !== 'read' || definition.confirmation !== 'never') {
+        throw new SuggestionExecutionError(
+          'direct_action_not_found',
+          'That inline detail is no longer available.',
+        );
+      }
+      const started = Date.now();
+      const toolRunId = await store.startToolRun(pool, {
+        userId,
+        threadId,
+        messageId: null,
+        capabilityId: step.capabilityId,
+        input: step.input,
+        dataKey: config.dataEncryptionKey,
+      });
+      try {
+        const result = await registry.execute(step.capabilityId, step.input, executionContext);
+        if (!safeResult(result)) {
+          throw new SuggestionExecutionError(
+            'direct_action_failed',
+            'The platform could not load that inline detail.',
+          );
+        }
+        await store.finishToolRun(pool, {
+          userId,
+          toolRunId,
+          modelResult: result.modelResult,
+          authoritativeResult: result.authoritativeResult,
+          renderer: result.renderer,
+          classicPath: result.classicPath,
+          durationMs: Date.now() - started,
+          dataKey: config.dataEncryptionKey,
+        });
+        return toolRunId;
+      } catch (error) {
+        await store.finishToolRun(pool, {
+          userId,
+          toolRunId,
+          modelResult: {
+            ok: false,
+            error: { code: String(error?.code || 'direct_action_failed').slice(0, 64) },
+          },
+          status: 'failed',
+          durationMs: Date.now() - started,
+          dataKey: config.dataEncryptionKey,
+        }).catch(() => {});
+        throw error;
+      }
+    }));
+    const rejected = settled.find((entry) => entry.status === 'rejected');
+    if (rejected?.status === 'rejected') throw rejected.reason;
+    const resultIds = settled.map((entry) => entry.value);
+    const results = await store.loadToolResults(pool, {
+      userId,
+      threadId,
+      resultIds,
+      dataKey: config.dataEncryptionKey,
+    });
+    if (results.length !== resultIds.length) {
+      throw new SuggestionExecutionError(
+        'result_unavailable',
+        'The inline detail completed but could not be loaded.',
+      );
+    }
+    return { results, modelInvocations: 0 };
+  }
+
+  return { execute, executeInline, showSuggestionPage };
 }
 
 module.exports = {

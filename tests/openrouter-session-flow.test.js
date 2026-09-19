@@ -42,7 +42,13 @@ test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => 
     '// ===== Spec stage endpoints',
   );
   assert.match(route, /const isOpenRouterSession/);
-  assert.match(route, /if \(!isOpenRouterSession\) \{\s*billing = await limits\.resolveBillingPath/);
+  // #2571: an OpenRouter session still never touches resolveBillingPath —
+  // there is no Anthropic key to spill onto and no Anthropic allowance to
+  // consume. What it does now is share ONE weekly pool when the key is the
+  // company-funded one, so that case is gated by checkBudget directly.
+  assert.match(route, /if \(isOpenRouterSession\) \{\s*if \(await managedOpenRouter\.usesIncludedKey\(pool, req\.user\.id\)\) \{\s*const budget = await limits\.checkBudget\(pool, req\.user\.id\);/);
+  assert.match(route, /\} else \{\s*billing = await limits\.resolveBillingPath/,
+    'the Claude path keeps the limit-first platform/BYOK contract');
 
   const direct = between(
     route,

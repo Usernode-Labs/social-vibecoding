@@ -146,3 +146,22 @@ test('the sanitized body keeps its wrapper identity across re-renders', () => {
   // group chat's transcript hit exactly this.
   assert.match(read(COMMENTS), /const wrapper = useMemo\(\(\) => \(\{ __html: html \}\), \[html\]\);/);
 });
+
+test('a long comment is clamped to four lines, with a control to expand it', () => {
+  // #2556. A pasted stack trace in this thread used to run the sheet off
+  // the bottom of the screen; it shows its first four lines now, and a
+  // "Show more" under them.
+  const html = render({ comments: [comment({ bodyHtml: `<p>${'word '.repeat(400)}</p>` })] });
+  assert.match(html, /class="dev-feed-msg-text dev-issue-body line-clamp-4"/,
+    'the clamp is a class on the body node itself, not a wrapper around it');
+  // Whether THIS comment is long is a question about the rendered box, so
+  // the control is revealed by an effect (see comment-clamp.tsx). The first
+  // paint carries the same markup the prerendered shell does — which is the
+  // rule for every island — and the effect adds the button.
+  assert.doesNotMatch(html, /Show more|Show less/);
+
+  // A short comment is unchanged apart from the clamp, which cuts nothing.
+  const short = render({ comments: [comment({ bodyHtml: '<p>hi</p>' })] });
+  assert.match(short, /<div class="dev-feed-msg-text dev-issue-body line-clamp-4"><p>hi<\/p><\/div>/);
+  assert.doesNotMatch(short, /<button/);
+});

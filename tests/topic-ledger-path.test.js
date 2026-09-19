@@ -201,8 +201,31 @@ test('a proposal that is only behind main says the platform is doing it', () => 
   assert.ok(sync, 'the behind row is the sync step when nothing conflicts');
   assert.equal(sync.step, 1);
   assert.equal(sync.sub, null, 'nobody is being asked to do anything, so nobody is named');
-  assert.deepEqual(sync.text, [{ b: 'Syncing.', tone: 'warn' }, ' Homeroom is bringing this proposal up to date with main automatically.'],
-    'what the reader needs, without the commit count the chip already carries');
+  assert.deepEqual(sync.text, [{ b: 'Syncing.', tone: 'warn' }, ' Main has moved 3 commits ahead; Homeroom is bringing this proposal up to date automatically.'],
+    'what the reader needs, with the commit count: the change page draws no chip to carry it');
+});
+
+// #2588: the provenance notes are off the ledger, and the x/y figure the
+// steps sheet draws is unchanged by their going.
+//
+// They were never steps — `_topicLedgerPath` numbers the sync, the checks
+// and the vote, and nothing else — so an imported, connector-built proposal
+// has exactly the path a native one has. This is the assertion that keeps
+// the count honest: the two rows leave, the figure does not move.
+test('an imported, agent-built proposal has the same path as any other', () => {
+  const AppView = makeAppView();
+  const IMPORTED = {
+    ...GAVE_UP,
+    source: 'imported', imported_pr_author: 'octo', external_agent: 'claude-code',
+  };
+  const d = AppView._proposalDetailsView(IMPORTED);
+  assert.equal(d.pathSteps, 3, 'the same three steps a native proposal has');
+  assert.equal(d.pathLeft, 3);
+  assert.deepEqual(plain(d.ledger.filter((r) => r.step).map((r) => r.key)),
+    ['mergeability', 'checks', 'votes']);
+  const keys = plain(d.ledger).map((r) => r.key);
+  assert.ok(!keys.includes('imported') && !keys.includes('agent'),
+    'and no provenance row padding the list under them');
 });
 
 test('with nothing to sync the ledger is left exactly as it was', () => {
@@ -248,12 +271,16 @@ test('the path is drawn as a checklist, and a cleared step is ticked', () => {
   assert.equal(clean.pathLeft, null);
 });
 
-test('a step box is a box, and a cleared one is not still coloured by the blocker', () => {
+test('a step wears a mark, and a cleared one is not still coloured by the blocker', () => {
+  // The change page draws the path as the card's requirements strip,
+  // expanded (topic/topic-head.tsx StepsSheet): a ring per step, filled ok
+  // once it has cleared and blocked when it is the red one.
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-ledger-row\[data-step\] \.dev-ledger-dot \{[^}]*border-radius: 5px;/,
-    'squared off, so it reads as a checkbox rather than a status dot');
-  assert.match(css, /\.dev-ledger-row\[data-step\]\[data-step-done\] \.dev-ledger-dot \{[^}]*--state-ok/,
-    'a ticked box takes the ok tone, not the row it sits in');
+  assert.match(css, /\.dev-step-mark \{[^}]*border-radius: 9999px;[^}]*box-shadow: inset 0 0 0 1\.5px currentColor;/,
+    'a ring, so it reads as a step rather than a status dot');
+  assert.match(css, /\.dev-step-mark-done \{ background: var\(--state-ok\); color: #fff; box-shadow: none; \}/,
+    'a ticked step takes the ok tone, not the row it sits in');
+  assert.match(css, /\.dev-step-mark-blocked \{ background: var\(--state-blocked\);/);
   assert.doesNotMatch(css, /The path rail/, 'the rail it replaced is gone, geometry and all');
 });
 

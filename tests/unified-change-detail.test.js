@@ -223,8 +223,8 @@ test('the Main row reads the integration record when that is the measurement the
   const behind = mainRow({ integration_behind_by: 3, integration_measured_at: '2026-09-14T12:42:29Z', integration_merges_clean: true });
   assert.equal(behind.key, 'behind');
   assert.deepEqual(JSON.parse(JSON.stringify(behind.text)),
-    [{ b: 'Syncing.', tone: 'warn' }, ' Homeroom is bringing this proposal up to date with main automatically.'],
-    'what the reader needs: the platform is on it — the commit count is the chip’s');
+    [{ b: 'Syncing.', tone: 'warn' }, ' Main has moved 3 commits ahead; Homeroom is bringing this proposal up to date automatically.'],
+    'what the reader needs: the platform is on it, and how far main has moved; the change page draws no chip to carry the count');
   assert.equal(behind.sub, null, 'and nobody is named under the label');
   const legacy = mainRow({ freshness_behind_by: 3, freshness_checked_at: '2026-09-14T12:42:29Z' });
   assert.deepEqual(behind.text, legacy.text, 'one measurement, one row, whichever column carried it');
@@ -275,19 +275,24 @@ test('actual shared component renders the entire card and escapes the issue titl
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor('session', failing);
   const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }));
-  for (const label of ['What changes for you', 'Where it stands', 'Addresses', 'More about this change', 'Testing instructions', 'Discussion', 'Build', 'Expected app, received login']) assert.ok(html.includes(label), label);
+  // The Needs-you page: the summary, the issues line, the steps sheet (with
+  // the failing check's reason behind its door), the Discussion, the Build.
+  for (const label of ['Addresses', 'Where it stands', 'Discussion', 'Build', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
   assert.match(html, />Edit issues</, 'the owner can manage associations after creation');
-  assert.match(html, /rounded-full bg-violet-500\/10/, 'the issue number is a compact identity chip');
-  assert.match(html, /class="gc-event-box dev-issue-ref"/, 'the linked issue is a full navigable row, in the Discussion’s event-box language');
-  // #2193: the heading names what is addressed, and the row keeps its own
-  // flex layout so a long title truncates instead of scrolling the card.
-  assert.match(html, /class="dev-topic-part-h">Addresses issues?</);
+  // The issue is a chip on the "Addresses" line, in the Needs-you chip's
+  // accent tint: the number bold, the title after it, the issue's own page
+  // behind it.
+  assert.match(html, /<a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"[^>]*><b>#1993<\/b><span>&lt;script&gt;issue&lt;\/script&gt;<\/span><\/a>/);
+  assert.match(html, /class="dev-topic-hero-issues-k">Addresses</);
+  assert.doesNotMatch(html, /dev-issue-ref/, 'the event-box row is the ISSUE page\u2019s (AddressedBy), not the change page\u2019s');
+  // #2193: a long title truncates instead of scrolling the page sideways.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
-  const rowRule = css.match(/\.dev-change-issues a \{[^}]*\}/);
-  assert.ok(rowRule, 'the linked-issue row rule exists');
-  assert.doesNotMatch(rowRule[0], /display\s*:/, 'no display override outranks the row\u2019s flex');
+  const chipRule = css.match(/\.dev-topic-issue > span \{[^}]*\}/);
+  assert.ok(chipRule, 'the issue chip\u2019s title rule exists');
+  assert.match(chipRule[0], /text-overflow: ellipsis/);
+  assert.match(chipRule[0], /white-space: nowrap/);
   // No tabs: the Discussion is the sheet under the card, and the Build sheet
   // sits behind the card's pill — open here, because the author's own
   // underway change opens on its workspace.

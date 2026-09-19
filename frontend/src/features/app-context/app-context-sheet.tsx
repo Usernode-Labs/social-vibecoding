@@ -135,6 +135,7 @@ import {
 } from '@/components/ui/icons';
 
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -434,7 +435,7 @@ export function AppsSwitcherSheet(): ReactNode {
           ))}
           {apps && rows.length === 0 ? (
             <span className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
-              No apps yet. Discover finds the ones you can join.
+              {NO_APPS_YET}
             </span>
           ) : null}
         </div>

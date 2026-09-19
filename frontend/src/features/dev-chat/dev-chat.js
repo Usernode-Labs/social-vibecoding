@@ -283,6 +283,90 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  // #2570: what each model is good for and what a change on it is expected
+  // to cost. One read per page, cached on the module: the payload is the
+  // platform's own editorial table plus a token profile, and neither moves
+  // inside a session. A failure leaves it null, which is the pre-#2570
+  // picker — a note nobody can fetch is not an error a builder has to see.
+  _modelNotes: null,
+  _modelNotesPromise: null,
+
+  async _ensureModelNotes() {
+    if (DevChat._modelNotes) return DevChat._modelNotes;
+    if (DevChat._modelNotesPromise) return DevChat._modelNotesPromise;
+    const request = (async () => {
+      try {
+        const res = await fetch('/api/model-notes', { credentials: 'same-origin' });
+        if (!res.ok) return null;
+        const body = await res.json();
+        return (body && typeof body === 'object' && body.models) ? body : null;
+      } catch {
+        return null;
+      }
+    })();
+    DevChat._modelNotesPromise = request;
+    const notes = await request;
+    if (notes) {
+      DevChat._modelNotes = notes;
+      DevChat._publishComposer();
+    }
+    DevChat._modelNotesPromise = null;
+    return notes;
+  },
+
+  /**
+   * #2570: the note and the estimated cost for one model, as the picker
+   * states them. ONE helper, because the same two facts appear in three
+   * places — the compact text beside an option, the full line under the
+   * selected one, and (through the same call) any later surface.
+   *
+   * `catalogModel` is the user's own OpenRouter catalogue entry when there
+   * is one. The server cannot read that catalogue (it holds no key), so a
+   * model the platform does not curate gets its estimate here instead:
+   * the catalogue's published per-token prices times the server's token
+   * profile for a typical change. Same arithmetic, same profile, either
+   * side of the wire.
+   */
+  _modelCostNote(modelId, catalogModel) {
+    const notes = DevChat._modelNotes;
+    const id = String(modelId || '').replace(/^openrouter:|^anthropic:/, '');
+    const entry = notes?.models?.[id] || null;
+    let note = entry?.note || '';
+    let cents = entry && entry.estimateCents != null ? Number(entry.estimateCents) : null;
+    if (cents == null && notes?.typicalChange && catalogModel) {
+      const input = Number(catalogModel.inputPricePerMillion);
+      const output = Number(catalogModel.outputPricePerMillion);
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
+          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
+        cents = Math.round(dollars * 100 * 100) / 100;
+      }
+    }
+    // Under a cent is "<$0.01" rather than "$0.00": a model that costs
+    // something must not read as free.
+    const money = cents == null ? ''
+      : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+    // #2570: a bare dollar amount is never shown to anybody. The figure is
+    // per TYPICAL CHANGE, not per message, per hour or per month, and a
+    // naked "$1.55" beside a model name invites all three readings. So the
+    // amount only ever leaves here inside this phrase, and every surface
+    // that shows a cost renders it. "about" carries the estimate; what a
+    // typical change IS stays defined once, in the server's TYPICAL_CHANGE
+    // profile, which the admin screen prints.
+    const perChange = money ? `about ${money} for a typical change` : '';
+    return {
+      note,
+      // The bare amount, for arithmetic and tests. Not for display on its
+      // own: render `compact` or `full`.
+      estimate: money,
+      // "general coding work · about $1.55 for a typical change (estimate)"
+      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      // The same sentence, minus the explicit label, for the one line a
+      // closed native control shows.
+      compact: [note, perChange].filter(Boolean).join(' · '),
+    };
+  },
+
   /** Load the saved OpenRouter choice and its key-visible model shortlist. */
   async _ensureModelPickerData({ forceRefresh = false } = {}) {
     if (!DevChat.currentSession) return null;
@@ -293,6 +377,11 @@ const DevChat = {
       return DevChat._modelPickerDataPromise;
     }
 
+    // #2570: the notes ride along with the picker's own read. They are a
+    // separate endpoint because they are platform-wide rather than
+    // per-user, and not awaited here because the picker must paint whether
+    // or not they land.
+    DevChat._ensureModelNotes();
     const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
     DevChat._modelPickerDataPromise = request;
     try {
@@ -308,15 +397,74 @@ const DevChat = {
   },
 
   /**
-   * The one in-composer model picker, as grouped data. Null off-platform.
+   * ONE FLAT LIST (#2569). The picker used to be two optgroups — "OpenRouter
+   * key" and "Anthropic key" — with every option repeating its key source in
+   * its own label, and the OpenRouter models only reachable after "Add more
+   * OpenRouter models…". That made the first question "whose key pays?" when
+   * the question a builder is actually asking is "which model?".
    *
-   * OpenRouter comes first. Its shortlist is the user's saved model (or the
-   * server's recommended GLM when there is no saved choice), the model pinned
-   * to this session, and favorites added through the full catalog dialog.
-   * Anthropic's direct models come second. Every option repeats its key source
-   * because native optgroup headings disappear when a select is closed — this
-   * keeps an Anthropic-authored model reached through OpenRouter from looking
-   * like it will use the Anthropic key.
+   * So: no headings, no prefixes, one list. The order is
+   * `_flatModelOptions` below, and which key is charged survives as a `title`
+   * on each option — available on hover, absent from the label.
+   *
+   * The OPTION VALUES keep their `openrouter:` / `anthropic:` prefixes: they
+   * are what _onModelPicked dispatches on, and the backend resolves them.
+   */
+  _flatModelOptions({ data, byId, starterIds, extraIds }) {
+    const options = [];
+    const seen = new Set();
+    const pushOpenRouter = (id, { disabled = false, label = null } = {}) => {
+      if (!id || seen.has(`${OPENROUTER_MODEL_PREFIX}${id}`)) return;
+      seen.add(`${OPENROUTER_MODEL_PREFIX}${id}`);
+      const model = byId.get(id);
+      // #2570: the compact cost/note text rides beside the name so it is
+      // visible while the menu is open, not only once a model is picked.
+      const cost = disabled ? null : DevChat._modelCostNote(id, model);
+      options.push({
+        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
+        label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
+        // The secondary hint, not part of the label (#2569).
+        title: 'Runs on your OpenRouter key',
+        ...(disabled ? { disabled: true } : null),
+      });
+    };
+
+    // 1. The starting models: the platform's curated OpenRouter pair, in the
+    //    server's own order (GLM first, because it is the default).
+    for (const id of starterIds) pushOpenRouter(id);
+
+    // 2. The three Anthropic models, by their DevChat.MODELS labels.
+    for (const [id, meta] of Object.entries(DevChat.MODELS)) {
+      const cost = DevChat._modelCostNote(id, null);
+      const label = (meta && meta.label) || id;
+      options.push({
+        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+        label: cost.compact ? `${label} · ${cost.compact}` : label,
+        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+      });
+    }
+
+    // 3. Anything else this account is already using: favourites starred in
+    //    the full catalog dialog, the model pinned to this session, and the
+    //    saved default. De-duplicated against the pair above.
+    for (const entry of extraIds) {
+      if (typeof entry === 'string') pushOpenRouter(entry);
+      else pushOpenRouter(entry.id, entry);
+    }
+
+    // 4. The door to the full catalog, still last.
+    options.push({
+      value: OPENROUTER_MORE_VALUE,
+      label: 'Add more OpenRouter models…',
+      title: 'Browse every model your OpenRouter key can reach',
+    });
+    return options;
+  },
+
+  /**
+   * The one in-composer model picker, as a flat option list. Null
+   * off-platform. See _flatModelOptions for the order and why there are no
+   * provider headings any more.
    */
   _modelPickerView() {
     const venue = DevChat._currentVenueId();
@@ -365,55 +513,62 @@ const DevChat = {
       addShortlistId(model.id);
     }
 
-    const openRouterOptions = shortlistIds.map((id) => {
-      const model = byId.get(id);
-      return {
-        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
-        label: `OpenRouter key · ${model?.name || id}`,
-      };
-    });
     let selectedOpenRouterId = currentOpenRouterId || preferredId;
+    const extraIds = [...shortlistIds];
     if (openRouterSelected && !selectedOpenRouterId) {
       // Old/incomplete rows should say that they are still loading rather
-      // than make the select visually fall into Anthropic's first option.
+      // than make the select visually fall into the first real option.
       selectedOpenRouterId = '__loading__';
-      openRouterOptions.unshift({
-        value: `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`,
-        label: 'OpenRouter key · Loading model',
-        disabled: true,
-      });
+      extraIds.unshift({ id: selectedOpenRouterId, label: 'Loading model', disabled: true });
     }
 
-    const groups = [];
+    // The two starting models are the server's curated pair
+    // (config.openrouterRecommendedModels), with its single recommendation
+    // first. A deployment that changes that list changes what a new account
+    // starts on; nothing here hardcodes a model id.
+    const starterIds = [];
+    const addStarter = (id) => {
+      if (id && byId.has(id) && !starterIds.includes(id)) starterIds.push(id);
+    };
+    addStarter(recommendedId);
+    for (const model of catalog) if (model?.isDefaultFavorite) addStarter(model.id);
+    for (const model of catalog) if (model?.isRecommended) addStarter(model.id);
+
     // Before the async read lands, keep the catalog door available. Once the
-    // capability response says OpenRouter is unavailable, omit a dead group
-    // unless this is an existing OpenRouter session that must remain visible.
-    if (!data || data.codexAvailable || data.loadError || openRouterSelected) {
-      groups.push({
-        id: 'openrouter',
-        label: 'OpenRouter key',
-        options: [
-          ...openRouterOptions,
-          { value: OPENROUTER_MORE_VALUE, label: 'Add more OpenRouter models…' },
-        ],
+    // capability response says OpenRouter is unavailable, drop the OpenRouter
+    // half of the list unless this is an existing OpenRouter session that
+    // must remain visible.
+    const openRouterUsable = !data || data.codexAvailable || data.loadError || openRouterSelected;
+    const options = openRouterUsable
+      ? DevChat._flatModelOptions({ data, byId, starterIds, extraIds })
+      : Object.entries(DevChat.MODELS).map(([id, meta]) => {
+        const cost = DevChat._modelCostNote(id, null);
+        const label = (meta && meta.label) || id;
+        return {
+          value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+          label: cost.compact ? `${label} · ${cost.compact}` : label,
+          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        };
       });
-    }
-    const directOptions = Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-      value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-      label: `Anthropic key · ${(meta && meta.label) || id}`,
-    }));
-    groups.push({ id: 'anthropic', label: 'Anthropic key', options: directOptions });
 
     const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
       ? DevChat.selectedModel
       : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
         ? DevChat._defaultModel
         : (Object.keys(DevChat.MODELS)[0] || ''));
+    // #2570: one line UNDER the picker with the full note for whichever
+    // model is selected. A native closed select shows one line of text, so
+    // the compact form above has to fit beside a name; this is where the
+    // sentence gets to be a sentence.
+    const selectedNote = openRouterSelected
+      ? DevChat._modelCostNote(selectedOpenRouterId, byId.get(selectedOpenRouterId))
+      : DevChat._modelCostNote(directId, null);
     return {
-      groups,
+      options,
       selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
+      note: selectedNote.full || '',
       changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
     };
   },
@@ -1902,9 +2057,10 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: DevChat._creditWindow().weekly
-          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
-          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        // #2571: one allowance, one window. The fixture behind ?demo=1 is
+        // the weekly cap at its default, so the card names that.
+        error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.',
+        capWindow: 'weekly',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1946,11 +2102,13 @@ const DevChat = {
     return CO.resetSentence(state);
   },
 
-  // #1788: the allowance runs over two windows now (daily and weekly) and
-  // the server reports whichever one is BINDING in the legacy
-  // limit/spent/remaining fields. Every sentence that used to hardcode
-  // "today" / "daily" asks here instead, so the meter, its tooltip and the
-  // banner all name the window the numbers actually describe.
+  // #1788 gave the allowance two windows and reported whichever was
+  // BINDING in the legacy limit/spent/remaining fields; #2571 leaves one —
+  // the server always answers `capWindow: 'weekly'` now. Every sentence
+  // that used to hardcode "today" / "daily" still asks here, so the meter,
+  // its tooltip and the banner name the window the numbers describe, and
+  // the daily spellings below remain only as the fallback for a payload
+  // that carries no window at all.
   _creditWindow() {
     const b = DevChat.budget || {};
     const weekly = b.capWindow === 'weekly';
@@ -1960,7 +2118,7 @@ const DevChat = {
       label: b.windowLabel || (weekly ? 'This week' : 'Today'),
       // "…left today" / "…left this week"
       when: weekly ? 'this week' : 'today',
-      // "your $20.00 platform daily limit"
+      // "your $50.00 platform weekly limit"
       limitNoun: weekly ? 'weekly limit' : 'daily limit',
       // "your free daily AI credits"
       creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
@@ -2031,9 +2189,9 @@ const DevChat = {
   _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
-    // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it; what it shows instead is
-    // what is left on that key (#2118).
+    // An OpenRouter session's meter is the KEY's remaining figure, not the
+    // platform's (#2118) — see _openRouterAllowanceView on what that means
+    // for an included key now that #2571 pools its spend.
     if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
@@ -2151,13 +2309,23 @@ const DevChat = {
 
   // #2118: the OpenRouter session's half of the meter. A session on an
   // OpenRouter key never touches the platform's Anthropic allowance, so
-  // the daily meter has nothing to say about it; what the viewer wants to
-  // know instead is how much of the KEY's limit is left. OpenRouter
+  // the platform meter has nothing to say about it; what the viewer wants
+  // to know instead is how much of the KEY's limit is left. OpenRouter
   // reports that itself (GET /key: limit, limit_remaining, limit_reset),
   // so the figure is shown as reported rather than derived, in the window
   // the key's reset cadence names. A key with no limit draws nothing
   // rather than a guess, and the Claude meter's red/yellow thresholds
   // colour what is left.
+  //
+  // #2571 pooled the INCLUDED key's spend with Claude spend against one
+  // weekly cap, and this figure does not know about that half: OpenRouter
+  // only ever counts OpenRouter. So for an included key it is an upper
+  // bound on what is left, and the pooled gate can refuse a turn while it
+  // still shows headroom — the refusal card names the weekly cap and the
+  // figure it was measured against. Showing the pooled number here instead
+  // is a change to this meter's contract (and to the ?shot= fixture and
+  // declared checks behind it), so it is deliberately left for its own
+  // change rather than folded into this one.
   _openRouterAllowanceView() {
     const NONE = { title: null, parts: [] };
     const a = DevChat.openrouterAllowance;
@@ -2418,19 +2586,29 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
     if (shot !== 'credits-low' && shot !== 'credits-exhausted') return null;
+    // #2571: the allowance is weekly, so the fixture is 80% (or all) of the
+    // $50 weekly cap and names Monday 00:00 UTC as the boundary.
     const reset = new Date();
-    reset.setUTCHours(24, 0, 0, 0);
+    reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+    reset.setUTCHours(0, 0, 0, 0);
     const exhausted = shot === 'credits-exhausted';
     return {
-      spentCents: exhausted ? 2500 : 2000,
-      limitCents: 2500,
-      remainingCents: exhausted ? 0 : 500,
+      spentCents: exhausted ? 5000 : 4000,
+      limitCents: 5000,
+      remainingCents: exhausted ? 0 : 1000,
       globalSpentCents: 4000,
       globalLimitCents: 100000,
       byokSpentCents: 0,
       aiEnabled: true,
       resetsAt: reset.toISOString(),
       lowBalancePct: 80,
+      capWindow: 'weekly',
+      windowLabel: 'This week',
+      resetLabel: 'Monday 00:00 UTC',
+      dailyApplies: false,
+      weeklyApplies: true,
+      weeklyLimitCents: 5000,
+      weeklySpentCents: exhausted ? 5000 : 4000,
       shot: true,
     };
   },
@@ -4432,7 +4610,8 @@ const DevChat = {
             role: 'assistant',
             content: '',
             creditsCard: {
-              error: data.error || 'They reset at midnight UTC.',
+              error: data.error || 'They reset Monday 00:00 UTC.',
+              capWindow: (DevChat.budget || {}).capWindow || 'weekly',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
               verificationRequired: !!data.verificationRequired,
@@ -7180,8 +7359,6 @@ const DevChat = {
       // stays until the first message lands, so it is persistent rather than
       // a toast.
       empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
-      // #2241: …and nothing has been created for it yet.
-      unsent: !!(session && session.pending),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and
@@ -8523,7 +8700,7 @@ const DevChat = {
         branch: '',
         pr: null,
         prTitle: '',
-        newChangeTitle: 'Nothing is created until you send your first message.',
+        newChangeTitle: '',
         life: null,
         venue: null,
         actions: [],

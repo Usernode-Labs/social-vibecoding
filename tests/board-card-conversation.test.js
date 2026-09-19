@@ -219,7 +219,11 @@ test('the legacy comment filler is wired from the board and paints wherever the 
   const body = fill.slice(0, fill.indexOf('\n  },'));
   assert.ok(!/getElementById\('dev-workshop'\)/.test(body), 'the paint is not scoped to the Workshop host');
   assert.match(body, /document\.querySelectorAll\(\s*`\.dev-feed-comments\[data-comments-for="\$\{number\}"\]`\s*\)/);
-  assert.match(body, /for \(const node of live\) node\.innerHTML = html;/, 'every live slot gets the answer');
+  assert.match(
+    body,
+    /for \(const node of live\) \{\s*node\.innerHTML = html;\s*AppView\._clampFeedComments\(node\);\s*\}/,
+    'every live slot gets the answer, and its own clamp measurement (#2556)',
+  );
 });
 
 test('the comment and thread CSS is scoped to both card hosts, at the weight it had', () => {

@@ -42,6 +42,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
 const emailSignup = require('../services/email-signup');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
 // — GET /api/apps hides self-hosted rows from non-admins on purpose.
@@ -350,6 +351,15 @@ function authRoutes(config) {
           },
         });
       }
+      // #2568: a brand-new account gets its included OpenRouter key here,
+      // the moment the row exists. Best effort by construction —
+      // ensureIncludedKey never throws — so signing up cannot fail because
+      // OpenRouter's management API did; the next new-change screen retries.
+      if (verified.created) {
+        await managedOpenRouter.ensureIncludedKey({
+          pool, userId: verified.userId, config, reason: 'signup_email',
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
       log.info('email-signup', 'Email code verified, password setup pending', {
         userId: verified.userId,
@@ -430,6 +440,11 @@ function authRoutes(config) {
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_activation_code',
+      });
 
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -526,10 +541,20 @@ function authRoutes(config) {
     // block above: this endpoint already pays for one users lookup, and
     // only this endpoint renders the value.
     let devFlowPreference = null;
+    // #2563: has this account still never picked the handle other members
+    // see? Read in the same users lookup as the block above — it is one
+    // more column on a row this endpoint already fetches.
+    //
+    // Defaults FALSE, and stays FALSE if the lookup below throws. That is
+    // the deliberate failure direction: a gate that cannot be read must let
+    // people in, not strand every signed-in member behind a blocking step
+    // the client cannot dismiss.
+    let needsUsernameChoice = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
+                u.needs_username_choice,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -548,14 +573,14 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
-      const inOpenRouterBeta = !config.openrouterBetaUserIds?.length
-        || config.openrouterBetaUserIds.includes(String(req.user.id));
+      // #2568: no allowlist any more — availability is the deployment
+      // switch plus whether this account actually holds a usable key.
       openrouterAvailable = config.codexOpenrouterEnabled === true
-        && inOpenRouterBeta
         && rows[0]?.openrouter_credential_valid === true;
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
         : null;
+      needsUsernameChoice = rows[0]?.needs_username_choice === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -609,6 +634,16 @@ function authRoutes(config) {
         // waitlist — the waiting room polls this to know when to let
         // the user through.
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // First-run username gate (#2563). TRUE means this account has
+        // never picked the handle other members see — email sign-up gave
+        // it a generated one and recorded that the person still has to
+        // choose. The web shell presents a blocking "Choose your username"
+        // step on arrival; the mobile app can follow the same flag later.
+        //
+        // A NEW field: `username` above is untouched and still carries
+        // whatever the account currently holds, so every existing client
+        // renders exactly what it rendered before.
+        needsUsernameChoice,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
@@ -688,29 +723,29 @@ function authRoutes(config) {
     // (plus BYOK spillover) so a reviewer sees the real layout.
     if (IS_STAGING && req.query.demo === '1') {
       const reset = new Date();
-      reset.setUTCHours(24, 0, 0, 0);
+      reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+      reset.setUTCHours(0, 0, 0, 0);
       return res.json({
-        limitCents: 2000,
+        limitCents: 5000,
         spentCents: 1360,
-        remainingCents: 640,
+        remainingCents: 3640,
         byokCents: 450,
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
-        // #1788: the allowance has two windows now, and the row's copy
-        // follows whichever one is binding. The daily cap binds in this
-        // fixture — the weekly one still has room — so the reviewed row
-        // reads exactly as it did before, with the window now stated
-        // rather than assumed.
-        capWindow: 'daily',
-        windowLabel: 'Today',
-        resetLabel: 'midnight UTC',
-        dailyApplies: true,
-        dailyLimitCents: 2000,
-        dailySpentCents: 1360,
+        // #1788 stated which window the row's copy follows; #2571 leaves
+        // one: the account's single weekly allowance, reset Monday 00:00
+        // UTC. The daily figures below are the retained-but-unenforced
+        // setting and today's share of the same spend.
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: false,
+        dailyLimitCents: 2500,
+        dailySpentCents: 480,
         weeklyApplies: true,
-        weeklyLimitCents: 17500,
-        weeklySpentCents: 4820,
+        weeklyLimitCents: 5000,
+        weeklySpentCents: 1360,
         demo: true,
       });
     }
@@ -1449,6 +1484,11 @@ function authRoutes(config) {
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_wallet',
+      });
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

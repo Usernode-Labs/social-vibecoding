@@ -50,6 +50,7 @@ import { LanguageSection } from './language';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
 import { ThemeSection } from './theme';
+import { TourSection } from './tour';
 import { UsernameSection } from './username';
 import { EmailSection } from './email';
 import { UsernodeSection } from './usernode';
@@ -85,6 +86,10 @@ export function SettingsSections() {
       <WalletSection />
       <LanguageSection />
       <AlertsSection />
+      {/* The way back to Home's welcome tour. It sits in Preferences, last,
+          because it is the one entry here that does not configure anything:
+          pressing it replays a walkthrough. See ./tour.tsx. */}
+      <TourSection />
       {/* HomePanelsSection sat here — the per-widget show/hide list for the
           home screen. THE UI OVERHAUL made those three fixed sections, so
           there is nothing to configure. */}

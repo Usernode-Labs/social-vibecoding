@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeading } from '@/components/ui/field';
@@ -42,7 +42,8 @@ function price(model: GlobalChatModel) {
   return '';
 }
 
-export function GlobalChatSettingsSection() {
+export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: boolean } = {}) {
+  const instanceId = useId();
   const [profile, setProfile] = useState<GlobalChatProfile | null>(null);
   const [usage, setUsage] = useState<GlobalChatUsage | null>(null);
   const [overall, setOverall] = useState<OverallAllowance | null>(null);
@@ -56,6 +57,7 @@ export function GlobalChatSettingsSection() {
   const [savingEnabled, setSavingEnabled] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const idPrefix = embedded ? `chat-global-chat-${instanceId}` : 'settings-global-chat';
 
   async function loadModels(nextEffort: string, refresh = false) {
     const next = await api.models(nextEffort, { refresh });
@@ -126,6 +128,7 @@ export function GlobalChatSettingsSection() {
       setUsage(next.usage);
       setEnabled(next.profile.enabled === true);
       setCap(next.profile.spendCapUsd || '');
+      await initializeGlobalChat({ force: true });
       setStatus('Global Chat settings saved.');
     } catch (reason) {
       setStatus('');
@@ -160,31 +163,38 @@ export function GlobalChatSettingsSection() {
   }
 
   return (
-    <div data-settings-section="global-chat" className="hidden">
-      <SectionHeading title={<>Global Chat <span className="text-sm font-normal text-zinc-500">(experimental)</span></>}>
-        Fast, low-cost AI for navigating and using Homeroom. Development work keeps its own model and reasoning setting.
-      </SectionHeading>
+    <div
+      {...(embedded
+        ? { 'data-global-chat-settings-editor': 'true' }
+        : { 'data-settings-section': 'global-chat' })}
+      className={embedded ? 'global-chat-settings-editor' : 'hidden'}
+    >
+      {!embedded ? (
+        <SectionHeading title={<>Global Chat <span className="text-sm font-normal text-zinc-500">(experimental)</span></>}>
+          Fast, low-cost AI for navigating and using Homeroom. Development work keeps its own model and reasoning setting.
+        </SectionHeading>
+      ) : null}
 
       {loading ? <p className="text-sm text-zinc-500 dark:text-zinc-400 py-2">Loading…</p> : null}
       {error ? <p role="alert" className="mb-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
 
       {!loading && profile ? (
         <div className="mb-4 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3">
-          <label className="flex items-start justify-between gap-4 cursor-pointer select-none" htmlFor="settings-global-chat-enabled">
+          <label className="flex items-start justify-between gap-4 cursor-pointer select-none" htmlFor={`${idPrefix}-enabled`}>
             <span>
               <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
                 Enable experimental Global Chat
               </span>
-              <span id="settings-global-chat-enabled-description" className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">
+              <span id={`${idPrefix}-enabled-description`} className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">
                 Show the New chat entry in Improve. Classic remains the default experience.
               </span>
             </span>
             <Switch
-              id="settings-global-chat-enabled"
+              id={`${idPrefix}-enabled`}
               className="mt-0.5 shrink-0"
               checked={enabled}
               disabled={savingEnabled || saving}
-              aria-describedby="settings-global-chat-enabled-description"
+              aria-describedby={`${idPrefix}-enabled-description`}
               onChange={(event) => void changeEnabled(event.target.checked)}
             />
           </label>
@@ -209,10 +219,10 @@ export function GlobalChatSettingsSection() {
       {!loading && catalog?.configured ? (
         <div className="space-y-4">
           <div>
-            <Label className="mb-1" htmlFor="settings-global-chat-model">Global Chat model</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>Global Chat model</Label>
             <div className="flex items-stretch gap-2">
               <Select
-                id="settings-global-chat-model"
+                id={`${idPrefix}-model`}
                 className="min-w-0 flex-1"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
@@ -236,9 +246,9 @@ export function GlobalChatSettingsSection() {
           </div>
 
           <div>
-            <Label className="mb-1" htmlFor="settings-global-chat-reasoning">Reasoning effort</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>Reasoning effort</Label>
             <Select
-              id="settings-global-chat-reasoning"
+              id={`${idPrefix}-reasoning`}
               value={effort}
               onChange={(event) => void changeEffort(event.target.value)}
             >
@@ -251,9 +261,9 @@ export function GlobalChatSettingsSection() {
           </div>
 
           <div>
-            <Label className="mb-1" htmlFor="settings-global-chat-cap">Monthly Chat cap in USD · optional</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-cap`}>Monthly Chat cap in USD · optional</Label>
             <Input
-              id="settings-global-chat-cap"
+              id={`${idPrefix}-cap`}
               inputMode="decimal"
               placeholder="No separate cap"
               value={cap}
@@ -297,4 +307,8 @@ export function GlobalChatSettingsSection() {
       ) : null}
     </div>
   );
+}
+
+export function GlobalChatSettingsSection() {
+  return <GlobalChatSettingsEditor />;
 }

@@ -153,6 +153,9 @@ test('the authenticated Global Chat loopback gets a compact icon-ready app proje
         open_prs: '2',
         active_sessions: '1',
         open_issues: '3',
+        message_count: '9',
+        total_seconds: '5400',
+        active_users: '4',
       })],
     };
   };
@@ -173,6 +176,9 @@ test('the authenticated Global Chat loopback gets a compact icon-ready app proje
     assert.strictEqual(body.apps[0].openIssues, 3);
     assert.strictEqual(body.apps[0].openProposals, 2);
     assert.strictEqual(body.apps[0].activeDevelopment, 1);
+    assert.strictEqual(body.apps[0].messagesLast7Days, 9);
+    assert.strictEqual(body.apps[0].activitySecondsLast7Days, 5400);
+    assert.strictEqual(body.apps[0].activeUsers, 4);
     assert.ok(body.apps[0].description.length <= 500);
     assert.strictEqual(Object.hasOwn(body.apps[0], 'manifest_snapshot'), false);
     assert.strictEqual(Object.hasOwn(body.apps[0], 'repo_url'), false);

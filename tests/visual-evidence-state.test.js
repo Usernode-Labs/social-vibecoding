@@ -37,7 +37,7 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
     rationale: null,
     claims: [],
     headSha: 'a'.repeat(40),
-    reason: 'This proposal appears to change the UI but has no visual evidence declaration yet.',
+    reason: 'This proposal appears to change the UI but has no visual change preview declaration yet.',
   });
 });
 

@@ -417,7 +417,9 @@ test('every fallback reason the server can send has a sentence', () => {
   // stamps onto the 201 body. It is deliberately lenient — a session that
   // runs beats a 4xx — so the note is the only place a user learns their
   // saved default was not honoured.
-  for (const reason of ['flag_off', 'not_in_beta', 'model_unavailable', 'no_credential']) {
+  // #2568 retired `not_in_beta`: the gradual-rollout allowlist is gone, so
+  // there is no limited beta for a saved default to be outside of.
+  for (const reason of ['flag_off', 'model_unavailable', 'no_credential']) {
     const note = BV.fallbackNote(reason);
     assert.ok(note, `no note for ${reason}`);
     assert.match(note, /Homeroom · OpenRouter/, `${reason} does not name the venue asked for`);
@@ -426,7 +428,7 @@ test('every fallback reason the server can send has a sentence', () => {
 });
 
 test('an unknown fallback reason renders nothing at all', () => {
-  for (const bogus of ['', null, undefined, 'kaboom', 'toString']) {
+  for (const bogus of ['', null, undefined, 'kaboom', 'toString', 'not_in_beta']) {
     assert.equal(BV.fallbackNote(bogus), '', `fallbackNote(${JSON.stringify(bogus)})`);
   }
 });

@@ -79,6 +79,9 @@ function parseArguments(raw) {
 }
 
 function safeCode(error) {
+  if (!error?.code && /^global-chat metadata:/.test(String(error?.message || ''))) {
+    return 'invalid_metadata';
+  }
   const code = String(error?.code || 'tool_failed');
   return /^[A-Za-z0-9_.:-]{1,64}$/.test(code) ? code : 'tool_failed';
 }
@@ -97,10 +100,17 @@ function toolFailure(error) {
     rate_limited: 'The chat model is busy right now. Please try again.',
     provider_unavailable: 'The chat model is temporarily unavailable. Please try again.',
     provider_error: 'The chat model could not complete that request. Please try again.',
+    invalid_metadata: 'Global Chat could not prepare that request. Please try again.',
     presentation_required: 'The chat model returned an incomplete response. Please try again.',
     iteration_limit: 'The chat model could not finish that request. Please try again.',
   };
-  return { ok: false, error: { code, message: messages[code] || 'The capability could not be completed.' } };
+  return {
+    ok: false,
+    error: {
+      code,
+      message: messages[code] || 'Global Chat could not complete that request. Please try again.',
+    },
+  };
 }
 
 function boundedToolContent(value) {
@@ -829,6 +839,23 @@ function createGlobalChatOrchestrator({
         'Global Chat could not complete that request within the tool limit.',
       );
     } catch (error) {
+      let assistantMessage = null;
+      if (userMessage && error?.code !== 'cancelled') {
+        const failure = toolFailure(error);
+        assistantMessage = await store.insertMessage(pool, {
+          userId,
+          threadId,
+          role: 'assistant',
+          text: failure.error.message,
+          payload: {
+            kind: 'turn_error',
+            errorCode: failure.error.code,
+          },
+          promptVersion: PROMPT_VERSION,
+          model: model?.id || null,
+          reasoningEffort: globalChatProfile?.reasoningEffort || null,
+        }).catch(() => null);
+      }
       if (userMessage && typeof accounting.recordTurnOutcome === 'function') {
         await accounting.recordTurnOutcome(pool, {
           userId,
@@ -847,6 +874,7 @@ function createGlobalChatOrchestrator({
           turnId,
           code: safeCode(error),
           message: toolFailure(error).error.message,
+          assistantMessage,
         }).catch(() => {});
       }
       throw error;

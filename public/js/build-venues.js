@@ -501,8 +501,9 @@
   // was Homeroom · OpenRouter got a Homeroom · Claude session with no
   // explanation. One sentence, naming the fix.
   var FALLBACK_NOTES = {
+    // #2568 retired `not_in_beta` with the gradual-rollout allowlist: there
+    // is no limited beta to be outside of any more.
     flag_off: 'Your default is Homeroom · OpenRouter, but this deployment has it turned off, so this session is building in Homeroom · Claude.',
-    not_in_beta: 'Your default is Homeroom · OpenRouter, which is still in a limited beta you’re not in yet. This session is building in Homeroom · Claude.',
     model_unavailable: 'Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.',
     no_credential: 'Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.',
   };

@@ -437,13 +437,25 @@ test('one transient provider failure is accounted as a retry and free-form compl
   );
 
   const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
+  const failureEvents = [];
   await assert.rejects(
-    invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' })),
+    invalidState.orchestrator.runTurn(turnInput({
+      text: 'Hello.',
+      emit: async (event) => { failureEvents.push(event); },
+    })),
     (error) => error instanceof GlobalChatOrchestrationError
       && error.code === 'presentation_required',
   );
   assert.ok(invalidState.calls.some((entry) => entry.type === 'release'));
-  assert.equal(invalidState.messages.some((message) => message.role === 'assistant'), false);
+  const failureMessage = invalidState.messages.find((message) => message.role === 'assistant');
+  assert.equal(failureMessage?.payload.kind, 'turn_error');
+  assert.equal(
+    failureMessage?.text,
+    'The chat model returned an incomplete response. Please try again.',
+  );
+  const terminal = failureEvents.find((event) => event.type === 'turn.failed');
+  assert.equal(terminal?.assistantMessage?.id, failureMessage?.id);
+  assert.equal(terminal?.message, failureMessage?.text);
 });
 
 test('runtime metadata uses only the server-owned compacted transcript summary', async () => {

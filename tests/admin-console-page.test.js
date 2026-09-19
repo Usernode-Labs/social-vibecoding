@@ -127,7 +127,11 @@ test('the console island imports every admin module, console first', () => {
   assert.deepEqual(order.slice(1).sort(), [
     'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
-    'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges', 'admin-node',
+    'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges',
+    // #2570: Model costs, where the picker's per-model notes and cost
+    // estimates are kept honest against what changes actually cost.
+    'admin-model-costs',
+    'admin-node',
     'admin-overview', 'admin-push', 'admin-rollover', 'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage', 'admin-topochain', 'admin-users',

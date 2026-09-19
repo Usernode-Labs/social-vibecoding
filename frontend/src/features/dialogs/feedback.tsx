@@ -251,15 +251,23 @@ export function FeedbackDialog() {
             control spends a real allowance, so the cost has to stay on
             screen. The note already had the live remaining figure and is the
             right place for it.
+
+            #2586 made that line one sentence about the person it thanks:
+            "Put a kudos on this to thank whoever solves it". The emphasised
+            run no longer ends in a colon, so the separating space rides
+            inside the plain run's string — a bare whitespace expression
+            between the two would be two adjacent text children, which
+            cannot survive hydration (React #418) and the shell build
+            refuses it.
         */}
         <div id="feedback-bounty-row" className="hidden mt-2">
           <label className="flex items-start gap-2 cursor-pointer select-none">
             <input id="feedback-bounty-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Put a kudos bounty on this:
+                Put a kudos on this
               </span>
-              encourages someone to take it up and solve it
+              {' to thank whoever solves it'}
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>

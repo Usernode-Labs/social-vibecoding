@@ -71,7 +71,25 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'credential mint used by the app iframe transport, never a model-visible capability',
   },
   {
-    matches: (route) => route.source === 'src/routes/auth.js' && route.line === 168,
+    // The `router.post(SESSION_MINT_PATHS, ...)` guard in src/routes/auth.js.
+    // It registers one handler for several paths, each of which ALSO has a
+    // concrete route of its own further down the file — so the boundary is
+    // identified by its line, and the line moves whenever anything above it
+    // in that file does (#2568 added an import and moved it from 168 to 169).
+    // The path list is checked too, so a stale line number exempts nothing
+    // rather than silently exempting whatever moved into its place.
+    matches: (route) => route.source === 'src/routes/auth.js'
+      && route.line === 169
+      && [
+        '/api/auth/login',
+        '/api/auth/otp/verify',
+        '/api/auth/otp/set-password',
+        '/api/auth/register',
+        '/api/auth/wallet-verify',
+        '/api/auth/wallet-reset-verify',
+        '/api/auth/wallet-register',
+        '/api/auth/wallet-link-login',
+      ].includes(route.path),
     reason: 'session-mint boundary middleware duplicated by the concrete signed-out authentication routes',
   },
   {

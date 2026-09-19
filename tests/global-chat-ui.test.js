@@ -18,6 +18,9 @@ const improveSection = read('frontend', 'src', 'features', 'global-chat', 'impro
 const store = read('frontend', 'src', 'features', 'global-chat', 'store.ts');
 const renderers = read('frontend', 'src', 'features', 'global-chat', 'renderers.tsx');
 const api = read('frontend', 'src', 'features', 'global-chat', 'api.ts');
+const developmentSettings = read(
+  'frontend', 'src', 'features', 'global-chat', 'development-settings-editor.tsx',
+);
 const settings = read('frontend', 'src', 'features', 'settings', 'sections', 'global-chat.tsx');
 const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
@@ -99,6 +102,12 @@ test('Global Chat stays isolated from developer and proposal chat implementation
 test('a streamed turn failure keeps its actionable error instead of being replaced by an incomplete-stream error', () => {
   assert.match(store, /event\.type === 'turn\.failed'[\s\S]*?completed = true;/);
   assert.match(store, /turn\.failed'[\s\S]*?pending \? \{ \.\.\.item, pending: false \}/);
+  assert.match(store, /event\.assistantMessage as GlobalChatMessage/);
+  assert.match(store, /assistant\.payload\?\.kind === 'turn_error'/);
+  assert.match(store, /retryRequest: failed \? retryRequest : null/);
+  assert.match(store, /export async function retryLastGlobalChatRequest/);
+  assert.match(screen, /retryLastGlobalChatRequest\(\)/);
+  assert.doesNotMatch(screen, /onClick=\{\(\) => void openGlobalChat\(\)\}[\s\S]*Retry/);
 });
 
 test('suggestions stay compact, button-like, and append through a separate More control', () => {
@@ -145,10 +154,25 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /github_issue_number/);
   assert.match(renderers, /githubIssueCapability/);
   assert.match(renderers, /executeGlobalChatResultAction/);
-  assert.match(renderers, /actionId: 'issues\.for_app'/);
-  assert.match(renderers, /actionId: 'issue\.comments'/);
-  assert.match(renderers, /actionId: 'session\.checks'/);
-  assert.match(directItemActionSource, /proposalType === 'governance'[\s\S]*actionId: 'governance\.detail'/);
+  assert.match(renderers, /itemAction\([^\n]+?'issues\.for_app'/);
+  assert.match(renderers, /itemAction\([^\n]+?'messages\.for_app'/);
+  assert.match(renderers, /itemAction\([^\n]+?'issue\.comments'/);
+  assert.match(renderers, /itemAction\([^\n]+?'session\.checks'/);
+  assert.match(renderers, /itemAction\([\s\S]*?'notification\.detail'/);
+  assert.match(renderers, /itemAction\([\s\S]*?'leaderboard\.profile'/);
+  assert.ok(renderers.includes("|| /\\/dev\\/chat$/.test(base)"));
+  assert.match(renderers, /Platform issues/);
+  assert.match(renderers, /GitHub issues/);
+  assert.match(renderers, /Recent app activity/);
+  assert.match(renderers, /Messages \(7d\)/);
+  assert.match(renderers, /Active time \(7d\)/);
+  assert.match(renderers, /No current proposals\./);
+  assert.match(renderers, /SettingInstruction/);
+  assert.match(renderers, /In the "\$\{title\}" settings group \(key: \$\{group\}\)/);
+  assert.match(renderers, /Preserve every value I did not ask to change/);
+  assert.doesNotMatch(renderers, /function safeFields/);
+  assert.doesNotMatch(renderers, />\s*Done\s*</);
+  assert.match(directItemActionSource, /proposalType === 'governance'[\s\S]*'governance\.detail'/);
   assert.doesNotMatch(directItemActionSource, /return `#app\//);
   assert.match(classicPathSource, /proposalType === 'governance'[\s\S]*return `#app\/\$\{segment\(slug\)\}\/dev\/governance/);
 });
@@ -174,11 +198,13 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(api, /\/turn-status/);
   assert.match(api, /\/cancel/);
   assert.match(api, /\/direct-actions/);
+  assert.match(api, /\/inline-actions/);
   assert.match(api, /method:\s*'DELETE'/);
   assert.match(api, /\/api\/global-chat\/threads\/\$\{encodeURIComponent\(threadId\)\}/);
   assert.match(store, /recoverInterruptedTurn/);
   assert.match(store, /Reconnecting…/);
   assert.match(store, /executeDirectAction/);
+  assert.match(store, /executeInlineAction/);
   assert.match(store, /api\.deleteThread\(threadId\)/);
   assert.match(store, /api\.cancelTurn\(threadId\)/);
   assert.match(api, /modelInvocations:\s*0/);
@@ -199,7 +225,8 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
 });
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
-  assert.match(settings, /id="settings-global-chat-enabled"/);
+  assert.match(settings, /idPrefix = embedded \? `chat-global-chat-\$\{instanceId\}` : 'settings-global-chat'/);
+  assert.match(settings, /id=\{`\$\{idPrefix\}-enabled`\}/);
   assert.match(settings, /Enable experimental Global Chat/);
   assert.match(settings, /api\.saveProfile\(\{ enabled: nextEnabled \}\)/);
   assert.match(settings, /initializeGlobalChat\(\{ force: true \}\)/);
@@ -210,4 +237,19 @@ test('Settings keeps navigation AI separate from development AI and reports spen
   assert.match(settings, /Overall OpenRouter remaining/);
   assert.match(settings, /Development AI settings/);
   assert.match(settings, /This profile only controls Global Chat/);
+});
+
+test('rendered rows disclose locally and settings can be edited and saved in place', () => {
+  assert.match(renderers, /aria-expanded=\{expanded\}/);
+  assert.match(renderers, /className="global-chat-item-toggle"/);
+  assert.match(renderers, /action\.mode === 'inline'/);
+  assert.match(renderers, /loadGlobalChatInlineResults/);
+  assert.match(renderers, /<GlobalChatSettingsEditor embedded \/>/);
+  assert.match(renderers, /<DevelopmentAISettingsEditor \/>/);
+  assert.match(developmentSettings, /\/api\/me\/coding-agent/);
+  assert.match(developmentSettings, /method: 'PATCH'/);
+  assert.match(developmentSettings, /Save development AI/);
+  assert.match(developmentSettings, /does not change the Global Chat model/);
+  assert.match(css, /\.global-chat-item-toggle/);
+  assert.match(css, /\.global-chat-result-nested/);
 });

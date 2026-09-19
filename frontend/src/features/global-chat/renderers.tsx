@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 
-import { ArrowRightShortIcon, CheckIcon, ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
+import { DevelopmentAISettingsEditor } from './development-settings-editor';
 
 import {
   clientAction,
@@ -9,6 +11,7 @@ import {
   confirmGlobalChatAction,
   dismissConfirmation,
   executeGlobalChatResultAction,
+  loadGlobalChatInlineResults,
   runGlobalChatClientAction,
   sendGlobalChatMessage,
   useGlobalChatState,
@@ -22,8 +25,15 @@ const ARRAY_KEYS = [
   'notifications', 'results', 'rows', 'challenges', 'users', 'messages',
 ];
 const OBJECT_KEYS = ['app', 'issue', 'proposal', 'session', 'conversation', 'profile', 'notification'];
-const TITLE_KEYS = ['title', 'name', 'label', 'username', 'subject', 'displayName', 'appName'];
-const SUMMARY_KEYS = ['summary', 'description', 'body', 'content', 'message', 'statusText'];
+const TITLE_KEYS = [
+  'title', 'name', 'label', 'subject', 'displayName', 'appName', 'app_name',
+  'sessionTitle', 'session_title', 'prTitle', 'pr_title', 'conversationTitle',
+  'conversation_title', 'username',
+];
+const SUMMARY_KEYS = [
+  'summary', 'description', 'body', 'content', 'message', 'statusText',
+  'latestSummary', 'latest_summary', 'messageContent', 'message_content',
+];
 const ID_KEYS = [
   'number', 'issueNumber', 'issue_number', 'github_issue_number', 'sessionId', 'session_id',
   'conversationId', 'conversation_id', 'proposalId', 'proposal_id',
@@ -84,6 +94,106 @@ function rendererLabel(renderer: string) {
   return labels[renderer] || 'Result';
 }
 
+function humanize(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\bpr\b/gi, 'PR')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formattedDate(value: unknown) {
+  const raw = text(value, 100);
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function displayValue(key: string, value: unknown) {
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (/activitySecondsLast7Days/.test(key)) {
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      if (seconds < 60) return `${Math.round(seconds)} sec`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+      return `${(seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0)} hr`;
+    }
+  }
+  if (/(?:^|\.)(?:spent|cap|remaining).*usd$/i.test(key)) {
+    const amount = Number(value);
+    if (Number.isFinite(amount)) return `$${amount.toFixed(amount > 0 && amount < 0.01 ? 4 : 2)}`;
+  }
+  if (/(?:At|_at)$/.test(key)) return formattedDate(value);
+  return text(value, 80);
+}
+
+function itemTitle(result: GlobalChatResult, item: JsonObject) {
+  if (result.renderer === 'notification') {
+    const kind = text(item.kind, 80);
+    const place = first(item, ['appName', 'app_name', 'conversationTitle', 'conversation_title'], 100);
+    const label = kind ? humanize(kind) : 'Notification';
+    return place ? `${label} · ${place}` : label;
+  }
+  const rendererKeys: Record<string, string[]> = {
+    app: ['name', 'title'],
+    issue: ['title', 'name'],
+    proposal: ['prTitle', 'pr_title', 'title', 'sessionTitle', 'session_title', 'name'],
+    session: ['sessionTitle', 'session_title', 'prTitle', 'pr_title', 'title', 'name'],
+    conversation: [
+      'title', 'conversationTitle', 'conversation_title', 'name',
+      'senderUsername', 'sender_username', 'username',
+    ],
+    profile: ['displayName', 'username', 'name'],
+    leaderboard: ['username', 'displayName', 'name'],
+    setting: ['name', 'label'],
+  };
+  const explicit = first(item, rendererKeys[result.renderer] || TITLE_KEYS, 120);
+  if (explicit) return explicit;
+  const id = identifier(item)?.value;
+  return id ? `${rendererLabel(result.renderer)} ${id}` : rendererLabel(result.renderer);
+}
+
+function itemSummary(result: GlobalChatResult, item: JsonObject, title: string) {
+  const rendererKeys: Record<string, string[]> = {
+    notification: [
+      'messageContent', 'message_content', 'voteReason', 'vote_reason', 'detail',
+      'prTitle', 'pr_title', 'sessionTitle', 'session_title',
+    ],
+    conversation: ['latestSummary', 'latest_summary', ...SUMMARY_KEYS],
+    session: ['checkErrorDetail', 'check_error_detail', ...SUMMARY_KEYS],
+  };
+  const summary = first(item, rendererKeys[result.renderer] || SUMMARY_KEYS, 180);
+  return summary && summary !== title ? summary : '';
+}
+
+function resultLabel(result: GlobalChatResult) {
+  if (result.renderer === 'issue') {
+    return /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId)
+      ? 'GitHub issues'
+      : 'Platform issues';
+  }
+  if (result.capabilityId === 'apps.activity') return 'Recent app activity';
+  if (result.capabilityId === 'messages.for_app') return 'App discussions';
+  return rendererLabel(result.renderer);
+}
+
+function emptyResultMessage(result: GlobalChatResult) {
+  const messages: Record<string, string> = {
+    app: 'No apps found.',
+    issue: 'No issues found.',
+    proposal: 'No current proposals.',
+    session: 'No active development found.',
+    conversation: 'No conversations found.',
+    notification: 'No notifications found.',
+    leaderboard: 'No leaderboard entries found.',
+    setting: 'No settings found.',
+  };
+  return messages[result.renderer] || 'No results found.';
+}
+
 function humanizeCapability(value: string) {
   return value
     .replace(/\.[a-f0-9]{8}$/i, '')
@@ -102,18 +212,22 @@ function identifier(item: JsonObject) {
   return null;
 }
 
-function promptTarget(renderer: string, item: JsonObject) {
-  const id = identifier(item);
-  const noun = rendererLabel(renderer).toLowerCase();
-  if (!id) return `this ${noun}`;
-  const prefix = id.key === 'number' || /number$/i.test(id.key) ? '#' : '';
-  return `${noun} ${prefix}${id.value}`;
-}
-
 interface DirectItemAction {
   label: string;
+  requestLabel: string;
   actionId: string;
   parameters: Record<string, string>;
+  mode: 'inline' | 'turn';
+}
+
+function itemAction(
+  label: string,
+  requestLabel: string,
+  actionId: string,
+  parameters: Record<string, string>,
+  mode: 'inline' | 'turn',
+): DirectItemAction {
+  return { label, requestLabel, actionId, parameters, mode };
 }
 
 function resultAppSlug(result: GlobalChatResult, item: JsonObject) {
@@ -124,13 +238,18 @@ function resultAppSlug(result: GlobalChatResult, item: JsonObject) {
   try { return decodeURIComponent(encoded); } catch { return encoded; }
 }
 
-function directItemActions(result: GlobalChatResult, item: JsonObject): DirectItemAction[] {
+function directItemActions(
+  result: GlobalChatResult,
+  item: JsonObject,
+  targetLabel: string,
+): DirectItemAction[] {
   const slug = resultAppSlug(result, item);
   const payload = object(item.payload);
   if (result.renderer === 'app' && slug) {
     return [
-      { label: 'Details', actionId: 'apps.detail', parameters: { appSlug: slug } },
-      { label: 'Issues', actionId: 'issues.for_app', parameters: { appSlug: slug } },
+      itemAction('Details', `About ${targetLabel}`, 'apps.detail', { appSlug: slug }, 'inline'),
+      itemAction('Issues', `Issues for ${targetLabel}`, 'issues.for_app', { appSlug: slug }, 'turn'),
+      itemAction('Discussions', `Discussions in ${targetLabel}`, 'messages.for_app', { appSlug: slug }, 'turn'),
     ];
   }
   if (result.renderer === 'issue' && slug) {
@@ -143,51 +262,68 @@ function directItemActions(result: GlobalChatResult, item: JsonObject): DirectIt
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
     if (issueNumber && (githubIssueCapability || !text(item.kind, 80))) {
       return [
-        { label: 'Details', actionId: 'issue.detail', parameters: { appSlug: slug, issueNumber } },
-        { label: 'Comments', actionId: 'issue.comments', parameters: { appSlug: slug, issueNumber } },
+        itemAction('Details', `Open ${targetLabel}`, 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction('Comments', `Comments on ${targetLabel}`, 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
       ];
     }
     if (governanceId) {
-      return [{
-        label: 'Details',
-        actionId: 'governance.detail',
-        parameters: { appSlug: slug, governanceId },
-      }];
+      return [itemAction(
+        'Details', `Open ${targetLabel}`, 'governance.detail',
+        { appSlug: slug, governanceId }, 'inline',
+      )];
     }
   }
   if (result.renderer === 'proposal' && slug) {
     const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
     if (item.proposalType === 'governance' && governanceId) {
-      return [{
-        label: 'Details',
-        actionId: 'governance.detail',
-        parameters: { appSlug: slug, governanceId },
-      }];
+      return [itemAction(
+        'Details', `Open ${targetLabel}`, 'governance.detail',
+        { appSlug: slug, governanceId }, 'inline',
+      )];
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
     if (proposalId) return [
-      { label: 'Details', actionId: 'proposal.detail', parameters: { appSlug: slug, proposalId } },
-      { label: 'Evidence', actionId: 'proposal.evidence', parameters: { appSlug: slug, proposalId } },
+      itemAction('Details', `Open ${targetLabel}`, 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
+      itemAction('Change preview', `Visual change preview for ${targetLabel}`, 'proposal.evidence', { appSlug: slug, proposalId }, 'inline'),
     ];
   }
   if (result.renderer === 'session') {
     const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
     if (sessionId) return [
-      { label: 'Details', actionId: 'session.detail', parameters: { sessionId } },
-      { label: 'Checks', actionId: 'session.checks', parameters: { sessionId } },
+      itemAction('Details', `Details for ${targetLabel}`, 'session.detail', { sessionId }, 'inline'),
+      itemAction('Checks', `Checks for ${targetLabel}`, 'session.checks', { sessionId }, 'inline'),
     ];
   }
   if (result.renderer === 'conversation') {
+    if (result.capabilityId === 'messages.for_app') return [];
     const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
-    if (conversationId) return [{
-      label: 'Details', actionId: 'conversation.detail', parameters: { conversationId },
-    }];
+    if (conversationId) return [itemAction(
+      'Details', `Open ${targetLabel}`, 'conversation.detail', { conversationId }, 'inline',
+    )];
   }
-  if (result.renderer === 'setting') {
-    const group = text(item.id, 80);
-    if (group) return [{
-      label: 'View', actionId: 'settings.inspect', parameters: { group },
-    }];
+  if (result.renderer === 'notification') {
+    const notificationId = first(item, ['notificationId', 'notification_id', 'id'], 80);
+    if (notificationId) return [itemAction(
+      'Details', `Open ${targetLabel}`, 'notification.detail', { notificationId }, 'inline',
+    )];
+  }
+  if (result.renderer === 'leaderboard') {
+    const userId = first(item, ['userId', 'user_id', 'id'], 80);
+    const username = text(item.username, 80);
+    return [
+      ...(userId ? [itemAction(
+        'Profile', `Profile for ${targetLabel}`, 'leaderboard.profile', { userId }, 'inline',
+      )] : []),
+      ...(username ? [itemAction(
+        'Merged work', `Merged work by ${targetLabel}`, 'leaderboard.prs', { username }, 'inline',
+      )] : []),
+    ];
+  }
+  if (result.renderer === 'setting' && result.capabilityId === 'settings.catalog') {
+    const group = text(item.id || item.group, 80);
+    if (group && text(item.classicPath, 300)) return [itemAction(
+      'View', `Open ${targetLabel}`, 'settings.inspect', { group }, 'inline',
+    )];
   }
   return [];
 }
@@ -196,6 +332,7 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
   const base = result.classicPath;
   if (!base) return null;
   const exactTopic = /\/dev\/(?:issues|proposals|sessions)\/[A-Za-z0-9%-]+$/.test(base)
+    || /\/dev\/chat$/.test(base)
     || /^#messages\/[1-9]\d*$/.test(base);
   if (exactTopic) return base;
 
@@ -253,44 +390,210 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
   return base;
 }
 
-function compactMetadata(item: JsonObject) {
+function compactMetadata(result: GlobalChatResult, item: JsonObject, title: string) {
   const parts: string[] = [];
   const id = identifier(item);
-  if (id && !TITLE_KEYS.includes(id.key)) {
-    parts.push(id.key === 'number' || /number$/i.test(id.key) ? `#${id.value}` : id.value);
+  if (id && ['issue', 'proposal', 'session'].includes(result.renderer)
+      && !title.includes(id.value)) {
+    parts.push(`#${id.value}`);
   }
-  for (const key of ['status', 'state', 'role', 'visibility', 'kind', 'updatedAt', 'createdAt']) {
+  for (const key of ['status', 'state', 'visibility']) {
     const value = text(item[key], 50);
-    if (value && !parts.includes(value)) parts.push(value);
+    if (value && !parts.includes(value)) parts.push(humanize(value));
     if (parts.length === 3) break;
   }
+  if (result.renderer === 'notification') {
+    parts.push(item.readAt || item.read_at ? 'Read' : 'Unread');
+  }
+  const date = first(item, ['lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'], 100);
+  const renderedDate = formattedDate(date);
+  if (renderedDate && parts.length < 3) parts.push(renderedDate);
   return parts.join(' · ');
 }
 
-function safeFields(item: JsonObject) {
-  return Object.entries(item).filter(([key, value]) => (
-    !PRIVATE_KEY.test(key)
-    && !TITLE_KEYS.includes(key)
-    && !SUMMARY_KEYS.includes(key)
-    && !ID_KEYS.includes(key)
-    && ['string', 'number', 'boolean'].includes(typeof value)
-    && text(value, 80)
-  )).slice(0, 4);
+interface DisplayField {
+  label: string;
+  value: string;
 }
 
-function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }) {
+function displayFields(result: GlobalChatResult, item: JsonObject): DisplayField[] {
+  const fields: DisplayField[] = [];
+  const seen = new Set<string>();
+  const add = (label: string, keys: string[]) => {
+    if (seen.has(label)) return;
+    for (const key of keys) {
+      if (!Object.hasOwn(item, key) || item[key] == null || item[key] === '') continue;
+      const value = displayValue(key, item[key]);
+      if (!value) continue;
+      fields.push({ label, value });
+      seen.add(label);
+      return;
+    }
+  };
+
+  if (result.renderer === 'app') {
+    if (result.capabilityId === 'apps.activity') {
+      add('Messages (7d)', ['messagesLast7Days']);
+      add('Active time (7d)', ['activitySecondsLast7Days']);
+      add('Active users', ['activeUsers', 'active_users']);
+      add('Development', ['activeDevelopment', 'active_development', 'active_sessions']);
+    } else {
+      add('Open issues', ['openIssues', 'open_issues']);
+      add('Open proposals', ['openProposals', 'open_proposals', 'open_prs']);
+      add('Active development', ['activeDevelopment', 'active_development', 'active_sessions']);
+    }
+  } else if (result.renderer === 'proposal') {
+    add('App', ['appName', 'app_name']);
+    add('Yes', ['yesCount', 'yes_count', 'upCount', 'up_count']);
+    add('No', ['noCount', 'no_count', 'downCount', 'down_count']);
+    add('Checks', ['checkState', 'check_state']);
+  } else if (result.renderer === 'session') {
+    add('App', ['appName', 'app_name']);
+    add('Checks', ['checkState', 'check_state']);
+    add('Phase', ['checkPhase', 'check_phase']);
+  } else if (result.renderer === 'conversation') {
+    add('Unread', ['unreadCount', 'unread_count']);
+    add('Members', ['memberCount', 'member_count']);
+  } else if (result.renderer === 'notification') {
+    add('From', ['sourceUsername', 'source_username']);
+    add('PR', ['prNumber', 'pr_number']);
+  } else if (result.renderer === 'leaderboard') {
+    add('Kudos', ['kudosReceived', 'kudos_received']);
+    add('PRs recognized', ['prsKudosed', 'prs_kudosed']);
+    add('Merged', ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
+  } else if (result.renderer === 'setting') {
+    const spending = text(item.name, 100) === 'Global Chat usage';
+    if (spending) {
+      add('Spent this month', ['spentUsd']);
+      add('Monthly cap', ['capUsd']);
+      add('Cap remaining', ['remainingUsd']);
+      add('OpenRouter remaining', ['overallRemainingUsd']);
+    } else {
+      add('Model', ['profile.model', 'backends.codex_openrouter.model', 'model']);
+      add('Reasoning', ['profile.reasoningEffort', 'reasoningEffort', 'reasoning_effort']);
+      add('Enabled', ['profile.enabled', 'enabled']);
+      add('Spent this month', ['usage.spentUsd', 'spentUsd']);
+      add('Monthly cap', ['usage.capUsd', 'profile.spendCapUsd', 'capUsd']);
+      add('OpenRouter remaining', ['overallRemaining', 'overallRemainingUsd']);
+      add('Backend', ['backend', 'profile.backend']);
+    }
+    if (fields.length < 4) {
+      for (const [key, raw] of Object.entries(item)) {
+        if (fields.length >= 4) break;
+        if (PRIVATE_KEY.test(key)
+            || [...TITLE_KEYS, ...SUMMARY_KEYS, ...ID_KEYS, 'group', 'classicPath'].includes(key)
+            || !['string', 'number', 'boolean'].includes(typeof raw)) continue;
+        const label = humanize(key.split('.').at(-1) || key);
+        const value = displayValue(key, raw);
+        if (!value || seen.has(label)) continue;
+        fields.push({ label, value });
+        seen.add(label);
+      }
+    }
+  }
+  return fields.slice(0, 4);
+}
+
+function actionTargetLabel(result: GlobalChatResult, item: JsonObject, title: string) {
+  const id = identifier(item)?.value;
+  if (!id || title.includes(id)) return title;
+  if (result.renderer === 'issue') return `${title} (#${id})`;
+  if (result.renderer === 'proposal') return `${title} (proposal #${id})`;
+  if (result.renderer === 'session') return `${title} (development #${id})`;
+  return title;
+}
+
+function SettingInstruction({ item, title }: { item: JsonObject; title: string }) {
+  const [editing, setEditing] = useState(false);
+  const [instruction, setInstruction] = useState('');
+  const group = text(item.group || item.id, 80);
+  if (!group || group === 'global-chat') return null;
+
+  function submit() {
+    const requested = instruction.trim();
+    if (!requested) return;
+    setInstruction('');
+    setEditing(false);
+    void sendGlobalChatMessage(
+      `In the "${title}" settings group (key: ${group}), ${requested}. `
+      + 'Preserve every value I did not ask to change, use only capabilities for this settings group, '
+      + 'and show the exact confirmation before saving.',
+    );
+  }
+
+  return editing ? (
+    <form
+      className="global-chat-setting-instruction"
+      onSubmit={(event) => { event.preventDefault(); submit(); }}
+    >
+      <input
+        value={instruction}
+        maxLength={500}
+        autoFocus
+        aria-label={`Change ${title}`}
+        placeholder={`What should change in ${title}?`}
+        onChange={(event) => setInstruction(event.target.value)}
+      />
+      <button type="submit" disabled={!instruction.trim()}>Continue</button>
+      <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+    </form>
+  ) : (
+    <button type="button" className="global-chat-setting-edit" onClick={() => setEditing(true)}>
+      Change these settings
+    </button>
+  );
+}
+
+function ItemRow({
+  result,
+  value,
+  nested = false,
+}: {
+  result: GlobalChatResult;
+  value: unknown;
+  nested?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(nested);
+  const [inlineResults, setInlineResults] = useState<Record<string, GlobalChatResult[]>>({});
+  const [inlineLoading, setInlineLoading] = useState<string | null>(null);
+  const [inlineError, setInlineError] = useState('');
   const item = object(value) || { value };
-  const target = promptTarget(result.renderer, item);
-  const title = first(item, TITLE_KEYS, 120)
-    || (identifier(item)?.value ? `${rendererLabel(result.renderer)} ${identifier(item)?.value}` : rendererLabel(result.renderer));
-  const summary = first(item, SUMMARY_KEYS, 150);
-  const meta = compactMetadata(item);
+  const title = itemTitle(result, item);
+  const targetLabel = actionTargetLabel(result, item, title);
+  const summary = itemSummary(result, item, title);
+  const meta = compactMetadata(result, item, title);
   const classicPath = itemClassicPath(result, item);
-  const fields = safeFields(item);
+  const fields = displayFields(result, item);
   const showAppIcon = result.renderer === 'app' && !!text(item.slug || item.app_slug, 255);
-  const directActions = directItemActions(result, item);
+  const directActions = nested ? [] : directItemActions(result, item, targetLabel);
+  const catalogView = directActions.find((action) => action.actionId === 'settings.inspect');
+
+  async function loadInline(action: DirectItemAction) {
+    if (inlineLoading || inlineResults[action.actionId]) return;
+    setInlineLoading(action.actionId);
+    setInlineError('');
+    try {
+      const loaded = await loadGlobalChatInlineResults(
+        action.actionId,
+        action.parameters,
+        targetLabel,
+      );
+      setInlineResults((current) => ({ ...current, [action.actionId]: loaded }));
+    } catch (reason) {
+      setInlineError(reason instanceof Error ? reason.message : 'Could not load those details.');
+    } finally {
+      setInlineLoading(null);
+    }
+  }
+
+  function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && catalogView) void loadInline(catalogView);
+  }
+
   return (
-    <article className="global-chat-item">
+    <article className="global-chat-item" data-expanded={expanded || undefined}>
       {showAppIcon ? (
         <div
           className="app-icon-tile h-10 w-10 shrink-0 overflow-hidden rounded-xl flex items-center justify-center text-lg font-bold"
@@ -300,32 +603,66 @@ function ItemRow({ result, value }: { result: GlobalChatResult; value: unknown }
         </div>
       ) : null}
       <div className="min-w-0 flex-1">
-        <div className="global-chat-item-title">{title}</div>
-        {meta ? <div className="global-chat-item-meta">{meta}</div> : null}
-        {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
-        {!summary && fields.length ? (
-          <div className="global-chat-item-meta">
-            {fields.map(([key, value]) => `${key.replace(/([a-z])([A-Z])/g, '$1 $2')}: ${text(value, 80)}`).join(' · ')}
+        <button
+          type="button"
+          className="global-chat-item-toggle"
+          aria-expanded={expanded}
+          onClick={toggleExpanded}
+        >
+          <span className="min-w-0 flex-1 text-left">
+            <span className="global-chat-item-title">{title}</span>
+            {meta ? <span className="global-chat-item-meta">{meta}</span> : null}
+          </span>
+          <ChevronDownIcon className="global-chat-item-chevron" aria-hidden="true" />
+        </button>
+        {expanded ? (
+          <div className="global-chat-item-details">
+            {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
+            {fields.length ? (
+              <dl className="global-chat-item-fields">
+                {fields.map(({ label, value: fieldValue }) => (
+                  <div key={label}><dt>{label}</dt><dd>{fieldValue}</dd></div>
+                ))}
+              </dl>
+            ) : null}
+            {!nested ? (
+              <div className="global-chat-inline-actions">
+                {directActions.filter((action) => action.actionId !== 'settings.inspect').map((action) => (
+                  <button
+                    key={action.actionId}
+                    type="button"
+                    disabled={inlineLoading === action.actionId}
+                    onClick={() => action.mode === 'inline'
+                      ? void loadInline(action)
+                      : void executeGlobalChatResultAction(
+                        action.requestLabel,
+                        action.actionId,
+                        action.parameters,
+                        targetLabel,
+                      )}
+                  >
+                    {inlineLoading === action.actionId ? 'Loading…' : action.label}
+                  </button>
+                ))}
+                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
+              </div>
+            ) : classicPath ? (
+              <div className="global-chat-inline-actions">
+                <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button>
+              </div>
+            ) : null}
+            {inlineLoading === 'settings.inspect' ? (
+              <div className="global-chat-inline-loading">Loading current settings…</div>
+            ) : null}
+            {inlineError ? <div className="global-chat-inline-error" role="alert">{inlineError}</div> : null}
+            {Object.values(inlineResults).flat().map((loaded) => (
+              <GlobalChatResultBlock key={loaded.id} result={loaded} nested />
+            ))}
+            {result.renderer === 'setting' && result.capabilityId === 'settings.inspect'
+              ? <SettingInstruction item={item} title={title} />
+              : null}
           </div>
         ) : null}
-        <div className="global-chat-inline-actions">
-          {directActions.length ? directActions.map((action) => (
-            <button
-              key={action.actionId}
-              type="button"
-              onClick={() => void executeGlobalChatResultAction(
-                action.label,
-                action.actionId,
-                action.parameters,
-              )}
-            >
-              {action.label}
-            </button>
-          )) : (
-            <button type="button" onClick={() => void sendGlobalChatMessage(`Show details for ${target}.`)}>Details</button>
-          )}
-          {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
-        </div>
       </div>
     </article>
   );
@@ -398,26 +735,77 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
   );
 }
 
-export function GlobalChatResultBlock({ result }: { result: GlobalChatResult }) {
+export function GlobalChatResultBlock({
+  result,
+  nested = false,
+}: {
+  result: GlobalChatResult;
+  nested?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
   const items = useMemo(() => findItems(payload), [payload]);
   if (confirmation) return <ConfirmationResult result={result} payload={object(payload) || {}} />;
+  if (result.renderer === 'setting'
+      && result.capabilityId === 'settings.inspect'
+      && object(payload)?.group === 'global-chat') {
+    return (
+      <section
+        className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
+        data-renderer="setting"
+      >
+        <header className="global-chat-result-head"><span>Global Chat settings</span></header>
+        <GlobalChatSettingsEditor embedded />
+        {result.classicPath ? (
+          <div className="global-chat-inline-actions global-chat-client-action">
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+  if (result.renderer === 'setting'
+      && result.capabilityId === 'settings.inspect'
+      && object(payload)?.group === 'openrouter') {
+    return (
+      <section
+        className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
+        data-renderer="setting"
+      >
+        <header className="global-chat-result-head"><span>Development AI settings</span></header>
+        <DevelopmentAISettingsEditor />
+        {result.classicPath ? (
+          <div className="global-chat-inline-actions global-chat-client-action">
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   const visible = expanded ? items : items.slice(0, 3);
   const action = clientAction(result);
   return (
-    <section className="global-chat-result" data-renderer={result.renderer}>
+    <section
+      className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}`}
+      data-renderer={result.renderer}
+    >
       <header className="global-chat-result-head">
-        <span>{rendererLabel(result.renderer)}</span>
-        {result.classicPath && !items.length ? (
-          <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>
-            Open in Classic <ArrowRightShortIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        ) : null}
+        <span>{resultLabel(result)}</span>
       </header>
-      {visible.length ? <div className="global-chat-result-items">{visible.map((item, index) => <ItemRow key={`${result.id}-${index}`} result={result} value={item} />)}</div> : null}
+      {visible.length ? (
+        <div className="global-chat-result-items">
+          {visible.map((item, index) => (
+            <ItemRow
+              key={`${result.id}-${index}`}
+              result={result}
+              value={item}
+              nested={nested}
+            />
+          ))}
+        </div>
+      ) : null}
       {items.length > visible.length ? (
         <button type="button" className="global-chat-expand" onClick={() => setExpanded(true)}>
           Show {items.length - visible.length} more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -425,7 +813,7 @@ export function GlobalChatResultBlock({ result }: { result: GlobalChatResult }) 
       ) : null}
       {action ? <ClientActionResult result={result} /> : null}
       {!items.length && !action ? (
-        <div className="global-chat-result-done"><CheckIcon className="w-4 h-4" aria-hidden="true" /> Done</div>
+        <div className="global-chat-result-done">{emptyResultMessage(result)}</div>
       ) : null}
     </section>
   );
